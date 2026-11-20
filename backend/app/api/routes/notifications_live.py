@@ -60,6 +60,7 @@ from app.common.auth import (
     get_current_session_id,
     verify_notice_token,
 )
+from app.core import credentials
 from app.core.errors import BadRequestError
 from app.domain.agent.chat import ChatService
 from app.domain.agent.personal.service import AssistantConversations
@@ -121,8 +122,7 @@ async def _behind(chat: ChatService, user_id: int, cursor: int) -> bool:
 
 @router.websocket("/notifications/live")
 async def live(websocket: WebSocket, chat: ChatDep) -> None:
-    bearer = websocket.headers.get("authorization", "")
-    claims = verify_notice_token(bearer.removeprefix("Bearer ").strip())
+    claims = verify_notice_token(credentials.presented(websocket.headers))
     handle = await _signed_in(chat, *claims) if claims is not None else None
     if claims is None or handle is None:
         # Refused before the handshake completes: the app sees a 403 and waits

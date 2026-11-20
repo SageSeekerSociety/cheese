@@ -21,6 +21,7 @@ from dataclasses import dataclass
 #: What lives outside a project, by its first segment.
 GLOBAL_KINDS = (
     "spaces",
+    "teams",
     "drafts",
     "files",
     "alerts",
@@ -65,6 +66,7 @@ _SINGULAR = {
     "tasks": "task",
     "docs": "doc",
     "spaces": "space",
+    "teams": "team",
     "drafts": "draft",
     "files": "file",
     "alerts": "alert",

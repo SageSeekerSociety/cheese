@@ -23,7 +23,7 @@ test('慢网首帧，没登录的人在首页上看到的是首页的轮廓，�
   const skeleton = page.locator('#sx-boot-skeleton');
   await expect(skeleton).toBeVisible();
   await expect(skeleton.locator('.sx-landing')).toBeVisible();
-  await expect(skeleton.locator('.sx-rail')).toBeHidden();
+  await expect(skeleton.locator('.sx-top')).toBeHidden();
 });
 
 test('慢网首帧，登录的人看到应用外框，侧栏是他留下的宽度', async ({ page }) => {
@@ -38,11 +38,31 @@ test('慢网首帧，登录的人看到应用外框，侧栏是他留下的宽�
   const skeleton = page.locator('#sx-boot-skeleton');
   await expect(skeleton).toBeVisible();
   await expect(skeleton.locator('.sx-landing')).toBeHidden();
-  // 正文从左栏加上那 320px 之后开始，和真页面一样（侧栏和它的分隔线一起占这么宽）。
-  const rail = await skeleton.locator('.sx-rail').boundingBox();
+  // 顶栏 40px 一条横贯全宽；侧栏从窗口左缘、顶栏下面开始，正文从那 320px 之后开始，
+  // 和真页面一样（侧栏和它的分隔线一起占这么宽）。
+  const [top, main] = await Promise.all([
+    skeleton.locator('.sx-top').boundingBox(),
+    skeleton.locator('.sx-main').boundingBox(),
+  ]);
+  expect(top?.height).toBe(40);
+  expect(main?.x).toBe(320);
+  expect(main?.y).toBe(40);
+});
+
+test('慢网首帧，侧栏收起过的人看到的骨架也没有侧栏', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.addInitScript(() => {
+    localStorage.setItem('accessToken', 'stored-token');
+    localStorage.setItem('user', JSON.stringify({ id: 1, onboarded_at: '2026-01-01T00:00:00Z' }));
+    localStorage.setItem('cheesex.sidebarFolded', '1');
+  });
+  await holdScripts(page);
+  await page.goto('/inbox', { waitUntil: 'domcontentloaded' });
+
+  const skeleton = page.locator('#sx-boot-skeleton');
+  await expect(skeleton.locator('.sx-side')).toBeHidden();
   const main = await skeleton.locator('.sx-main').boundingBox();
-  expect(rail?.width).toBeGreaterThan(0);
-  expect(main?.x).toBe((rail?.x ?? 0) + (rail?.width ?? 0) + 320);
+  expect(main?.x).toBe(0);
 });
 
 test('应用一挂载，骨架节点立刻消失', async ({ page }) => {

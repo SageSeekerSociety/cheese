@@ -6,6 +6,7 @@
 """
 
 from app.core.errors import BadRequestError
+from app.core.sentences import say
 
 # ``SubmitterType`` 那两个序号：报名是人报的还是小队报的。领域代码判这一点时读这里，
 # 不再各自写一遍字面量。
@@ -16,6 +17,15 @@ SUBMITTER_TEAM = 1
 APPROVE_APPROVED = 0
 APPROVE_DISAPPROVED = 1
 APPROVE_NONE = 2
+
+# How a claim starts (``Task.start_mode``). ``DIRECT``: the claim is approved the
+# moment it is made and its project opens then; the deadline is the task's own,
+# shared by everyone. ``APPLY``: the claim waits for the publisher, and its
+# project opens and its deadline (``default_deadline`` days) starts when it is
+# approved.
+START_DIRECT = "DIRECT"
+START_APPLY = "APPLY"
+START_MODES = (START_DIRECT, START_APPLY)
 
 
 def map_submitter_type(value: str) -> int:
@@ -46,3 +56,10 @@ def map_approve_type_to_int(value: str | None) -> int | None:
     if value is None:
         return None
     return map_approve_type(value)
+
+
+def map_start_mode(value: str) -> str:
+    """A start mode as the API names it; anything else is refused."""
+    if value not in START_MODES:
+        raise BadRequestError(say("taskStartModeInvalid"))
+    return value

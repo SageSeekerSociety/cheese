@@ -1,9 +1,10 @@
 """A closed task's checkout leaves the machines its room worked on.
 
 Whatever it holds that was not pushed: each turn's checkpoint already sent the
-task's work to its branch and snapshot. Only a checkout a process is still
-inside stays. A machine that was offline when the task closed — the one a room
-has left included — is swept when it connects again.
+task's commits to its branch, and what it did not commit is not carried
+anywhere. Only a checkout a process is still inside stays. A machine that was
+offline when the task closed — the one a room has left included — is swept when
+it connects again.
 """
 
 import asyncio
@@ -22,6 +23,7 @@ from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.services import IdentityService
 from app.domain.room_task.checkouts import remove_closed_checkouts
 from app.domain.room_task.closing import close_task
+from app.domain.room_task.lock_order import lock_tasks_for_change
 from app.domain.room_task.models import Task, TaskStatus
 from tests.integration.conftest import post_project, session_auth_headers
 
@@ -164,9 +166,7 @@ async def _tasks(client, room, count: int) -> list[uuid.UUID]:
 async def _close(client, room, tasks: list[uuid.UUID]) -> None:
     """Close them the way the room does, and commit."""
     async with client.test_factory() as db:
-        for task in tasks:
-            row = await db.get(Task, task)
-            assert row is not None
+        for row in await lock_tasks_for_change(db, tasks):
             await close_task(db, row, None, machines=sweep)
         await db.commit()
 
@@ -260,9 +260,7 @@ async def test_a_room_with_more_closed_tasks_than_a_command_line_holds_is_swept(
     room = await _room(client, tmp_path)
     tasks = await _tasks(client, room, 1300)
     async with client.test_factory() as db:
-        for task in tasks:
-            row = await db.get(Task, task)
-            assert row is not None
+        for row in await lock_tasks_for_change(db, tasks):
             row.status = TaskStatus.closed
         await db.commit()
     last = room.machines["a"].checkout(tasks[-1], push=True)

@@ -33,6 +33,9 @@ type Msg struct {
 	// Profiles: this connector expands the enrollment's root
 	// (place.RootPlaceholder) in the paths it resolves itself.
 	Profiles bool `json:"profiles,omitempty"`
+	// Machine: this connector listens on a session's platform socket and relays
+	// what the sandbox sends there as machine.* streams (host/machine.go).
+	Machine bool `json:"machine,omitempty"`
 	// Which binary is speaking, sent up in `hello`: Build is the sha256 of this
 	// connector's own executable, Target its `<os>-<arch>`. V cannot carry this
 	// — it moves only for a breaking change, so a build missing a compatibly
@@ -145,7 +148,7 @@ func (c *Conn) Run(ctx context.Context, onMsg func(Msg)) error {
 func (c *Conn) runOnce(ctx context.Context, onMsg func(Msg)) (connected bool) {
 	header := http.Header{}
 	if c.token != "" {
-		header.Set("X-Cheese-Session", c.token)
+		header.Set("Authorization", "Bearer "+c.token)
 	}
 	conn, _, err := websocket.DefaultDialer.DialContext(ctx, c.url, header)
 	if err != nil {
@@ -164,7 +167,7 @@ func (c *Conn) runOnce(ctx context.Context, onMsg func(Msg)) (connected bool) {
 		c.mu.Unlock()
 	}()
 
-	_ = c.Send(Msg{T: "hello", V: Version, Build: c.build, Target: c.target, Executor: true, Profiles: true})
+	_ = c.Send(Msg{T: "hello", V: Version, Build: c.build, Target: c.target, Executor: true, Profiles: true, Machine: true})
 	// Say it heartbeats immediately, not at the first tick. The backend starts
 	// its silence clock only after a heartbeat has been heard
 	// (`DeviceHub.silence_allowed`), so until the first one a machine that went

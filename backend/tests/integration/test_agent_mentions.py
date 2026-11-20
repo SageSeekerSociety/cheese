@@ -158,7 +158,7 @@ def _as(project_id, room_id, seat):
     token = mint_scoped_token(
         project_id=project_id, topic_id=room_id, agent_handle=seat
     )
-    return {"X-Cheese-Token": token}
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _publish(client, room_id, headers, content):

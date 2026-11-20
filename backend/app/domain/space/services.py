@@ -5,14 +5,16 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
 
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from app.core.sentences import say
 from app.domain.space.material_service import member_readable_material_ids
+from app.domain.space.member_repositories import APPROVED, REJECTED
 from app.domain.space.models import (
     Space,
     SpaceAdminRelation,
     SpaceAdminRole,
     SpaceCategory,
     SpaceDomainGroup,
-    SpaceInviteCode,
+    SpaceJoinRequest,
     SpaceMember,
 )
 from app.domain.space.repositories import (
@@ -21,7 +23,7 @@ from app.domain.space.repositories import (
     SpaceClassificationTopicsRepository,
     SpaceDomainGroupDomainRepository,
     SpaceDomainGroupRepository,
-    SpaceInviteCodeRepository,
+    SpaceJoinRepository,
     SpaceMemberRepository,
     SpaceRepository,
     SpaceUserRankRepository,
@@ -33,41 +35,6 @@ if TYPE_CHECKING:
 
     from app.domain.materials.services import MaterialService
     from app.domain.task.repositories import TaskRepository
-
-
-#: What a code minted at space-creation time is worth. Enough to bring in a
-#: class; an admin who wants a different budget mints one explicitly.
-DEFAULT_SPACE_INVITE_CODE_MAX_USES = 50
-
-#: No 0/O/1/I/L — these codes get read aloud and typed in by hand.
-_INVITE_CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
-_INVITE_CODE_LENGTH = 10
-
-
-def _validated_max_uses(value: object) -> int:
-    """The one place that decides what counts as a usable 人数预算.
-
-    Shared by minting and by editing so the two cannot drift into disagreeing
-    about what a code may hold. ``bool`` is rejected explicitly because it is
-    an ``int`` in Python and ``True`` would otherwise read as a budget of 1.
-    """
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise BadRequestError("maxUses must be a positive integer")
-    return value
-
-
-def _normalized_note(value: str | None) -> str | None:
-    """A 说明, or ``None`` for "this code says nothing about itself".
-
-    Shared by minting and by editing so a note cannot mean one thing when it
-    is written and another when it is corrected. A whitespace-only string is
-    the same as no note at all — storing ``"  "`` would put an invisible row
-    in the list and read as though something had been said.
-    """
-    if value is None:
-        return None
-    stripped = value.strip()
-    return stripped or None
 
 
 def _error_data_id(exc: NotFoundError) -> object | None:
@@ -196,7 +163,7 @@ class SpaceService:
         domain_group_repo: SpaceDomainGroupRepository | None = None,
         domain_group_domain_repo: SpaceDomainGroupDomainRepository | None = None,
         member_repo: SpaceMemberRepository | None = None,
-        invite_code_repo: SpaceInviteCodeRepository | None = None,
+        join_repo: SpaceJoinRepository | None = None,
         document_check: "DocumentCheck | None" = None,
         material_service: "MaterialService | None" = None,
         session: "AsyncSession | None" = None,
@@ -210,7 +177,7 @@ class SpaceService:
         self._domain_group_repo = domain_group_repo
         self._domain_group_domain_repo = domain_group_domain_repo
         self._member_repo = member_repo
-        self._invite_code_repo = invite_code_repo
+        self._join_repo = join_repo
         self._document_check = document_check
         self._material_service = material_service
         self._session = session
@@ -244,7 +211,7 @@ class SpaceService:
             domain_group_repo=SpaceDomainGroupRepository(session),
             domain_group_domain_repo=SpaceDomainGroupDomainRepository(session),
             member_repo=SpaceMemberRepository(session),
-            invite_code_repo=SpaceInviteCodeRepository(session),
+            join_repo=SpaceJoinRepository(session),
             document_check=document_check,
             material_service=material_service,
             session=session,
@@ -253,7 +220,7 @@ class SpaceService:
     @classmethod
     def for_visibility(cls, session: "AsyncSession") -> "SpaceService":
         """Wired for the two plain reads a visibility gate needs — the board
-        (``get_space``) and one person's membership (``is_member``).
+        (``get_space``) and whether one person reads it (``is_reader``).
 
         ``require_reviewed_space`` runs on every board request, so this build
         stays small: the full constructor's other repositories are not needed to
@@ -281,14 +248,13 @@ class SpaceService:
         return await self._classification_topics_repo.list_topics_for_spaces(space_ids)
 
     async def replace_classification_topics(
-        self, *, space_id: int, topic_ids: Sequence[int], actor_user_id: int | None
+        self, *, space_id: int, topic_ids: Sequence[int]
     ) -> None:
         if self._classification_topics_repo is None:
             raise BadRequestError(
                 "classificationTopics is not configured on this server",
                 data={"spaceId": space_id},
             )
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         await self._classification_topics_repo.replace_topics_for_space(
             space_id=space_id, topic_ids=topic_ids
         )
@@ -334,8 +300,8 @@ class SpaceService:
             return None
         return await self._rank_repo.get_rank(space_id=space_id, user_id=user_id)
 
-    async def is_member(self, *, space_id: int, user_id: int) -> bool:
-        return await self._repo.is_member(space_id=space_id, user_id=user_id)
+    async def is_reader(self, *, space_id: int, user_id: int) -> bool:
+        return await self._repo.is_reader(space_id=space_id, user_id=user_id)
 
     @staticmethod
     def admin_role_name(role: int) -> str:
@@ -361,11 +327,6 @@ class SpaceService:
             "OWNER": SpaceAdminRole.OWNER,
             "ADMIN": SpaceAdminRole.ADMIN,
         }.get(name.upper())
-
-    async def invite_codes_by_ids(
-        self, code_ids: Sequence[int]
-    ) -> dict[int, SpaceInviteCode]:
-        return await self._require_invite_code_repo().get_by_ids(code_ids)
 
     # ------------------------------------------------------------------
     # Space lifecycle
@@ -421,18 +382,6 @@ class SpaceService:
                 role=SpaceAdminRole.OWNER,
             )
 
-        # Every 题目版 is created holding a code: membership is the only way
-        # in, so a board whose creator has no code to hand out is a board
-        # nobody can ever reach. Minting it here saves that first step.
-        if self._invite_code_repo is not None:
-            await self._invite_code_repo.create_code(
-                space_id=space.id,
-                code=await self._generate_invite_code(),
-                max_uses=DEFAULT_SPACE_INVITE_CODE_MAX_USES,
-                expires_at=None,
-                created_by=owner_id,
-            )
-
         return space
 
     async def update_space(
@@ -452,7 +401,6 @@ class SpaceService:
         teaching: dict | None = None,
     ) -> Space:
         space = await self._get_space_or_error(space_id)
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
 
         if teaching is not None:
             # Refused here, before a single field of the row is touched: a
@@ -510,10 +458,8 @@ class SpaceService:
         name: str,
         description: str | None,
         display_order: int,
-        actor_user_id: int | None,
         default_role: str | None = None,
     ) -> SpaceCategory:
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         if not name.strip():
             raise BadRequestError("Category name cannot be empty")
         if await self._category_repo.exists_unarchived_name(space_id, name.strip()):
@@ -534,14 +480,12 @@ class SpaceService:
         *,
         space_id: int,
         category_id: int,
-        actor_user_id: int | None,
         name: str | None = None,
         description: str | None = None,
         display_order: int | None = None,
         archived: bool | None = None,
         default_role: str | None = None,
     ) -> SpaceCategory:
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         category = await self._get_category(space_id, category_id)
 
         if name is not None:
@@ -587,9 +531,7 @@ class SpaceService:
         *,
         space_id: int,
         category_id: int,
-        actor_user_id: int | None,
     ) -> None:
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         category = await self._get_category(space_id, category_id)
 
         space = await self._repo.get_by_id(space_id)
@@ -617,9 +559,7 @@ class SpaceService:
         space_id: int,
         category_id: int,
         archived: bool,
-        actor_user_id: int | None,
     ) -> SpaceCategory:
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         category = await self._get_category(space_id, category_id)
         category.archived_at = datetime.now(UTC) if archived else None
         category.updated_at = datetime.now(UTC)
@@ -640,9 +580,7 @@ class SpaceService:
         space_id: int,
         target_user_id: int,
         role: SpaceAdminRole,
-        actor_user_id: int | None,
     ) -> None:
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=False)
         if self._admin_repo is None:
             raise BadRequestError("Space admin repository unavailable")
         existing = await self._admin_repo.get_relation(space_id, target_user_id)
@@ -671,9 +609,7 @@ class SpaceService:
         *,
         space_id: int,
         target_user_id: int,
-        actor_user_id: int | None,
     ) -> None:
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=False)
         if self._admin_repo is None:
             raise BadRequestError("Space admin repository unavailable")
         relation = await self._admin_repo.get_relation(space_id, target_user_id)
@@ -691,10 +627,8 @@ class SpaceService:
         space_id: int,
         target_user_id: int,
         new_role: SpaceAdminRole,
-        actor_user_id: int | None,
     ) -> None:
         """Update an existing admin's role (e.g. ADMIN <-> OWNER)."""
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=False)
         if self._admin_repo is None:
             raise BadRequestError("Space admin repository unavailable")
         relation = await self._admin_repo.get_relation(space_id, target_user_id)
@@ -713,15 +647,14 @@ class SpaceService:
             relation.updated_at = datetime.now(UTC)
             await self._admin_repo.save(relation)
 
-    async def delete_space(self, *, space_id: int, actor_user_id: int | None) -> None:
+    async def delete_space(self, *, space_id: int) -> None:
         space = await self._get_space_or_error(space_id)
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=False)
         space.deleted_at = datetime.now(UTC)
         space.updated_at = datetime.now(UTC)
         await self._repo.save(space)
 
     # ------------------------------------------------------------------
-    # Membership and invite codes
+    # Membership and the join link
     # ------------------------------------------------------------------
 
     async def list_members(self, space_id: int) -> Sequence[SpaceMember]:
@@ -729,89 +662,91 @@ class SpaceService:
             return []
         return await self._member_repo.list_members(space_id)
 
-    async def join_space(self, *, code: str, user_id: int) -> Space:
-        """Redeem a space invite code, becoming a member.
+    async def join_link(
+        self,
+        *,
+        space_id: int,
+        reset: bool = False,
+        approval: bool | None = None,
+    ) -> Space:
+        """The space's join link, minted on first ask; ``reset`` replaces it.
 
-        The code is the ordinary way in: a 题目版 carries one from the moment
-        it is created (see ``create_space``), and the creator hands it to
-        whoever should be able to see the board.
+        Resetting makes the old link answer like a space that does not exist;
+        whoever already joined through it stays a member.
         """
-        invite_repo = self._require_invite_code_repo()
-        member_repo = self._require_member_repo()
-
-        invite = await invite_repo.get_by_code(code)
-        if invite is None:
-            raise NotFoundError("Invite code not found", data={"type": "inviteCode"})
-
-        space = await self._repo.get_by_id(invite.space_id)
-        if space is None:
-            raise NotFoundError.for_resource("space", invite.space_id)
-
-        if invite.expires_at is not None and invite.expires_at <= datetime.now(UTC):
-            raise BadRequestError(
-                "Invite code expired", data={"type": "inviteCode", "id": invite.id}
-            )
-
-        # Already in — redeeming again is a no-op rather than burning a use
-        # or failing, so a double-tap on「加入」is not an error.
-        if await member_repo.get_member(space.id, user_id) is not None:
-            return space
-        if self._admin_repo is not None:
-            if await self._admin_repo.get_relation(space.id, user_id) is not None:
-                return space
-
-        # Review gates every way in, the code included. `/spaces/join` names no
-        # ``spaceId``, so the router-level gate never saw it; this is where the
-        # code's board is actually known. After the early returns above, so
-        # people already in stay a no-op; raised as NotFound, not Forbidden, so
-        # the answer cannot confirm that an unreviewed board exists.
-        if space.review_status != "APPROVED":
-            raise NotFoundError("Space not found")
-
-        # Membership first, use second, and the order is the point: the
-        # membership write is idempotent and atomic (uq_space_member_active,
-        # see `SpaceMemberRepository.add_member`), so its answer to "did I get
-        # in" is the only one that two concurrent redemptions cannot both
-        # claim. Consuming the use first, as this used to, spends one for the
-        # loser of a double-tap: both read "not a member", both spend.
-        #
-        # The code goes onto the row in the same write, and the two writes stay
-        # one decision: if `consume_use` below refuses (exhausted, or expired
-        # in the window), the raise rolls this membership back with it, so a
-        # row can never claim a code whose use was never spent. The 成员 page
-        # reads this column to answer「他怎么进来的」— see the model's comment
-        # for what NULL means.
-        _, created = await member_repo.add_member(
-            space_id=space.id, user_id=user_id, invite_code_id=invite.id
-        )
-        if not created:
-            # A concurrent redeem already let them in. No use spent, no error.
-            return space
-
-        if not await invite_repo.consume_use(invite.id):
-            # Out of uses after all — or the code expired in the window
-            # between the check above and the UPDATE that spends one, which
-            # `consume_use` refuses for the same reason. Those are two
-            # different things to be told, so ask which one this is instead of
-            # calling it exhausted either way.
-            #
-            # Raising rolls the whole request back, the membership row
-            # included, so the two writes stay one decision rather than a
-            # membership with nothing behind it.
-            current = await invite_repo.get_by_code(code)
-            if (
-                current is not None
-                and current.expires_at is not None
-                and current.expires_at <= datetime.now(UTC)
-            ):
-                raise BadRequestError(
-                    "Invite code expired",
-                    data={"type": "inviteCode", "id": invite.id},
-                )
-            raise BadRequestError(
-                "Invite code exhausted", data={"type": "inviteCode", "id": invite.id}
-            )
+        space = await self._get_space_or_error(space_id)
+        if reset or space.join_token is None:
+            space.join_token = secrets.token_urlsafe(32)
+        if approval is not None:
+            space.join_approval = approval
+        space.updated_at = datetime.now(UTC)
+        await self._repo.save(space)
         return space
+
+    async def space_for_join_token(self, token: str) -> Space:
+        """The space a link names, for whoever holds it, or 404.
+
+        A reset link, a deleted space and one the platform has not approved
+        all answer the same way a space nobody may see does, so a link tells
+        nobody more than holding a valid one would.
+        """
+        space = await self._require_join_repo().space_by_token(token)
+        if space is None or space.review_status != "APPROVED":
+            raise NotFoundError(say("spaceJoinLinkInvalid"))
+        return space
+
+    async def join_status(self, *, space_id: int, user_id: int) -> str:
+        """``member`` (in it, or running it), ``pending`` (a request waits for
+        approval) or ``none``."""
+        if await self._require_member_repo().get_member(space_id, user_id):
+            return "member"
+        if self._admin_repo is not None and await self._admin_repo.get_relation(
+            space_id, user_id
+        ):
+            return "member"
+        if await self._require_join_repo().pending_for(space_id, user_id):
+            return "pending"
+        return "none"
+
+    async def join_by_link(self, *, token: str, user_id: int) -> tuple[Space, str]:
+        """Join the space the link names, or ask to — whichever its
+        ``join_approval`` says. Returns the space and where the person now
+        stands. Asking twice, or asking once already in, is not an error."""
+        space = await self.space_for_join_token(token)
+        status = await self.join_status(space_id=space.id, user_id=user_id)
+        if status != "none":
+            return space, status
+        if space.join_approval:
+            await self._require_join_repo().ask(space_id=space.id, user_id=user_id)
+            return space, "pending"
+        await self._require_member_repo().add_member(space_id=space.id, user_id=user_id)
+        return space, "member"
+
+    async def list_join_requests(self, *, space_id: int) -> Sequence[SpaceJoinRequest]:
+        """The requests waiting on this space, oldest first."""
+        await self._get_space_or_error(space_id)
+        return await self._require_join_repo().list_pending(space_id)
+
+    async def decide_join_request(
+        self, *, space_id: int, request_id: int, approve: bool, actor_user_id: int
+    ) -> None:
+        """Approve (the requester becomes a member) or reject a waiting request."""
+        await self._get_space_or_error(space_id)
+        request = await self._require_join_repo().decide(
+            space_id=space_id,
+            request_id=request_id,
+            status=APPROVED if approve else REJECTED,
+            decided_by=actor_user_id,
+        )
+        if request is None:
+            raise NotFoundError(
+                say("spaceJoinRequestNotFound"),
+                data={"spaceId": space_id, "requestId": request_id},
+            )
+        if approve:
+            await self._require_member_repo().add_member(
+                space_id=space_id, user_id=request.user_id
+            )
 
     async def leave_space(self, *, space_id: int, user_id: int) -> None:
         """Stop being a member. Nothing else the person owns is touched."""
@@ -843,15 +778,12 @@ class SpaceService:
         *,
         space_id: int,
         target_user_id: int,
-        actor_user_id: int | None,
     ) -> SpaceMember:
         """Put someone in the space directly.
 
-        The owner's way to bring someone in without handing out a code —
-        useful when the code has been spent or when only one person should
-        have it.
+        The owner's way to bring someone in without handing out the link —
+        useful when only one person should get in.
         """
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         await self._get_space_or_error(space_id)
         member_repo = self._require_member_repo()
 
@@ -859,8 +791,8 @@ class SpaceService:
         if existing is not None:
             return existing
         # Neither answer is interesting here — an admin put them in directly,
-        # so there is no use to spend and nothing else that depends on whether
-        # this call or a concurrent one wrote the row.
+        # and nothing depends on whether this call or a concurrent one wrote
+        # the row.
         member, _ = await member_repo.add_member(
             space_id=space_id, user_id=target_user_id
         )
@@ -871,7 +803,6 @@ class SpaceService:
         *,
         space_id: int,
         target_user_id: int,
-        actor_user_id: int | None,
     ) -> None:
         """Drop someone from the space. Owner and admins alike may do this.
 
@@ -879,7 +810,6 @@ class SpaceService:
         submissions and projects are not this space's to delete — the same
         reason leaving keeps them and deleting a space keeps them.
         """
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         member_repo = self._require_member_repo()
 
         if self._admin_repo is not None:
@@ -899,141 +829,12 @@ class SpaceService:
             )
         await member_repo.remove_member(member)
 
-    async def list_invite_codes(
-        self, *, space_id: int, actor_user_id: int | None
-    ) -> Sequence[SpaceInviteCode]:
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
-        return await self._require_invite_code_repo().list_codes_for_space(space_id)
-
-    async def create_invite_code(
-        self,
-        *,
-        space_id: int,
-        actor_user_id: int | None,
-        max_uses: int | None = None,
-        expires_at: datetime | None = None,
-        note: str | None = None,
-    ) -> SpaceInviteCode:
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
-        await self._get_space_or_error(space_id)
-
-        uses = _validated_max_uses(
-            DEFAULT_SPACE_INVITE_CODE_MAX_USES if max_uses is None else max_uses
-        )
-
-        return await self._require_invite_code_repo().create_code(
-            space_id=space_id,
-            code=await self._generate_invite_code(),
-            max_uses=uses,
-            expires_at=expires_at,
-            created_by=actor_user_id,
-            # 说明 is optional and free text: a code that says nothing about
-            # itself is a normal code (every code minted before this field is
-            # exactly that), so an empty one is stored as NULL rather than "".
-            # Normalising here rather than at the route keeps "what counts as
-            # no note" in one place.
-            note=_normalized_note(note),
-        )
-
-    async def update_invite_code(
-        self,
-        *,
-        space_id: int,
-        actor_user_id: int | None,
-        code_id: int,
-        max_uses: int | None = None,
-        max_uses_set: bool = False,
-        expires_at: datetime | None = None,
-        expires_at_set: bool = False,
-        note: str | None = None,
-        note_set: bool = False,
-    ) -> SpaceInviteCode:
-        """Adjust how many people a live code admits, or when it stops working.
-
-        Both fields are optional and ``*_set`` says whether the caller meant
-        them: an absent ``expiresAt`` leaves the date alone, an explicit null
-        clears it (the code then never expires). Only the field count is
-        validated away, so a code that was handed out with ``maxUses: 5`` can
-        be widened later without touching the people already in.
-
-        ``note`` follows the same absent-vs-null rule, for the same reason:
-        correcting a 说明 must not be the same request as deleting it. Editing
-        one is not in the prototype's 调整 form, but a 说明 that can be typed
-        once and never fixed is worse than one that can — the only other way
-        to correct it would be revoke-and-mint, which invalidates a code that
-        is already in people's hands.
-
-        Lowering ``maxUses`` below the code's use count is refused rather than
-        clamped. The result of allowing it — a code that reads as usable but
-        refuses everyone — is the kind of quiet failure the person adjusting it
-        would go looking for in the wrong place.
-        """
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
-        invite = await self._get_invite_code_or_error(
-            space_id=space_id, code_id=code_id
-        )
-
-        if max_uses_set:
-            uses = _validated_max_uses(max_uses)
-            if uses < invite.use_count:
-                raise BadRequestError(
-                    "maxUses cannot be lower than the code's use count",
-                    data={"maxUses": uses, "useCount": invite.use_count},
-                )
-            invite.max_uses = uses
-        if expires_at_set:
-            invite.expires_at = expires_at
-        if note_set:
-            invite.note = _normalized_note(note)
-
-        return await self._require_invite_code_repo().save(invite)
-
-    async def revoke_invite_code(
-        self, *, space_id: int, actor_user_id: int | None, code_id: int
-    ) -> None:
-        """Take a code out of circulation. Redeeming it stops working at once.
-
-        The refusal is not implemented here: ``consume_use`` already declines
-        a row whose ``deleted_at`` is set, and that is the same statement that
-        decides every other redemption. A revoke that relied on a check of its
-        own would be a second copy of that rule, free to drift.
-        """
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
-        invite = await self._get_invite_code_or_error(
-            space_id=space_id, code_id=code_id
-        )
-        await self._require_invite_code_repo().revoke(invite)
-
-    async def _get_invite_code_or_error(
-        self, *, space_id: int, code_id: int
-    ) -> SpaceInviteCode:
-        invite = await self._require_invite_code_repo().get_for_space(
-            space_id=space_id, code_id=code_id
-        )
-        if invite is None:
-            raise NotFoundError(
-                "Invite code not found",
-                data={"spaceId": space_id, "codeId": code_id},
-            )
-        return invite
-
-    async def _generate_invite_code(self) -> str:
-        invite_repo = self._require_invite_code_repo()
-        for _ in range(10):
-            candidate = "".join(
-                secrets.choice(_INVITE_CODE_ALPHABET)
-                for _ in range(_INVITE_CODE_LENGTH)
-            )
-            if not await invite_repo.code_exists(candidate):
-                return candidate
-        raise BadRequestError("Could not allocate an invite code, please retry")
-
     # ------------------------------------------------------------------
     # Domain groups
     # ------------------------------------------------------------------
 
     async def list_domain_groups(
-        self, *, space_id: int, actor_user_id: int | None
+        self, *, space_id: int
     ) -> list[tuple[SpaceDomainGroup, list[str]]]:
         # Listing is open to all authenticated users so they can select
         # domain groups when publishing/editing tasks.
@@ -1051,9 +852,7 @@ class SpaceService:
         name: str,
         description: str | None,
         domains: list[str],
-        actor_user_id: int | None,
     ) -> tuple[SpaceDomainGroup, list[str]]:
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         group_repo = self._require_domain_group_repo()
         domain_repo = self._require_domain_group_domain_repo()
 
@@ -1083,9 +882,7 @@ class SpaceService:
         name: str | None,
         description: str | None,
         domains: list[str] | None,
-        actor_user_id: int | None,
     ) -> tuple[SpaceDomainGroup, list[str]]:
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         group_repo = self._require_domain_group_repo()
         domain_repo = self._require_domain_group_domain_repo()
 
@@ -1122,9 +919,7 @@ class SpaceService:
         *,
         space_id: int,
         group_id: int,
-        actor_user_id: int | None,
     ) -> None:
-        await self._ensure_admin(space_id, actor_user_id, allow_admin=True)
         group_repo = self._require_domain_group_repo()
         domain_repo = self._require_domain_group_domain_repo()
 
@@ -1137,23 +932,6 @@ class SpaceService:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
-
-    async def _ensure_admin(
-        self,
-        space_id: int,
-        user_id: int | None,
-        *,
-        allow_admin: bool,
-    ) -> None:
-        if self._admin_repo is None:
-            return
-        if user_id is None:
-            raise ForbiddenError("Authentication required")
-        relation = await self._admin_repo.get_relation(space_id, user_id)
-        if relation is None:
-            raise ForbiddenError("Only space admins can perform this action")
-        if not allow_admin and relation.role != SpaceAdminRole.OWNER.value:
-            raise ForbiddenError("Only space owner can perform this action")
 
     async def _get_space_or_error(self, space_id: int) -> Space:
         space = await self._repo.get_by_id(space_id)
@@ -1228,12 +1006,10 @@ class SpaceService:
             raise BadRequestError("Space membership is not configured on this server")
         return self._member_repo
 
-    def _require_invite_code_repo(self) -> SpaceInviteCodeRepository:
-        if self._invite_code_repo is None:
-            raise BadRequestError(
-                "Space invite codes are not configured on this server"
-            )
-        return self._invite_code_repo
+    def _require_join_repo(self) -> SpaceJoinRepository:
+        if self._join_repo is None:
+            raise BadRequestError("Space join links are not configured on this server")
+        return self._join_repo
 
     def _require_domain_group_repo(self) -> SpaceDomainGroupRepository:
         if self._domain_group_repo is None:

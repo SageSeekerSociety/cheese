@@ -497,6 +497,6 @@ def test_the_scoped_token_reaches_the_meter_as_the_proxy_password(live_stack):
     user, _, token = base64.b64decode(encoded).decode().partition(":")
     assert user == "cheese"
     # The real token, not a placeholder — the meter verifies its signature.
-    assert token.count(".") == 1 and len(token) > 40
+    assert token.count(".") == 2 and len(token) > 40
     # The request line itself must survive intact; the meter parses it.
     assert head.startswith(b"CONNECT api.anthropic.com:443 HTTP/1.1\r\n")

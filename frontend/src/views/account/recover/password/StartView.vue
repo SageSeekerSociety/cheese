@@ -51,7 +51,6 @@
 
 <script lang="ts" setup>
 import { computed } from 'vue'
-import { toTypedSchema } from '@vee-validate/zod'
 import { useForm } from 'vee-validate'
 import { z } from 'zod'
 
@@ -62,6 +61,7 @@ import AccountHeading from '@/components/account/AccountHeading.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import { t } from '@/i18n'
+import { toTypedSchema } from '@/lib/zodTypedSchema'
 
 defineProps<{
   /** The sentence for a send that failed, or '' while there is none. */

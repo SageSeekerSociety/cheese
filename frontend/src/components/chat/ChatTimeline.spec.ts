@@ -176,6 +176,144 @@ describe('each task made on its own in the channel keeps its own card', () => {
   })
 })
 
+describe('what happens to a task is recorded where it came from', () => {
+  function recorded(id: string, meta: Record<string, unknown>, content: string): Block {
+    return {
+      id,
+      conversation_id: 't',
+      kind: 'event',
+      author_type: 'platform',
+      author: 'system',
+      content,
+      created_at: '2026-11-10T09:00:00Z',
+      shown_as: 'happening',
+      meta: { severity: 'info', who: 'platform', task_id: 'task-7', ...meta },
+    } as Block
+  }
+  function handedIn(id: string, version: number, title: unknown = '报名表'): Block {
+    return recorded(
+      id,
+      {
+        event_type: 'task_filed',
+        delivery: { card_id: `c${version}`, version },
+        i18n: { content: { key: 'taskFiledForReview', params: { title } } },
+      },
+      '「报名表」已提交审阅'
+    )
+  }
+
+  it('a version handed in is one card named after the task, under nobody’s name, and opens that task', async () => {
+    const rows = collapseNotices([handedIn('d1', 2)])
+    const { emitted } = mount({
+      rows,
+      runEdges: ['start'],
+      isMine: () => false,
+      noticeAgent: () => ({ name: '芝士', handle: 'cheese-0a1b2c3d4e5f' }),
+    })
+    const card = screen.getByTestId('delivery-card')
+    expect(card.textContent).toContain('报名表')
+    expect(card.textContent).toContain('第 2 版')
+    expect(screen.queryByText('芝士')).toBeNull()
+    expect(screen.queryByText('「报名表」已提交审阅')).toBeNull()
+    await fireEvent.click(card)
+    expect(emitted('open-card')).toEqual([['task-7']])
+  })
+
+  it('names the task as it is called now, and an unnamed one in the reader’s language', () => {
+    setLocale('en')
+    const rows = collapseNotices([handedIn('d1', 1, { key: 'taskUntitled', params: {} })])
+    mount({ rows, runEdges: ['start'], isMine: () => false })
+    expect(screen.getByTestId('delivery-card').textContent).toContain('New task')
+  })
+
+  it('two versions of one task handed in one after the other are two cards', () => {
+    const rows = collapseNotices([handedIn('d1', 1), handedIn('d2', 2)])
+    mount({ rows, runEdges: rows.map(() => 'start'), isMine: () => false })
+    const cards = screen.getAllByTestId('delivery-card')
+    expect(cards.map((card) => card.textContent)).toEqual([
+      expect.stringContaining('第 1 版'),
+      expect.stringContaining('第 2 版'),
+    ])
+  })
+
+  describe('in the channel’s main line', () => {
+    const waiting: TaskLine = {
+      id: 'task-7',
+      title: '报名表',
+      owner: 'me',
+      creator: 'me',
+      state: REVIEW,
+      mine: true,
+      accepted: null,
+      at: '',
+      delivery: { reviewers: ['me'], code: true, preview: false },
+    }
+    const teammate = (id: string): Block =>
+      ({
+        ...said(id, '报名表做好了'),
+        author: 'cheese-0a1b2c3d4e5f',
+        created_at: '2026-11-10T09:01:00Z',
+        meta: { task_tag: 'task-7' },
+      }) as Block
+    const actions = () => screen.queryAllByRole('group', { name: '审阅「报名表」这一版' })
+    const inMainLine = (blocks: Block[]) => {
+      const rows = collapseNotices(blocks)
+      return mount({
+        rows,
+        runEdges: rows.map(() => 'start'),
+        isMine: () => false,
+        mainLine: true,
+        taskOf: (id: string) => (id === 'task-7' ? waiting : null),
+      })
+    }
+
+    it('a version handed in is the platform’s one line, not a card', () => {
+      inMainLine([handedIn('d1', 1)])
+      expect(screen.queryByTestId('delivery-card')).toBeNull()
+      expect(screen.getByText('「报名表」已提交审阅')).toBeTruthy()
+    })
+
+    it('what settles the version hangs under the teammate’s latest word about it', () => {
+      const { container } = inMainLine([handedIn('d1', 1), teammate('m1')])
+      expect(actions()).toHaveLength(1)
+      expect(container.querySelector('[data-mid="m1"]')?.contains(actions()[0]!)).toBe(true)
+    })
+
+    it('with no handed-in line, it hangs under the teammate’s earlier word about the task', () => {
+      const { container } = inMainLine([teammate('m1')])
+      expect(actions()).toHaveLength(1)
+      expect(container.querySelector('[data-mid="m1"]')?.contains(actions()[0]!)).toBe(true)
+    })
+
+    it('when the teammate said nothing after it, it hangs under the handed-in line', () => {
+      const { container } = inMainLine([teammate('m1'), handedIn('d1', 1)])
+      expect(actions()).toHaveLength(1)
+      expect(container.querySelector('[data-mid="m1"]')?.contains(actions()[0]!)).toBe(false)
+    })
+  })
+
+  it('a version returned is a line saying who returned it, naming them without an @', () => {
+    const returned = recorded(
+      'r1',
+      {
+        event_type: 'task_returned',
+        i18n: { content: { key: 'taskReturned', params: { who: '<@lin>', title: '报名表' } } },
+      },
+      '<@lin> 退回了「报名表」'
+    )
+    const rows = collapseNotices([returned])
+    const { container } = mount({
+      rows,
+      runEdges: ['start'],
+      isMine: () => false,
+      refs: { mentionNames: { lin: '林' }, topicTitles: {} },
+    })
+    expect(container.textContent).toContain('林')
+    expect(container.textContent).toContain('报名表')
+    expect(container.textContent).not.toContain('@林')
+  })
+})
+
 describe('every row in the timeline has a name, on screen or not', () => {
   // A row off screen is not rendered (content-visibility) and the browser then has
   // no contents to name it from; emptying the rows stands in for that.

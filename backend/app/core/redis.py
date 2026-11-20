@@ -4,6 +4,11 @@ from redis.asyncio import Redis, from_url
 
 from app.core.config import settings
 
+#: The longest any one reply is waited for before its connection is given up as
+#: dead. redis-py applies it to blocking commands too, so a block must end
+#: before it does (``happenings.waiter``).
+SOCKET_TIMEOUT_S = 5
+
 # Returns one unit to a counter a rate-limit script took it from, when the
 # thing it was taken for never happened. A counter that has already expired
 # stays gone rather than coming back at -1.
@@ -27,4 +32,9 @@ def get_redis_client() -> Redis | None:
     redis_url = settings.redis_url
     if not redis_url:
         return None
-    return from_url(redis_url, encoding="utf-8", decode_responses=False)
+    return from_url(
+        redis_url,
+        encoding="utf-8",
+        decode_responses=False,
+        socket_timeout=SOCKET_TIMEOUT_S,
+    )

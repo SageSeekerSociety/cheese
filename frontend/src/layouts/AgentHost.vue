@@ -13,15 +13,26 @@
     >
       <AssistantPanel v-bind="panelProps" v-on="panelEvents" />
     </v-navigation-drawer>
-    <!-- Desktop, floating: a card at the bottom right, over the page, which keeps its width. -->
+    <!-- Desktop, floating: a card over the page, which keeps its width. It opens in the bottom right
+         corner and the person can drag it anywhere by its header; where they left it is remembered
+         per browser, and a double-click on the header puts it back in the corner. -->
     <Transition name="agent-host">
       <div
         v-if="mdAndUp && agentOpen && !docked"
+        ref="floatEl"
         class="agent-host__float"
+        :class="{ 'agent-host__float--dragging': floatDragging }"
+        :style="floatStyle"
         data-testid="agent-host"
         data-agent-select="off"
       >
-        <AssistantPanel v-bind="panelProps" v-on="panelEvents" />
+        <AssistantPanel
+          draggable
+          v-bind="panelProps"
+          v-on="panelEvents"
+          @drag-start="startFloatDrag"
+          @recenter="resetFloat"
+        />
       </div>
     </Transition>
     <!-- Phone: a sheet from the bottom; the page stays visible above it. -->
@@ -62,13 +73,14 @@
 import type { AssistantHanded } from '@/stores/agentThread'
 import type { Citable } from '@/types/citable'
 
-import { computed, onBeforeUnmount, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
-import { toast } from 'vuetify-sonner'
 
 import { useAgentCiting } from '@/composables/useAgentCiting'
 import { useAgentPointer } from '@/composables/useAgentPointer'
+import { useAgentRules } from '@/composables/useAgentRules'
+import { useFloatingPanelSpot } from '@/composables/useFloatingPanelSpot'
 
 import { downloadFile, hearAssistantVoice, libraryFileRawUrl } from '@/api'
 import { defineCommands } from '@/commands'
@@ -76,6 +88,7 @@ import AgentLayer from '@/components/agent/AgentLayer.vue'
 import AgentSelectionAsk from '@/components/assistant/AgentSelectionAsk.vue'
 import AssistantPanel from '@/components/assistant/AssistantPanel.vue'
 import { t } from '@/i18n'
+import { agentRulesKey } from '@/lib/agentRules'
 import { onAssistantChange } from '@/lib/inboxLive'
 import { leafOf } from '@/lib/libraryFolders'
 import { myHandle } from '@/me'
@@ -113,6 +126,25 @@ const route = useRoute()
 const router = useRouter()
 const docked = agentDocked
 
+/** 浮层上一次被拖到哪：和「固定 / 取消固定」一样记在这台浏览器里。 */
+const FLOAT_SPOT_KEY = 'cheesex.agentFloatSpot'
+
+// 取消固定之后那块浮层停在哪：拖过就记着，没拖过由样式停在右下角（`useFloatingPanelSpot`）。
+const floatEl = ref<HTMLElement | null>(null)
+const {
+  style: floatStyle,
+  dragging: floatDragging,
+  startDrag: startFloatDrag,
+  settle: settleFloat,
+  reset: resetFloat,
+} = useFloatingPanelSpot(FLOAT_SPOT_KEY, floatEl)
+
+// 浮层刚画出来、或者窗口小到换了摆法时量不到它的尺寸，收一次要等它排完版。
+watch(
+  () => [agentOpen.value, docked.value, mdAndUp.value] as const,
+  () => void nextTick(settleFloat)
+)
+
 const available = computed(() => AccountService._loggedIn.value)
 // 退出登录：上一个人的对话不留给下一个人。
 watch(
@@ -130,8 +162,17 @@ watch(
   { immediate: true }
 )
 
+// 芝士建的自动化：回答里那张卡片的状态和取消、暂停、恢复。
+const rules = useAgentRules(agentThread.current, agentThread.busy)
+provide(agentRulesKey, rules)
+
 // 和芝士的对话在别处说了新的话（另一个标签页、另一台设备、例行事务）：面板跟着读。
-onBeforeUnmount(onAssistantChange((conversation) => void agentThread.heard(conversation).catch(() => undefined)))
+onBeforeUnmount(
+  onAssistantChange((conversation) => {
+    void agentThread.heard(conversation).catch(() => undefined)
+    void rules.load()
+  })
+)
 
 // 面板开着、页面在前台、芝士正在答：告诉服务端有人看着，这一轮答完就不再另发通知。
 // 服务端只记几十秒，看着的时候隔一会儿说一次。
@@ -245,6 +286,7 @@ const panelProps = computed(() => {
       Object.values(agentPicked.value).map((item) => [item.id, { kind: item.kind, title: item.title }])
     ),
     searchProblems: citing.searchProblems,
+    rules: agentThread.rules.value,
   }
 })
 
@@ -257,10 +299,9 @@ const panelEvents = {
   older: () => void agentThread.older().catch(() => undefined),
   olderMessages: (topic: string | null) => void agentThread.earlierMessages(topic).catch(() => undefined),
   close: () => (agentOpen.value = false),
+  // 成功和失败的话都在 `downloadFile` 那一层说（`lib/download`），这里不再补一句。
   downloadFile: (file: AssistantHanded) =>
-    void downloadFile(libraryFileRawUrl({ team: file.team }, file.path), leafOf(file.path)).catch(() =>
-      toast.error(t('work.library.downloadFailed'))
-    ),
+    void downloadFile(libraryFileRawUrl({ team: file.team }, file.path), leafOf(file.path)),
   dock: (next: boolean) => (docked.value = next),
   undo: (change: number, key: string) =>
     agentSurface.value?.undo ? agentSurface.value.undo(change, key) : void undoChange(change, key),
@@ -295,6 +336,8 @@ const panelEvents = {
   flex-direction: column;
 }
 
+/* 没拖过时停在右下角（这里的 `right` / `bottom`）；拖过之后由内联样式给出 `left` / `top`，
+   并把这两个设成 auto。`max-height` 而不是固定高度：窗口矮的时候它跟着缩。 */
 .agent-host__float {
   position: fixed;
   right: 16px;
@@ -308,6 +351,15 @@ const panelEvents = {
   border: 1px solid var(--line-2);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-2);
+}
+
+/* 拖起来之后整块都是「抓着」的手势：指针可能已经移到面板里的对话上，那里平时是文本光标。 */
+.agent-host__float--dragging {
+  cursor: grabbing;
+}
+
+.agent-host__float--dragging :deep(*) {
+  cursor: grabbing;
 }
 
 .agent-host-enter-active,

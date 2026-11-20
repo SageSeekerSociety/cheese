@@ -161,6 +161,10 @@ async def _poll_pr_card(
     if status.state == "closed":
         await self._void_closed_pr_card(card=card, topic=topic)
         return
+    if status.mergeable_state == "unknown":
+        # Both forges work a head's mergeability out after it moves, and
+        # answer "unknown" until they have; the poller asks again shortly.
+        self.merge_state_computing_for = status.head_sha
 
     if card.note_code == notes.NoteCode.waiting_merge_queue:
         if await client.merge_queue_entry(
@@ -173,7 +177,7 @@ async def _poll_pr_card(
             # 没人再看这张卡，把机器收掉，而轮询其实一直在看，回头又要叫醒这条线
             # 重建环境、重读文档。只推 `checked_at` 到此刻：state、reasons 说的都还
             # 是入队时那份判定，没有任何一条更新。
-            _write_merge_mirror(
+            await _write_merge_mirror(
                 self,
                 card,
                 MergeVerdict(
@@ -315,9 +319,11 @@ async def _poll_pr_card(
         await self._session.flush()  # the mirror and dispatched ledger keep
         raise deferred
 
-    if verdict.state == "clean" and title is None:
+    if verdict.state == "clean" and title is None and not card.auto_merge_armed_by:
         # CLEAN → 通知验收人（按 head 去重）。标题分家时不报「可以合了」：
-        # 那一刻它合不进去，而上面那条待发已经把该修的事说清楚了。
+        # 那一刻它合不进去，而上面那条待发已经把该修的事说清楚了。布防过的卡
+        # 也不报：审阅人已经决定采纳这一版，下面这一拍就以他的名义合并，「等他
+        # 采纳」不是真的。
         await self._notify_ready(card, topic)
     elif verdict.state == "blocked" and "required_check_missing" in kinds:
         # BLOCKED 必跑检查没报到 → 等 CI，不发；超过宽限期转人 ——

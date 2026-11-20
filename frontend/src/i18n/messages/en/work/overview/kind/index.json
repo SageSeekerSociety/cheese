@@ -1,9 +1,10 @@
 {
   "accepted": "Accepted",
   "closed": "Closed",
-  "completed": "Closed",
+  "completed": "Completed",
   "created": "New",
   "returned": "Returned",
+  "revised": "Task updated",
   "stalled": "Stalled",
   "started": "Started",
   "version": "New version"

@@ -12,10 +12,12 @@ import pytest
 
 from app.domain.agent.cli_notices import cli_notice
 from app.domain.agent.platform_failures import (
+    CONTROL_PLANE_UNAVAILABLE_CODE,
     MODEL_LIMIT_REACHED_CODE,
     PROVIDER_OVERLOADED_CODE,
     PROVIDER_UNREACHABLE_CODE,
     RESPONSE_TRUNCATED_CODE,
+    SUBSCRIPTION_ACCOUNTS_COOLING_CODE,
     SUBSCRIPTION_EGRESS_OFFLINE_CODE,
     classify_cli_notice,
 )
@@ -59,10 +61,17 @@ def test_the_rest_of_the_real_ones():
     )
 
 
-def test_a_models_spent_upstream_cap_is_not_retryable():
+def test_a_models_spent_upstream_cap_is_a_failed_model_call():
     """Our gateway's lifetime cap on an upstream key words itself like a rate
-    limit (`deploy/gateway/spend_cap.py`), which used to read as an overload
-    that clears up and offered a retry that could only be refused again."""
+    limit (`deploy/gateway/spend_cap.py`). It is the platform's key: the room
+    reads a failed model call with a retry that works once the cap is raised,
+    and the operators are told it was the cap."""
+    from app.core.sentences import say
+    from app.domain.agent.turn.state.notices import (
+        _turn_failure_notice,
+        platform_side_cause,
+    )
+
     line = (
         "API Error: Server is temporarily limiting requests (not your usage limit)"
         " · gemini/gemini-4-argon has reached its spend cap: $1005.08 of $1000.00."
@@ -70,25 +79,62 @@ def test_a_models_spent_upstream_cap_is_not_retryable():
         "（rate_limit）"
     )
     assert classify_cli_notice(line) == MODEL_LIMIT_REACHED_CODE
-    notice = cli_notice(line)
-    assert notice is not None and not notice[1].get("retryable")
+    said, meta = _turn_failure_notice(line, None)
+    assert said == say("turnFailedModelError")
+    assert meta["retryable"] is True
+    assert platform_side_cause(line) == MODEL_LIMIT_REACHED_CODE
 
 
-def test_the_metering_proxys_offline_egress_is_its_own_notice():
+@pytest.mark.parametrize(
+    "line",
+    [
+        # The admission check could not say which project this call is billed
+        # to, and the platform has a Claude login to fall back on.
+        "API Error: 503 cheese: task billing attribution is temporarily "
+        "unavailable; retry shortly. This is a server-side issue, usually "
+        "temporary — try again in a moment. If it persists, check "
+        "https://status.claude.com.（server_error）",
+        # The same 503 with no Claude login to fall back on: the control plane
+        # could not place the request at all.
+        "API Error: 503 cheese: the control plane could not say where this "
+        "request goes, and the platform has no Claude login to fall back on; "
+        "retry shortly",
+    ],
+)
+def test_the_metering_proxys_admission_outage_is_the_platforms_to_fix(line):
+    """The proxy's 503 when it cannot ask who the call is billed to is neither
+    an overloaded provider nor a spent account. It used to reach the room as
+    「平台的 AI 服务额度暂时不足」, because its own wording contains the word
+    "billing". The room reads a failed model call with a retry, the service's
+    words kept whole behind it; the operators are told it was the proxy, which
+    an overloaded provider is not."""
+    from app.core.sentences import say
+    from app.domain.agent.turn.state.notices import (
+        _turn_failure_notice,
+        platform_side_cause,
+    )
+
+    assert classify_cli_notice(line) == CONTROL_PLANE_UNAVAILABLE_CODE
+    said, meta = _turn_failure_notice(line, None)
+    assert said == say("turnFailedModelError")
+    assert meta["retryable"] is True
+    assert line in meta["detail"]
+    assert platform_side_cause(line) == CONTROL_PLANE_UNAVAILABLE_CODE
+    assert platform_side_cause("API Error: 502 Bad Gateway.") is None
+
+
+def test_the_metering_proxys_offline_egress_is_the_platforms_to_fix():
     """The proxy's 503 for an egress that does not answer is not an overloaded
-    provider: waiting on the provider will not help, the machine has to come
-    back."""
+    provider: the machine has to come back, and the operators are told so."""
+    from app.domain.agent.turn.state.notices import platform_side_cause
+
     line = (
         'API Error: 503 {"type":"error","error":{"type":"api_error","message":'
         '"cheese: the subscription egress is offline, so no model call was made. '
         'It works again once that machine is back online."}}'
     )
     assert classify_cli_notice(line) == SUBSCRIPTION_EGRESS_OFFLINE_CODE
-    overloaded = cli_notice("API Error: 502 Bad Gateway.")
-    notice = cli_notice(line)
-    assert notice is not None and overloaded is not None
-    assert notice[0] != overloaded[0]
-    assert line in str(notice[1])
+    assert platform_side_cause(line) == SUBSCRIPTION_EGRESS_OFFLINE_CODE
 
 
 # ---- 不能误伤芝士自己的话 ----
@@ -125,58 +171,65 @@ def test_it_must_start_with_the_known_opening():
 # ---- 换成什么 ----
 
 
-def test_the_card_says_it_in_chinese_and_keeps_the_original():
-    original = "API Error: Unable to connect to API (ConnectionRefused)"
-    result = cli_notice(original)
-    assert result is not None
-    line, meta = result
-    # 卡面那一行是平台自己的话，不是 CLI 的英文原话。
-    assert "API Error" not in line
+@pytest.mark.parametrize(
+    "original",
+    [
+        "API Error: Unable to connect to API (ConnectionRefused)",
+        "API Error: 529 Overloaded. This is a server-side issue.",
+        "API Error: 502 Bad Gateway. This is a server-side issue, usually temporary.",
+        "You've reached your Fable limit. /model to switch models.",
+    ],
+)
+def test_a_failed_model_call_says_only_that_with_a_retry(original):
+    """Whatever made calling the model fail, the room reads one line of the
+    platform's own, offered with a retry. The CLI's English is the only copy
+    of what the service said: folded behind it, not dropped."""
+    from app.core.sentences import say
+    from app.domain.agent.turn.state.notices import _turn_failure_notice
+
+    line, meta = _turn_failure_notice(original, None)
+    assert line == say("turnFailedModelError")
     assert meta["severity"] == "error"
-    # 原话是唯一的一份，不能丢 —— 折叠起来，不是删掉。
+    assert meta["retryable"] is True
     assert original in meta["detail"]
 
 
-def test_a_limit_says_it_needs_a_person_not_a_retry():
-    # 「稍后重试」对额度用完是错的建议，会把人送进一个不可能成功的循环。
-    result = cli_notice("You've reached your Fable limit. /model to switch models.")
+def test_a_cli_line_about_the_turn_itself_keeps_its_own_card():
+    """What the CLI says about the reply itself, not about calling the model,
+    is still its own card in the platform's words."""
+    original = (
+        "API Error: Response stalled mid-stream. The response above may be incomplete."
+    )
+    result = cli_notice(original)
     assert result is not None
     line, meta = result
-    assert meta["who"] == "human"
-    # 房间不会给它一个重试按钮。
-    assert not meta.get("retryable")
-
-
-def test_an_overload_says_it_is_worth_retrying():
-    result = cli_notice("API Error: 529 Overloaded. This is a server-side issue.")
-    assert result is not None
-    _, meta = result
-    assert meta["severity"] == "warn"
-    assert meta["who"] == "platform"
-    assert meta["retryable"] is True
+    assert "API Error" not in line
+    assert original in meta["detail"]
 
 
 # ---- 同一句话结束了一轮 ----
 
 
-def test_a_turn_ended_by_the_subscription_cooling_down_says_so():
+def test_a_turn_ended_by_the_subscription_cooling_down_tells_the_operators():
     """FB-87: the proxy refused every call because each Claude account of the
-    subscription was cooling down, Claude Code ended the turn with that refusal,
-    and the room read only 「本轮未完成」. A turn that ends incomplete says why
-    on its line, and the service's words stay behind it."""
+    subscription was cooling down, and the room read only 「本轮未完成」. The
+    room reads a failed model call with a retry, the service's words behind it;
+    the subscription's accounts are the platform's, so its operators are told
+    which cause it was."""
     from app.core.sentences import say
-    from app.domain.agent.turn.state.notices import _turn_failure_notice
+    from app.domain.agent.turn.state.notices import (
+        _turn_failure_notice,
+        platform_side_cause,
+    )
 
     said = (
         "API Error: Server is temporarily limiting requests (not your usage "
         "limit) · cheese: all Claude accounts are cooling down（rate_limit）"
     )
     line, meta = _turn_failure_notice(said, None)
-    assert line != say("turnFailedService")
-    # Not the provider being briefly overloaded: waiting a moment will not help.
-    overloaded = cli_notice("API Error: 529 Overloaded.")
-    assert overloaded is not None and line != overloaded[0]
+    assert line == say("turnFailedModelError")
     assert said in meta["detail"]
+    assert platform_side_cause(said) == SUBSCRIPTION_ACCOUNTS_COOLING_CODE
 
 
 def test_a_turn_the_provider_throttled_says_so():
@@ -218,3 +271,120 @@ def test_a_failure_the_platform_cannot_place_still_offers_a_retry():
 
     _, meta = _turn_failure_notice("upstream connect error before headers", None)
     assert meta.get("retryable") is True
+
+
+# ---- 一场对话大到装不下，整理又失败 ----
+
+
+REFUSED_BY_A_FULL_CONVERSATION = (
+    "Prompt is too long · automatic compaction failed: Failed to authenticate."
+    " API Error: 401 Authentication Error, litellm.PermissionDeniedError:"
+    " Model is blocked（invalid_request）"
+)
+
+
+def test_a_conversation_too_long_to_compact_is_recognised_as_its_own_failure():
+    from app.domain.agent.platform_failures import is_compaction_refused
+
+    assert is_compaction_refused(REFUSED_BY_A_FULL_CONVERSATION)
+    # `Prompt is too long` alone is NOT it: the build says that for an input
+    # too long for another reason, and for a turn stopped mid-compaction —
+    # both states a retry gets past (the build's own release notes).
+    assert not is_compaction_refused("Prompt is too long: 210000 tokens > 200000")
+    # Nor is an ordinary failed model call.
+    assert not is_compaction_refused("API Error: 429 rate limited")
+    assert not is_compaction_refused("")
+    # Nor a failure whose text merely mentions it: the line is matched from its
+    # start, like every other one this module reads. Matching it anywhere would
+    # take this conversation's retry and its resume away for a log's sake.
+    assert not is_compaction_refused(
+        "Some other failure; the log says automatic compaction failed earlier"
+    )
+
+
+def test_a_conversation_too_long_to_compact_offers_no_retry_and_says_why():
+    """The one failure whose right advice is not 「再试一次」: every retry sends
+    the same over-long conversation to be refused the same way. The room is told
+    what is true, the files are safe, and the service's words stay behind the
+    detail."""
+    from app.core.sentences import say
+    from app.domain.agent.turn.state.notices import (
+        CONTEXT_FULL_CODE,
+        _turn_failure_notice,
+    )
+
+    line, meta = _turn_failure_notice(REFUSED_BY_A_FULL_CONVERSATION, None)
+    assert line == say("turnFailedContextFull")
+    assert meta["code"] == CONTEXT_FULL_CODE
+    # Not the failed-model-call card: that one offers a retry, and `notice`
+    # writes the key only when it is true.
+    assert "retryable" not in meta
+    assert say("turnFailedContextFullHint") in meta["detail"]
+    assert REFUSED_BY_A_FULL_CONVERSATION in meta["detail"]
+
+
+def test_on_the_projects_own_connection_the_room_is_not_told_admins_were_alerted():
+    """`platform_side_cause(own=True)` is None: the platform sends no alert for a
+    call it does not carry. A hint claiming 「已经报给平台管理员」 there would be
+    a sentence nobody acted on, so the own route gets its own."""
+    from app.core.sentences import say
+    from app.domain.agent.turn.state.notices import (
+        _turn_failure_notice,
+        platform_side_cause,
+    )
+
+    line, meta = _turn_failure_notice(REFUSED_BY_A_FULL_CONVERSATION, None, own=True)
+    assert say("turnFailedContextFullOwnHint") in meta["detail"]
+    assert say("turnFailedContextFullHint") not in meta["detail"]
+    # And nothing goes to the platform's operators about it.
+    assert platform_side_cause(REFUSED_BY_A_FULL_CONVERSATION, own=True) is None
+    assert platform_side_cause(REFUSED_BY_A_FULL_CONVERSATION) is not None
+
+
+def test_the_platform_does_not_start_that_turn_again_by_itself():
+    """A turn the platform re-sends on a timer retries a conversation that does
+    not fit, for as long as the streak allows — the 「永远点不通的重试」 this
+    exists to stop (`resumable_failures.classify`)."""
+    from app.domain.agent.resumable_failures import classify
+
+    assert classify(REFUSED_BY_A_FULL_CONVERSATION) is None
+
+
+def test_a_conversation_refused_for_size_at_the_api_is_the_same_failure():
+    """The other half of the same state: the request is refused for size before
+    any compaction can help. It used to reach a room as 「可能有解不开的图片」,
+    which sent people hunting an image that was not the problem."""
+    from app.core.sentences import say
+    from app.domain.agent.turn.state.notices import (
+        CONTEXT_FULL_CODE,
+        _turn_failure_notice,
+    )
+
+    said = (
+        "API Error: 400 litellm.ContextWindowExceededError: "
+        "litellm.BadRequestError: ContextWindowExceededError: DeepseekException - "
+        '{"error":{"message":"This model\'s maximum context length is 1048576 '
+        'tokens. However, you requested 1129046 tokens",'
+        '"type":"invalid_request_error"}}'
+    )
+    line, meta = _turn_failure_notice(said, None)
+    assert line == say("turnFailedContextFull")
+    assert meta["code"] == CONTEXT_FULL_CODE
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        # An ordinary invalid request — the image case this must NOT swallow.
+        'API Error: 400 {"type":"error","error":{"type":"invalid_request_error",'
+        '"message":"messages.3.content.0.image: unsupported image"}}',
+        # A 500 is not a size problem.
+        "API Error: 500 Internal Server Error",
+        # A rate limit is not a size problem.
+        "API Error: 429 rate limited",
+    ],
+)
+def test_other_400s_are_not_read_as_a_conversation_too_long(said):
+    from app.domain.agent.platform_failures import is_compaction_refused
+
+    assert not is_compaction_refused(said)

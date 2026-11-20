@@ -254,9 +254,9 @@ def _host(client, project: str, task: str):
     class Host:
         environ = {"CHEESE_TOPIC": task, "CHEESE_PROJECT": project}
         headers = {
-            "X-Cheese-Token": mint_session_token(
-                project, task, room_agent_seat(client, task)
-            )
+            "Authorization": f"Bearer {
+                mint_session_token(project, task, room_agent_seat(client, task))
+            }"
         }
         doc_versions: dict = {}
 
@@ -366,8 +366,8 @@ def _teammate_of(client, pid: str, room: str) -> dict:
 
 
 def test_a_card_names_the_teammate_working_its_task_by_its_given_name(client):
-    """A card's phrase can name the teammate (「{agent}在做」). A project that
-    renamed it reads that name; one that never did reads 「default」, which a
+    """A card names the teammate working its task beside the status word. A
+    project that renamed it reads that name; one that never did reads 「default」, which a
     screen says in its reader's language rather than as a stored 芝士."""
     pid, _, _, canvas = _task_canvas(client)
     room = _channel(client, pid)

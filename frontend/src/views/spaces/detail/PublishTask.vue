@@ -9,38 +9,50 @@
 // 表单要的分类、话题、域名组、模板都从 pinia 的 `space` store 来，这一页自己装，**装完才
 // 挂表单**：`fetchCategories()` 在 `currentSpaceId` 为空时直接返回，装晚了分类下拉是空的。
 // `?categoryId=`（从某个分类的列表过来）在这里读。
-import type { SpaceTeaching, TaskDraft, TaskDraftFields, TaskDraftSummary, TaskFormSubmitData } from '@/types'
+import type { UploadProgress } from '@/api/partUpload'
+import type {
+  SpaceKnowledgeSuggestion,
+  SpaceTeaching,
+  TaskDraft,
+  TaskDraftFields,
+  TaskDraftSummary,
+  TaskFormSubmitData,
+} from '@/types'
 import type { StripItem } from './TaskDraftStrip.vue'
 
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
-import { toast } from 'vuetify-sonner'
 import { storeToRefs } from 'pinia'
 
 import { useAgentTypes } from '@/composables/useAgentTypes'
 import { useAttachmentUploads } from '@/composables/useAttachmentUploads'
 import { useDraftAgent } from '@/composables/useDraftAgent'
+import { useSkillCatalog } from '@/composables/useSkillCatalog'
 import { useSpaceData } from '@/composables/useSpaceData'
+import { useSpaceLearningAnalysis } from '@/composables/useSpaceLearningAnalysis'
 import { useSpaceMaterials } from '@/composables/useSpaceMaterials'
+import { useStarterUpload } from '@/composables/useStarterUpload'
 import { useTaskDraft } from '@/composables/useTaskDraft'
 
 import PublishTaskView from './PublishTaskView.vue'
 
 import { AttachmentsApi } from '@/api/attachments'
-import { TaskBoardApi } from '@/api/taskBoard'
+import { axiosErrorMessage } from '@/api/axiosHttp'
 import { TaskDraftsApi } from '@/api/taskDrafts'
 import { fieldLabel } from '@/lib/draftChangeView'
 import { publishDoneRoute, spaceLibraryPath } from '@/lib/spaceRouteNames'
 import { missingOf } from '@/lib/taskDraftAgent'
 import { mentorOptions } from '@/lib/taskMentors'
-import { defaultRolePayload, isTeachingBlank } from '@/lib/teaching'
+import { isTeachingBlank } from '@/lib/teaching'
+import { toast } from '@/lib/toast'
 import { myAccount, myHandle } from '@/me'
 import errorHandler from '@/services/ErrorHandler'
 import { agentDocked, agentOpen, askAgent, attachToAgent, openAgent, useAgentContext } from '@/stores/agent'
 import { useSpaceStore } from '@/stores/space'
 import { draftFieldsOf } from '@/types'
+import { provideTestTrial } from '@/views/tasks/composables/useTaskJudge'
 
 const route = useRoute()
 const router = useRouter()
@@ -51,8 +63,11 @@ const spaceData = useSpaceData()
 const { currentSpaceId, templates, classificationTopics, categories, domainGroups } = storeToRefs(spaceStore)
 // 「默认队友」那一格的候选预设：取数留在这里（画面那一半不碰 API 层）。
 const { types: agentTypes, failed: agentTypesFailed } = useAgentTypes()
+const { skills: skillCatalog, failed: skillCatalogFailed } = useSkillCatalog()
 
 const spaceId = computed(() => Number(route.params.spaceId))
+// 表单里「用参考答案试跑」测试点：算力记在这个空间的所有者头上。
+provideTestTrial(() => spaceId.value)
 const listTo = computed(() => ({ name: 'SpacesDetailTasksList', params: { spaceId: spaceId.value } }))
 const draftParam = computed(() => {
   const id = Number(route.query.draft)
@@ -86,6 +101,52 @@ watch(spaceId, (id) => void loadSpace(id), { immediate: true })
 /** 参考资料那一格的候选。不并进 `loadSpace` 的成败里：取不到也照常发得了题。 */
 const { materials, state: materialsState } = useSpaceMaterials(spaceId)
 
+/** 学情分析：开关（摆不摆「涉及的知识点」那一栏）、知识点清单、能不能让 AI 读题面。 */
+const {
+  enabled: learningEnabled,
+  knowledgePoints,
+  canManage: learningCanManage,
+  state: learningState,
+  addKnowledgePoint,
+  suggest: suggestKnowledge,
+} = useSpaceLearningAnalysis(spaceId)
+
+/** AI 读题面回来的建议：还没处理的摆在那一栏下面，采用一条就少一条。 */
+const knowledgeSuggestions = ref<SpaceKnowledgeSuggestion[]>([])
+const knowledgeSuggesting = ref(false)
+const knowledgeSuggestFailed = ref(false)
+
+async function runKnowledgeSuggestion() {
+  if (knowledgeSuggesting.value) return
+  knowledgeSuggesting.value = true
+  knowledgeSuggestFailed.value = false
+  try {
+    const name = live.value.name ?? ''
+    const description = live.value.descriptionMarkdown ?? live.value.description ?? ''
+    knowledgeSuggestions.value = await suggestKnowledge(name, description)
+  } catch (error) {
+    knowledgeSuggestFailed.value = true
+    void errorHandler.handle(error as Error, { showToast: false })
+  } finally {
+    knowledgeSuggesting.value = false
+  }
+}
+
+/** 那一栏上改了挂的知识点：填回表单（表单那一格是唯一的一份），随之照常存进草稿。 */
+function applyKnowledgePoints(ids: number[]) {
+  void view.value?.form.apply({ knowledgePointIds: ids })
+}
+
+/** 采用一条清单里还没有的建议：先把它加进清单，拿到编号再挂到这道题上。 */
+async function adoptNewKnowledge(name: string) {
+  try {
+    const point = await addKnowledgePoint(name)
+    if (point) view.value?.form.apply({ knowledgePointIds: [...(live.value.knowledgePointIds ?? []), point.id] })
+  } catch (error) {
+    toast.error(axiosErrorMessage(error, t('spaces.learningAnalysis.field.suggestFailed')))
+  }
+}
+
 /** 活跃（未归档）的分类，按 `displayOrder` 排：下拉里只有能选的。 */
 const activeCategories = computed(() =>
   categories.value.filter((category) => !category.archivedAt).sort((a, b) => a.displayOrder - b.displayOrder)
@@ -103,6 +164,10 @@ const terms = () => ({
   topics: classificationTopics.value.map((topic) => ({ id: topic.id, name: topic.name })),
   domainGroups: domainGroups.value.map((g) => ({ id: g.id, name: g.name })),
   mentors: mentorChoices.value.map((m) => ({ handle: m.value, name: m.title })),
+  materials: materials.value.map(({ id, name }) => ({ id, name })),
+  teammates: agentTypes.value.map(({ name, title }) => ({ name, title })),
+  knowledgePoints: knowledgePoints.value.map(({ id, name }) => ({ id, name })),
+  teaching: teaching.value,
 })
 
 // --- 草稿 ------------------------------------------------------------------------
@@ -130,26 +195,55 @@ const initialData = ref<Partial<TaskFormSubmitData>>({})
 /** 换一份初值就重挂表单。 */
 const formKey = ref(0)
 const publishedHere = ref(false)
+/** 上一次发布没成的原因，留在页头，直到再点发布或换一份草稿。 */
+const publishError = ref('')
+// 原因属于它说的那份草稿：换了一份（新建的、从草稿列表或上方那一排切过去的），就不再是它的事。
+watch(
+  () => draft.id.value,
+  () => (publishError.value = '')
+)
 
-/** 不在表单里、但也存进草稿的几样：附件、AI 指导。 */
+/** 不在表单里、但也存进草稿的几样：附件、AI 指导、默认队友。 */
 const teaching = ref<SpaceTeaching>({})
 const teachingOwn = ref(false)
-const uploads = useAttachmentUploads({
-  upload: async (file) => (await AttachmentsApi.upload({ type: 'file', file })).id,
+/** 这道题指定的默认队友（#944）：`''` = 不指定（继承项目集 / 空间）。新题没有自己的可清，
+ *  所以草稿里存的是预设名或 `null`。 */
+const defaultRole = ref('')
+/** 传成游离的附件（`POST /attachments`），浏览器报得出传了多少，这一格写百分比。 */
+async function uploadLoose(file: File, progress: UploadProgress): Promise<number> {
+  const { id } = await AttachmentsApi.upload({ type: 'file', file }, (event) =>
+    progress(event.loaded, event.total ?? file.size)
+  )
+  return id
+}
+const uploads = useAttachmentUploads({ upload: uploadLoose })
+/** 起始代码：选完就交给服务端，先查能不能作为起始代码（和放进题目时同一个检查），合格
+ *  才存成附件；不合格的这里就说原因、什么都不存，发布前就知道。合格的随草稿存着、随草稿
+ *  发布，和芝士替人写进草稿的那一份走同一条路。 */
+const starter = useStarterUpload<number>({
+  upload: async (file, progress) => {
+    const { id } = await TaskDraftsApi.uploadStarter(file, (event) => progress(event.loaded, event.total ?? file.size))
+    return { id, name: file.name, size: file.size }
+  },
 })
 
 function fill(fields: TaskDraftFields) {
   initialData.value = fields as Partial<TaskFormSubmitData>
   teaching.value = { ...(fields.teaching ?? {}) }
   teachingOwn.value = !!fields.teachingOwn
+  defaultRole.value = fields.defaultRole ?? ''
   const files = fields.attachmentFiles ?? []
   uploads.reset(files.map(({ id, name, size }) => ({ id, name, size })))
+  starter.reset(fields.starterFile ?? null)
   // 这些是装进来的起点，不是人改的。
   draft.baseline({
     teaching: teaching.value,
     teachingOwn: teachingOwn.value,
+    defaultRole: defaultRole.value || null,
     attachmentIds: files.map((f) => f.id),
     attachmentFiles: files,
+    starterAttachmentId: fields.starterFile?.id ?? null,
+    starterFile: fields.starterFile ?? null,
   })
   formKey.value++
 }
@@ -211,6 +305,7 @@ function useTemplate(index: number) {
 watch([teaching, teachingOwn], () => draft.changed({ teaching: teaching.value, teachingOwn: teachingOwn.value }), {
   deep: true,
 })
+watch(defaultRole, (role) => draft.changed({ defaultRole: role || null }))
 watch(
   () => uploads.files.value,
   (files) =>
@@ -220,6 +315,8 @@ watch(
     }),
   { deep: true }
 )
+
+watch(starter.file, (file) => draft.changed({ starterAttachmentId: file?.id ?? null, starterFile: file }))
 
 // --- 芝士 --------------------------------------------------------------------------
 
@@ -235,16 +332,22 @@ watch(view, (v) =>
   )
 )
 
-/** 草稿里不在表单上的几格（AI 指导、附件），芝士写到它们时由页面自己填。 */
+/** 草稿里不在表单上的几格（AI 指导、默认队友、附件），芝士写到它们时由页面自己填。 */
 function pageApply(fields: TaskDraftFields): TaskDraftFields {
   const shown: TaskDraftFields = {}
   if ('teaching' in fields) teaching.value = { ...(fields.teaching ?? {}) }
   if ('teachingOwn' in fields) teachingOwn.value = !!fields.teachingOwn
+  if ('defaultRole' in fields) defaultRole.value = fields.defaultRole ?? ''
   if ('attachmentFiles' in fields) {
     const files = fields.attachmentFiles ?? []
     uploads.reset(files.map(({ id, name, size }) => ({ id, name, size })))
     shown.attachmentFiles = files
     shown.attachmentIds = files.map((f) => f.id)
+  }
+  if ('starterFile' in fields) {
+    starter.reset(fields.starterFile ?? null)
+    shown.starterFile = fields.starterFile ?? null
+    shown.starterAttachmentId = fields.starterFile?.id ?? null
   }
   return shown
 }
@@ -299,6 +402,13 @@ function onFormReady(fields: TaskDraftFields) {
   draft.baseline(fields)
 }
 
+/** 「默认队友」沿用的那一位：表单上选中的项目集设的；还没选项目集时不知道。 */
+const inheritedRole = computed(() => {
+  const id = live.value.categoryId ?? preselectedCategoryId.value
+  const category = activeCategories.value.find((c) => c.id === id)
+  return category ? category.defaultRole ?? null : undefined
+})
+
 /** 这一组里已经发出去的（发布后草稿就没了，这一排还留着它，标「已发布」）。 */
 const publishedInGroup = ref<{ id: number; name: string; conversationId: string }[]>([])
 const flagged = ref(false)
@@ -328,7 +438,7 @@ const stripItems = computed<StripItem[]>(() => {
       id: d.id,
       name: d.id === here ? live.value.name ?? d.name : d.name,
       writing: !!target && target.draft === d.id,
-      missing: (d.id === here ? missingOf(live.value) : d.missing).map(fieldLabel),
+      missing: (d.id === here ? missingOf(live.value) : d.missing).map((key) => fieldLabel(key)),
       published: false,
     }))
   for (const done of publishedInGroup.value)
@@ -372,7 +482,7 @@ async function removeDraft(id: number) {
 /** 全部发布：每道各自看齐没齐，齐的发出去，缺项的标出来、留在原处。 */
 async function publishAll() {
   if (publishingAll.value || publishing.value) return
-  if (uploads.uploading.value) {
+  if (uploads.uploading.value || starter.uploading.value) {
     toast.error(t('spaces.detail.publishTask.attachmentsUploading'))
     return
   }
@@ -403,8 +513,14 @@ async function publishAll() {
           { id: item.id as number, name, conversationId: conversationHere.value ?? '' },
         ]
         if (item.id === draft.id.value) draft.gone()
-      } catch {
-        sentences.push(t('spaces.detail.publishTask.strip.failed', { name }))
+      } catch (error) {
+        // 和单发一样说服务端那句话；没有原话（网络断了等）才只说发布失败。
+        const reason = errorHandler.sentence(error as Error, '')
+        sentences.push(
+          reason
+            ? t('spaces.detail.publishTask.strip.failedBecause', { name, reason })
+            : t('spaces.detail.publishTask.strip.failed', { name })
+        )
       }
     }
   } finally {
@@ -423,10 +539,6 @@ async function publishAll() {
   else view.value?.check()
 }
 
-/** 这道题指定的默认队友（#944）。新建题没有原始值，留空 = 不指定（继承项目集 / 空间）。 */
-const defaultRole = ref('')
-const defaultRoleSubmit = computed(() => defaultRolePayload(defaultRole.value, null))
-
 // --- 发布 --------------------------------------------------------------------------
 
 const publishing = ref(false)
@@ -441,11 +553,12 @@ const mentorChoices = computed(() => {
 async function publish(form: TaskFormSubmitData) {
   if (publishing.value) return
   // 材料还在上传就先别发：附件 id 是发题那条请求的一部分，这时发出去会静默少一份。
-  if (uploads.uploading.value) {
+  if (uploads.uploading.value || starter.uploading.value) {
     toast.error(t('spaces.detail.publishTask.attachmentsUploading'))
     return
   }
   publishing.value = true
+  publishError.value = ''
   try {
     await draft.flush()
     const row = await draft.ensure()
@@ -457,15 +570,13 @@ async function publish(form: TaskFormSubmitData) {
         descriptionMarkdown: view.value?.form.values().descriptionMarkdown,
         teaching: teachingOwn.value && !isTeachingBlank(teaching.value) ? teaching.value : {},
         teachingOwn: teachingOwn.value,
+        defaultRole: defaultRole.value || null,
         attachmentIds: uploads.ids.value,
+        starterAttachmentId: starter.file.value?.id ?? null,
+        starterFile: starter.file.value,
       })
     )
     const { task } = await TaskDraftsApi.publish(row.id)
-    if (defaultRoleSubmit.value !== undefined) {
-      // 「默认队友」不在草稿字段里（`TASK_DRAFT_FIELDS` 没有它），发布之后按题目补写
-      // 一次。`undefined` = 这一格选的是「继承」，不发这个键。
-      await TaskBoardApi.update(task.id, { defaultRole: defaultRoleSubmit.value })
-    }
     const { approved } = task
     draft.gone()
     toast.success(
@@ -475,7 +586,9 @@ async function publish(form: TaskFormSubmitData) {
     )
     await router.replace(publishDoneRoute(spaceId.value))
   } catch (error) {
-    void errorHandler.handle(error as Error, { defaultMessage: t('spaces.detail.publishTask.createFailed') })
+    // 页头留着这句，不再另弹一条转眼就消失的提示。
+    publishError.value = errorHandler.sentence(error as Error, t('spaces.detail.publishTask.createFailed'))
+    void errorHandler.handle(error as Error, { showToast: false })
   } finally {
     publishing.value = false
   }
@@ -529,13 +642,29 @@ const ready = computed(() => spaceReady.value && draftReady.value)
     :templates="templates.map((template, index) => ({ index, name: template.name, description: template.description }))"
     :attachments="uploads.files.value"
     :uploading="uploads.uploading.value"
+    :upload-percent="uploads.percent.value"
     :max-file-bytes="uploads.maxFileBytes.value"
+    :starter="starter.file.value"
+    :starter-uploading="starter.uploading.value"
+    :starter-percent="starter.percent.value"
     :materials="materials"
     :materials-state="materialsState"
     :library-to="spaceLibraryPath(spaceId)"
+    :knowledge-enabled="learningEnabled === true"
+    :knowledge-point-ids="live.knowledgePointIds ?? []"
+    :knowledge-point-list="knowledgePoints"
+    :knowledge-point-state="learningState"
+    :knowledge-suggestions="knowledgeSuggestions"
+    :knowledge-suggesting="knowledgeSuggesting"
+    :knowledge-suggest-failed="knowledgeSuggestFailed"
+    :knowledge-can-suggest="learningCanManage"
     :publishing="publishing"
+    :publish-error="publishError"
     :agent-types="agentTypes"
     :agent-types-failed="agentTypesFailed"
+    :skill-catalog="skillCatalog"
+    :skill-catalog-failed="skillCatalogFailed"
+    :inherited-role="inheritedRole"
     :mentor-options="mentorChoices"
     :default-mentor="myHandle() || undefined"
     :drafts="drafts"
@@ -551,11 +680,16 @@ const ready = computed(() => spaceReady.value && draftReady.value)
     @import-files="importFiles"
     @add-attachments="uploads.add"
     @remove-attachment="uploads.remove"
+    @pick-starter="starter.pick"
+    @remove-starter="starter.remove"
     @submit="publish"
     @change="onFormChange"
     @form-ready="onFormReady"
     @open-draft="openOther"
     @new-draft="newDraft"
+    @update:knowledge-points="applyKnowledgePoints"
+    @suggest-knowledge="runKnowledgeSuggestion"
+    @adopt-new-knowledge="adoptNewKnowledge"
     @remove-draft="removeDraft"
     @publish-all="publishAll"
   >

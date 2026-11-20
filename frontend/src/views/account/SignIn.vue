@@ -29,7 +29,6 @@ import type { SignInWay } from './SignInView.vue'
 
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 import {
   browserSupportsWebAuthn,
   browserSupportsWebAuthnAutofill,
@@ -49,6 +48,8 @@ import { axiosErrorMessage } from '@/api/axiosHttp'
 import { UserAuthApi } from '@/api/userAuth'
 import { t } from '@/i18n'
 import { storageGetJson, storageSet, storageSetJson } from '@/lib/browserStorage'
+import { signInAtOrigin } from '@/lib/desktopApp'
+import { toast } from '@/lib/toast'
 import { forgetOAuthRedirect, postLoginTarget, stashOAuthRedirect } from '@/router/loginRedirect'
 import AccountService from '@/services/account'
 
@@ -229,7 +230,18 @@ const handleOAuthLogin = (providerId: string) => {
     // 生成随机 state 参数用于防止 CSRF 攻击，存下来供回来时核对
     const state = crypto.randomUUID()
     storageSet('oauth_state', state)
-    stashOAuthRedirect(postLoginTarget(route.query))
+    const target = postLoginTarget(route.query)
+    // A provider registered on another origin of this deployment signs in
+    // there and hands the sign-in back here.
+    const origin = oAuthProviders.value.find((p) => p.id === providerId)?.origin
+    if (origin && origin !== window.location.origin) {
+      void signInAtOrigin(origin, providerId, target).catch(() => {
+        busy.value = null
+        errorMessage.value = t('account.signIn.providerFailed')
+      })
+      return
+    }
+    stashOAuthRedirect(target)
     UserAuthApi.redirectToOAuthLogin(providerId, state)
   } catch {
     busy.value = null

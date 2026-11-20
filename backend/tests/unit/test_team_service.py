@@ -5,11 +5,11 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from app.core.errors import (
     BadRequestError,
     ConflictError,
-    ForbiddenError,
     NotFoundError,
 )
 from app.domain.team.membership_services import TeamMembershipService
@@ -45,6 +45,8 @@ def _make_team(**overrides):
         "description": "desc",
         "avatar_id": 10,
         "personal_owner_user_id": None,
+        "visibility": "public",
+        "open_to_all": True,
         "created_at": _NOW,
         "updated_at": _NOW,
         "deleted_at": None,
@@ -123,6 +125,9 @@ def _build_membership_service(
     mock_result = MagicMock()
     mock_result.scalar_one_or_none.return_value = 1
     session.execute.return_value = mock_result
+    # Pending rows are inserted inside a savepoint (`_save_pending`); there is
+    # no database here, so the savepoint only has to be enterable.
+    session.begin_nested = MagicMock(return_value=AsyncMock())
     # `_notify` is patched out in these tests, so the ledger the service was
     # handed is never called; a stand-in keeps the constructor honest.
     svc = TeamMembershipService(
@@ -349,7 +354,7 @@ class TestTeamServiceUpdateTeam:
         )
         repo.exists_by_name.return_value = False
 
-        result = await svc.update_team(team_id=1, actor_user_id=42, name="New Name")
+        result = await svc.update_team(team_id=1, name="New Name")
 
         assert result.name == "New Name"
 
@@ -364,7 +369,6 @@ class TestTeamServiceUpdateTeam:
 
         result = await svc.update_team(
             team_id=1,
-            actor_user_id=42,
             intro="new intro",
             description="new desc",
         )
@@ -381,29 +385,9 @@ class TestTeamServiceUpdateTeam:
             role=TeamMemberRole.OWNER
         )
 
-        result = await svc.update_team(team_id=1, actor_user_id=42, avatar_id=99)
+        result = await svc.update_team(team_id=1, avatar_id=99)
 
         assert result.avatar_id == 99
-
-    @pytest.mark.anyio
-    async def test_rejects_non_admin(self):
-        svc, repo = _build_team_service()
-        repo.get_by_id.return_value = _make_team(id=1)
-        repo.get_member_relation.return_value = _make_relation(
-            role=TeamMemberRole.MEMBER
-        )
-
-        with pytest.raises(ForbiddenError, match="Only team owner or admins"):
-            await svc.update_team(team_id=1, actor_user_id=42, name="X")
-
-    @pytest.mark.anyio
-    async def test_rejects_non_member(self):
-        svc, repo = _build_team_service()
-        repo.get_by_id.return_value = _make_team(id=1)
-        repo.get_member_relation.return_value = None
-
-        with pytest.raises(ForbiddenError):
-            await svc.update_team(team_id=1, actor_user_id=42, name="X")
 
     @pytest.mark.anyio
     async def test_rejects_empty_name_update(self):
@@ -414,7 +398,7 @@ class TestTeamServiceUpdateTeam:
         )
 
         with pytest.raises(BadRequestError, match="cannot be empty"):
-            await svc.update_team(team_id=1, actor_user_id=42, name="   ")
+            await svc.update_team(team_id=1, name="   ")
 
     @pytest.mark.anyio
     async def test_rejects_duplicate_name_update(self):
@@ -426,7 +410,7 @@ class TestTeamServiceUpdateTeam:
         repo.exists_by_name.return_value = True
 
         with pytest.raises(ConflictError, match="already exists"):
-            await svc.update_team(team_id=1, actor_user_id=42, name="Taken")
+            await svc.update_team(team_id=1, name="Taken")
 
     @pytest.mark.anyio
     async def test_allows_same_name_unchanged(self):
@@ -439,7 +423,7 @@ class TestTeamServiceUpdateTeam:
         # exists_by_name should not matter since name is unchanged
         repo.exists_by_name.return_value = True
 
-        result = await svc.update_team(team_id=1, actor_user_id=42, name="Same")
+        result = await svc.update_team(team_id=1, name="Same")
 
         assert result.name == "Same"
 
@@ -452,7 +436,7 @@ class TestTeamServiceUpdateTeam:
         )
 
         with pytest.raises(BadRequestError, match="positive integer"):
-            await svc.update_team(team_id=1, actor_user_id=42, avatar_id=-1)
+            await svc.update_team(team_id=1, avatar_id=-1)
 
     @pytest.mark.anyio
     async def test_rejects_non_string_name(self):
@@ -463,7 +447,7 @@ class TestTeamServiceUpdateTeam:
         )
 
         with pytest.raises(BadRequestError, match="must be string"):
-            await svc.update_team(team_id=1, actor_user_id=42, name=12345)
+            await svc.update_team(team_id=1, name=12345)
 
     @pytest.mark.anyio
     async def test_raises_not_found_for_missing_team(self):
@@ -471,7 +455,7 @@ class TestTeamServiceUpdateTeam:
         repo.get_by_id.return_value = None
 
         with pytest.raises(NotFoundError, match="team not found"):
-            await svc.update_team(team_id=999, actor_user_id=42, name="X")
+            await svc.update_team(team_id=999, name="X")
 
 
 class TestTeamServiceDeleteTeam:
@@ -487,7 +471,7 @@ class TestTeamServiceDeleteTeam:
         members = [_make_relation(user_id=1), _make_relation(user_id=2)]
         repo.list_members_of_team.return_value = members
 
-        await svc.delete_team(team_id=1, actor_user_id=42, has_live_projects=False)
+        await svc.delete_team(team_id=1, has_live_projects=False)
 
         # Members should have been soft-deleted
         for m in members:
@@ -497,34 +481,12 @@ class TestTeamServiceDeleteTeam:
         repo.soft_delete_team.assert_awaited_once_with(team)
 
     @pytest.mark.anyio
-    async def test_non_owner_cannot_delete(self):
-        svc, repo = _build_team_service()
-        repo.get_by_id.return_value = _make_team(id=1)
-        repo.get_member_relation.return_value = _make_relation(
-            role=TeamMemberRole.ADMIN
-        )
-
-        with pytest.raises(ForbiddenError, match="Only the team owner"):
-            await svc.delete_team(team_id=1, actor_user_id=42, has_live_projects=False)
-
-    @pytest.mark.anyio
-    async def test_non_member_cannot_delete(self):
-        svc, repo = _build_team_service()
-        repo.get_by_id.return_value = _make_team(id=1)
-        repo.get_member_relation.return_value = None
-
-        with pytest.raises(ForbiddenError):
-            await svc.delete_team(team_id=1, actor_user_id=42, has_live_projects=False)
-
-    @pytest.mark.anyio
     async def test_raises_not_found_for_missing_team(self):
         svc, repo = _build_team_service()
         repo.get_by_id.return_value = None
 
         with pytest.raises(NotFoundError):
-            await svc.delete_team(
-                team_id=999, actor_user_id=42, has_live_projects=False
-            )
+            await svc.delete_team(team_id=999, has_live_projects=False)
 
 
 class TestTeamServiceRemoveMember:
@@ -534,31 +496,9 @@ class TestTeamServiceRemoveMember:
         relation = _make_relation(user_id=42, role=TeamMemberRole.MEMBER)
         repo.get_member_relation.return_value = relation
 
-        await svc.remove_team_member(team_id=1, target_user_id=42, actor_user_id=42)
+        await svc.remove_team_member(team_id=1, target_user_id=42)
 
         repo.soft_delete_member.assert_awaited_once_with(relation)
-
-    @pytest.mark.anyio
-    async def test_admin_can_remove_member(self):
-        svc, repo = _build_team_service()
-        target_rel = _make_relation(user_id=50, role=TeamMemberRole.MEMBER)
-        actor_rel = _make_relation(user_id=42, role=TeamMemberRole.ADMIN)
-        repo.get_member_relation.side_effect = [target_rel, actor_rel]
-
-        await svc.remove_team_member(team_id=1, target_user_id=50, actor_user_id=42)
-
-        repo.soft_delete_member.assert_awaited_once_with(target_rel)
-
-    @pytest.mark.anyio
-    async def test_owner_can_remove_admin(self):
-        svc, repo = _build_team_service()
-        target_rel = _make_relation(user_id=50, role=TeamMemberRole.ADMIN)
-        actor_rel = _make_relation(user_id=42, role=TeamMemberRole.OWNER)
-        repo.get_member_relation.side_effect = [target_rel, actor_rel]
-
-        await svc.remove_team_member(team_id=1, target_user_id=50, actor_user_id=42)
-
-        repo.soft_delete_member.assert_awaited_once_with(target_rel)
 
     @pytest.mark.anyio
     async def test_cannot_remove_owner(self):
@@ -568,27 +508,7 @@ class TestTeamServiceRemoveMember:
         )
 
         with pytest.raises(BadRequestError, match="owner cannot be removed"):
-            await svc.remove_team_member(team_id=1, target_user_id=50, actor_user_id=42)
-
-    @pytest.mark.anyio
-    async def test_member_cannot_remove_others(self):
-        svc, repo = _build_team_service()
-        target_rel = _make_relation(user_id=50, role=TeamMemberRole.MEMBER)
-        actor_rel = _make_relation(user_id=42, role=TeamMemberRole.MEMBER)
-        repo.get_member_relation.side_effect = [target_rel, actor_rel]
-
-        with pytest.raises(ForbiddenError, match="Only admins or owner"):
-            await svc.remove_team_member(team_id=1, target_user_id=50, actor_user_id=42)
-
-    @pytest.mark.anyio
-    async def test_admin_cannot_remove_other_admin(self):
-        svc, repo = _build_team_service()
-        target_rel = _make_relation(user_id=50, role=TeamMemberRole.ADMIN)
-        actor_rel = _make_relation(user_id=42, role=TeamMemberRole.ADMIN)
-        repo.get_member_relation.side_effect = [target_rel, actor_rel]
-
-        with pytest.raises(ForbiddenError, match="Admins cannot remove other admins"):
-            await svc.remove_team_member(team_id=1, target_user_id=50, actor_user_id=42)
+            await svc.remove_team_member(team_id=1, target_user_id=50)
 
     @pytest.mark.anyio
     async def test_raises_not_found_for_missing_member(self):
@@ -596,7 +516,7 @@ class TestTeamServiceRemoveMember:
         repo.get_member_relation.return_value = None
 
         with pytest.raises(NotFoundError, match="team member not found"):
-            await svc.remove_team_member(team_id=1, target_user_id=50, actor_user_id=42)
+            await svc.remove_team_member(team_id=1, target_user_id=50)
 
 
 class TestTeamServiceUpdateMemberRole:
@@ -610,7 +530,6 @@ class TestTeamServiceUpdateMemberRole:
         await svc.update_team_member_role(
             team_id=1,
             target_user_id=50,
-            actor_user_id=42,
             new_role=TeamMemberRole.ADMIN,
         )
 
@@ -627,7 +546,6 @@ class TestTeamServiceUpdateMemberRole:
         await svc.update_team_member_role(
             team_id=1,
             target_user_id=50,
-            actor_user_id=42,
             new_role=TeamMemberRole.MEMBER,
         )
 
@@ -644,7 +562,6 @@ class TestTeamServiceUpdateMemberRole:
             await svc.update_team_member_role(
                 team_id=1,
                 target_user_id=50,
-                actor_user_id=42,
                 new_role=TeamMemberRole.ADMIN,
             )
 
@@ -658,23 +575,7 @@ class TestTeamServiceUpdateMemberRole:
             await svc.update_team_member_role(
                 team_id=1,
                 target_user_id=50,
-                actor_user_id=42,
                 new_role=TeamMemberRole.OWNER,
-            )
-
-    @pytest.mark.anyio
-    async def test_non_owner_cannot_change_roles(self):
-        svc, repo = _build_team_service()
-        target = _make_relation(user_id=50, role=TeamMemberRole.MEMBER)
-        actor = _make_relation(user_id=42, role=TeamMemberRole.ADMIN)
-        repo.get_member_relation.side_effect = [target, actor]
-
-        with pytest.raises(ForbiddenError, match="Only team owner"):
-            await svc.update_team_member_role(
-                team_id=1,
-                target_user_id=50,
-                actor_user_id=42,
-                new_role=TeamMemberRole.ADMIN,
             )
 
     @pytest.mark.anyio
@@ -686,7 +587,6 @@ class TestTeamServiceUpdateMemberRole:
             await svc.update_team_member_role(
                 team_id=1,
                 target_user_id=50,
-                actor_user_id=42,
                 new_role=TeamMemberRole.ADMIN,
             )
 
@@ -697,45 +597,23 @@ class TestTeamServiceTransferOwner:
         svc, repo = _build_team_service()
         owner_rel = _make_relation(user_id=42, role=TeamMemberRole.OWNER)
         target_rel = _make_relation(user_id=50, role=TeamMemberRole.ADMIN)
-        repo.get_member_relation.side_effect = [owner_rel, target_rel]
+        repo.list_members_of_team.return_value = [owner_rel, target_rel]
+        repo.get_member_relation.return_value = target_rel
 
-        await svc.transfer_team_owner(team_id=1, new_owner_user_id=50, actor_user_id=42)
+        await svc.transfer_team_owner(team_id=1, new_owner_user_id=50)
 
         assert owner_rel.role == TeamMemberRole.ADMIN
         assert target_rel.role == TeamMemberRole.OWNER
 
     @pytest.mark.anyio
-    async def test_non_owner_cannot_transfer(self):
-        svc, repo = _build_team_service()
-        repo.get_member_relation.return_value = _make_relation(
-            user_id=42, role=TeamMemberRole.ADMIN
-        )
-
-        with pytest.raises(ForbiddenError, match="Only current owner"):
-            await svc.transfer_team_owner(
-                team_id=1, new_owner_user_id=50, actor_user_id=42
-            )
-
-    @pytest.mark.anyio
-    async def test_non_member_cannot_transfer(self):
-        svc, repo = _build_team_service()
-        repo.get_member_relation.return_value = None
-
-        with pytest.raises(ForbiddenError):
-            await svc.transfer_team_owner(
-                team_id=1, new_owner_user_id=50, actor_user_id=42
-            )
-
-    @pytest.mark.anyio
     async def test_target_must_be_existing_member(self):
         svc, repo = _build_team_service()
         owner_rel = _make_relation(user_id=42, role=TeamMemberRole.OWNER)
-        repo.get_member_relation.side_effect = [owner_rel, None]
+        repo.list_members_of_team.return_value = [owner_rel]
+        repo.get_member_relation.return_value = None
 
         with pytest.raises(NotFoundError, match="existing team member"):
-            await svc.transfer_team_owner(
-                team_id=1, new_owner_user_id=999, actor_user_id=42
-            )
+            await svc.transfer_team_owner(team_id=1, new_owner_user_id=999)
 
 
 # ===================================================================
@@ -827,6 +705,70 @@ class TestCancelJoinRequest:
             await svc.cancel_my_join_request(user_id=42, request_id=999)
 
 
+def _lost_the_race() -> IntegrityError:
+    return IntegrityError(
+        "INSERT", {}, Exception("uq_team_membership_application_pending")
+    )
+
+
+class TestARaceForThePendingSlot:
+    """Two submissions both passed the read-then-insert check; the index let
+    one row in. The one that lost is told what the check would have said, and
+    an insert refused for any other reason still fails as itself."""
+
+    @pytest.mark.anyio
+    @patch(_PUBLISH_PATH, new_callable=AsyncMock)
+    async def test_the_losing_invitation_is_a_conflict_and_notifies_nobody(
+        self, mock_publish
+    ):
+        svc, team_repo, app_repo = _build_membership_service()
+        team_repo.is_team_member.return_value = False
+        app_repo.exists_pending_for_user_and_team.side_effect = [False, True]
+        app_repo.save.side_effect = _lost_the_race()
+
+        with pytest.raises(ConflictError):
+            await svc.create_team_invitation(
+                initiator_user_id=42,
+                team_id=1,
+                user_id_to_invite=50,
+                role=None,
+                message=None,
+            )
+        mock_publish.assert_not_awaited()
+
+    @pytest.mark.anyio
+    @patch(_PUBLISH_PATH, new_callable=AsyncMock)
+    async def test_the_losing_join_request_is_pending(self, mock_publish):
+        svc, team_repo, app_repo = _build_membership_service()
+        team_repo.is_team_member.return_value = False
+        app_repo.exists_pending_for_user_and_team.side_effect = [False, True]
+        app_repo.save.side_effect = _lost_the_race()
+
+        status = await svc.join(
+            user_id=42, team=_make_team(id=1, join_approval=True), message=None
+        )
+
+        assert status == "pending"
+        mock_publish.assert_not_awaited()
+
+    @pytest.mark.anyio
+    @patch(_PUBLISH_PATH, new_callable=AsyncMock)
+    async def test_an_insert_refused_for_another_reason_still_fails(self, mock_publish):
+        svc, team_repo, app_repo = _build_membership_service()
+        team_repo.is_team_member.return_value = False
+        app_repo.exists_pending_for_user_and_team.return_value = False
+        app_repo.save.side_effect = _lost_the_race()
+
+        with pytest.raises(IntegrityError):
+            await svc.create_team_invitation(
+                initiator_user_id=42,
+                team_id=1,
+                user_id_to_invite=50,
+                role=None,
+                message=None,
+            )
+
+
 class TestCreateInvitation:
     @pytest.mark.anyio
     @patch(_PUBLISH_PATH, new_callable=AsyncMock)
@@ -854,20 +796,6 @@ class TestCreateInvitation:
 
         assert result is saved
         mock_publish.assert_awaited_once()
-
-    @pytest.mark.anyio
-    async def test_raises_forbidden_for_non_admin(self):
-        svc, team_repo, app_repo = _build_membership_service()
-        team_repo.is_team_at_least_admin.return_value = False
-
-        with pytest.raises(ForbiddenError, match="not authorized to invite"):
-            await svc.create_team_invitation(
-                initiator_user_id=42,
-                team_id=1,
-                user_id_to_invite=50,
-                role=None,
-                message=None,
-            )
 
     @pytest.mark.anyio
     async def test_raises_conflict_if_user_already_member(self):
@@ -1052,16 +980,6 @@ class TestApproveJoinRequest:
         mock_publish.assert_awaited_once()
 
     @pytest.mark.anyio
-    async def test_raises_forbidden_for_non_admin(self):
-        svc, team_repo, app_repo = _build_membership_service()
-        team_repo.is_team_at_least_admin.return_value = False
-
-        with pytest.raises(ForbiddenError, match="not authorized to approve"):
-            await svc.approve_team_join_request(
-                approver_user_id=42, team_id=1, request_id=200
-            )
-
-    @pytest.mark.anyio
     async def test_raises_not_found_for_missing_request(self):
         svc, team_repo, app_repo = _build_membership_service()
         team_repo.is_team_at_least_admin.return_value = True
@@ -1105,16 +1023,6 @@ class TestRejectJoinRequest:
         mock_publish.assert_awaited_once()
 
     @pytest.mark.anyio
-    async def test_raises_forbidden_for_non_admin(self):
-        svc, team_repo, app_repo = _build_membership_service()
-        team_repo.is_team_at_least_admin.return_value = False
-
-        with pytest.raises(ForbiddenError, match="not authorized to reject"):
-            await svc.reject_team_join_request(
-                rejector_user_id=42, team_id=1, request_id=200
-            )
-
-    @pytest.mark.anyio
     async def test_raises_not_found_for_missing_request(self):
         svc, team_repo, app_repo = _build_membership_service()
         team_repo.is_team_at_least_admin.return_value = True
@@ -1148,16 +1056,6 @@ class TestCancelInvitation:
         assert app.status == ApplicationStatus.CANCELED.value
         assert app.processed_by_id == 42
         mock_publish.assert_awaited_once()
-
-    @pytest.mark.anyio
-    async def test_raises_forbidden_for_non_admin(self):
-        svc, team_repo, app_repo = _build_membership_service()
-        team_repo.is_team_at_least_admin.return_value = False
-
-        with pytest.raises(ForbiddenError, match="not authorized to cancel"):
-            await svc.cancel_team_invitation(
-                canceler_user_id=42, team_id=1, invitation_id=200
-            )
 
     @pytest.mark.anyio
     async def test_raises_not_found_for_missing_invitation(self):
@@ -1292,20 +1190,6 @@ class TestListTeamJoinRequests:
         assert result == apps
         assert page["total"] == 1
 
-    @pytest.mark.anyio
-    async def test_raises_forbidden_for_non_admin(self):
-        svc, team_repo, app_repo = _build_membership_service()
-        team_repo.is_team_at_least_admin.return_value = False
-
-        with pytest.raises(ForbiddenError, match="not authorized to view requests"):
-            await svc.list_team_join_requests(
-                requesting_user_id=42,
-                team_id=1,
-                status=None,
-                page_start=None,
-                page_size=None,
-            )
-
 
 class TestListTeamInvitations:
     @pytest.mark.anyio
@@ -1325,20 +1209,6 @@ class TestListTeamInvitations:
 
         assert result == apps
         assert page["total"] == 1
-
-    @pytest.mark.anyio
-    async def test_raises_forbidden_for_non_admin(self):
-        svc, team_repo, app_repo = _build_membership_service()
-        team_repo.is_team_at_least_admin.return_value = False
-
-        with pytest.raises(ForbiddenError, match="not authorized to view invitations"):
-            await svc.list_team_invitations(
-                requesting_user_id=42,
-                team_id=1,
-                status=None,
-                page_start=None,
-                page_size=None,
-            )
 
     @pytest.mark.anyio
     async def test_uses_invitation_type(self):

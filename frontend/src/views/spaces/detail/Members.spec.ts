@@ -1,7 +1,8 @@
 // 成员页钉住的规则：
 // 1. 管理员（含所有者）不在成员表里也要列出来 —— 名单是两份的并集。
-// 2. 「加入方式」有记录就写那张码，没记录写「未知」，不拿别的码顶上。
-// 3. 改角色、转让所有者只有所有者能做；转让要先确认，没确认之前一个请求都不发。
+// 2. 改角色、转让所有者只有所有者能做；转让要先确认，没确认之前一个请求都不发。
+// 3. 加入链接：进来就读；重置、切换「加入需要批准」各发对应的那一条请求。
+// 4. 加入申请：批准 / 拒绝发的是那一份申请的 id；批准之后成员表重读。
 import type { Component } from 'vue'
 
 import { defineComponent, h } from 'vue'
@@ -9,17 +10,29 @@ import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listMembers = vi.fn()
 const updateAdmin = vi.fn()
+const getJoinLink = vi.fn()
+const updateJoinLink = vi.fn()
+const resetJoinLink = vi.fn()
+const listJoinRequests = vi.fn()
+const approveJoinRequest = vi.fn()
+const rejectJoinRequest = vi.fn()
 
 vi.mock('@/api/spaces', () => ({
   SpacesApi: {
     listMembers: (...a: unknown[]) => listMembers(...a),
     updateAdmin: (...a: unknown[]) => updateAdmin(...a),
+    getJoinLink: (...a: unknown[]) => getJoinLink(...a),
+    updateJoinLink: (...a: unknown[]) => updateJoinLink(...a),
+    resetJoinLink: (...a: unknown[]) => resetJoinLink(...a),
+    listJoinRequests: (...a: unknown[]) => listJoinRequests(...a),
+    approveJoinRequest: (...a: unknown[]) => approveJoinRequest(...a),
+    rejectJoinRequest: (...a: unknown[]) => rejectJoinRequest(...a),
   },
 }))
 
@@ -27,7 +40,7 @@ vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }
 
 vi.mock('vue-i18n', async () => {
   const actual = await vi.importActual<typeof import('vue-i18n')>('vue-i18n')
-  return { ...actual, useI18n: () => ({ t: (key: string) => key }) }
+  return { ...actual, useI18n: () => ({ t: (key: string) => key, locale: { value: 'zh-CN' } }) }
 })
 
 import Members from './Members.vue'
@@ -60,18 +73,18 @@ async function mount(currentUserId: number) {
       { user: OWNER, role: 'OWNER' },
       { user: ADMIN, role: 'ADMIN' },
     ],
+    // What the server says this reader may do: only the owner manages admins.
+    viewerPermissions:
+      currentUserId === OWNER.id
+        ? ['view', 'edit_settings', 'manage_members', 'manage_admins', 'delete']
+        : ['view', 'edit_settings', 'manage_members'],
   } as never
 
   const router = createRouter({
     history: createMemoryHistory(),
     routes: [
       { path: '/spaces/:spaceId/members', name: 'Members', component: Members as Component },
-      // 页头「邀请成员」跳的两处设置入口；名字与 `router/spaces.ts` 一致。
-      {
-        path: '/spaces/:spaceId/manage/settings/invite-codes',
-        name: 'SpacesDetailSettingsInviteCodes',
-        component: { template: '<div />' },
-      },
+      // 页头「邮箱域名组」跳的设置入口；名字与 `router/spaces.ts` 一致。
       {
         path: '/spaces/:spaceId/manage/settings/domain-groups',
         name: 'SpacesDetailSettingsDomainGroups',
@@ -122,16 +135,20 @@ describe('空间成员页', () => {
     vi.stubGlobal('devicePixelRatio', 1)
     listMembers.mockResolvedValue({
       members: [
-        { userId: 3, joinedAt: 0, user: { id: 3, username: 'lin', nickname: '成员丙' }, inviteCode: null },
-        {
-          userId: 4,
-          joinedAt: 0,
-          user: { id: 4, username: 'zhou', nickname: '成员丁' },
-          inviteCode: { id: 9, code: 'ABCD2345EF' },
-        },
+        { userId: 3, joinedAt: 0, user: { id: 3, username: 'lin', nickname: '成员丙' } },
+        { userId: 4, joinedAt: 0, user: { id: 4, username: 'zhou', nickname: '成员丁' } },
       ],
     })
     updateAdmin.mockResolvedValue({ space: null })
+    getJoinLink.mockResolvedValue({ token: 'tok-1', approval: false })
+    updateJoinLink.mockImplementation(async (_id: number, data: { approval: boolean }) => ({
+      token: 'tok-1',
+      approval: data.approval,
+    }))
+    resetJoinLink.mockResolvedValue({ token: 'tok-2', approval: false })
+    listJoinRequests.mockResolvedValue({ requests: [] })
+    approveJoinRequest.mockResolvedValue(true)
+    rejectJoinRequest.mockResolvedValue(true)
   })
 
   afterEach(() => {
@@ -141,19 +158,55 @@ describe('空间成员页', () => {
     vi.clearAllMocks()
   })
 
+  it('shows and searches remarks without losing original names or handles', async () => {
+    listMembers.mockResolvedValue({
+      members: [
+        {
+          userId: 3,
+          joinedAt: 0,
+          user: { id: 3, username: 'reader', nickname: 'Public reader', remark: 'My colleague' },
+        },
+      ],
+    })
+    const store = await mount(OWNER.id)
+    store.currentSpace!.admins = store.currentSpace!.admins.map((admin) =>
+      admin.user.id === ADMIN.id
+        ? { ...admin, user: { ...admin.user, nickname: 'Public admin', remark: 'My administrator' } }
+        : admin
+    )
+    expect(await screen.findByText('My colleague')).toBeTruthy()
+    expect(await screen.findByText('My administrator')).toBeTruthy()
+    expect(rowOf('My colleague').textContent).toContain('Public reader')
+    expect(rowOf('My administrator').textContent).toContain('Public admin')
+    const search = screen.getByRole('textbox', { name: 'spaces.members.search' })
+    for (const query of ['My colleague', 'Public reader', 'reader']) {
+      await fireEvent.update(search, query)
+      expect(screen.getByText('My colleague')).toBeTruthy()
+      expect(screen.queryByText('My administrator')).toBeNull()
+    }
+  })
+
+  it('identifies join applicants by remark while retaining public identity', async () => {
+    listJoinRequests.mockResolvedValue({
+      requests: [
+        {
+          id: 12,
+          userId: 5,
+          createdAt: 0,
+          user: { id: 5, username: 'applicant', nickname: 'Public applicant', remark: 'My applicant' },
+        },
+      ],
+    })
+    await mount(OWNER.id)
+    expect(await screen.findByText('My applicant')).toBeTruthy()
+    expect(screen.getByText(/Public applicant.*applicant/)).toBeTruthy()
+  })
+
   it('管理员不在成员表里也会列出来', async () => {
     await mount(OWNER.id)
     await waitFor(() => expect(rows().length).toBe(4))
     expect(rows().some((r) => r.includes('所有者甲'))).toBe(true)
     expect(rows().some((r) => r.includes('管理员乙'))).toBe(true)
-  })
-
-  it('有记录就写那张码，没记录写未知', async () => {
-    await mount(OWNER.id)
-    await waitFor(() => expect(rows().length).toBe(4))
-    expect(rowOf('成员丁').textContent).toContain('ABCD2345EF')
-    expect(rowOf('成员丙').textContent).toContain('spaces.members.unknown')
-    expect(rowOf('成员丙').textContent).not.toContain('ABCD2345EF')
   })
 
   it('不是所有者的人看不到改角色的按钮', async () => {
@@ -176,18 +229,70 @@ describe('空间成员页', () => {
     await waitFor(() => expect(updateAdmin).toHaveBeenCalledWith(SPACE_ID, ADMIN.id, { role: 'OWNER' }))
   })
 
-  it('页头的「邀请成员」把人送到设置里那两处邀请入口', async () => {
+  it('页头的「邮箱域名组」把人送到设置里那一页', async () => {
     await mount(OWNER.id)
     await waitFor(() => expect(rows().length).toBe(4))
+    const domains = screen.getByRole('link', { name: 'spaces.members.inviteDomainGroups' })
+    expect(domains.getAttribute('href')).toBe(`/spaces/${SPACE_ID}/manage/settings/domain-groups`)
+  })
 
-    await fireEvent.click(button(document, 'spaces.members.invite'))
-    await waitFor(() => expect(document.body.textContent).toContain('spaces.members.inviteCodes'))
+  it('进来就读这个空间的加入链接，画出完整的地址', async () => {
+    await mount(OWNER.id)
+    await waitFor(() => expect(getJoinLink).toHaveBeenCalledWith(SPACE_ID))
+    const field = await screen.findByRole('textbox', { name: '加入链接' })
+    expect((field as HTMLInputElement).value).toBe(`${window.location.origin}/space-invites/tok-1`)
+  })
 
-    const links = Array.from(document.querySelectorAll('a'))
-    const codes = links.find((a) => a.textContent?.includes('spaces.members.inviteCodes'))
-    const domains = links.find((a) => a.textContent?.includes('spaces.members.inviteDomainGroups'))
-    expect(codes?.getAttribute('href')).toBe(`/spaces/${SPACE_ID}/manage/settings/invite-codes`)
-    expect(domains?.getAttribute('href')).toBe(`/spaces/${SPACE_ID}/manage/settings/domain-groups`)
+  it('重置链接：发重置请求，地址换成新的那条', async () => {
+    await mount(OWNER.id)
+    await screen.findByRole('textbox', { name: '加入链接' })
+
+    await fireEvent.click(screen.getByRole('button', { name: '重置链接' }))
+    await waitFor(() => expect(resetJoinLink).toHaveBeenCalledWith(SPACE_ID))
+    await waitFor(() =>
+      expect((screen.getByRole('textbox', { name: '加入链接' }) as HTMLInputElement).value).toBe(
+        `${window.location.origin}/space-invites/tok-2`
+      )
+    )
+  })
+
+  it('打开「加入需要批准」：发的是 approval: true，申请那一块出现', async () => {
+    await mount(OWNER.id)
+    await screen.findByRole('textbox', { name: '加入链接' })
+    expect(screen.queryByText('spaces.members.requests.empty')).toBeNull()
+
+    await fireEvent.input(screen.getByRole('checkbox', { name: '加入需要批准' }), { target: { checked: true } })
+    await waitFor(() => expect(updateJoinLink).toHaveBeenCalledWith(SPACE_ID, { approval: true }))
+    expect(await screen.findByText('spaces.members.requests.empty')).toBeTruthy()
+  })
+
+  it('批准一份申请：发的是那一份的 id，成员表跟着重读', async () => {
+    getJoinLink.mockResolvedValue({ token: 'tok-1', approval: true })
+    listJoinRequests.mockResolvedValueOnce({
+      requests: [{ id: 31, userId: 21, user: { id: 21, username: 'wu', nickname: '申请人戊' }, createdAt: 0 }],
+    })
+    await mount(OWNER.id)
+    await screen.findByText('申请人戊')
+    const before = listMembers.mock.calls.length
+
+    await fireEvent.click(screen.getByRole('button', { name: 'spaces.members.requests.approve' }))
+    await waitFor(() => expect(approveJoinRequest).toHaveBeenCalledWith(SPACE_ID, 31))
+    expect(rejectJoinRequest).not.toHaveBeenCalled()
+    await waitFor(() => expect(listMembers.mock.calls.length).toBeGreaterThan(before))
+    await waitFor(() => expect(screen.queryByText('申请人戊')).toBeNull())
+  })
+
+  it('拒绝一份申请：发的是那一份的 id，不批准', async () => {
+    getJoinLink.mockResolvedValue({ token: 'tok-1', approval: true })
+    listJoinRequests.mockResolvedValueOnce({
+      requests: [{ id: 32, userId: 22, user: { id: 22, username: 'ji', nickname: '申请人己' }, createdAt: 0 }],
+    })
+    await mount(OWNER.id)
+    await screen.findByText('申请人己')
+
+    await fireEvent.click(screen.getByRole('button', { name: 'spaces.members.requests.reject' }))
+    await waitFor(() => expect(rejectJoinRequest).toHaveBeenCalledWith(SPACE_ID, 32))
+    expect(approveJoinRequest).not.toHaveBeenCalled()
   })
 
   it('每个角色旁都写着一句这个角色能做什么', async () => {
@@ -197,6 +302,69 @@ describe('空间成员页', () => {
     expect(rowOf('管理员乙').textContent).toContain('spaces.members.role.adminHint')
     expect(rowOf('成员丙').textContent).toContain('spaces.members.role.memberHint')
     expect(rowOf('成员丁').textContent).toContain('spaces.members.role.memberHint')
+  })
+
+  it('成员有个人备注时显示备注，原名与账号仍认得出', async () => {
+    listMembers.mockResolvedValue({
+      members: [
+        { userId: 3, joinedAt: 0, user: { id: 3, username: 'lin', nickname: '成员丙', remark: '小林' } },
+        { userId: 4, joinedAt: 0, user: { id: 4, username: 'zhou', nickname: '成员丁' } },
+      ],
+    })
+    await mount(OWNER.id)
+    await waitFor(() => expect(rows().length).toBe(4))
+    const row = rowOf('小林')
+    expect(row.textContent).toContain('(成员丙)')
+    expect(row.textContent).toContain('lin')
+    // 没设备注的人照旧显示昵称。
+    expect(rowOf('成员丁').textContent).not.toContain('(成员丁)')
+  })
+
+  it('搜索认备注、原名和账号，都是同一个人', async () => {
+    listMembers.mockResolvedValue({
+      members: [{ userId: 3, joinedAt: 0, user: { id: 3, username: 'lin', nickname: '成员丙', remark: '小林' } }],
+    })
+    await mount(OWNER.id)
+    // 两位管理员 + 这一位成员。
+    await waitFor(() => expect(rows().length).toBe(3))
+    const search = document.querySelector('.mem__search input') as HTMLInputElement
+
+    await fireEvent.update(search, '小林')
+    expect(rows().some((r) => r.includes('小林'))).toBe(true)
+
+    await fireEvent.update(search, '成员丙')
+    expect(rows().some((r) => r.includes('小林'))).toBe(true)
+
+    await fireEvent.update(search, 'lin')
+    expect(rows().some((r) => r.includes('小林'))).toBe(true)
+  })
+
+  it('昵称就是账号且没备注时，副行不重复写同一个名字', async () => {
+    listMembers.mockResolvedValue({
+      members: [
+        { userId: 3, joinedAt: 0, user: { id: 3, username: 'ada', nickname: 'ada' } },
+        { userId: 4, joinedAt: 0, user: { id: 4, username: 'lin', nickname: '成员丙' } },
+      ],
+    })
+    await mount(OWNER.id)
+    await waitFor(() => expect(rows().length).toBe(4))
+    const twins = rowOf('ada')
+    // 名字一行写着 ada；副行不该再写一遍。
+    expect(twins.textContent!.split('ada').length - 1).toBe(1)
+    // 昵称与账号不同时，账号照写在副行。
+    expect(rowOf('成员丙').textContent).toContain('lin')
+  })
+
+  it('加入申请的申请人显示备注与原名', async () => {
+    listJoinRequests.mockResolvedValue({
+      requests: [
+        { id: 31, userId: 9, createdAt: 0, user: { id: 9, username: 'qinmo', nickname: 'qinmo', remark: '秦老师' } },
+      ],
+    })
+    await mount(OWNER.id)
+    await waitFor(() => expect(document.body.textContent).toContain('秦老师'))
+    // 昵称和账号是同一串：副行只写一次，不写成「(qinmo) · qinmo」。
+    expect(document.body.textContent).not.toContain('(qinmo) · qinmo')
   })
 
   it('读失败时成员那一块换成原因和一条重试，不再假装只有管理员', async () => {

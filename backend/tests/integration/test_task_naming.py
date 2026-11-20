@@ -53,8 +53,8 @@ from tests.support.living_doc import document_of
 def gateway(monkeypatch: pytest.MonkeyPatch) -> dict:
     """The LiteLLM gateway, stubbed: ``answers`` is what the model says next.
 
-    An answer is the JSON object the model replies with, or an
-    ``httpx.Response`` for a call that does not come back the usual way (the
+    An answer is the JSON object the model replies with, a function from what
+    the model read to that object, or an ``httpx.Response`` for a call that does not come back the usual way (the
     model cut off mid-thought, an upstream error). ``bodies`` is what the model
     was asked."""
     seen: dict = {
@@ -74,6 +74,9 @@ def gateway(monkeypatch: pytest.MonkeyPatch) -> dict:
             seen["asked"].append(body["messages"][-1]["content"])
             seen["bodies"].append(body)
             answer = seen["answers"].pop(0) if seen["answers"] else {"keep": True}
+            if callable(answer):
+                # A model that answers from what it was given to read.
+                answer = answer(body["messages"][-1]["content"])
             if isinstance(answer, httpx.Response):
                 return answer
             content = answer if isinstance(answer, str) else json.dumps(answer)
@@ -373,6 +376,26 @@ def test_a_task_turned_from_a_message_is_named_by_that_message(client, alice, ga
     asked = gateway["asked"][0]
     assert '<message role="person">请在项目里新建一个 hello.md' in asked
     assert asked.index("新建一个 hello.md") < asked.index("按什么口径写")
+
+
+def test_a_title_taken_from_the_conversation_reads_as_the_person_typed_it(
+    client, alice, gateway
+):
+    """A model names a task with the words it read. However the conversation
+    is framed for it, the title people see carries the characters the person
+    typed — ``<``, ``&`` and quotes included — not markup for them."""
+    said = 'R&D <2万 "回滚"'
+    tid = _turned_from(client, alice, said)
+
+    def quoting(asked: str) -> dict:
+        start = asked.index('<message role="person">') + len('<message role="person">')
+        return {"keep": False, "title": asked[start : asked.index("</message>", start)]}
+
+    gateway["answers"].append(quoting)
+    assert _run(client, tid, "idle") is not None
+
+    assert _shown(client, tid) == (said, "auto")
+    assert _history(client, tid)[-1][0] == said
 
 
 def test_a_task_turned_from_a_discussion_reads_what_was_said_under_it(
@@ -925,11 +948,13 @@ def test_a_title_the_tasks_own_session_gives_is_still_the_platforms(
     room = project["root_topic_id"]
     tid = _task(client, alice, room)
     own = {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=project["id"],
-            topic_id=tid,
-            agent_handle=room_agent_seat(client, room),
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(
+                project_id=project['id'],
+                topic_id=tid,
+                agent_handle=room_agent_seat(client, room),
+            )
+        }"
     }
     r = client.post(f"/topics/{tid}/title", json={"title": "限流开关"}, headers=own)
     assert r.status_code == 200, r.text

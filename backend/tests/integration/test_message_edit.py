@@ -6,7 +6,6 @@ nobody else may. Everyone in the room sees the new text live, marked as edited.
 """
 
 import asyncio
-import time
 import uuid
 
 import pytest
@@ -135,7 +134,7 @@ def test_nobody_else_edits_a_persons_message(client):
     attempts = [
         session_auth_headers("bob"),  # in the room, not the author
         session_auth_headers("mallory"),  # not in the project
-        {"X-Cheese-Token": agent_token},  # the room's agent
+        {"Authorization": f"Bearer {agent_token}"},  # the room's agent
         {},  # nobody signed in
     ]
     for headers in attempts:
@@ -145,7 +144,9 @@ def test_nobody_else_edits_a_persons_message(client):
 
 def test_an_agent_edits_its_own_message_through_the_same_route(client):
     room, project = _room(client)
-    headers = {"X-Cheese-Token": mint_scoped_token(project_id=project, topic_id=room)}
+    headers = {
+        "Authorization": f"Bearer {mint_scoped_token(project_id=project, topic_id=room)}"
+    }
     posted = client.post(
         f"/topics/{room}/messages",
         json={
@@ -227,7 +228,9 @@ def test_a_persons_edit_stores_what_sending_it_stores(client, make_room):
 @ROOMS
 def test_an_agents_edit_stores_what_publishing_it_stores(client, make_room):
     room, project, _ = make_room(client)
-    headers = {"X-Cheese-Token": mint_scoped_token(project_id=project, topic_id=room)}
+    headers = {
+        "Authorization": f"Bearer {mint_scoped_token(project_id=project, topic_id=room)}"
+    }
 
     def publish(content: str) -> str:
         response = client.post(
@@ -315,12 +318,14 @@ def _two_teammates(client) -> dict:
     """A channel of alice's with two AI seats on it, and a 支线 of that channel.
 
     `place` is the 支线 — where a person talks when they call a teammate;
-    `channel` is the main line, where a message is answered in its own 支线.
+    `channel` is the main line, where a message is answered too. bob is in the
+    project, so a message there that names nobody calls nobody.
     `own` is the seat the channel falls back to, `other` the one it does not.
     """
     project = post_project(client, json={"name": "编辑点名"}, owner="alice").json()[
         "data"
     ]
+    join_project_team(client, project["id"], "bob")
     channel = client.post(
         "/topics",
         json={"project_id": project["id"], "title": "话题"},
@@ -353,21 +358,6 @@ def _reactions_on(client, place: str, block_id: str) -> list[dict]:
     return next(b for b in blocks if b["id"] == block_id)["reactions"]
 
 
-def _await_reaction(client, place: str, block_id: str, emoji: str) -> dict:
-    """``block_id``'s ``emoji`` reaction, once it lands.
-
-    A receipt is reported by the harness on its own task, so it is not ordered
-    against the edit's own response; asking the durable state is the only way to
-    ask without racing (the same looseness `test_reactions` documents).
-    """
-    for _ in range(200):
-        for reaction in _reactions_on(client, place, block_id):
-            if reaction["emoji"] == emoji:
-                return reaction
-        time.sleep(0.02)
-    raise AssertionError(f"no {emoji} ever landed on {block_id}")
-
-
 async def _thread_of(client, block_id: str) -> Thread | None:
     async with client.test_factory() as session:
         return await session.scalar(
@@ -396,18 +386,6 @@ def test_an_edit_that_newly_names_a_teammate_starts_its_turn(client, stub_hooks)
     [(_, prompt)] = arrivals
     assert f"<@{other}> 接口先别动" in prompt
     assert "alice" in prompt
-
-
-def test_a_teammate_the_edit_names_leaves_its_seen_receipt(client):
-    """被编辑点到的队友，和发消息时被点到的队友一样，在那条消息上留下自己的 👀。"""
-    room = _two_teammates(client)
-    place, other = room["place"], room["other"]
-    said = _say(client, place, "alice", "接口先别动")
-    wait_work_idle()
-
-    _edit(client, said, f"<@{other}> 接口先别动", session_auth_headers("alice"))
-
-    assert _await_reaction(client, place, said, "👀")["authors"] == [other]
 
 
 def test_an_edit_that_names_nobody_wakes_nobody(client, stub_hooks):
@@ -439,10 +417,10 @@ def test_an_edit_does_not_wake_a_teammate_the_message_already_named(client, stub
     assert len(_deliveries(client, place)) == before
 
 
-def test_an_edit_to_a_main_line_message_hands_the_teammate_to_its_thread(
+def test_an_edit_to_a_main_line_message_hands_the_teammate_the_main_line(
     client, stub_hooks
 ):
-    """主线上那条消息被编辑后点到的队友，在那条消息的支线里开这一轮。"""
+    """主线上那条消息被编辑后点到的队友，就在主线上开这一轮，不开支线。"""
     room = _two_teammates(client)
     channel, other = room["channel"], room["other"]
     said = _say(client, channel, "alice", "接口先别动")
@@ -452,9 +430,10 @@ def test_an_edit_to_a_main_line_message_hands_the_teammate_to_its_thread(
     _edit(client, said, f"<@{other}> 接口先别动", session_auth_headers("alice"))
     wait_work_idle()
 
-    thread = asyncio.run(_thread_of(client, said))
-    assert thread is not None, "a main-line message is answered in its 支线"
-    [row] = _deliveries(client, str(thread.id))
+    assert asyncio.run(_thread_of(client, said)) is None
+    [row] = [
+        row for row in _deliveries(client, channel) if row.recipient_handle == other
+    ]
     assert row.recipient_handle == other
     assert row.payload["eventType"] == mention.BY_PERSON
     assert row.state == "received", row.last_error

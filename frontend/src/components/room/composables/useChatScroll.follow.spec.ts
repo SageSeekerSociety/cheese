@@ -297,3 +297,58 @@ describe('时间线外面还包了一层，输入区在包装层外面', () => {
     expect(box.el.scrollTop).toBe(1600)
   })
 })
+
+// 停在对话最底下，点左上角书签跳到上面某一条（真人 2026-10-26 反馈：被拽回来，到不了
+// 那一条）。书签浮条挂在滚动框外面，点它不算「人在滚」；而 agent 在跑时输入框上方那行
+// 「用时」每秒都在改这一栏，上面那条改写兜底正好把这次往上的移动读成浏览器锚定，当场
+// 钉回底部。这一下滚动是我们自己发的，两条判据都该让开。
+describe('点书签跳到上面那一条', () => {
+  /** 这一栏刚被就地改写：agent 在跑时每秒都有一次。 */
+  async function rewriteNow(content: HTMLElement) {
+    content.append(document.createElement('p'))
+    await new Promise((r) => setTimeout(r)) // MutationObserver 的回调
+  }
+
+  it('是我们自己发的滚动：停在最底下点书签，落到那一条上，不拽回底部', async () => {
+    const { box, scroll } = await mounted(2000)
+    await rewriteNow(scroll.contentRef.value!)
+    scroll.beginOwnScroll() // scrollIntoView 之前
+    box.el.scrollTop = 1600 - 30 // 平滑滚动的第一帧：离底部还不到 80
+    scroll.rememberScroll('t-jump')
+    // 这一帧近底部、又赶上刚被改写：那一瞬间位置和「在不在底部」都还没定，跟随由
+    // 窗口自己挡着（下面长高一截，也不该被拽回底部）。
+    box.grow(400)
+    fire()
+    expect(box.el.scrollTop).toBe(1600 - 30)
+    box.el.scrollTop = 1600 - 900 // 落到了书签那一条
+    scroll.rememberScroll('t-jump')
+    await new Promise((r) => setTimeout(r, 200)) // 安静下来，算滚完了
+    expect(scroll.atBottom.value).toBe(false)
+    expect(box.el.scrollTop).toBe(700)
+  })
+
+  it('跳过去之后读的人自己滚轮：仍是他翻走了，不拽回底部', async () => {
+    const { box, scroll } = await mounted(2000)
+    await rewriteNow(scroll.contentRef.value!)
+    scroll.beginOwnScroll()
+    box.el.scrollTop = 1600 - 900
+    box.el.dispatchEvent(new WheelEvent('wheel', { deltaY: 300 }))
+    await rewriteNow(scroll.contentRef.value!)
+    box.el.scrollTop = 700 + 300
+    scroll.rememberScroll('t-jump-wheel')
+    expect(scroll.atBottom.value).toBe(false)
+    expect(box.el.scrollTop).toBe(1000)
+  })
+
+  it('跳的地方本来就靠底部：停下之后照常跟新消息', async () => {
+    const { box, scroll } = await mounted(2000)
+    scroll.beginOwnScroll()
+    box.el.scrollTop = 1600 - 40 // 书签正是最后一条那一带
+    scroll.rememberScroll('t-jump-bottom')
+    await new Promise((r) => setTimeout(r, 200)) // 安静下来，算滚完了
+    expect(scroll.atBottom.value).toBe(true)
+    box.grow(10)
+    fire()
+    expect(box.el.scrollTop).toBe(1610)
+  })
+})

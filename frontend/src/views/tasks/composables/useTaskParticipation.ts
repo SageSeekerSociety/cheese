@@ -2,14 +2,15 @@ import type { useTaskData } from './useTaskData'
 
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 
 import { useEvents } from '../events'
 
 import { TaskBoardApi } from '@/api/taskBoard'
 import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 import { useDialog } from '@/plugins/dialog'
 import AccountService from '@/services/account'
+import errorHandler from '@/services/ErrorHandler'
 
 export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskData>) {
   const { taskData, loadTaskData } = taskDataModule
@@ -18,6 +19,19 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
   const router = useRouter()
 
   const selectedTeamId = ref<number | null>(null)
+
+  /** 直接开始的题点了就开始；申请制的题先申请，等出题人通过。 */
+  const direct = () => taskData.value?.startMode === 'DIRECT'
+
+  /** 开始了就进项目；申请制的题申请时还没有项目（通过后点「开始做这道题」才建），留在题目页。 */
+  const opened = async (project: { id: string } | null) => {
+    if (project) {
+      toast.success(t('tasks.participation.started'))
+      await router.push(`/projects/${project.id}`)
+    } else {
+      toast.success(t('tasks.participation.applied'))
+    }
+  }
 
   // 注册事件监听
   events.on('select-team', (teamId: number) => {
@@ -68,25 +82,25 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
       const result = await TaskBoardApi.join(
         taskData.value.id,
         {
-          deadline: null,
           email: contactInfo.email,
           phone: contactInfo.phone,
           applyReason: contactInfo.applyReason,
           personalAdvantage: undefined,
           remark: undefined,
-          // 领取确认框里列出了导师，按下确认就是同意他们加入项目。
-          agreeMentors: (taskData.value.mentors?.length ?? 0) > 0,
+          // 直接开始的题，确认框里列出了导师，按下确认就是同意他们加入项目；申请时不问。
+          agreeMentors: direct() && (taskData.value.mentors?.length ?? 0) > 0,
         },
         teamId
       )
 
-      toast.success(t('tasks.participation.joined'))
       await loadTaskData()
       events.emit('reload-joined-teams')
-      await router.push(`/projects/${result.project.id}`)
+      await opened(result.project)
     } catch (error) {
-      toast.error(t('tasks.participation.teamClaimFailed'))
-      console.error('Failed to join task as team:', error)
+      // 服务端说了为什么（例如项目正在建、过一会儿再试），就说那一句。
+      void errorHandler.handle(error as Error, {
+        defaultMessage: t(direct() ? 'tasks.participation.startFailed' : 'tasks.participation.teamClaimFailed'),
+      })
     }
   }
 
@@ -101,23 +115,48 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
       }
 
       const result = await TaskBoardApi.join(taskData.value.id, {
-        deadline: null,
         email: contactInfo?.email,
         phone: contactInfo?.phone,
         applyReason: contactInfo?.applyReason,
         personalAdvantage: undefined,
         remark: undefined,
-        // 领取确认框里列出了导师，按下确认就是同意他们加入项目。
-        agreeMentors: (taskData.value.mentors?.length ?? 0) > 0,
+        // 直接开始的题，确认框里列出了导师，按下确认就是同意他们加入项目；申请时不问。
+        agreeMentors: direct() && (taskData.value.mentors?.length ?? 0) > 0,
       })
 
-      toast.success(t('tasks.participation.joined'))
       await loadTaskData()
-      await router.push(`/projects/${result.project.id}`)
+      await opened(result.project)
     } catch (error) {
-      toast.error(t('tasks.participation.claimFailed'))
+      void errorHandler.handle(error as Error, {
+        defaultMessage: t(direct() ? 'tasks.participation.startFailed' : 'tasks.participation.claimFailed'),
+      })
     }
   }
+
+  /** 已经通过、还没有项目的那份领取（申请制的题通过了，或上次建仓库没成）：点「开始做这道题」
+   *  先弹开始的确认框（导师在这一刻问），按了「开始做」才用这道题新建项目。联系方式申请时
+   *  已经给过，不再问。 */
+  const startingClaim = ref<{ type: 'USER' | 'TEAM'; memberId: number } | null>(null)
+  const openApprovedClaim = (claim: { type: 'USER' | 'TEAM'; memberId: number }) => {
+    startingClaim.value = claim
+    events.emit('start-dialog-open', true)
+  }
+
+  events.on('start-confirmed', async () => {
+    const claim = startingClaim.value
+    if (!taskData.value || !claim) return
+    try {
+      const result = await TaskBoardApi.join(
+        taskData.value.id,
+        { agreeMentors: (taskData.value.mentors?.length ?? 0) > 0 },
+        claim.type === 'TEAM' ? claim.memberId : undefined
+      )
+      await loadTaskData()
+      await opened(result.project)
+    } catch (error) {
+      void errorHandler.handle(error as Error, { defaultMessage: t('tasks.participation.startFailed') })
+    }
+  })
 
   // 退出任务主逻辑
   const confirmLeaveTask = async () => {
@@ -187,6 +226,7 @@ export function useTaskParticipation(taskDataModule: ReturnType<typeof useTaskDa
 
   return {
     onJoinTaskClicked,
+    openApprovedClaim,
     handleVerifyInfoSubmit,
     confirmLeaveTask,
     leaveTaskWithTeam,

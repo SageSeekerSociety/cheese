@@ -10,8 +10,8 @@
 // 调用方把话递回来（`error`）—— 那句话写在这一页里，人改了字段就地再存一次。
 //
 // 「时间」和「条件」两颗勾选框看着是两样，其实是同一个 `trigger` 的二选一：一条规则只有
-// 一种触发方式。所以勾上这一颗就是取消那一颗；两颗都不勾也是允许的 —— 那样存下来先不跑，
-// 等之后在「修改」里定了触发方式再开始。
+// 一种触发方式。所以勾上这一颗就是取消那一颗；两颗都不勾也是允许的 —— 存下来先不跑，
+// 由队友照目标补上（就是表顶上那句「未填项由它生成」）。
 //
 // 条件那一头记着的是 `eventTrigger`，取消再勾回来还是刚才那一样：勾选框只是它的开关。
 import type { Routine, RoutineInput, RoutineTrigger } from '@/lib/routine'
@@ -21,7 +21,7 @@ import { computed, reactive, ref, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
-import { routineFreqs, routineWeekdays } from '@/lib/routine'
+import { eventTriggers, routineFreqs, routineWeekdays } from '@/lib/routine'
 import { presetTemplates, routineWhenText } from '@/lib/routineTemplates'
 
 const props = withDefaults(
@@ -79,6 +79,8 @@ const form = reactive({
   day: 1,
   minute: 0,
   timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Shanghai',
+  /** 审阅有结果那一条只等哪一种；空着是两种都算。 */
+  outcome: '' as '' | 'accepted' | 'rejected',
 })
 
 const editing = ref<Routine | null>(null)
@@ -124,6 +126,7 @@ watch(
       day: (spec.day as number) ?? 1,
       minute: (spec.minute as number) ?? 0,
       timezone: r?.timezone ?? form.timezone,
+      outcome: (spec.outcome as '' | 'accepted' | 'rejected') ?? '',
     })
   },
   { immediate: true }
@@ -132,31 +135,54 @@ watch(
 const presets = computed(() => presetTemplates())
 /** 时间那一栏画不画：勾着「时间」的时候才画。 */
 const onTime = computed(() => form.trigger === 'schedule')
-const conditionOptions = computed(() =>
-  (['library_file_added', 'task_closed', 'card_accepted'] as RoutineTrigger[]).map((value) => ({
-    value,
-    title: t(`routines.trigger.${value}`),
-  }))
-)
+/**
+ * 「条件」那一颗勾着没有。
+ *
+ * 不能写成「不是时间」：那样两个都不选的时候它也是勾着的，点它取消只是把空串再写一遍，
+ * 界面上永远取消不掉，也看不出两个都没选。它说的是「选了一种事件触发」。
+ */
+const onCondition = computed(() => form.trigger !== '' && form.trigger !== 'schedule')
+/** 这张表还有没有空格要芝士补：名称取目标的第一句，所以「名称」和「什么时候」
+ *  才是那两格。全填上时那句「未填项由它生成」就不该再挂着。 */
+const hasBlank = computed(() => !form.title.trim() || !form.trigger)
+/** 条件那几颗列在 `lib/routine.ts`，和别处读的同一份。 */
+const conditionOptions = computed(() => eventTriggers())
 
 /** 勾「时间」或勾「条件」：换到那一头去，另一颗跟着灭；再点已选中的那颗就取消。 */
-function pickTrigger(next: RoutineTrigger) {
-  form.trigger = form.trigger === next ? '' : next
-  if (next !== 'schedule') eventTrigger.value = next
-}
 function toggleTime(on: unknown) {
-  if (on) pickTrigger('schedule')
+  if (on) form.trigger = 'schedule'
   else if (form.trigger === 'schedule') form.trigger = ''
 }
 function toggleCondition(on: unknown) {
-  if (on) pickTrigger(eventTrigger.value)
+  if (on) form.trigger = eventTrigger.value
   else if (form.trigger !== 'schedule') form.trigger = ''
+}
+/** 「审阅有结果」之后问的那一句：采纳、退回，或者两种都算（空串）。 */
+const outcomeOptions = computed(
+  () =>
+    [
+      { value: '', title: t('routines.form.outcomeEither') },
+      { value: 'accepted', title: t('routines.form.outcomeAccepted') },
+      { value: 'rejected', title: t('routines.form.outcomeRejected') },
+    ] as { value: '' | 'accepted' | 'rejected'; title: string }[]
+)
+
+/** 条件那几条是单选：点哪条就是哪条。换一条时把上一条的结果清掉，别让「只看采纳」
+ *  跟着跑到「任务提交审阅」身上去。 */
+function pickCondition(next: RoutineTrigger) {
+  if (next !== form.trigger) form.outcome = ''
+  eventTrigger.value = next
+  form.trigger = next
 }
 
 /** 表单里的几样人话 → 后端要的 `spec`。 */
 function specFromForm(): Record<string, unknown> {
   if (!form.trigger) return {}
-  if (form.trigger !== 'schedule') return { scope: scopeOfRoutine() }
+  if (form.trigger !== 'schedule') {
+    const spec: Record<string, unknown> = { scope: scopeOfRoutine() }
+    if (form.trigger === 'task_decided' && form.outcome) spec.outcome = form.outcome
+    return spec
+  }
   return { ...whenFromForm(), ...keptFromRoutine() }
 }
 
@@ -190,6 +216,17 @@ function keptFromRoutine(): Record<string, unknown> {
 /** 一条模板「什么时候跑」那一行：按读者此刻的语言现算（模板本身只存 `spec`）。 */
 function whenText(tpl: RoutineTemplate): string {
   return routineWhenText(tpl.trigger, tpl.spec)
+}
+
+/**
+ * 模板列表里那一行：什么时候跑，加一句目标是干什么的。
+ *
+ * 模板可以没有触发方式（从一张两个都没勾的表存下来的）。那一行就只有目标，不另写一句
+ * 「还没定什么时候跑」——模板这一页只摆模板自己的几格，不让表单里的说明跟过来。
+ */
+function whatFor(tpl: RoutineTemplate): string {
+  const when = whenText(tpl)
+  return when ? `${when} · ${tpl.goal}` : tpl.goal
 }
 
 /** 挑一条模板：把它那几格铺进表里，然后翻到那张表上让人看一眼、再改。 */
@@ -325,7 +362,7 @@ function submit() {
         <li v-for="tpl in presets" :key="tpl.id" class="tpl">
           <button type="button" class="tpl__pick" @click="applyTemplate(tpl)">
             <span class="tpl__title">{{ tpl.title }}</span>
-            <span class="tpl__meta">{{ whenText(tpl) }} · {{ tpl.goal }}</span>
+            <span class="tpl__meta">{{ whatFor(tpl) }}</span>
           </button>
         </li>
       </ul>
@@ -339,7 +376,7 @@ function submit() {
           <li v-for="tpl in templates" :key="tpl.id" class="tpl">
             <button type="button" class="tpl__pick" @click="applyTemplate(tpl)">
               <span class="tpl__title">{{ tpl.title }}</span>
-              <span class="tpl__meta">{{ whenText(tpl) }} · {{ tpl.goal }}</span>
+              <span class="tpl__meta">{{ whatFor(tpl) }}</span>
             </button>
             <button type="button" class="tpl__act" @click="editTemplate(tpl)">
               {{ t('routines.action.edit') }}
@@ -368,7 +405,11 @@ function submit() {
         <span class="compose__room-name">{{ roomName }}</span>
       </div>
 
-      <p class="t-meta c-faint compose__hint">{{ t('routines.form.autoHint', { agent: agentName }) }}</p>
+      <!-- 这句话只在真有空项时说：填全了的表上还挂着一句「未填项由它生成」，
+           会让人以为哪一格漏了。 -->
+      <p v-if="hasBlank" class="t-meta c-faint compose__hint">
+        {{ t('routines.form.autoHint', { agent: agentName }) }}
+      </p>
 
       <v-text-field
         v-model="form.title"
@@ -376,6 +417,8 @@ function submit() {
         :label="editingTemplate ? t('routines.template.nameLabel') : t('routines.form.name')"
         class="mb-3"
       />
+      <!-- 目标是唯一必填的一格：标签右上一个星号。星号画在 CSS 里、标签文字不加字，
+           按标签文字找这一格的地方（测试、读屏）都还是「目标」。 -->
       <v-textarea
         v-model="form.instructions"
         autocomplete="off"
@@ -384,7 +427,10 @@ function submit() {
         rows="3"
         auto-grow
         required
-      />
+        aria-required="true"
+      >
+        <template #label="{ label }"> {{ label }}<span class="compose__req" aria-hidden="true" /> </template>
+      </v-textarea>
       <v-textarea
         v-model="form.note"
         autocomplete="off"
@@ -439,7 +485,7 @@ function submit() {
       </template>
 
       <v-checkbox
-        :model-value="!onTime"
+        :model-value="onCondition"
         autocomplete="off"
         :label="t('routines.form.conditionOn')"
         hide-details
@@ -447,7 +493,7 @@ function submit() {
         class="compose__switch"
         @update:model-value="toggleCondition"
       />
-      <div v-if="!onTime" class="when-list">
+      <div v-if="onCondition" class="when-list">
         <button
           v-for="opt in conditionOptions"
           :key="opt.value"
@@ -455,19 +501,32 @@ function submit() {
           class="when"
           :class="{ 'when--on': form.trigger === opt.value }"
           :aria-pressed="form.trigger === opt.value"
-          @click="pickTrigger(opt.value)"
+          @click="pickCondition(opt.value)"
+        >
+          {{ opt.title }}
+        </button>
+      </div>
+      <!-- 「任务的审阅有结果」之后问的那一句：采纳、退回，或者两种都算。
+           另起一行、缩进一层，才看得出它是上一条的细分而不是第四条条件。 -->
+      <div v-if="form.trigger === 'task_decided'" class="when-list when-list--narrow">
+        <button
+          v-for="opt in outcomeOptions"
+          :key="opt.value"
+          type="button"
+          class="when"
+          :class="{ 'when--on': form.outcome === opt.value }"
+          :aria-pressed="form.outcome === opt.value"
+          @click="form.outcome = opt.value"
         >
           {{ opt.title }}
         </button>
       </div>
     </div>
-    <p v-if="!form.trigger" class="t-meta c-faint compose__unset">
-      {{ t('routines.form.triggerUnset') }}
-    </p>
-
+    <!-- 「存成模板」和「保存」只属于「新建」那一页：模板页是挑一条，没有要存的表。
+         「取消」两边都留着 —— 它是退出这个建规则的界面，模板页上不挑也能退。 -->
     <div class="compose__foot">
       <v-checkbox
-        v-if="!editing && !editingTemplate"
+        v-if="tab === 'new' && !editing && !editingTemplate"
         v-model="asTemplate"
         autocomplete="off"
         :label="t('routines.form.keepTemplate')"
@@ -475,11 +534,11 @@ function submit() {
         density="compact"
         class="compose__keep"
       />
-      <p v-if="error || localError" role="alert" class="t-body c-danger compose__error">
+      <p v-if="tab === 'new' && (error || localError)" role="alert" class="t-body c-danger compose__error">
         {{ error || localError }}
       </p>
       <BaseButton :disabled="saving" @click="emit('update:modelValue', false)">{{ t('routines.cancel') }}</BaseButton>
-      <BaseButton kind="primary" :loading="saving" @click="submit">
+      <BaseButton v-if="tab === 'new'" kind="primary" :loading="saving" @click="submit">
         {{ t('routines.save') }}
       </BaseButton>
     </div>
@@ -559,11 +618,24 @@ function submit() {
   color: var(--muted);
   font-size: 13px;
 }
+/* 「审阅有结果」的细分：挂在上面那一条下面，缩进一层。 */
+.when-list--narrow {
+  padding-left: 16px;
+  margin-top: -2px;
+}
+
 .compose__section-note {
   color: var(--muted);
 }
 .compose__switch {
   margin-top: 8px;
+}
+/* 必填星号：星号画在标签后面，不进标签文字 —— 读屏和按标签文字找控件的代码
+   （`getByLabelText('目标')`）都还听得见、找得到「目标」两个字。 */
+.compose__req::after {
+  content: '*';
+  margin-left: 2px;
+  color: var(--danger-ink);
 }
 .compose__row {
   display: flex;

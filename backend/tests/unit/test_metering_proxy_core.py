@@ -5,14 +5,14 @@ Covers the proxy half of #198 (scoped-token verify → attribution the sandbox
 cannot forge) and the #218 admission gate (fail-open, cached)."""
 
 import base64
-import hashlib
-import hmac
 import importlib.util
 import io
 import json
 import time
 from pathlib import Path
 from unittest import mock
+
+from app.core import sandbox_auth
 
 CORE = (
     Path(__file__).resolve().parents[3]
@@ -24,8 +24,6 @@ spec = importlib.util.spec_from_file_location("cheese_billing_core", CORE)
 assert spec and spec.loader
 core = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(core)
-
-SECRET = "test-sandbox-token"
 
 
 def test_task_admissions_refresh_execution_and_receipts_record_it(tmp_path):
@@ -135,35 +133,33 @@ def test_child_selection_is_sent_to_backend_admission():
     assert verdict.model == "claude-opus-5"
 
 
-def _mint(claims: dict, secret: str = SECRET) -> str:
-    """The backend's exact minting algorithm (sandbox_auth.mint_scoped_token):
-    urlsafe-b64 JSON body, HMAC-SHA256 sig, both unpadded."""
-    raw = json.dumps(claims, separators=(",", ":")).encode()
-    body = base64.urlsafe_b64encode(raw).decode().rstrip("=")
-    digest = hmac.new(secret.encode(), body.encode(), hashlib.sha256).digest()
-    sig = base64.urlsafe_b64encode(digest).decode().rstrip("=")
-    return f"{body}.{sig}"
+def test_the_proxy_reads_a_session_credential_the_backend_minted():
+    """A session's credential, as the backend mints it, names the same
+    project and room to the proxy — with the secret the two share."""
+    token = sandbox_auth.mint_scoped_token(project_id="proj-1", topic_id="topic-1")
 
-
-def test_valid_token_roundtrips_its_claims():
-    token = _mint({"p": "proj-1", "t": "topic-1", "exp": int(time.time()) + 60})
-
-    claims = core.verify_scoped_token(token, SECRET)
+    claims = core.verify_scoped_token(token, sandbox_auth.SANDBOX_TOKEN)
 
     assert claims and claims["p"] == "proj-1" and claims["t"] == "topic-1"
 
 
-def test_wrong_secret_expired_and_garbage_are_all_rejected():
-    good = {"p": "proj-1", "t": None, "exp": int(time.time()) + 60}
-    assert core.verify_scoped_token(_mint(good), "other-secret") is None
-    expired = _mint({**good, "exp": int(time.time()) - 1})
-    assert core.verify_scoped_token(expired, SECRET) is None
-    assert core.verify_scoped_token("not-a-token", SECRET) is None
-    assert core.verify_scoped_token("", SECRET) is None
-    # A resigned body with a different secret must not pass either.
-    body = _mint(good).split(".", 1)[0]
-    forged_sig = _mint(good, "other-secret").split(".", 1)[1]
-    assert core.verify_scoped_token(f"{body}.{forged_sig}", SECRET) is None
+def test_the_proxy_refuses_what_is_not_a_live_session_credential():
+    """Another secret, an expired credential, another kind of credential, a
+    forged signature or garbage: none of them names a project to bill."""
+    secret = sandbox_auth.SANDBOX_TOKEN
+    good = sandbox_auth.mint_scoped_token(project_id="proj-1")
+    assert core.verify_scoped_token(good, "other-secret") is None
+    expired = sandbox_auth.mint_scoped_token(project_id="proj-1", ttl_s=-1)
+    assert core.verify_scoped_token(expired, secret) is None
+    project_credential = sandbox_auth.mint_project_agent_credential(
+        project_id="proj-1", epoch=0
+    )
+    assert core.verify_scoped_token(project_credential, secret) is None
+    head, body, _ = good.split(".")
+    forged = sandbox_auth.mint_scoped_token(project_id="proj-2").split(".")[2]
+    assert core.verify_scoped_token(f"{head}.{body}.{forged}", secret) is None
+    assert core.verify_scoped_token("not-a-token", secret) is None
+    assert core.verify_scoped_token("", secret) is None
 
 
 def test_proxy_basic_password_extracts_the_connect_credential():

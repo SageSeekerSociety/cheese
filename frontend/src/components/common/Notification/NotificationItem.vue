@@ -67,7 +67,6 @@ import type { RenderedNotificationContent } from './renders/NotificationRenderUt
 
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toast } from 'vuetify-sonner'
 
 import { useNavigation } from '@/composables/useNavigation'
 import { useRowMenu } from '@/composables/useRowMenu'
@@ -79,6 +78,7 @@ import { getNotificationRenderer } from './registry'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import { toast } from '@/lib/toast'
 
 const props = defineProps<{
   notification: Notification

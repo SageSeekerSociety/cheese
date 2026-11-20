@@ -4,10 +4,9 @@
 而它偏偏又是「大家都该知道的事」唯一的落点——于是项目的共识住在一个只有模型读
 得到的地方。文档三样都有，所以那一路的去向是项目目标。
 
-写记忆的那个旧入口已经整个停用（话题「记忆机制照搬CC」）：先是 `cheese_remember
-everyone` 往这份文档里追加的那一路——它把这份文档写成了只增不减的观察清单——接着是
-`cheese_remember` 本身，它写的条目池已经不再注入任何地方。这一组守的是还成立的那
-几头：停用要明说、并且说清该去哪写；每段对话跑一轮时，项目目标在它的提示词里。
+往这份文档里追加记忆的那个旧入口已经删掉（话题「记忆机制照搬CC」）：它把这份文档
+写成了只增不减的观察清单。这一组守的是还成立的那一头：每段对话跑一轮时，项目目标
+在它的提示词里。
 
 按小节写的老文档只有「项目是什么」那一块进提示词：手抄进别的小节的字谁都读不到。
 """
@@ -52,11 +51,6 @@ def _say(client, topic_id: str, text: str = "@芝士 现在什么状态") -> Non
                 break
 
 
-def _overview_text(client, project_id: str) -> str:
-    doc = client.get(_overview(client, project_id)).json()["data"]
-    return (doc or {}).get("content", "")
-
-
 def _write_overview(client, project_id: str, content: str) -> None:
     written = client.put(
         _overview(client, project_id),
@@ -64,30 +58,6 @@ def _write_overview(client, project_id: str, content: str) -> None:
         headers=session_auth_headers("user-1"),
     )
     assert written.status_code == 200, written.text
-
-
-def test_writing_memory_through_this_endpoint_is_retired_and_says_where(client):
-    """写记忆的旧入口整个停用了，而且明说停在哪、该去哪写，不是静默吞掉。
-
-    `scope="everyone"` 那一路先停：它把这份文档写成了一份只增不减的观察清单
-    （话题「记忆机制照搬CC」）。剩下的写入面随后一起收掉——`cheese_remember` 写
-    的是条目池，而条目池已经不再注入任何地方，所以「已记入」是一句谎话。旧会话
-    里的调用方读到的这句要说清记忆现在是什么形状：`~/.cheese/memory/` 下的
-    文件。这份文档是项目目标，只写要做成什么、什么时候做成、这阶段不做什么。
-    """
-    project_id, topic_id = _project_and_room(client)
-
-    for body in (
-        {"content": FACT, "topic": topic_id, "scope": "everyone"},
-        {"content": FACT, "scope": "everyone"},
-        {"content": FACT, "topic": topic_id},
-        {"content": FACT},
-    ):
-        refused = client.post(f"/projects/{project_id}/memory", json=body)
-        assert refused.status_code == 422, refused.text
-        assert "停用" in refused.text
-        assert "~/.cheese/memory/" in refused.text
-    assert FACT not in _overview_text(client, project_id)
 
 
 def test_another_room_reads_the_overview_document_on_its_next_turn(client, stub_hooks):

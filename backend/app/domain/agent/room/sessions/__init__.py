@@ -42,14 +42,13 @@ stays in ``__init__.py`` is what the tree reaches by *this* module path:
     ``app/domain/agent/compute.py``), and the two shapes a seat's session is
     held as (``Live``, ``Clock``);
   * the state: every map in ``__init__`` (``live``, ``work``, ``clocks``,
-    ``tasks``, ``queues``, ``dead`` …) is here, and the sibling modules take an
+    ``tasks``, ``dead`` …) is here, and the sibling modules take an
     instance as their first argument. ``attachments.note`` registers the seat's
     attachment id, so ``__init__`` is where that registry's slot is decided.
 
 Where each moved piece went: ``books`` (what the room hears, and the books kept
 from it), ``reading`` (one seat's reading, attach, and the endings only this
-process sees), ``starting`` (``ensure``), ``speaking`` (a message, a steer, the
-platform's own read), ``lifecycle`` (letting go, and finding again), ``records``
+process sees), ``starting`` (``ensure``), ``speaking`` (a message, a steer), ``lifecycle`` (letting go, and finding again), ``records``
 (``Live``, ``Clock``, ``_home``).
 
 **A package rather than six flat siblings.** C3 (``sibling domains under
@@ -67,7 +66,6 @@ cross-feature coupling C3 is there to catch. ``app/domain/agent/device_hub`` and
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
@@ -81,8 +79,13 @@ from app.domain.agent.room.sessions.records import Clock as Clock
 from app.domain.agent.room.sessions.records import Live as Live
 from app.domain.agent.room.sessions.records import Outdated
 from app.domain.agent.room.sessions.records import _home as _home
-from app.domain.agent.service import AgentEvent, AgentResult
-from app.domain.agent.session_host.contract import Image, Prompt
+from app.domain.agent.service import AgentResult
+from app.domain.agent.session_host.contract import (
+    ColdCompaction,
+    Image,
+    PrivateText,
+    Prompt,
+)
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.delivery.input_identity import (
     InputIdentity,
@@ -100,8 +103,6 @@ from . import speaking as _speaking
 from . import starting as _starting
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
     from app.domain.agent.central_provider import CentralChannel
     from app.domain.agent.room.reads import RoomReader
 
@@ -218,9 +219,6 @@ class RoomSessions:
         self.tasks: dict[Seat, asyncio.Task] = {}
         # Each seat's reading caught up with what its session had written.
         self.caught: dict[Seat, asyncio.Event] = {}
-        # The platform's own work (``reading``) reads its events here rather
-        # than the room hearing them.
-        self.queues: dict[uuid.UUID, asyncio.Queue[AgentEvent]] = {}
         #: Where the room hears what its sessions say and do.
         self.reader: RoomReader | None = None
         self.unread: UnreadProbe | None = None
@@ -397,6 +395,7 @@ class RoomSessions:
         *,
         system_prompt: str,
         resume_token: str | None = None,
+        retired_token: str | None = None,
         model: str | None = None,
         env: dict[str, str] | None = None,
         acting: str | None = None,
@@ -409,6 +408,7 @@ class RoomSessions:
             session,
             system_prompt=system_prompt,
             resume_token=resume_token,
+            retired_token=retired_token,
             model=model,
             env=env,
             acting=acting,
@@ -427,6 +427,7 @@ class RoomSessions:
         on_mark: Callable[[uuid.UUID], None],
         register_input: InputRegistrar,
         resume_token: str | None = None,
+        retired_token: str | None = None,
         model: str | None = None,
         env: dict[str, str] | None = None,
         acting: str | None = None,
@@ -436,6 +437,9 @@ class RoomSessions:
         owes_reply: bool = False,
         session_opening: str = "",
         opening_changes: str = "",
+        cold: ColdCompaction | None = None,
+        private: tuple[PrivateText, ...] = (),
+        on_private: Callable[[], None] | None = None,
     ) -> bool:
         return await _speaking.send(
             self,
@@ -446,6 +450,7 @@ class RoomSessions:
             on_mark=on_mark,
             register_input=register_input,
             resume_token=resume_token,
+            retired_token=retired_token,
             model=model,
             env=env,
             acting=acting,
@@ -455,6 +460,9 @@ class RoomSessions:
             owes_reply=owes_reply,
             session_opening=session_opening,
             opening_changes=opening_changes,
+            cold=cold,
+            private=private,
+            on_private=on_private,
         )
 
     def _with_project_state(
@@ -516,13 +524,6 @@ class RoomSessions:
 
     def _steer_seat(self, topic_id, agent_handle) -> Seat | None:
         return _speaking._steer_seat(self, topic_id, agent_handle)
-
-    @contextlib.asynccontextmanager
-    async def reading(
-        self, work_id: uuid.UUID
-    ) -> AsyncIterator[AsyncIterator[AgentEvent]]:
-        async with _speaking.reading(self, work_id) as events:
-            yield events
 
     async def interrupt(self, session: SessionRef) -> bool:
         """Take the seat's work away; the session and its conversation stay.

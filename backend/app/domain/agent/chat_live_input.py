@@ -20,15 +20,13 @@ import uuid
 from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
-from app.domain.agent.harness.prompt import (
-    live_input_lines,
-    platform_prompt,
-    publication_prompt,
-    strip_platform_notice,
-)
+from app.domain.agent.harness.lines import live_input_lines
 from app.domain.agent.input_registration import input_registrar
 from app.domain.agent.prompt import live_inputs, model_images
+from app.domain.agent.room.system_prompt import session_kind
+from app.domain.agent.turn.intake.rooms import _is_dm
 from app.domain.agent.turn.state.inputs import _pending_input_blocks
+from app.domain.agent.turn.store.session_inputs import record_read
 from app.domain.delivery.agent import DeliveryTargetChanged
 from app.domain.delivery.input_identity import (
     InputEffects,
@@ -40,6 +38,14 @@ from app.domain.delivery.mention import BY_PERSON
 from app.domain.delivery.models import Delivery
 from app.domain.identity.handles import recipient_seat
 from app.domain.notice_meta import EVENT_ROUTINE_RUN
+from app.domain.prompts import (
+    Kind,
+    NoticeType,
+    platform_prompt,
+    render_notice,
+    strip_platform_notice,
+)
+from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.place import PlaceResolver
 from app.domain.thread.services import conversation_inputs
 from app.domain.topic.models import TopicStatus
@@ -86,7 +92,9 @@ class LiveInput:
         ``True`` means transport acceptance was recorded. A reconciliation
         result holds the registered identity without authorizing a queued retry.
         ``False`` means a pre-send failure; ``None`` means no session of that
-        seat is working here.
+        seat is working here, or the conversation is a closed task: its work is
+        over and its session is being stopped (`close_task`), so what is said
+        there is answered as anything said in a closed task is.
 
         The text is labelled the same way `prompt_line` labels a pending block,
         so a message that arrives mid-work reads identically to one that came in
@@ -100,7 +108,7 @@ class LiveInput:
         if working is None:
             return None
         # The seat aims the steer; the handle it acts under is who reads the
-        # message (``seen_by``) and whose own earlier message a reply quotes.
+        # message (已读) and whose own earlier message a reply quotes.
         seat_agent, acting = working
         async with self._sessions() as session:
             stored, replied = await live_inputs(session, user_block_ids)
@@ -116,8 +124,6 @@ class LiveInput:
             InputEffects(
                 held_block_ids=tuple(user_block_ids),
                 block_ids=tuple(user_block_ids),
-                seen_block_ids=tuple(user_block_ids),
-                seen_by=acting,
             ),
             probe_unread=True,
         )
@@ -129,6 +135,9 @@ class LiveInput:
             # path takes the same non-conflicting KEY SHARE lock.
             async with self._sessions() as session:
                 place = await PlaceResolver(session).conversation(topic_id)
+                task = place.task if place is not None else None
+                if task is not None and task.status == TaskStatus.closed:
+                    return None
                 archived = place is None or place.room.status == TopicStatus.archived
                 # The pictures are read here, and the lines written after: a line
                 # says whether its file arrives as a picture, and only reading
@@ -141,7 +150,12 @@ class LiveInput:
                     else ({}, set())
                 )
             pictures = [images[path] for path, _ in files if path in images]
-            line = publication_prompt(
+            line = render_notice(
+                # Nowhere to deliver when the place is gone (`archived`); the
+                # line is not sent then.
+                session_kind(place, needs_place=not _is_dm(place.room))
+                if place is not None
+                else Kind.main_line,
                 "\n".join(
                     live_input_lines(
                         author,
@@ -182,6 +196,7 @@ class LiveInput:
             delivered = False
         if not delivered:
             return False
+        await record_read(self._sessions, reader=acting, block_ids=user_block_ids)
         return True
 
     async def notify_running_session(
@@ -191,6 +206,7 @@ class LiveInput:
         *,
         blocks: Sequence[uuid.UUID] = (),
         recipient_seat: str | None = None,
+        kind: NoticeType = NoticeType.change,
     ) -> bool | InputReconciliationPending:
         """Tell the session already working in this topic that the world
         changed under it: ``recipient_seat``'s, or the room's only working one.
@@ -220,7 +236,7 @@ class LiveInput:
         if working is None:
             return False
         seat_agent, _acting = working
-        line = platform_prompt(strip_platform_notice(notice))
+        line = platform_prompt(strip_platform_notice(notice), kind)
         registrar = self._input_registrar(
             InputEffects(held_block_ids=tuple(blocks), block_ids=tuple(blocks)),
             probe_unread=bool(blocks),
@@ -261,10 +277,9 @@ class LiveInput:
         session's next tool boundary.
 
         ``None``: the seat's session is not working here, or this delivery is
-        work of its own. A routine's run is: its session is assembled with the
-        routine owner's memory (`turn_speakers.routine_owner`), which a session
-        already working for somebody else does not carry. The caller starts it
-        as before. ``False``: the session is working and the input did not
+        work of its own. A routine's run is: it starts work of its own rather
+        than joining what the seat is already doing. The caller starts it as
+        before. ``False``: the session is working and the input did not
         reach it; nothing was sent (`receipts.withdraw_input` puts the attempt
         back to ``claimed``), so the attempt is refused and retried like any
         other. ``True``: the session's transport took it. Only the session's
@@ -297,7 +312,9 @@ class LiveInput:
         # Framed as the work it would otherwise have started frames it: a
         # ledger delivery's work is the platform's, which reads the content
         # under the platform marker (`turn.intake.preparation.prompt`).
-        line = platform_prompt(str(payload.get("content") or ""))
+        line = platform_prompt(
+            str(payload.get("content") or ""), NoticeType.instruction
+        )
         by_person = payload.get("eventType") == BY_PERSON
         registrar = self._input_registrar(
             InputEffects(delivery_id=delivery_id, attempt_id=attempt_id),

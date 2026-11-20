@@ -1,0 +1,15 @@
+{
+  "label": "阶段",
+  "noDue": "不设截止",
+  "due": "截止 {when}",
+  "dateFormat": "M月D日 HH:mm",
+  "number": "阶段 {n}",
+  "numbered": "{n}. {name}",
+  "status": {
+    "NOT_SUBMITTED": "未提交",
+    "PENDING_REVIEW": "待批改",
+    "PASSED": "已通过",
+    "REJECTED": "被退回",
+    "MISSED": "未通过"
+  }
+}

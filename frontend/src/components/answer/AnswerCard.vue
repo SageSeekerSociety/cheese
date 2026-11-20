@@ -2,10 +2,10 @@
 <template>
   <v-card :id="`answer-${answer.id}`" flat rounded="lg">
     <v-card-item>
-      <v-card-title>{{ answer.author.nickname }}</v-card-title>
+      <v-card-title>{{ authorName }}</v-card-title>
       <v-card-subtitle data-user-content>{{ answer.author.intro }}</v-card-subtitle>
       <template #prepend>
-        <user-avatar :avatar="avatarUrl" :name="answer.author.nickname" :seed="answer.author.username" />
+        <user-avatar :avatar="avatarUrl" :name="authorName" :seed="answer.author.username" />
       </template>
     </v-card-item>
     <v-card-text class="text-body-1 font-weight-regular answer-body-text pb-1 px-3">
@@ -64,6 +64,8 @@ import UserAvatar from '../common/UserAvatar.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { NewAttitudeType } from '@/constants'
+import { userName } from '@/lib/agentNames'
+
 const { t } = useI18n()
 
 const props = withDefaults(
@@ -80,6 +82,9 @@ const props = withDefaults(
     defaultAvatarId: null,
   }
 )
+
+// 作者按查看者的叫法：设了个人备注就是备注，否则是公开昵称（`userName` 已经兜到账号）。
+const authorName = computed(() => userName(props.answer.author))
 
 const emit = defineEmits<{
   accept: [answer: Answer]

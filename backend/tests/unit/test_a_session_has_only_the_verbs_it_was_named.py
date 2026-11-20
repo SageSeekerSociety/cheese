@@ -1,7 +1,8 @@
 """A session may be handed only some of an object's verbs: a document's 芝士
 reads and edits its document (`cheese_doc.get`, `.edit`, `.set`) but makes no
 new one and lists none of the project's. The tool it is offered lists only
-those verbs, and a call to another is refused before it reaches the platform."""
+those verbs, and a call to another is refused before it reaches the platform,
+told the ones it has."""
 
 import asyncio
 
@@ -41,6 +42,6 @@ def test_a_verb_it_was_not_named_is_refused(tmp_path, monkeypatch):
     read = asyncio.run(session.run_cli("cheese_doc", {"action": "get"}, None, "c2"))
 
     assert made["status"] == 1
-    assert "no such tool" in made["stderr"]
+    assert made["stderr"] == "cheese_doc 要 action：get / edit / set"
     assert read["status"] == 0
     assert ran == [("cheese_doc", {"action": "get"}, True)]

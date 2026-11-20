@@ -137,6 +137,34 @@ def test_an_unknown_type_still_reads_as_a_sentence():
     assert letter.link == f"{settings.frontend_url}/inbox"
 
 
+def test_a_credit_warning_leads_to_the_page_it_can_be_fixed_on():
+    letter = letter_for(
+        {
+            "type": "CREDIT_WARNING",
+            "payload": {
+                "content": "团队额度快用完了：方案额度还剩 100 点，11月1日重置。",
+                "layer": "team",
+                "teamHandle": "b-tree",
+            },
+        }
+    )
+    assert "团队额度快用完了" in letter.subject
+    assert letter.link == f"{settings.frontend_url}/teams/b-tree/credits"
+
+    project = letter_for(
+        {
+            "type": "CREDIT_WARNING",
+            "payload": {
+                "content": "这个项目的额度预算快用完了：还剩 100 点。",
+                "event": "credit_warning",
+                "layer": "project",
+                "projectId": "p-1",
+            },
+        }
+    )
+    assert project.link == f"{settings.frontend_url}/projects/p-1/settings/environment"
+
+
 def test_the_email_escapes_user_text_and_preserves_the_destination():
     body = render_html(
         letter_for(

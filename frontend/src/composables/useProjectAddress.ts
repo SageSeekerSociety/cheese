@@ -2,11 +2,11 @@
 // 新地址；旧地址照样能打开（`lib/addresses`）。
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 
 import { setProjectSlug } from '@/api/addresses'
 import { t } from '@/i18n'
 import { projectSlug, rememberProject } from '@/lib/addresses'
+import { toast } from '@/lib/toast'
 
 export function useProjectAddress(projectId: () => string) {
   const router = useRouter()

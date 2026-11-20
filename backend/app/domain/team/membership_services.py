@@ -3,12 +3,12 @@ from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import (
     BadRequestError,
     ConflictError,
-    ForbiddenError,
     NotFoundError,
 )
 from app.core.sentences import say
@@ -26,10 +26,10 @@ from app.domain.team.models import (
     TeamMemberRole,
     TeamMembershipApplication,
 )
+from app.domain.team.permissions import TEAM, Permission
 from app.domain.team.repositories import (
     TeamMembershipApplicationRepository,
     TeamRepository,
-    refuse_admin_grant_by_non_owner,
     refuse_anyone_but_the_owner,
 )
 from app.domain.user.models import User
@@ -135,6 +135,27 @@ class TeamMembershipService:
         if await self._app_repo.exists_pending_for_user_and_team(user_id, team_id):
             raise ConflictError(say("teamApplicationPending"))
 
+    async def _save_pending(
+        self, app: TeamMembershipApplication
+    ) -> TeamMembershipApplication | None:
+        """Insert a pending request or invitation; ``None`` if one beat it in.
+
+        The check in ``_validate_user_can_apply_or_be_invited`` reads before it
+        writes, so two submissions at once (a double click, two admins) both
+        pass it. ``uq_team_membership_application_pending`` lets only one of
+        them in; the other is told what the check would have said. Inside a
+        savepoint so the caller's transaction survives the refusal.
+        """
+        try:
+            async with self._session.begin_nested():
+                return await self._app_repo.save(app)
+        except IntegrityError:
+            if await self._app_repo.exists_pending_for_user_and_team(
+                app.user_id, app.team_id
+            ):
+                return None
+            raise
+
     async def _update_status(
         self,
         app: TeamMembershipApplication,
@@ -167,6 +188,10 @@ class TeamMembershipService:
         status = await self.join_status(team.id, user_id)
         if status != "none":
             return status
+        # A personal team takes no members but its owner — and no application
+        # either: one waiting there could only ever sit unanswered. The owner
+        # is already in, so this only ever answers someone else.
+        refuse_anyone_but_the_owner(team, user_id)
         if not team.join_approval:
             # deferred-import: tests replace this name on app.domain.team.services
             from app.domain.team.services import check_team_locking_status
@@ -190,7 +215,9 @@ class TeamMembershipService:
             updated_at=now,
             deleted_at=None,
         )
-        saved = await self._app_repo.save(app)
+        saved = await self._save_pending(app)
+        if saved is None:
+            return "pending"
 
         # 推送是服务端替人渲染好的一句话，拿不到实体解析（`push.push_text`），
         # 所以这两个名字跟着 payload 走，和频道里那几种带 `authorName` 一样。
@@ -240,15 +267,7 @@ class TeamMembershipService:
         role: int | None,
         message: str | None,
     ) -> TeamMembershipApplication:
-        if not await self._team_repo.is_team_at_least_admin(team_id, initiator_user_id):
-            raise ForbiddenError(
-                f"User {initiator_user_id} is not authorized to invite members to team {team_id}."
-            )
 
-        if role in (TeamMemberRole.ADMIN, TeamMemberRole.OWNER):
-            await refuse_admin_grant_by_non_owner(
-                self._team_repo, team_id, initiator_user_id
-            )
         team = await self._team_repo.get_by_id(team_id)
         if team is not None:
             # Refused now rather than when it is accepted: an invitation that
@@ -277,7 +296,9 @@ class TeamMembershipService:
             updated_at=now,
             deleted_at=None,
         )
-        saved = await self._app_repo.save(app)
+        saved = await self._save_pending(app)
+        if saved is None:
+            raise ConflictError(say("teamApplicationPending"))
 
         payload: dict[str, Any] = {
             "inviter": {"type": "user", "id": str(initiator_user_id)},
@@ -397,11 +418,6 @@ class TeamMembershipService:
         # deferred-import: tests replace this name on app.domain.team.services
         from app.domain.team.services import check_team_locking_status
 
-        if not await self._team_repo.is_team_at_least_admin(team_id, approver_user_id):
-            raise ForbiddenError(
-                f"User {approver_user_id} is not authorized to approve requests for team {team_id}."
-            )
-
         app = await self._app_repo.find_pending_by_id_and_team_and_type(
             application_id=request_id,
             team_id=team_id,
@@ -416,6 +432,13 @@ class TeamMembershipService:
         await check_team_locking_status(self._session, team_id)
 
         requester_id = app.user_id
+        await TEAM.refuse_own_seat(
+            self._session,
+            team_id,
+            approver_user_id,
+            Permission.manage_members,
+            seats=requester_id,
+        )
         if await self._team_repo.is_team_member(team_id, requester_id):
             raise BadRequestError("Cannot approve request, user is already a member.")
 
@@ -449,10 +472,6 @@ class TeamMembershipService:
         team_id: int,
         request_id: int,
     ) -> None:
-        if not await self._team_repo.is_team_at_least_admin(team_id, rejector_user_id):
-            raise ForbiddenError(
-                f"User {rejector_user_id} is not authorized to reject requests for team {team_id}."
-            )
 
         app = await self._app_repo.find_pending_by_id_and_team_and_type(
             application_id=request_id,
@@ -495,10 +514,6 @@ class TeamMembershipService:
         team_id: int,
         invitation_id: int,
     ) -> None:
-        if not await self._team_repo.is_team_at_least_admin(team_id, canceler_user_id):
-            raise ForbiddenError(
-                f"User {canceler_user_id} is not authorized to cancel invitations for team {team_id}."
-            )
 
         app = await self._app_repo.find_pending_by_id_and_team_and_type(
             application_id=invitation_id,
@@ -601,12 +616,6 @@ class TeamMembershipService:
         page_start: int | None,
         page_size: int | None,
     ) -> tuple[list[TeamMembershipApplication], dict]:
-        if not await self._team_repo.is_team_at_least_admin(
-            team_id, requesting_user_id
-        ):
-            raise ForbiddenError(
-                f"User {requesting_user_id} is not authorized to view requests for team {team_id}."
-            )
         limit = page_size or self._default_page_size
         offset = page_start or 0
         apps, total = await self._app_repo.list_for_team(
@@ -637,12 +646,6 @@ class TeamMembershipService:
         page_start: int | None,
         page_size: int | None,
     ) -> tuple[list[TeamMembershipApplication], dict]:
-        if not await self._team_repo.is_team_at_least_admin(
-            team_id, requesting_user_id
-        ):
-            raise ForbiddenError(
-                f"User {requesting_user_id} is not authorized to view invitations for team {team_id}."
-            )
         limit = page_size or self._default_page_size
         offset = page_start or 0
         apps, total = await self._app_repo.list_for_team(

@@ -85,6 +85,7 @@ from app.domain.usage.payers import (  # noqa: F401
     payer_for_person,
     payer_for_project,
     payers_for_projects,
+    project_with_payer,
     team_terms,
     terms_of,
 )

@@ -16,7 +16,7 @@ released like any other: it is nobody else's to release.
 **Before it goes**, the VM gets the one best-effort checkpoint a switch of work
 computer gives the machine it leaves (``session_work.checkpoint``, ``cheese
 sync --all``), and goes whether or not it went through: what a lost
-checkpoint loses is held by the snapshot of the session's last turn. Then the
+checkpoint does not push goes with the VM. Then the
 session's lease and home go, the room is told, and the pool sweep deletes the
 VM (``HostPool.maintain``).
 
@@ -74,6 +74,9 @@ async def release_idle(db, lifecycle) -> int:
                 CloudHost.released_at.is_(None),
                 CloudHost.device_id.is_not(None),
                 SandboxHome.active_at < now - idle_for,
+                # A whole cloud VM is not frozen (``lifecycle``): it is
+                # released, and this is where that happens.
+                SandboxHome.frozen_at.is_(None),
             )
             .order_by(SandboxHome.active_at)
         )

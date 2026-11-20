@@ -26,7 +26,8 @@ const online = useOnline()
 <style scoped>
 .offline-banner {
   position: fixed;
-  top: 0;
+  /* 桌面上挂在顶栏下沿（`--app-bar-height`，没有顶栏时是 0）：贴着窗口上沿会盖住正中的搜索框。 */
+  top: var(--app-bar-height, 0px);
   left: 50%;
   z-index: var(--z-banner); /* above the app bar and drawers */
   display: flex;

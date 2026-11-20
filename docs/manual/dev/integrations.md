@@ -90,7 +90,7 @@ API 那条路的前提是应用拿到了文档权限（管理员在飞书后台�
 
 `backend/app/domain/webhook/` 是**外部系统**（CI、部署流水线）往一个频道时间线里发消息的门。
 
-凭据是 HMAC 令牌，**一个字都不存**（`backend/app/core/webhook_auth.py`）：`WebhookToken` 只存一个 `version` 计数器，令牌里嵌着它。`mint` 把版本 +1 并签发一个含新版本的令牌（这就是轮换：此前发出的全部立刻失效），`revoke` 只 +1 而不发新令牌（这就是撤销）。`verify` 重新验签、并把令牌里的 `v` 和行上的当前值比对。
+凭据是 `webhook+jwt` 令牌，**一个字都不存**（`backend/app/core/webhook_auth.py`）：`WebhookToken` 只存一个 `version` 计数器，令牌里嵌着它。`mint` 把版本 +1 并签发一个含新版本的令牌（这就是轮换：此前发出的全部立刻失效），`revoke` 只 +1 而不发新令牌（这就是撤销）。`verify` 重新验签、并把令牌里的 `v` 和行上的当前值比对。
 
 行的身份是「**哪段对话**」：一行一个 `conversation_id`（房间或任务的 id，唯一），`bump_version` 按它冲突更新。
 
@@ -99,7 +99,7 @@ API 那条路的前提是应用拿到了文档权限（管理员在飞书后台�
 | `POST /api/topics/{topic_id}/webhook-token` | 项目成员 | 签发/轮换，原始令牌只出现这一次 |
 | `POST /webhooks/{topic_id}` | 持令牌者 | **挂在根上**（不在 `/api` 下），也不在 CLI 作用域令牌那条闸门下 |
 
-进门令牌从 `x-webhook-token` 或 `Authorization: Bearer` 取，验不过就是 401。正文要求 `content` 和 `source` 都非空，然后交给 `post_with_retries`。
+进门令牌从 `Authorization: Bearer` 取，验不过就是 401。正文要求 `content` 和 `source` 都非空，然后交给 `post_with_retries`。
 
 `post_with_retries` 是**进程内**共享的落库函数，自己不做鉴权（HTTP 那条路验完才调它，而「合并结果回房间」那种调用方本来就受信，直接调它、不走 HTTP）。它按 `_RETRY_DELAYS_SECONDS`（0、5、30 秒）重试，**每次尝试用自己的 session** —— 它报告的结果已经在别处发生了（一次 CI 跑完、一次合并），所以哪怕调用方的事务正准备回滚，房间也必须知道。它落的是 room-only 的公告（不指名谁该动手），永远不抛异常，只返回有没有落地；路由于是把 `{"accepted": false}` 也回成 200，而不是 5xx。**真的去写成一条消息**的那一步不是它做的：写住在第 5 层的 `agent.announce`，`webhook` 在第 3 层、够不到它，所以「往房间里落一句话」这件事由调用方当参数递进来（`<&backend/app/domain/webhook/ports.py>` 的 `Poster`，和 session 工厂同一条规矩），两个调用点递的都是 `announce`。
 

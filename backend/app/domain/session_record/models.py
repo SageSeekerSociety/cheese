@@ -5,7 +5,7 @@ stream-json lines, Codex's app-server notifications, pi's entries) and the
 backend mirrors that journal (`agent.harness.driven`). This table keeps those
 records the way they came, so that what the agent did can be read after the
 mirror has forgotten it. A sealed run's object is kept in the bucket for good;
-its row for `retention.RETENTION` (30 days, `retention.expire`). A permanent
+its row for `RETENTION` below (30 days, `retention.expire`). A permanent
 bucket index keeps sealed runs readable after their database rows expire.
 
 A row is a run of consecutive records of one session's journal, all of one
@@ -23,7 +23,7 @@ still names one record, and reading the same page twice lands it once.
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import (
     BigInteger,
@@ -40,6 +40,17 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.domain.common import UuidPk
+
+#: How long a sealed run's row is kept. It lives here, beside the table whose
+#: row it bounds, because **two** readers that must agree on one value need it:
+#: `retention.expire` deletes rows by it, and `service.read` decides from it
+#: whether the bucket's index can still name anything a page is missing. They
+#: cannot each hold a copy — a reader whose copy differed from the sweeper's
+#: would skip the listing while the rows were in fact gone, and hand back a
+#: short page as if it were complete. Both read `models.RETENTION`, so a
+#: changed or patched value moves them together. (`retention` imports
+#: `service`, so this module is the only place below both of them.)
+RETENTION = timedelta(days=30)
 
 
 class SessionRecord(UuidPk, Base):

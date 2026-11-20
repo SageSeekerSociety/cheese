@@ -29,7 +29,7 @@ contractEnvironment()
 
 let avatars: typeof import('./avatars')
 let notifications: typeof import('./notifications')
-let attachments: typeof import('./taskAttachments')
+let taskFiles: typeof import('./taskFiles')
 let materials: typeof import('./materials')
 let newErrorMessage: typeof import('./axiosHttp').axiosErrorMessage
 let notified: Mock
@@ -37,7 +37,7 @@ let notified: Mock
 beforeAll(async () => {
   avatars = await import('./avatars')
   notifications = await import('./notifications')
-  attachments = await import('./taskAttachments')
+  taskFiles = await import('./taskFiles')
   materials = await import('./materials')
   ;({ axiosErrorMessage: newErrorMessage } = await import('./axiosHttp'))
   // The session-expired toast is the mock `requestContract.spec.helper` installs.
@@ -58,15 +58,13 @@ function reads() {
     },
     {
       base: newer,
-      path: '/tasks/12/attachments',
+      path: '/tasks/12/files',
       args: [12],
       payload: {
-        attachments: [
-          { id: 3, name: 'notes.pdf', size: 8, contentType: 'application/pdf', downloadCount: 2, createdAt: 0 },
-        ],
+        files: [{ name: 'notes.pdf', size: 8, addedAt: 0 }],
         canDownload: false,
       },
-      next: () => attachments.listTaskAttachments(12),
+      next: () => taskFiles.listTaskFiles(12),
     },
   ]
 }
@@ -78,7 +76,7 @@ describe('four-domain pilot against the HTTP contract', () => {
     }
   })
 
-  it('does not infer download permission from the presence of attachments', async () => {
+  it('does not infer download permission from the presence of materials', async () => {
     const read = reads()[1]
     for (const canDownload of [false, true]) {
       server.use(

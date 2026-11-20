@@ -50,7 +50,7 @@ export const ATTACHMENT_ENTRIES: CatalogEntry[] = [
         name: '等待点开',
         note: '进入对话不会加载视频字节或自动播放。点开才尝试读取；目录站没有字节源，会显示读取失败与重新加载入口。',
         props: {},
-        expectSelector: '.attachment-video',
+        expectSelector: '.video-card',
       },
     ],
   },

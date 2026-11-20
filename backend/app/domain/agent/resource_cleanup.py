@@ -11,6 +11,7 @@ import json
 import os
 import runpy
 import shutil
+import signal
 import stat
 import struct
 import subprocess
@@ -253,6 +254,17 @@ def proc_index(paths: list[Path]) -> set:
 
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     for path in paths:
+        if cloud_home(path):
+            result = run_command(
+                ["sudo", "-n", SANDBOX_HOST, "index-home", path.name, str(path)]
+            )
+            if result.returncode:
+                # i18n-exempt: runs on the machine; cleanup diagnostic for its log
+                raise RuntimeError(
+                    "sandbox home could not be indexed: " + result.stderr
+                )
+            found.update(tuple(entry) for entry in json.loads(result.stdout)["inodes"])
+            continue
         try:
             top = os.open(str(path), os.O_RDONLY | os.O_DIRECTORY)
         except FileNotFoundError:
@@ -709,8 +721,8 @@ def end_holders(paths: list[Path]) -> None:
 def remove_task_checkouts(home: Path, tasks: list[str]) -> dict:
     """Remove the checkouts of these closed tasks.
 
-    The platform names the tasks. A closed task's work went to its branch and
-    snapshot at each turn's checkpoint, so nothing here waits on publication;
+    The platform names the tasks. A closed task's work is what it pushed to its
+    branch; nothing here waits on publication, and what it never pushed goes;
     only a checkout something still has open stays, and comes back with the
     reason. A checkout that is not there is already done, so the same list can
     be sent again and again.
@@ -814,7 +826,25 @@ def put_archive(archive: Path, url: str) -> dict:
     return {"size": size, "md5": digest.hexdigest()}
 
 
+def cloud_home(path: Path) -> bool:
+    return (
+        sys.platform == "linux"
+        and Path(SANDBOX_HOST).exists()
+        and path.parent.parent.name == "home"
+        and sandbox_marker(path).with_suffix(".cloud").is_file()
+    )
+
+
 def remove_tree(path: Path) -> None:
+    if cloud_home(path):
+        result = run_command(
+            ["sudo", "-n", SANDBOX_HOST, "remove-home", path.name, str(path)]
+        )
+        if result.returncode:
+            # i18n-exempt: runs on the machine; cleanup diagnostic for its log
+            raise RuntimeError("sandbox home could not be removed: " + result.stderr)
+        return
+
     def retry_unlink(function, name, exc_info):
         error = exc_info[1]
         parent = Path(name).parent
@@ -1223,7 +1253,157 @@ def stop_sandboxed_executor(home: Path) -> None:
         os.close(descriptor)
 
 
+def mounted_at(path) -> bool:
+    """Whether anything is mounted at ``path``, live or dead.
+
+    `os.path.ismount` answers False for a mount whose server has died — every
+    stat on it fails and it swallows the error — and that is the one case this
+    is asked about: such a mount still occupies the path and refuses a second
+    one. The kernel's own list answers for both (`transcript_view._mounted` is
+    the same rule on the executor side).
+    """
+    real = os.path.realpath(str(path))
+    try:
+        lines = Path("/proc/self/mountinfo").read_text().splitlines()
+    except OSError:
+        return os.path.ismount(real)
+    for line in lines:
+        fields = line.split()
+        if len(fields) > 4 and _mount_point(fields[4]) == real:
+            return True
+    return False
+
+
+#: A mount point with a space, tab, newline or backslash arrives octal-escaped
+#: (`\040` and the like), and the bind this is asked about can be any path the
+#: session host named. `transcript_view` reads the same field the same way.
+_MOUNT_ESCAPES = {"\\040": " ", "\\011": "\t", "\\012": "\n", "\\134": "\\"}
+
+
+def _mount_point(field: str) -> str:
+    for escaped, plain in _MOUNT_ESCAPES.items():
+        field = field.replace(escaped, plain)
+    return field
+
+
+def stop_transcript_view(home: Path) -> None:
+    """Undo a room's transcript view: its helper, then every mount it made.
+
+    The helper runs on the executor but outside the room's sandbox
+    (`bootstrap.start_transcript_view`), so nothing else here reaches it: it is
+    not a sandbox process for `stop_executor` to end, and its pid is not in a
+    pid file the room wrote. What it binds at the build's path is a view kept
+    under the room's own home, and a mount left there is a home that cannot be
+    removed at all: `remove_tree` stops at the mountpoint with the filesystem's
+    error, in the middle of a delete that has already taken part of the room.
+
+    The helper goes first. A dead mount is what an unreleased one becomes, and
+    a dead FUSE mount can refuse the unmount too — so the process that made it
+    is given a chance to take it down itself (`transcript_view`'s SIGTERM
+    handler), and what it wrote is read rather than walked for: the bind can be
+    at a path this process cannot even list.
+    """
+    # `.cheese`, not `platform_dir`: the helper writes this file where
+    # `bootstrap.PLATFORM_DIR` puts it, which is fixed, while `platform_dir`
+    # resolves a room's *installation* and can answer `.claude` for one that
+    # moved — the two would then disagree and the record would never be found.
+    record = home / FOOTPRINT_ROOT / "transcript-view.json"
+    try:
+        held = json.loads(record.read_text())
+    except (OSError, ValueError):
+        return
+    # The file is under the room's own home, which a sandboxed room can write in
+    # full, and `json.loads` accepts any JSON: `[]`, `5` and `"x"` all parse.
+    # `.get` on those raises `AttributeError`, and a non-list `mounts` raises
+    # `TypeError` in the loop below — either of which aborts the rest of the
+    # teardown, since this is now the first step of both `stop_executor` and the
+    # `remove` action. A record of the wrong shape is a record this room wrote
+    # wrongly: there is nothing here to undo, and saying so is the whole answer.
+    if not isinstance(held, dict):
+        return
+    pid = held.get("pid")
+    if isinstance(pid, int) and _is_this_rooms_view(pid, home):
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            pass
+        else:
+            for _ in range(30):
+                if not PROC.is_dir() or not Path(PROC / str(pid)).exists():
+                    break
+                time.sleep(0.1)
+    left = []
+    # Same reason: a `mounts` that is not a list is not a list of paths to
+    # release. Read as empty rather than iterated into a `TypeError`.
+    mounts = held.get("mounts")
+    if not isinstance(mounts, (list, tuple)):
+        mounts = ()
+    for where in mounts:
+        for argv in (
+            ["fusermount", "-u", str(where)],
+            ["fusermount", "-uz", str(where)],
+            ["sudo", "-n", "fusermount", "-u", str(where)],
+            ["sudo", "-n", "fusermount", "-uz", str(where)],
+        ):
+            if not mounted_at(where):
+                break
+            run_command(argv)
+        if mounted_at(where):
+            left.append(where)
+    if left:
+        # Nothing could release them. The record stays so a later attempt —
+        # the one a failed `remove_tree` leads to — finds them again; deleting
+        # it here would leave the mounts nameless for good.
+        #
+        # Written the way the helper writes it: through a temporary beside it,
+        # and an `OSError` is not raised on. This runs first in `stop_executor`
+        # and in the `remove` action, so an exception here would abort the rest
+        # of the teardown — `sandbox_release`, `check_no_writers`, `remove_tree`
+        # — over a bookkeeping file, and an interrupted in-place write would
+        # truncate the record and lose the mounts this branch keeps.
+        held["mounts"] = left
+        try:
+            temporary = Path(str(record) + ".next")
+            temporary.write_text(json.dumps(held))
+            temporary.replace(record)
+        except OSError:
+            pass
+        return
+    try:
+        record.unlink(missing_ok=True)
+    except OSError:
+        # Same reason: a record left behind names mounts that are already
+        # released, which the next attempt reads as nothing to do.
+        pass
+
+
+def _is_this_rooms_view(pid: int, home: Path) -> bool:
+    """Whether `pid` is this room's transcript-view helper.
+
+    The record is under the room's own home, which a sandboxed room can write
+    all of, so its pid is a claim and not a fact: signalling it unverified
+    would let a room end another room's process — they run under the same
+    account — or a stale pid the kernel has since reused. The command line is
+    what says otherwise, the way `stop_windows_helper` and `request_exit` read
+    it for the helpers they end: this helper is the one running the release's
+    `transcript_view.py` with this room's view directory as its argument.
+    """
+    view = str(home / FOOTPRINT_ROOT / "transcript-view")
+    try:
+        argv = Path(PROC / str(pid) / "cmdline").read_bytes().split(b"\0")
+    except OSError:
+        return False
+    return any(arg.endswith(b"transcript_view.py") for arg in argv) and (
+        view.encode() in argv
+    )
+
+
 def stop_executor(home: Path, resource: str) -> None:
+    # First, because what it releases is inside the home every later step
+    # walks and, at the end, deletes: a mount left at the view's own directory
+    # stops `remove_tree` with the filesystem's error, partway through a room
+    # that is already half gone.
+    stop_transcript_view(home)
     sandboxed = sandbox_release(home) is not None
     installed = platform_dir(home)
     marker = installed / "execution-owner.json"
@@ -1363,6 +1543,12 @@ def main() -> None:
     elif action == "remove":
         # The caller recorded this generation before granting deletion permission.
         # A reopened room uses another UUID, even on the same physical device.
+        #
+        # The view goes first, and for its own reason: `prepare` normally
+        # stopped it already, but a room deleted without one still has the
+        # helper and its mount, and both are inside what is about to be
+        # walked and removed.
+        stop_transcript_view(home)
         check_no_writers([home, work])
         # A room from before rooms had an executor sends its files to the
         # bucket first, unless they were sent already (`KEPT_ALREADY`).
@@ -1389,6 +1575,7 @@ def main() -> None:
         # Last: until the room's directories are gone, they are a sandboxed
         # room's to have written.
         sandbox_marker(home).unlink(missing_ok=True)
+        sandbox_marker(home).with_suffix(".cloud").unlink(missing_ok=True)
         print(json.dumps({"removed": True, "kept": kept}))
     elif action == "tasks":
         # `tasks` are closed tasks of this room; `cleanup` and `room` are unused.

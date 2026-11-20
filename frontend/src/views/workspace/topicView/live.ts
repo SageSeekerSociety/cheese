@@ -33,6 +33,8 @@ export function useTopicLive(opts: {
   noteChatNews: () => void
   /** 采纳卡重读。 */
   reloadAccept: () => void
+  /** 技能的提议落下、被保存或被拒：对话里那张卡和右侧那一格跟着变。 */
+  reloadSkills: () => void
   /** 对话栏那个把手：连接状态和跟着帧走的那两样都问它。 */
   chat: () => ChatColumnHandle | null
 }) {
@@ -78,7 +80,7 @@ export function useTopicLive(opts: {
     // 提案卡落下、被发出去、被「不用」：卡片跟着变，不等刷新。
     else if (resource === 'feedback') opts.chat()?.reloadFeedback()
     // 技能的提议落下、被保存或被拒：那张卡跟着变。
-    else if (resource === 'skills') opts.chat()?.reloadSkills()
+    else if (resource === 'skills') opts.reloadSkills()
     else if (!CACHED_RESOURCES.has(resource)) activityTick.value += 1 // doc / notify → reload
   }
 

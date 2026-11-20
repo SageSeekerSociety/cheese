@@ -100,7 +100,7 @@ async def _room_on_alices_computer(client):
     return SimpleNamespace(
         topic_id=topic_id,
         lease_path=f"/topics/{topic_id}/sessions/{session.id}/work-lease",
-        agent={"X-Cheese-Token": token},
+        agent={"Authorization": f"Bearer {token}"},
     )
 
 

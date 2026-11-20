@@ -1,5 +1,4 @@
 {
-  "downloadFailed": "下载失败",
   "eventLabel": "{time}：{text}",
   "liveNew": "{name}：{text}",
   "loadingOlder": "加载更早的消息…",

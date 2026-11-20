@@ -296,20 +296,20 @@ def test_an_agent_finds_reads_and_then_claims_a_report_with_its_tools(client, pl
     topic = _topic(client, platform, DEV)
     agent = AgentHost(client, platform, topic)
 
-    listed = agent.run("cheese_feedback_list", query="保存")
+    listed = agent.run("cheese_feedback", action="list", query="保存")
     assert row["display_id"] in listed
     assert "导出 PDF" not in listed
 
-    read = agent.run("cheese_feedback_get", feedback=row["display_id"])
+    read = agent.run("cheese_feedback", action="get", feedback=row["display_id"])
     assert "点保存没有任何反应" in read
     assert "我这里也复现了" in read
     assert "已收录" in read
-    assert "cheese_feedback_claim" in read
+    assert "cheese_feedback(action=claim" in read
 
-    claimed = agent.run("cheese_feedback_claim", feedback=row["display_id"])
+    claimed = agent.run("cheese_feedback", action="claim", feedback=row["display_id"])
     assert row["display_id"] in claimed
 
-    again = agent.run("cheese_feedback_get", feedback=row["display_id"])
+    again = agent.run("cheese_feedback", action="get", feedback=row["display_id"])
     assert "处理中" in again
     assert room_agent_seat(client, topic) in again
 
@@ -322,9 +322,9 @@ def test_the_read_tools_say_why_an_agent_outside_the_platform_reads_nothing(
     agent = AgentHost(client, elsewhere, _topic(client, elsewhere, STRANGER))
 
     with pytest.raises(cheese.PlatformToolError) as listing:
-        agent.run("cheese_feedback_list")
+        agent.run("cheese_feedback", action="list")
     with pytest.raises(cheese.PlatformToolError) as reading:
-        agent.run("cheese_feedback_get", feedback=row["display_id"])
+        agent.run("cheese_feedback", action="get", feedback=row["display_id"])
 
     assert "代码仓库" in str(listing.value)
     assert "代码仓库" in str(reading.value)
@@ -335,6 +335,6 @@ def test_the_read_tool_says_a_hidden_report_is_not_there(client, platform):
     agent = AgentHost(client, platform, _topic(client, platform, DEV))
 
     with pytest.raises(cheese.PlatformToolError) as refusal:
-        agent.run("cheese_feedback_get", feedback=hidden["display_id"])
+        agent.run("cheese_feedback", action="get", feedback=hidden["display_id"])
 
     assert "不要修" in str(refusal.value)

@@ -14,18 +14,20 @@ from app.api.routes.tasks._common import (
     JoinTaskAsTeamRequest,
     PatchTaskParticipantRequest,
     TaskParticipantRequest,
-    require_mentor_consent,
+    consent_before_a_direct_start,
 )
+from app.api.task_claims import release_to_claim_project, start_claim
 from app.api.task_deps import (
     get_task_membership_service,
 )
 from app.api.task_serialization import (
     _membership_to_api_model,
 )
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import Can
+from app.auth import task_roles as task_seats
 from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
-from app.auth.space_access import may_teach_task
+from app.auth.task_roles import Permission as TaskPermission
 from app.core.config import settings
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -34,24 +36,16 @@ from app.core.errors import (
     NotFoundError,
 )
 from app.db.session import get_db
-from app.domain.agent_instance.adapters import default_teammate
-from app.domain.living_doc.overview import seed_overview
-from app.domain.membership.services import seat_mentors
 from app.domain.notification.preferences import local_time
-from app.domain.project.services import ProjectService
 from app.domain.space.repositories import (
     SpaceRepository,
     SpaceUserRankRepository,
 )
-from app.domain.task.access import (
-    ensure_task_joinable,
-)
-from app.domain.task.adapters import TaskTerms, as_brief, as_claim
 from app.domain.task.claims import claim_of
 from app.domain.task.inputs import (
+    APPROVE_APPROVED,
     map_approve_type_to_int,
 )
-from app.domain.task.mentors import mentors_of
 from app.domain.task.repositories import (
     TaskRepository,
 )
@@ -60,12 +54,7 @@ from app.domain.task.services import (
     TaskService,
 )
 from app.domain.task_notices import notices as task_notices
-from app.domain.team.protocol import TeamMemberRole
 from app.domain.team.services import team_service
-from app.domain.usage.adapters import ComputeCredits
-from app.domain.user.repositories import (
-    UserRepository,
-)
 from app.domain.user.services import timezones_by_ids
 
 router = APIRouter(prefix="/tasks")
@@ -106,43 +95,34 @@ async def list_joined_tasks(resolver: ActorResolverDep, db=Depends(get_db)) -> d
     return ok(rows)
 
 
-async def _participation_response(db, task, membership, auth_user) -> dict:
+async def _participation_response(
+    db, task, membership, auth_user, *, starts: bool, agreed_mentors: bool
+) -> dict:
+    """The claim, and its project once the claimant has started it.
 
-    owner_id = auth_user.user_id if membership.is_team else membership.member_id
-    if membership.is_team:
-        members = await team_service(db).get_team_members(membership.member_id)
-        if not any(member.user_id == owner_id for member in members):
-            owner_id = next(
-                (
-                    member.user_id
-                    for member in members
-                    if member.role == TeamMemberRole.OWNER
-                ),
-                None,
-            )
-            if owner_id is None:
-                raise NotFoundError("Team owner not found")
-    owner = await UserRepository(session=db).get_by_id(owner_id)
-    if owner is None:
-        raise NotFoundError("Participant user not found")
-    service = ProjectService(
-        db,
-        default_teammate=default_teammate,
-        compute_credits=ComputeCredits(db),
-        overview=seed_overview,
-        task_terms=TaskTerms(db),
-        seat_mentors=seat_mentors,
-    )
-    mentors = tuple(await mentors_of(db, task.id))
-    project = await service.for_participation(
-        task=as_brief(task, mentors=mentors),
-        claim=as_claim(membership),
-        owner_handle=owner.username,
-    )
+    开始 is 用这道题新建项目: a claim that is approved (a task started
+    directly, at once; a task applied for, once the publisher approved it) is
+    started by its claimant asking again, which makes its project, or answers
+    with the one it has (继续做). ``starts`` is False for a publisher enrolling
+    someone else: the project is made when that person starts. A claim still
+    waiting for the publisher has no project. The claim is committed before
+    the repository is made (``task_claims``).
+    """
+    project = None
+    if starts and membership.approved == APPROVE_APPROVED:
+        project = await start_claim(
+            db,
+            task=task,
+            membership=membership,
+            acting_user_id=auth_user.user_id,
+            agreed_mentors=agreed_mentors,
+        )
     return ok(
         {
             "participant": _membership_to_api_model(membership),
-            "project": {
+            "project": None
+            if project is None
+            else {
                 "id": str(project.id),
                 "name": project.name,
                 "root_topic_id": str(project.root_topic_id),
@@ -155,7 +135,7 @@ async def _participation_response(db, task, membership, auth_user) -> dict:
 @router.post(
     "/{taskId}/participants",
     summary="Apply for Task (create participant)",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(TaskPermission.take_up)],
 )
 async def create_task_participant(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -183,7 +163,7 @@ async def create_task_participant(
 
     # 出题者或本版管理员可以替成员报名，也可以把没审过的题先加进课程，
     # 不必等它 approved —— 这两条都是「管理员对这道题能做的事」，和评审同一个判据。
-    is_teacher = await may_teach_task(session=db, task=task, user_id=auth_user.user_id)
+    is_teacher = await task_seats.teaches(db, task, auth_user.user_id)
     if member != auth_user.user_id and not is_teacher:
         raise ForbiddenError("Only task owner can add other participants")
 
@@ -193,11 +173,6 @@ async def create_task_participant(
         raise BadRequestError("Cannot join an ended task")
 
     # 可见性检查：禁止"看不到但能加入"
-    await ensure_task_joinable(session=db, task=task, user_id=auth_user.user_id)
-    if member == auth_user.user_id:
-        # Someone claiming for themselves agrees to the mentors; a teacher
-        # enrolling a student is one of the people running the course.
-        await require_mentor_consent(db, task=task, agreed=payload.agree_mentors)
 
     # Rank check mirrors NT TaskMembershipEligibilityService.checkRankEligibility:
     # only gates the request when APPLICATION_RANK_CHECK_ENFORCED=true. The
@@ -217,13 +192,6 @@ async def create_task_participant(
                     f"(requires rank {task.rank - rank_jump}+)"
                 )
 
-    deadline_dt: datetime | None = None
-    if payload.deadline is not None:
-        try:
-            deadline_dt = datetime.fromtimestamp(int(payload.deadline) / 1000.0, tz=UTC)
-        except (TypeError, ValueError) as exc:
-            raise BadRequestError(f"Invalid deadline: {exc}") from exc
-
     is_team = task.submitter_type == 1
     if is_team and not await team_service(db).is_team_member(member, auth_user.user_id):
         # 这条路由的 ``member`` 在 TEAM 题上是**队伍 id**，而没带它时默认成了调用者
@@ -232,15 +200,22 @@ async def create_task_participant(
         raise ForbiddenError(
             "You must be a member of this team to register it for a task"
         )
-    # 新建报名默认审批状态：与 Kotlin 一致使用 ApproveType.NONE
-    approved = 2
-
+    # The claimant starts their own claim; a teacher enrolling a student makes
+    # the claim only, and the student starts it (and agrees to the mentors).
+    starts = is_team or member == auth_user.user_id
+    if starts:
+        await consent_before_a_direct_start(
+            db,
+            membership_service,
+            task=task,
+            member_id=member,
+            is_team=is_team,
+            agreed=payload.agree_mentors,
+        )
     membership = await membership_service.create_membership(
         task=task,
         member_id=member,
         is_team=is_team,
-        approved=approved,
-        deadline=deadline_dt,
         email=payload.email,
         phone=payload.phone,
         apply_reason=payload.apply_reason,
@@ -248,13 +223,20 @@ async def create_task_participant(
         remark=payload.remark,
     )
 
-    return await _participation_response(db, task, membership, auth_user)
+    return await _participation_response(
+        db,
+        task,
+        membership,
+        auth_user,
+        starts=starts,
+        agreed_mentors=payload.agree_mentors,
+    )
 
 
 @router.post(
     "/{taskId}/participations/user",
     summary="Join Task as User (self-join)",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(TaskPermission.take_up)],
 )
 async def join_task_as_user(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -283,30 +265,34 @@ async def join_task_as_user(
         )
 
     # 可见性检查：禁止"看不到但能加入"
-    await ensure_task_joinable(session=db, task=task, user_id=auth_user.user_id)
-    await require_mentor_consent(db, task=task, agreed=payload.agree_mentors)
-
-    deadline_dt: datetime | None = None
-    if payload.deadline is not None:
-        try:
-            deadline_dt = datetime.fromtimestamp(int(payload.deadline) / 1000.0, tz=UTC)
-        except (TypeError, ValueError) as exc:
-            raise BadRequestError(f"Invalid deadline: {exc}") from exc
+    await consent_before_a_direct_start(
+        db,
+        membership_service,
+        task=task,
+        member_id=auth_user.user_id,
+        is_team=False,
+        agreed=payload.agree_mentors,
+    )
 
     membership = await membership_service.create_membership(
         task=task,
         member_id=auth_user.user_id,
         is_team=False,
-        approved=2,
-        deadline=deadline_dt,
         email=payload.email,
         phone=payload.phone,
         apply_reason=payload.apply_reason,
         personal_advantage=payload.personal_advantage,
         remark=payload.remark,
     )
-    response = await _participation_response(db, task, membership, auth_user)
-    # Commit before answering (the claim and the project it opens). ``get_db``
+    response = await _participation_response(
+        db,
+        task,
+        membership,
+        auth_user,
+        starts=True,
+        agreed_mentors=payload.agree_mentors,
+    )
+    # Commit before answering (the claim, and the project it opened). ``get_db``
     # commits in its teardown, which FastAPI runs after the response has gone
     # out, so the task owner listing the participants right after a claim could
     # find no pending record yet. Same reason as the commit in ``create_task``.
@@ -317,7 +303,7 @@ async def join_task_as_user(
 @router.post(
     "/{taskId}/participations/team",
     summary="Join Task as Team",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(TaskPermission.take_up)],
 )
 async def join_task_as_team(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -349,39 +335,43 @@ async def join_task_as_team(
         )
 
     # 可见性检查：禁止"看不到但能加入"
-    await ensure_task_joinable(session=db, task=task, user_id=auth_user.user_id)
-    await require_mentor_consent(db, task=task, agreed=payload.agree_mentors)
-
-    deadline_dt: datetime | None = None
-    if payload.deadline is not None:
-        try:
-            deadline_dt = datetime.fromtimestamp(int(payload.deadline) / 1000.0, tz=UTC)
-        except (TypeError, ValueError) as exc:
-            raise BadRequestError(f"Invalid deadline: {exc}") from exc
+    await consent_before_a_direct_start(
+        db,
+        membership_service,
+        task=task,
+        member_id=payload.team_id,
+        is_team=True,
+        agreed=payload.agree_mentors,
+    )
 
     membership = await membership_service.create_membership(
         task=task,
         member_id=payload.team_id,
         is_team=True,
-        approved=2,
-        deadline=deadline_dt,
         email=payload.email,
         phone=payload.phone,
         apply_reason=payload.apply_reason,
         personal_advantage=payload.personal_advantage,
         remark=payload.remark,
     )
-    # Commit before answering, as in ``join_task_as_user``: the publisher lists
-    # the pending claims on the next request.
+    # Committed before answering, as in ``join_task_as_user``: the publisher
+    # lists the pending claims on the next request.
+    response = await _participation_response(
+        db,
+        task,
+        membership,
+        auth_user,
+        starts=True,
+        agreed_mentors=payload.agree_mentors,
+    )
     await db.commit()
-
-    return await _participation_response(db, task, membership, auth_user)
+    return response
 
 
 @router.patch(
     "/{taskId}/participants/{participantId}",
     summary="Update TaskMembership",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(TaskPermission.teach)],
 )
 async def patch_task_participant(
     task_id: Annotated[int, Path(ge=1, alias="taskId")],
@@ -396,9 +386,6 @@ async def patch_task_participant(
     task = await task_repo.get_by_id(task_id)
     if task is None:
         raise NotFoundError("Task not found")
-
-    if not await may_teach_task(session=db, task=task, user_id=auth_user.user_id):
-        raise ForbiddenError("Only task owner or space admin can update participants")
 
     membership = await membership_service.get_membership_by_id(participant_id)
     if membership is None or membership.task_id != task_id:
@@ -427,13 +414,6 @@ async def patch_task_participant(
         phone=payload.phone,
     )
 
-    await ProjectService(
-        db,
-        default_teammate=default_teammate,
-        compute_credits=ComputeCredits(db),
-        overview=seed_overview,
-        task_terms=TaskTerms(db),
-    ).activate_participation(task=as_brief(task), claim=as_claim(updated))
     # The claimer hears the decision, and a moved deadline on a claim already
     # approved (one being approved now gets its deadline with the decision).
     now = datetime.now(UTC)
@@ -450,6 +430,11 @@ async def patch_task_participant(
         await task_notices.personal_deadline_changed(
             db, task=task, membership=updated, by=auth_user.user_id, at=now
         )
+    # Approval makes no project: the claimant starts it (开始做这道题). A
+    # project an earlier release made while the claim waited gets the task's
+    # resources now.
+    if updated.approved == APPROVE_APPROVED and approved_before != APPROVE_APPROVED:
+        await release_to_claim_project(db, task=task, membership=updated)
     # Commit before answering: the participant told they are approved can reload
     # the task on their next request and must see it as theirs (download and
     # submit). Same reason as the commit in ``create_task``.

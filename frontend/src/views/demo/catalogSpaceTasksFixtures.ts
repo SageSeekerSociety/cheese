@@ -12,8 +12,13 @@
  */
 import type { SettingsGroup } from '@/components/common/SettingsOverlay.vue'
 import type {
+  LearningPracticeSet,
+  MyLearningInsight,
+  MyLearningPractice,
   Space,
   SpaceCategory,
+  SpaceKnowledgePoint,
+  SpaceKnowledgeSuggestion,
   SpaceMaterial,
   SpaceTeaching,
   Task,
@@ -23,6 +28,7 @@ import type {
   User,
 } from '@/types'
 import type { DomainGroup } from '@/types/spaces'
+import type { TaskVersionData } from '@/types/taskFiles'
 import type BriefView from '@/views/tasks/detail/BriefView.vue'
 import type RosterView from '@/views/tasks/detail/RosterView.vue'
 
@@ -102,12 +108,6 @@ export const SPACE_SETTINGS_GROUPS: SettingsGroup[] = [
         icon: 'mdi-file-document-outline',
       },
       {
-        key: 'SpacesDetailSettingsInviteCodes',
-        label: t('spaces.settings.tabs.inviteCodes'),
-        to: { name: 'SpacesDetailSettingsInviteCodes', params: { spaceId: '7' } },
-        icon: 'mdi-ticket-outline',
-      },
-      {
         key: 'SpacesDetailSettingsDomainGroups',
         label: t('spaces.settings.tabs.domainGroups'),
         to: { name: 'SpacesDetailSettingsDomainGroups', params: { spaceId: '7' } },
@@ -119,6 +119,12 @@ export const SPACE_SETTINGS_GROUPS: SettingsGroup[] = [
         to: { name: 'SpacesDetailSettingsGuidance', params: { spaceId: '7' } },
         icon: 'mdi-robot-outline',
       },
+      {
+        key: 'SpacesDetailSettingsLearningAnalysis',
+        label: t('spaces.settings.tabs.learningAnalysis'),
+        to: { name: 'SpacesDetailSettingsLearningAnalysis', params: { spaceId: '7' } },
+        icon: 'mdi-chart-box-outline',
+      },
     ],
   },
 ]
@@ -128,6 +134,23 @@ export const SPACE_TEACHING: SpaceTeaching = {
   mode: 'guide',
   systemPrompt: '这是一门操作系统的课。回答时先给结论，再给可以自己动手验证的那一步。不要用 pthread 以外的线程库。',
 }
+
+/** 这块板的知识点清单（所有题目共用）：发题 / 改题那一栏的候选。 */
+export const SPACE_KNOWLEDGE_POINTS: SpaceKnowledgePoint[] = [
+  { id: 91, name: '相关子查询', displayOrder: 1 },
+  { id: 92, name: '红黑树的旋转', displayOrder: 2 },
+]
+
+/** AI 读题面回来的建议：一条清单里已有、一条清单里没有。 */
+export const SPACE_KNOWLEDGE_SUGGESTIONS: SpaceKnowledgeSuggestion[] = [
+  {
+    name: '相关子查询',
+    why: '题面要求「不能用 JOIN，改用子查询」，多是相关子查询写不对',
+    confidence: 'high',
+    isNew: false,
+  },
+  { name: '游标', why: '题面提到逐行处理结果集', confidence: 'medium', isNew: true },
+]
 
 /** 资料库里的几份：文件、图、文本、仅管理员的一档各来一个。 */
 export const SPACE_MATERIALS: SpaceMaterial[] = [
@@ -278,7 +301,7 @@ export const TASK_DEMO: Task = {
   editable: true,
   description: '## 题目说明\n\n实现一个**优先级调度器**，跑通给定的三组样例。',
   submissionSchema: [{ prompt: '代码仓库地址', type: 'TEXT' }],
-  participants: { total: 5, examples: [participant(101, '李雷', 12), participant(102, '韩梅梅', 13)] },
+  participants: { total: 5, approved: 4, examples: [participant(101, '李雷', 12), participant(102, '韩梅梅', 13)] },
   submittable: true,
   createdAt: NOW - 20 * DAY,
   updatedAt: NOW - 3 * DAY,
@@ -289,23 +312,41 @@ export const TASK_DEMO: Task = {
 
 /** 这道题的材料清单（说明页那一栏）。 */
 export const TASK_BRIEF_ATTACHMENTS: TaskAttachmentData[] = [
+  { name: '实验指导书.pdf', size: 2_400_000, addedAt: NOW - 9 * DAY },
+  { name: 'starter.zip', size: 12_400_000, addedAt: NOW - 9 * DAY },
+]
+
+/** 历史版本：发布、加了一份数据、换了数据又删了草稿；最早那一版记版本时还没记文件。 */
+export const TASK_VERSIONS: TaskVersionData[] = [
   {
-    id: 7801,
-    name: '实验指导书.pdf',
-    size: 2_400_000,
-    contentType: 'application/pdf',
-    uploaderId: 1,
-    downloadCount: 18,
-    createdAt: NOW - 9 * DAY,
+    number: 3,
+    at: NOW - 1 * DAY,
+    author: { id: 1, username: 'teacher', nickname: '王老师' },
+    changes: { files: { replaced: ['数据.csv'], removed: ['草稿.txt'] } },
+    files: [
+      { name: '实验指导书.pdf', size: 2_400_000 },
+      { name: '数据.csv', size: 48_000 },
+      { name: '题目说明.md', size: 1_200 },
+    ],
   },
   {
-    id: 7802,
-    name: 'starter.zip',
-    size: 12_400_000,
-    contentType: 'application/zip',
-    uploaderId: 1,
-    downloadCount: 6,
-    createdAt: NOW - 9 * DAY,
+    number: 2,
+    at: NOW - 4 * DAY,
+    author: { id: 1, username: 'teacher', nickname: '王老师' },
+    changes: { description: true, files: { added: ['数据.csv', '草稿.txt'] } },
+    files: [
+      { name: '实验指导书.pdf', size: 2_400_000 },
+      { name: '数据.csv', size: 40_000 },
+      { name: '草稿.txt', size: null },
+      { name: '题目说明.md', size: 1_100 },
+    ],
+  },
+  {
+    number: 1,
+    at: NOW - 9 * DAY,
+    author: { id: 1, username: 'teacher', nickname: '王老师' },
+    changes: { published: true },
+    files: null,
   },
 ]
 
@@ -517,4 +558,124 @@ export const PANEL_SPLIT = {
       results: [],
     },
   ],
+}
+
+/** 「我的学习洞察」：一个成员在这块板上的结果 —— 一条薄弱（最该补的）、一条掌握、一条未涉及。 */
+export const MY_LEARNING_INSIGHT: MyLearningInsight = {
+  enabled: true,
+  updatedAt: Date.UTC(2026, 10, 16, 6, 20),
+  focusKnowledgePointId: 91,
+  knowledgePoints: [
+    {
+      id: 91,
+      name: '相关子查询',
+      judgment: {
+        id: 501,
+        level: 'weak',
+        summary: '你知道子查询能嵌套，但还不清楚内层怎样引用外层当前那一行。',
+        disputed: false,
+        analyzedAt: Date.UTC(2026, 10, 16, 6, 20),
+        evidence: [
+          {
+            blockId: 'b-91-1',
+            taskId: 3,
+            taskName: '第 3 题',
+            quote: '子查询里怎么引用外层那一行我一直没搞懂。',
+            createdAt: Date.UTC(2026, 10, 15, 6, 2),
+          },
+        ],
+      },
+    },
+    {
+      id: 92,
+      name: '红黑树的旋转',
+      judgment: {
+        id: 502,
+        level: 'mastered',
+        summary: '你能自己说清左旋和右旋各在什么时候用。',
+        disputed: false,
+        analyzedAt: Date.UTC(2026, 10, 16, 6, 20),
+        evidence: [],
+      },
+    },
+    { id: 93, name: 'GROUP BY 与 HAVING', judgment: null },
+  ],
+  frequentQuestions: [
+    { knowledgePointId: 91, knowledgePointName: '相关子查询', kind: 'concept', count: 4, example: '怎么引用外层的列' },
+    { knowledgePointId: null, knowledgePointName: null, kind: 'error', count: 2, example: 'WHERE 里写 AVG 报错' },
+  ],
+  sources: {
+    messagesRead: 63,
+    tasks: [
+      { taskId: 3, name: '第 3 题', messagesRead: 41 },
+      { taskId: 4, name: '第 4 题', messagesRead: 22 },
+    ],
+  },
+}
+
+/** 「我的学习洞察」第 4 步：一组老师推送、还在出题的，一条到期的复习，今天用了 2 次。 */
+export const MY_LEARNING_PRACTICE: MyLearningPractice = {
+  enabled: true,
+  dailyLimit: 8,
+  usedToday: 2,
+  open: [
+    {
+      id: 71,
+      knowledgePointId: 91,
+      knowledgePointName: '相关子查询',
+      source: 'pushed',
+      ready: false,
+      answered: 0,
+      total: 3,
+      createdAt: Date.UTC(2026, 10, 16, 8, 0),
+    },
+  ],
+  due: [{ knowledgePointId: 92, knowledgePointName: '红黑树的旋转', dueOn: '2026-11-16', streak: 1 }],
+  upcoming: null,
+}
+
+/** 一组巩固题：第 1 道答对、第 2 道答错（带讲解），第 3 道还没答。 */
+export const LEARNING_PRACTICE_SET: LearningPracticeSet = {
+  id: 70,
+  knowledgePointId: 91,
+  knowledgePointName: '相关子查询',
+  source: 'self',
+  ready: true,
+  done: false,
+  questions: [
+    {
+      stem: '「找出工资高于本部门平均工资的员工」，内层子查询怎样拿到外层当前那一行的部门？',
+      options: ['直接写外层表的别名，如 e.dept', '在内层再 JOIN 一次员工表', '把条件写进 HAVING', '内层拿不到外层的列'],
+      chosen: 0,
+      correct: true,
+      answer: 0,
+      explanation: '相关子查询里，内层可以直接引用外层表的别名；外层每扫一行，内层就按这一行的值重算一次。',
+    },
+    {
+      stem: '下面哪种写法会让子查询对外层的每一行都重新计算？',
+      options: [
+        'WHERE salary > (SELECT AVG(salary) FROM emp)',
+        'WHERE salary > (SELECT AVG(salary) FROM emp i WHERE i.dept = e.dept)',
+        'GROUP BY dept HAVING AVG(salary) > 0',
+        'SELECT DISTINCT dept FROM emp',
+      ],
+      chosen: 0,
+      correct: false,
+      answer: 1,
+      explanation: '只有内层引用了外层的列（i.dept = e.dept），它才和外层这一行相关；第一种写法整个只算一次。',
+    },
+    {
+      stem: '用派生表改写同一道题，先要算出的是什么？',
+      options: ['每个员工的工资排名', '每个部门的平均工资', '全公司的平均工资', '每个部门的人数'],
+      chosen: null,
+      correct: null,
+      answer: null,
+      explanation: null,
+    },
+  ],
+  correct: null,
+  levelBefore: null,
+  levelAfter: null,
+  createdAt: Date.UTC(2026, 10, 16, 8, 0),
+  completedAt: null,
 }

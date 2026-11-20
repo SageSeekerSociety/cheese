@@ -4,13 +4,17 @@ ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 WORKDIR /app
 RUN corepack enable
+# pnpm-workspace.yaml links dependencies out of the store's shared directory,
+# and the store here is a cache mount that later layers do not see: each
+# image keeps a node_modules of its own instead.
+ENV pnpm_config_virtual_store_type=project
 
 # The manifests alone, so editing a component does not reinstall the world: this
 # layer is reused until the lockfile itself changes. The pnpm store lives on a
 # cache mount, so even a lockfile edit fetches only what it added. The install
-# applies the dependency patches in patches/ (package.json's patchedDependencies).
+# applies the dependency patches in patches/ (pnpm-workspace.yaml's patchedDependencies).
 FROM base as deps
-COPY package.json pnpm-lock.yaml ./
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY patches ./patches
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile
 
@@ -20,6 +24,9 @@ CMD ["pnpm", "dev"]
 
 FROM deps as build
 COPY . ./
+# The API generation the build bakes in (vite.config.ts) is the backend's file,
+# outside this context: it comes in through the named `api` context (build.yml).
+COPY --from=api api-generation /backend/api-generation
 ENV VITE_API_BASE_URL=__VITE_API_BASE_URL__
 ENV VITE_NEW_API_BASE_URL=__VITE_NEW_API_BASE_URL__
 ENV VITE_AI_API_BASE_URL=__VITE_AI_API_BASE_URL__
@@ -38,10 +45,15 @@ FROM nginx:1.25.4 as prod
 COPY nginx.conf /etc/nginx/nginx.conf
 # The docs' two ways of being served; docker-entrypoint.sh picks one at start.
 COPY nginx/docs /etc/nginx/docs-modes
+COPY nginx/snippets /etc/nginx/snippets
+# The mainland redirect (MAINLAND_ENTRY): what it decides on, and the address
+# space it decides about. docker-entrypoint.sh writes the rest at start.
+COPY nginx/mainland /etc/nginx/mainland
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 COPY scripts/check-static-assets.sh /usr/local/bin/check-static-assets
 COPY scripts/docs-mode.sh /usr/local/bin/docs-mode
-RUN chmod +x /docker-entrypoint.sh /usr/local/bin/check-static-assets /usr/local/bin/docs-mode
+COPY scripts/mainland-redirect.sh /usr/local/bin/mainland-redirect
+RUN chmod +x /docker-entrypoint.sh /usr/local/bin/check-static-assets /usr/local/bin/docs-mode /usr/local/bin/mainland-redirect
 COPY --from=build /app/dist /usr/share/nginx/html
 # The docs built for a host of their own (DOCS_BASE=, build.yml), outside the
 # html root so no platform path reaches it.

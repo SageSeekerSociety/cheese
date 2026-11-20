@@ -44,6 +44,20 @@ const kind = computed(() => {
 const platformText = computed(() =>
   noticeText(props.block).replace(/<@([^>\s]+)>/g, (_, handle: string) => props.memberNames[handle] ?? handle)
 )
+// 频道主线和这件任务之间的一句话（`api/task_exchange.py`）：主线转达的，或任务报告的。
+// 不是哪一次运行里的一步，按谁说的、往哪个方向说的写一行头，下面是那句话本身。
+const exchange = computed(() => {
+  const way = props.block.meta?.exchange
+  if (way !== 'told' && way !== 'report') return null
+  const author = props.block.author
+  // 说这句的总是一位 AI 队友；记下说话人之前的那几条没有署名，按默认的名字称呼。
+  const name = props.memberNames[author] ?? t('work.room.defaultAgentName')
+  if (way === 'told') return t('work.room.site.exchange.told', { name })
+  const kind = props.block.meta?.kind
+  if (kind === 'blocked') return t('work.room.site.exchange.blocked', { name })
+  if (kind === 'done') return t('work.room.site.exchange.done', { name })
+  return t('work.room.site.exchange.asked', { name })
+})
 const images = ref<Record<string, string>>({})
 const imageError = ref(false)
 const long = (text = '') => text.length > 900 || text.split('\n').length > 12
@@ -72,7 +86,11 @@ onUnmounted(() => Object.values(images.value).forEach((url) => URL.revokeObjectU
       ><span>{{ block.meta?.harness }}</span>
       <time :datetime="block.created_at">{{ new Date(block.created_at).toLocaleTimeString() }}</time>
     </header>
-    <p v-if="!block.meta?.record" class="record-row__status">
+    <template v-if="exchange">
+      <p class="record-row__exchange">{{ exchange }}</p>
+      <MarkdownView :source="block.content" as="chat" />
+    </template>
+    <p v-else-if="!block.meta?.record" class="record-row__status">
       {{ block.meta?.before_launch ? t('work.room.site.beforeLaunch') : platformText }}
     </p>
     <details v-if="!block.meta?.record && block.meta?.error">
@@ -163,6 +181,10 @@ onUnmounted(() => Object.values(images.value).forEach((url) => URL.revokeObjectU
   padding: 8px 0;
   font-size: 13px;
   color: var(--text);
+  /* 这一栏**不**挂「离屏跳过」（content-visibility）。它的重内容（命令输出、思考
+     正文）都收在 <details> 里，浏览器本来就不排版收起的那部分——线上量过，一页
+     254KB 正文只有 4.4KB 真被排版。加到行上没有可省的，反而让展开详情后滚动更慢
+     （布局 70ms → 280ms）。 */
 }
 /* 此刻才到的一行：淡入并从下面 4px 升到位（见 `arriving`），和对话栏的新消息同一个
    动作。只动透明度和位置——高度不变，底部那个「钉住」就看不见它，读者不会被推走。 */
@@ -227,6 +249,10 @@ img {
 .record-row--failed,
 .record-row--failed > summary {
   color: var(--danger-ink);
+}
+.record-row__exchange {
+  margin-bottom: 4px;
+  color: var(--muted);
 }
 .record-row__json,
 .record-row__thinking {

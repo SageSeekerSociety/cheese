@@ -110,9 +110,9 @@ def _call_as(client, tid: str, pid, seat: str, name: str, method: str, params=No
         f"/topics/{tid}/mcp/{name}",
         json={"method": method, "params": params or {}},
         headers={
-            "X-Cheese-Token": mint_scoped_token(
-                project_id=str(pid), topic_id=tid, agent_handle=seat
-            )
+            "Authorization": f"Bearer {
+                mint_scoped_token(project_id=str(pid), topic_id=tid, agent_handle=seat)
+            }"
         },
     )
     assert response.status_code == 200, response.text
@@ -151,7 +151,7 @@ def test_a_types_remote_server_uses_the_projects_connection_for_its_teammates(
     assert listed["search"]["auth"] == "headers"
 
     back = _connect(client, pid, name="ticket")
-    assert back.status_code == 302, back.text
+    assert back["query"]["mcp_result"] == "connected", back
     assert _servers(client, pid)["ticket"]["authorized_by"] == "alice"
 
     assert _session_target(client, pid, tid, tracer) == {
@@ -291,7 +291,7 @@ def test_a_private_chat_keeps_the_teammates_type_servers(
     pid, tid = room
     tracer = _teammate(client, pid, "tracer-1", "tracer")
     plain = _teammate(client, pid, "plain-1", "plain")
-    assert _connect(client, pid, name="ticket").status_code == 302
+    assert _connect(client, pid, name="ticket")["query"]["mcp_result"] == "connected"
 
     own = _private_target(client, monkeypatch, pid, tid, "tracer-1", tracer)
     assert own["kind"] == "private"

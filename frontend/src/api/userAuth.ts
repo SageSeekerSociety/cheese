@@ -201,8 +201,13 @@ export namespace UserAuthApi {
   export const logout = () => axiosMutation({ url: '/users/auth/logout', method: 'POST', withCredentials: true })
 
   // 在浏览器里登录后交给桌面 app（views/account/BackToApp.vue、AppSignInFinish.vue）
-  export const startAppSignIn = (challenge: string) =>
-    axiosRequest<{ code: string }>({ url: '/users/auth/app-sign-in', method: 'POST', data: { challenge } })
+  // `returnTo`: another origin of this deployment the code is carried back to (lib/desktopApp.ts signInAtOrigin).
+  export const startAppSignIn = (challenge: string, returnTo?: string) =>
+    axiosRequest<{ code: string }>({
+      url: '/users/auth/app-sign-in',
+      method: 'POST',
+      data: { challenge, ...(returnTo ? { returnTo } : {}) },
+    })
 
   export const finishAppSignIn = (code: string, verifier: string) =>
     axiosRequest<null>({ url: '/users/auth/app-sign-in/finish', method: 'POST', data: { code, verifier } })

@@ -10,6 +10,7 @@
   "empty": "No applications.",
   "loadFailed": "Space applications failed to load",
   "next": "Next",
+  "openScope": "Requests an open space: {scope}",
   "previous": "Previous",
   "reason": "Rejection reason",
   "refresh": "Refresh",

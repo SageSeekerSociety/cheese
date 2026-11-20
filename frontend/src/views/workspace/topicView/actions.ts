@@ -3,7 +3,7 @@
 // 一张动作卡上的按钮（§3.1.1 控件）：点开相关的那一格——资料库里的一份文档开在面板的
 // 自由区；「它此刻在干什么」去现场；本轮摘要的「查看改动」是隔壁一格，不是新一页；
 // 「查看改动」还要在正文里一处处标出这个人让 AI 队友改的那几处。只有任务有自己的
-// 文档；频道里说的是资料库里的那份，前面那条已经接住了。离开专注模式会重画编辑器、把
+// 文档；频道里说的是资料库里的那份，前面那条已经接住了。面板换一格会重画编辑器、把
 // 它的 DOM 重建一遍，所以要等那次重画落定再标亮闪一下，不然闪完立刻被抹掉。
 //
 // 一条被点开的 <@handle>：去他的成员页。
@@ -13,15 +13,19 @@
 import type { Ref } from 'vue'
 import type TaskOverview from '@/components/task/TaskOverview.vue'
 import type { AgentControlState, Block } from '@/cx_types'
+import type { DeliveryAct } from '@/lib/channelTasks'
 import type { DocReviewRequest, OpenedDocument } from '@/lib/docReview'
 import type { MemberActivityLine } from '@/lib/memberActivity'
 import type { PreviewLocate, SubmitPreviewQuestion } from '@/lib/previewQuestion'
 import type { ChatColumnHandle, TopicPlace, WorkPanelHandle } from './shared'
 
-import { nextTick } from 'vue'
+import { computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 
+import { personalAsker } from '@/lib/personalAsker'
+import { isProposalResource, proposalPage } from '@/lib/proposalNavigation'
 import { userRefRoute } from '@/lib/userRef'
+import { agentAvailable, askAgent, openAgent } from '@/stores/agent'
 
 /** 任务概览那一列往回够的那几处：标亮某一轮改的几处。组件自己暴露什么，这里就是什么。 */
 export type TaskOverviewHandle = InstanceType<typeof TaskOverview>
@@ -30,16 +34,18 @@ export function useTopicActions(opts: {
   place: () => TopicPlace
   /** 面板浮层那一处：正文里标亮之前先把它打开。 */
   panel: { show: () => void }
-  focusMode: Ref<boolean>
   onPanelTab: (key: string) => void
   onReview: () => void
   /** 采纳卡重读。 */
   reloadAccept: () => void
+  /** 读这段对话里还在等人的技能提议：右侧那一格要画它。 */
+  loadSkills: () => Promise<void>
   /** 支线：打开一条、开任务页、把一条消息转成任务。 */
   opening: {
     onOpenThread: (block: Block) => void
-    onOpenCard: (taskId: string) => void
-    upgradeMessage: (messageId: string) => void
+    /** 对话里点开一件任务：频道主线上在右边审阅，别处去任务页。 */
+    openTask: (taskId: string) => void
+    upgradeInColumn: (messageId: string) => void
   }
   openTopic: (topicId: string) => void
   panelRef: Ref<WorkPanelHandle | null>
@@ -52,6 +58,8 @@ export function useTopicActions(opts: {
   handleTurnDone: () => void
   handleWorking: (now: boolean) => void
   handleStateChanged: (resource: string) => void
+  /** 主线上交付那几颗按钮（`adoptInPlace.ts`）。 */
+  onDelivery: (act: DeliveryAct) => void
 }) {
   const router = useRouter()
 
@@ -60,6 +68,14 @@ export function useTopicActions(opts: {
     opts.chatColumn.value?.say(payload.message, payload.attachments)
   }
   const submitQuestion: SubmitPreviewQuestion = (request) => opts.chatColumn.value?.submitQuestion(request) ?? false
+
+  /** 预览里私下问个人芝士：开面板、把那句话问过去。
+   *
+   *  没有这一条（没登录）时面板不摆那一项——摆一条按下去没反应的比不摆更糟。
+   *  「有没有」由这里说了算，面板只认「给了还是没给」。 */
+  const askPersonal = computed(() =>
+    personalAsker(agentAvailable.value, openAgent, (message) => void askAgent(message))
+  )
 
   function handleMentionClick(handle: string) {
     void router.push(userRefRoute(handle, opts.place().projectId))
@@ -80,10 +96,11 @@ export function useTopicActions(opts: {
     'mention-click': handleMentionClick,
     'open-file': (path: string) => opts.panelRef.value?.openFile?.(path),
     'open-resource': handleOpenResource,
-    'upgrade-message': opts.opening.upgradeMessage,
+    'upgrade-message': opts.opening.upgradeInColumn,
     'open-thread': opts.opening.onOpenThread,
     'open-topic': opts.openTopic,
-    'open-card': opts.opening.onOpenCard,
+    'open-card': opts.opening.openTask,
+    delivery: opts.onDelivery,
     review: opts.onReview,
   }
 
@@ -94,27 +111,36 @@ export function useTopicActions(opts: {
     review?: DocReviewRequest,
     document?: OpenedDocument
   ) {
+    if (document && isProposalResource(resource)) {
+      // AI 队友提议的技能：还在等人的，在面板的自由区开一格，读完就地决定；定下来的和
+      // 例行事务去它在项目里的那一页。
+      if (resource === 'skill' && opts.panelRef.value?.openSkill) {
+        void opts.loadSkills()
+        await nextTick()
+        await opts.panelRef.value.openSkill(document)
+        return
+      }
+      const page = proposalPage(resource, opts.place().projectId, document.id)
+      if (page) void router.push(page)
+      return
+    }
     if (resource === 'doc' && document) {
       // 资料库里的一份文档：在面板的自由区开一格，不是这个对话自己的文档。
-      opts.focusMode.value = false
       await nextTick()
       await opts.panelRef.value?.openDocument?.(document, review)
       return
     }
     if (resource === 'site') {
       // 对话里在动的那个头像：它此刻在干什么，去现场看。
-      opts.focusMode.value = false
       opts.onPanelTab('site')
     } else if (resource === 'changes') {
       // 本轮摘要的「查看改动」: the diff is a tab away, not a new page.
-      opts.focusMode.value = false
       opts.onPanelTab('changes')
     } else if (resource === 'accept') {
       opts.reloadAccept()
     } else if (resource === 'doc') {
       // 只有任务有自己的文档；频道里说的是资料库里的那份，上面那条已经接住了。
       if (!opts.place().taskId) return
-      opts.focusMode.value = false
       opts.panel.show()
       await opts.panelRef.value?.showOverview()
       // 「查看改动」：在正文里一处处标出这个人让 AI 队友改的那几处。
@@ -125,5 +151,5 @@ export function useTopicActions(opts: {
     // topics: the topic panel is already in view next to the chat.
   }
 
-  return { chatEvents, handleOpenResource, handleMentionClick, onLocate, submitQuestion }
+  return { chatEvents, handleOpenResource, handleMentionClick, onLocate, submitQuestion, askPersonal }
 }

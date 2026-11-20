@@ -32,6 +32,8 @@ const props = defineProps<{
   profile?: ContentProfile | null
   /** 屏上已有的笔画：文字工具点中已有文字时，改成编辑它而不是新画一条。 */
   strokes?: readonly SketchStroke[]
+  /** 屏幕上的图转过、翻过没有：落笔的点要先折回原图，才是原图像素。 */
+  adjust?: { rotate: number; flip: boolean }
 }>()
 const emit = defineEmits<{
   stroke: [stroke: SketchStroke]
@@ -61,6 +63,7 @@ function measure(): boolean {
     height: rect.height,
     naturalWidth: image.naturalWidth,
     naturalHeight: image.naturalHeight,
+    adjust: props.adjust,
   }
   captured = {
     src: image.getAttribute('src') ?? '',

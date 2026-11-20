@@ -26,6 +26,7 @@ from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
 from app.domain.project.models import Project
 from app.domain.user.repositories import UserRepository
+from app.domain.user.tokens import digest_token
 from tests.conftest import seed_user
 from tests.integration.conftest import session_auth_headers
 from tests.integration.test_remote_mcp import _local_upstream as _local_upstream
@@ -70,7 +71,9 @@ def room(client, upstream):
     return (
         pid,
         tid,
-        {"x-cheese-token": mint_scoped_token(project_id=str(pid), topic_id=tid)},
+        {
+            "Authorization": f"Bearer {mint_scoped_token(project_id=str(pid), topic_id=tid)}"
+        },
     )
 
 
@@ -87,7 +90,7 @@ def _computer(client, pid, owner: str, *, supply=Supply.self_hosted) -> str:
                 DeviceRow(
                     device_id=device_id,
                     name=f"{owner} 的笔记本",
-                    token=f"tok-{device_id}",
+                    token_digest=digest_token(f"tok-{device_id}"),
                     team_id=(await session.get(Project, pid)).team_id,
                     owner_user_id=user.id,
                     created_at=datetime.now(UTC),

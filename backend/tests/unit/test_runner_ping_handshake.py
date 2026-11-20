@@ -78,7 +78,7 @@ def test_the_ping_says_whether_the_runner_is_at_work_from_start_to_end(
     # Work taken away ends in a failure, and the ping says so.
     cut = str(uuid.uuid4())
     screen.send(
-        contract.do("Bash", command="sleep 30", description="wait"), work_id=cut
+        contract.do("Bash", command="env sleep 30", description="wait"), work_id=cut
     )
     screen.wait(_is("assistant"), after=screen.records()[-1]["sequence"])
     screen.call("interrupt")

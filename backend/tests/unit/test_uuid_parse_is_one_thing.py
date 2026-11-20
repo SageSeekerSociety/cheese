@@ -1,4 +1,4 @@
-"""UUID text keeps its meaning in work attribution, credential scope and reuse."""
+"""UUID text keeps its meaning in work attribution and reuse."""
 
 import uuid
 from unittest.mock import AsyncMock, MagicMock
@@ -7,7 +7,6 @@ import pytest
 
 from app.core.errors import UnprocessableEntityError
 from app.core.work_context import parse_work_id
-from app.domain.agent_credential.services import ProjectAgentCredentialService
 from app.domain.deliverables import artifacts
 from app.domain.project.models import ProjectArtifact
 
@@ -22,25 +21,6 @@ def test_work_id_accepts_uuid_text(raw):
 @pytest.mark.parametrize("raw", ["not-a-uuid", "", None])
 def test_work_id_without_valid_uuid_has_no_attribution(raw):
     assert parse_work_id(raw) is None
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize(
-    "raw, expected",
-    [(str(_ID), _ID), (_ID.hex, _ID), ("not-a-uuid", None), ("", None), (None, None)],
-)
-async def test_project_path_controls_credential_scope(raw, expected):
-    service = ProjectAgentCredentialService(AsyncMock())
-    assert await service.project_of_request(project_id=raw, topic_id=None) == expected
-
-
-@pytest.mark.anyio
-@pytest.mark.parametrize("raw", ["not-a-uuid", ""])
-async def test_invalid_topic_has_no_credential_scope(raw):
-    session = AsyncMock()
-    service = ProjectAgentCredentialService(session)
-    assert await service.project_of_request(project_id=None, topic_id=raw) is None
-    session.execute.assert_not_awaited()
 
 
 @pytest.mark.anyio

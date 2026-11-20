@@ -10,6 +10,7 @@
 """
 
 import uuid
+from datetime import datetime
 
 from app.domain.room_task.models import Task
 from app.domain.room_task.presentation import NeedsYou
@@ -23,6 +24,10 @@ from tests.integration.conftest import (
     session_auth_headers,
 )
 from tests.turn_log import open_turn
+
+
+def parse(iso: str) -> datetime:
+    return datetime.fromisoformat(iso)
 
 
 def _project(client, handle: str) -> str:
@@ -304,3 +309,29 @@ def test_a_card_waiting_on_me_says_which_version_and_since_when(client):
     (item,) = _mine(client, "alice")
     assert item["cardVersion"] == 1
     assert item["cardSince"]
+
+
+def test_a_waiting_question_carries_its_own_date_not_the_channels(
+    client, stub_hooks, monkeypatch
+):
+    """那一行右边写的日期是**题**问出来的时刻。
+
+    原先频道那一格取 `topic.updated_at` —— 那个时刻只在频道行自己被改时动（改名、改
+    通知档位），一道挂了十天的题会写成频道最后一次被改的那天。实况：10-13 问的题在
+    清单里显示成 10-12。
+    """
+    project = _project(client, "alice")
+    room = _room(client, project, "alice")
+    thread = in_thread(client, room, "alice")
+
+    with active_ask(client, stub_hooks, monkeypatch, thread, actor="alice") as headers:
+        _ask(client, thread, headers)
+    (item,) = _mine(client, "alice")
+
+    question = next(
+        b
+        for b in client.get(f"/topics/{thread}/blocks").json()["data"]["data"]
+        if b["id"] == item["blockId"]
+    )
+    # 同一刻，只是两处序列化的写法不同（这一条路写 "+00:00"，块那条写 "Z"）。
+    assert parse(item["at"]) == parse(question["created_at"])

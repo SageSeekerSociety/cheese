@@ -52,6 +52,8 @@ export interface AutoMergeInfo {
   allowed: boolean
   armed_by: string | null
   armed_at: string | null
+  /** Armed by 「提交并采纳」: the reviewer adopted this version, not the auto-merge switch. */
+  adopting?: boolean
 }
 
 // 托管方的能力位 (ARCH §4.5)。「这个项目接没接 GitHub」不是一个可读的布尔：
@@ -125,7 +127,7 @@ export interface AcceptCard {
     url: string | null
     revision?: string | null
   } | null
-  completes_task?: boolean // 这次交付是不是任务的最后一步；不是的话采纳后任务接着做下一步
+  completes_task?: boolean // 只在旧卡上有意义；新卡一律 false，界面不读它
 }
 
 // GET /topics/{id}/pr-checks — live CI state of the card's PR (display only).

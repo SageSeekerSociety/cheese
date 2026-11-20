@@ -130,13 +130,13 @@ async def inform(session: AsyncSession, task: Task, said: str) -> None:
 #: Where a returned or voided card leaves the task: back in its teammate's
 #: hands (`progress.back_to_work`), able to report again.
 BACK_TO_WORK = (
-    "看板上这件任务回到了「在做」，cheese_task(action=state) 又能报了"
+    "看板上这件任务回到了「进行中」，cheese_task(action=state) 又能报了"
     "（你递卡之前报的那一条在递卡时已经清掉）。"
 )
 
 #: The closed-task ending of an instruction: the line still goes out, but there
 #: is nothing left to work on.
-TASK_CLOSED = "原任务已关闭或不存在；如需继续修改，请由新任务承接。"
+TASK_CLOSED = "原任务已结束或不存在；如需继续修改，请由新任务承接。"
 
 
 def card_voided(
@@ -158,7 +158,23 @@ def card_voided(
 
 def reviewer_changed(*, by: str | None, reviewer: str) -> str:
     who = f"@{by} 把" if by else "平台把"
-    return f"{who}这件任务的验收卡改由 @{reviewer} 审阅，卡照旧在等审阅。"
+    return f"{who}这件任务的验收卡改由 @{reviewer} 审阅，卡照旧待审阅。"
+
+
+def member_handed_in(
+    *, by: str, subject: str, head: str | None, committed: bool, again: bool
+) -> str:
+    """A member handed the task's changes in themselves (`machine.hand_in`)."""
+    did = (
+        f"把任务目录里没提交的修改提交成了 {head[:12]}，推到了任务分支上，"
+        if committed and head
+        else ""
+    )
+    what = "再提交了一版" if again else "提交审阅"
+    return (
+        f"@{by} {did}{what}「{subject}」，现在待审阅。任务目录和分支已经是这一版："
+        "接着改之前先重新读要动的文件，不要用旧内容写回。"
+    )
 
 
 def accept_revoked(*, by: str, pr: int | None) -> str:
@@ -171,6 +187,16 @@ def task_closed(*, by: str, conclusion: str | None) -> str:
     return (
         f"@{by} 关闭了这件任务{ended}。"
         "你在这里还在跑的活已经停下；之后不再改动项目、不递卡。"
+    )
+
+
+def task_closed_deployed(*, conclusion: str | None) -> str:
+    """The channel's main line closed the task after its last merge, and the
+    task closed once that merge was live (`review.task_landing.deploy_landed`)."""
+    ended = f"，结论：{conclusion}" if conclusion else "，没有留结论"
+    return (
+        f"最后一次合并已经上线，平台按频道主线的决定关闭了这件任务{ended}。"
+        "之后不再改动项目、不提交审阅。"
     )
 
 
@@ -189,6 +215,15 @@ def task_closed_unasked() -> str:
     return (
         "平台关闭了这件任务：最后一步已经采纳，叫你写总结、关闭任务的那条指令"
         "一直没能交到你手上，平台没再等，直接关了。"
+    )
+
+
+def task_closed_neglected(*, days: int) -> str:
+    """Nobody touched the task for ``days`` days and the platform closed it
+    (`task_quiet.neglect`)."""
+    return (
+        f"平台关闭了这件任务：已经 {days} 天没有人理会。它的 PR 和分支都还在，"
+        "有人重新打开它时再接着做。"
     )
 
 

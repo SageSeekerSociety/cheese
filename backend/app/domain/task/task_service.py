@@ -6,12 +6,21 @@ stays under its size cap; the class is re-exported from ``services``, so
 """
 
 from collections.abc import Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.errors import BadRequestError
+from app.core.sentences import say
 from app.domain.tag.models import Tag
-from app.domain.task.models import Task, TaskRubricItem, TaskSubmissionSchemaEntry
+from app.domain.task import stages, test_suite
+from app.domain.task.inputs import APPROVE_APPROVED, map_approve_type
+from app.domain.task.models import (
+    Task,
+    TaskRubricItem,
+    TaskStage,
+    TaskSubmissionSchemaEntry,
+)
 from app.domain.task.repositories import (
     TaskAccessDomainRepository,
     TaskRepository,
@@ -143,6 +152,34 @@ class TaskService:
     async def has_prior_pending_task_for_creator(self, task: Task) -> bool:
         return await self._repo.has_prior_pending_task_for_creator(task)
 
+    async def review(
+        self,
+        task: Task,
+        *,
+        approved: str | None,
+        reject_reason: str | None,
+        reviewer_id: int,
+    ) -> None:
+        """Pass ``task`` onto its board or send it back, as ``reviewer_id``. The
+        caller has already decided they may (``PATCH /tasks/{id}`` for whoever
+        teaches the space, ``/admin/tasks`` for a platform admin) and saves."""
+        if approved is not None:
+            next_approved = map_approve_type(approved)
+            if next_approved == APPROVE_APPROVED and task.approved != APPROVE_APPROVED:
+                if await self.has_prior_pending_task_for_creator(task):
+                    raise BadRequestError(say("taskEarlierPending"))
+                if task.published_at is None:
+                    task.published_at = datetime.now(UTC)
+            task.approved = next_approved
+        if reject_reason is not None:
+            task.reject_reason = reject_reason
+        # 审核痕迹只在这里写：过了调用方那道门才落，通过和驳回是同一次写入，落的是
+        # 审核人与此刻（出题人自己审时就是出题人）。驳回后作者重新提交、再被审时覆盖
+        # 成最新一次 —— 「审没审过」看 approved，这两列说的是「上一次是谁、什么时候
+        # 点的」。
+        task.reviewed_by = reviewer_id
+        task.reviewed_at = datetime.now(UTC)
+
     async def save(self, task: Task) -> Task:
         return await self._repo.save(task)
 
@@ -168,6 +205,7 @@ class TaskService:
         max_team_size: int | None,
         team_locking_policy: str,
         access_control_enabled: bool = False,
+        start_mode: str = "DIRECT",
     ) -> Task:
         return await self._repo.create_task(
             name=name,
@@ -189,6 +227,7 @@ class TaskService:
             max_team_size=max_team_size,
             team_locking_policy=team_locking_policy,
             access_control_enabled=access_control_enabled,
+            start_mode=start_mode,
         )
 
     async def replace_topic_relations(
@@ -206,6 +245,20 @@ class TaskService:
             task_id
         )
 
+    async def replace_knowledge_point_relations(
+        self, *, task_id: int, knowledge_point_ids: Sequence[int]
+    ) -> None:
+        await self._repo.replace_knowledge_point_relations(
+            task_id=task_id, knowledge_point_ids=knowledge_point_ids
+        )
+
+    async def add_knowledge_point_relations(
+        self, *, task_id: int, knowledge_point_ids: Sequence[int]
+    ) -> None:
+        await self._repo.add_knowledge_point_relations(
+            task_id=task_id, knowledge_point_ids=knowledge_point_ids
+        )
+
     async def list_submission_schema(
         self, task_id: int
     ) -> Sequence[TaskSubmissionSchemaEntry]:
@@ -220,6 +273,13 @@ class TaskService:
             session=self._require_session()
         ).replace_schema(task_id, entries)
 
+    async def list_submission_schemas(
+        self, task_ids: Sequence[int]
+    ) -> dict[int, list[TaskSubmissionSchemaEntry]]:
+        return await TaskSubmissionSchemaRepository(
+            session=self._require_session()
+        ).list_by_task_ids(task_ids)
+
     async def list_rubric(self, task_id: int) -> list[TaskRubricItem]:
         return await TaskRubricRepository(
             session=self._require_session()
@@ -229,6 +289,37 @@ class TaskService:
         await TaskRubricRepository(session=self._require_session()).replace(
             task_id, lines
         )
+
+    async def list_test_suites(self, task_id: int) -> list[test_suite.TaskTestSuite]:
+        return await test_suite.list_suites(self._require_session(), task_id)
+
+    async def replace_test_suites(
+        self, task_id: int, lines: Sequence[test_suite.SuiteLine]
+    ) -> bool:
+        return await test_suite.replace_suites(self._require_session(), task_id, lines)
+
+    async def test_suite_stages(self, task_id: int) -> list[int]:
+        """这道题挂了测试点的阶段 —— ``rubric`` 校验「设为测试点的那一项要有测试点」
+        时读它。"""
+        return await test_suite.suite_stages(self._require_session(), task_id)
+
+    async def suites_to_api(
+        self, task_id: int, keys: Sequence[str], *, teacher: bool
+    ) -> list[dict]:
+        return await test_suite.suites_to_api(
+            self._require_session(), task_id, keys, teacher=teacher
+        )
+
+    async def list_stages(self, task_id: int) -> list[TaskStage]:
+        return await stages.list_stages(self._require_session(), task_id)
+
+    async def replace_stages(
+        self, task_id: int, lines: Sequence[stages.StageLine]
+    ) -> None:
+        await stages.replace_stages(self._require_session(), task_id, lines)
+
+    async def stage_keys(self, task_id: int) -> list[str]:
+        return await stages.stage_keys(self._require_session(), task_id)
 
     async def replace_access_domains(
         self, *, task_id: int, domains: Sequence[str]

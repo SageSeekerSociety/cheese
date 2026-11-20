@@ -10,7 +10,7 @@
 model_list: []
 
 # The platform's own web search (backend `/web-search`, the agents'
-# `cheese_web_search`), asked on the caller's virtual key at
+# `cheese_web(action=search)`), asked on the caller's virtual key at
 # /v1/search/deepseek-search, so it is admitted, logged and drained like that
 # key's model calls. DeepSeek's search API as a provider: deepseek_search.py.
 search_tools:
@@ -61,8 +61,10 @@ litellm_settings:
   # A deployment that declares cheese_upstream_headers or cheese_session_header
   # is sent them (`upstream_headers.py`), and one that declares
   # cheese_no_explicit_cache loses its cache_control marks
-  # (`no_explicit_cache.py`), and one that declares cheese_spend_cap_usd is
-  # refused past that total (`spend_cap.py`).
+  # (`no_explicit_cache.py`), one that declares cheese_cache_ttl is asked for
+  # that cache lifetime at the top of the request (`cache_ttl.py`), and one
+  # that declares cheese_spend_cap_usd is refused past that total
+  # (`spend_cap.py`).
   # A row whose provider account is out of credit is taken out of rotation
   # for minutes and named for the administrators (`provider_credit.py`, which
   # also wraps the router at worker start-up).
@@ -75,6 +77,7 @@ litellm_settings:
     - cheese_image_guard.handler
     - cheese_upstream_headers.handler
     - cheese_no_explicit_cache.handler
+    - cheese_cache_ttl.handler
     - cheese_spend_cap.handler
     - cheese_provider_credit.handler
     - cheese_web_search.handler

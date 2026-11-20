@@ -10,11 +10,10 @@ publisher may move it afterwards. Three readers have to name the same moment:
 2. what a person's 芝士 reads about their challenges (``GET /tasks/joined``)
    carries that same deadline, and every time is on the person's own clock
    (the time zone their browser reported), offset included;
-3. the project a claim opens carries that claim's deadline live
-   (``GET /projects/{id}``), and has none written into its overview text at
-   claim time — the claim is not approved yet then, so no deadline of the
-   person's exists to write, and one fixed string cannot be on every reader's
-   clock.
+3. the project the claimant starts once approved carries that claim's
+   deadline live (``GET /projects/{id}``): the publisher may move it
+   afterwards, so none is written into its overview text, and one fixed
+   string cannot be on every reader's clock anyway.
 """
 
 from __future__ import annotations
@@ -100,6 +99,7 @@ def _task(
         "/tasks",
         json={
             "name": f"题 {unique_int()}",
+            "startMode": "APPLY",
             "intro": "题",
             "description": '{"type":"doc","content":[]}',
             "space": board["space_id"],
@@ -242,9 +242,14 @@ def test_a_team_task_names_the_deadline_of_the_claim_that_was_approved(
     page = _data(api_client.get(f"/tasks/{task_id}", headers=_auth(token)))
     assert page["task"]["userDeadline"] == _ms(mine)
     _same_moment_on_my_clock(_joined(api_client, token, task_id)["myDeadline"], mine)
-    project = _data(
-        api_client.get(f"/projects/{second['project']['id']}", headers=_auth(token))
-    )
+    opened = _data(
+        api_client.post(
+            f"/tasks/{task_id}/participations/team",
+            json={"teamId": teams[1]},
+            headers=_auth(token),
+        )
+    )["project"]
+    project = _data(api_client.get(f"/projects/{opened['id']}", headers=_auth(token)))
     assert project["challenge_deadline"]["mine"] is True
     assert datetime.fromisoformat(project["challenge_deadline"]["at"]) == mine
 
@@ -260,13 +265,6 @@ def test_the_claims_project_carries_its_live_deadline_not_a_written_one(
             f"/tasks/{task_id}/participations/user", json={}, headers=_auth(token)
         )
     )
-    project_id = claimed["project"]["id"]
-
-    # What the overview page shows instead, live: before approval the
-    # challenge's closing time, after it the claim's own deadline.
-    project = _data(api_client.get(f"/projects/{project_id}", headers=_auth(token)))
-    assert project["challenge_deadline"]["mine"] is False
-    assert datetime.fromisoformat(project["challenge_deadline"]["at"]) == closes
     mine = datetime(2030, 10, 24, 8, 30, tzinfo=UTC)
     _decide(
         api_client,
@@ -276,9 +274,23 @@ def test_the_claims_project_carries_its_live_deadline_not_a_written_one(
         approved="APPROVED",
         deadline=_ms(mine),
     )
+    project_id = _data(
+        api_client.post(
+            f"/tasks/{task_id}/participations/user", json={}, headers=_auth(token)
+        )
+    )["project"]["id"]
     project = _data(api_client.get(f"/projects/{project_id}", headers=_auth(token)))
     assert project["challenge_deadline"]["mine"] is True
     assert datetime.fromisoformat(project["challenge_deadline"]["at"]) == mine
+
+    # The publisher moves it: the overview page shows the new one, live.
+    moved = datetime(2030, 10, 26, 8, 30, tzinfo=UTC)
+    _decide(
+        api_client, board, task_id, claimed["participant"]["id"], deadline=_ms(moved)
+    )
+    project = _data(api_client.get(f"/projects/{project_id}", headers=_auth(token)))
+    assert datetime.fromisoformat(project["challenge_deadline"]["at"]) == moved
+    assert moved != closes
 
     overview = _data(
         api_client.get(f"/projects/{project_id}/overview", headers=_auth(token))

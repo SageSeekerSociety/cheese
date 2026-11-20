@@ -8,7 +8,6 @@ import argparse
 import asyncio
 import json
 import logging
-import tempfile
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -26,13 +25,9 @@ from app.domain.project.forge import (
 from app.domain.project.forge_migration import (
     freeze,
     push,
-    task_snapshot,
-    unpack_working_files,
     write_checkpoint,
 )
 from app.domain.project.models import Project
-from app.domain.room_task import snapshots
-from app.domain.room_task.models import Task
 
 
 async def migrate(project_id: uuid.UUID, backups: Path, *, apply: bool) -> str:
@@ -109,54 +104,9 @@ async def migrate(project_id: uuid.UUID, backups: Path, *, apply: bool) -> str:
                     "project=%s status=refs_verified count=%s", project_id, len(refs)
                 )
             else:
-                # GitHub remains authoritative. Local-only history stays in the
-                # immutable archive and self-contained private task bundles.
+                # GitHub remains authoritative. Local-only history and the
+                # working files of every task stay in the immutable archive.
                 log.info("project=%s status=local_refs_archived", project_id)
-            tasks = list(
-                await session.scalars(select(Task).where(Task.project_id == project_id))
-            )
-            with tempfile.TemporaryDirectory(
-                dir=output, prefix="working-"
-            ) as working_files:
-                if any(task.workspace_name and task.branch_name for task in tasks):
-                    log.info("project=%s status=unpack_start", project_id)
-                    await asyncio.to_thread(
-                        unpack_working_files, output, Path(working_files)
-                    )
-                    log.info("project=%s status=unpack_complete", project_id)
-                for task in tasks:
-                    if not task.workspace_name or not task.branch_name:
-                        log.info("task=%s status=skip reason=no_workspace", task.id)
-                        continue
-                    log.info("task=%s status=snapshot_start", task.id)
-                    backup = await asyncio.to_thread(
-                        task_snapshot,
-                        output,
-                        task.id,
-                        working_files=Path(working_files),
-                        directory=task.workspace_name,
-                        branch=task.branch_name,
-                        include_history=binding.kind == "github_app",
-                    )
-                    if backup is None:
-                        log.info("task=%s status=skip reason=no_local_changes", task.id)
-                        continue
-                    with (output / backup["file"]).open("rb") as stream:
-                        await snapshots.save(
-                            session,
-                            task,
-                            file=stream,
-                            head_sha=backup["head_sha"],
-                            snapshot_sha=backup["snapshot_sha"],
-                            digest=backup["digest"],
-                        )
-                    # A later upload failure must not roll back completed task backups.
-                    await session.commit()
-                    log.info(
-                        "task=%s status=snapshot_saved digest=%s",
-                        task.id,
-                        backup["digest"],
-                    )
         await session.commit()
         project_backup.mkdir(parents=True, exist_ok=True, mode=0o700)
         write_checkpoint(

@@ -1,21 +1,22 @@
-import type { TaskAttachmentData } from '@/types/taskAttachments'
+import type { TaskFileData } from '@/types/taskFiles'
 
 import { ref } from 'vue'
 
-import { downloadFile, taskAttachmentRawUrl } from '@/api'
-import { listTaskAttachments } from '@/api/taskAttachments'
+import { downloadFile } from '@/api'
+import { listTaskFiles, taskFileRawUrl } from '@/api/taskFiles'
 
 /**
- * 一道题的材料清单。
+ * 一道题的材料清单（题目资料库里出题人放进来的文件）。
  *
  * 清单本身对**看得见这道题的人**都可见：看不见材料就无从判断要不要领这道题。能不能
  * 下载是另一回事，由服务端在 `canDownload` 里给 —— 出题人、空间管理员、已经领取的人
  * 拿得到，其余人那一行写「领取这道题之后才能下载」。
  */
 export function useTaskAttachments() {
-  const attachments = ref<TaskAttachmentData[]>([])
+  const attachments = ref<TaskFileData[]>([])
   const canDownload = ref(false)
-  const downloadingId = ref<number | null>(null)
+  /** 正在下载的那一份（名字）。 */
+  const downloading = ref<string | null>(null)
 
   async function load(taskId: number | null | undefined) {
     if (!taskId) {
@@ -24,8 +25,8 @@ export function useTaskAttachments() {
       return
     }
     try {
-      const data = await listTaskAttachments(taskId)
-      attachments.value = data.attachments ?? []
+      const data = await listTaskFiles(taskId)
+      attachments.value = data.files ?? []
       canDownload.value = data.canDownload ?? false
     } catch {
       // 清单取不到就整块不显示：一道没有材料的题和一次失败的请求在屏幕上长得一样，
@@ -35,16 +36,14 @@ export function useTaskAttachments() {
     }
   }
 
-  async function download(taskId: number, file: TaskAttachmentData) {
-    downloadingId.value = file.id
+  async function download(taskId: number, file: TaskFileData) {
+    downloading.value = file.name
     try {
-      await downloadFile(taskAttachmentRawUrl(taskId, file.id), file.name)
-      // 下载计数由服务端在真的取到字节之后 +1，这里跟着走一格，不重新拉整张清单。
-      file.downloadCount += 1
+      await downloadFile(taskFileRawUrl(taskId, file.name), file.name)
     } finally {
-      downloadingId.value = null
+      downloading.value = null
     }
   }
 
-  return { attachments, canDownload, downloadingId, load, download }
+  return { attachments, canDownload, downloading, load, download }
 }

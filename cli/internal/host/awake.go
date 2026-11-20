@@ -74,7 +74,7 @@ func runningSessions(ctx context.Context, client *http.Client, base, token strin
 	if err != nil {
 		return 0, err
 	}
-	req.Header.Set("X-Cheese-Session", token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := client.Do(req)
 	if err != nil {
 		return 0, err

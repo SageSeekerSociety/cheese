@@ -38,7 +38,7 @@ async def _channel(db, resolver, topic_id: uuid.UUID, *, acting: bool):
         raise NotFoundError(say("topicNotFound"))
     actor = await resolver.resolve(topic_id=topic_id, project_id=place.project_id)
     await resolver.authorize_topic(
-        actor, project_id=place.project_id, topic_id=topic_id
+        actor, project_id=place.project_id, topic_id=topic_id, room=place.room
     )
     if acting and not actor.authenticated:
         raise AuthenticationRequiredError("A verified member identity is required")

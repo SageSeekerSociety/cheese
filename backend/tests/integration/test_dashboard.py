@@ -5,7 +5,7 @@ import uuid
 
 from app.domain.block.models import Block, BlockKind
 from app.domain.event_author import AuthorType
-from tests.conftest import seed_claim, seed_space, seed_task_with_protocol
+from tests.conftest import seed_space, seed_task_with_protocol, start_task_project
 from tests.integration.conftest import post_project, session_auth_headers
 
 
@@ -64,14 +64,11 @@ def test_space_board_lists_linked_teams(client):
     # Space → its 赛题 → a project created from it (#370).
     space_id = seed_space(client, "明理书院")
     task_id = seed_task_with_protocol(client, space_id=space_id)
-    seed_claim(client, task_id, handle="owner")
-    post_project(client, json={"name": "队伍A", "external_task_id": task_id}).json()[
-        "data"
-    ]
+    project_id = start_task_project(client, task_id, handle="owner")
 
     board = client.get(f"/spaces/{space_id}/dashboard").json()["data"]
     assert board["total"] == 1
-    assert board["teams"][0]["name"] == "队伍A"
+    assert board["teams"][0]["project_id"] == project_id
 
 
 def test_space_board_empty_for_space_without_links(client):

@@ -161,6 +161,13 @@ jobs:
         working-directory: ${{ github.workspace }}
         run: uvx pre-commit run --all-files boundary-check
 
+      # The same comparison for who may call a write route: no route added
+      # here leaves it to its handler (ROUTE_DECIDES).
+      - name: No new write route declares ROUTE_DECIDES
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
+        working-directory: ${{ github.workspace }}
+        run: uvx pre-commit run --all-files route-decides
+
       # Building the document is also the smoke test that the app can produce
       # one at all: the frontend no longer finds a committed copy, it asks for
       # the document just before type-checking (frontend/scripts/typecheck.mjs).
@@ -217,6 +224,16 @@ jobs:
       - name: Run the pi extension's tests
         if: ${{ !cancelled() }}
         run: node --test tests/extension/*.test.ts
+
+      # The merge check (app/domain/review/merge_check.py) shells out to git,
+      # and the git that decides is the one the backend image ships, not this
+      # runner's newer one: `git merge-tree --quiet` passed here and exits 129
+      # on the image's Git 2.47 (#4853). So its tests run once more on the
+      # image's own runtime stage.
+      - name: Merge check tests with the backend image's git
+        if: ${{ !cancelled() }}
+        working-directory: ${{ github.workspace }}
+        run: bash backend/scripts/test_with_image_git.sh tests/unit/test_merge_check.py
 
       # Judges only the migrations this PR adds, against origin/main's models
       # (is a dropped column still mapped by the release that keeps serving
@@ -495,6 +512,78 @@ jobs:
               *) echo "$which is $built, not the pinned $expected" >&2; exit 1 ;;
             esac
           done
+
+      # tests/unit/test_preview_runtime_browser.py renders a page with jsdom to
+      # check what the injected bridge's snapshot keeps and what it drops.
+      # jsdom is a frontend devDependency, and a pure shard has no frontend
+      # install; a skipped case fails the suite (scripts/assert_suite_ran.py),
+      # so it is installed here.
+      #
+      # The version is the frontend lockfile's resolution for the root project,
+      # not `devDependencies.jsdom` (a caret range, which floats) and not a
+      # `jsdom@x` key found anywhere in the file (a transitive dependency
+      # pulling another major would win). Only the root importer's own `jsdom:`
+      # entry answers "what does the frontend install"; the awk below reads
+      # nothing else and fails this step when it is not there.
+      #
+      # The unpacked tree is cached, keyed by that version: without it both
+      # pure shards pulled jsdom and its dependency tree from the registry on
+      # every run — the re-download warm-caches.yml's own header says the
+      # harness caches exist to remove — and `~/.npm` above cannot help, since
+      # warm-caches.yml seeds that key with the harness packages alone and this
+      # workflow only ever restores it. Keyed by the version, so it survives
+      # everything but a jsdom bump, and `id`-gated so an exact hit installs
+      # nothing.
+      #
+      # This key warms itself rather than being saved by warm-caches.yml: the
+      # first run of a PR installs and saves it, and a push to main saves one
+      # every other ref can read. So it is `actions/cache@`, not the
+      # `cache/restore@` the harness keys use — there is no blessed save to
+      # wait for. An absolute path under $HOME, not $RUNNER_TEMP: a later run
+      # has to be able to ask for the same path. `--prefer-offline` keeps the
+      # restored npm cache in play when an install does run.
+      - name: Name the jsdom version the frontend installs
+        id: jsdom
+        if: matrix.layer == 'pure'
+        run: |
+          # The value is read from a file the pull request controls, so it is
+          # checked against what a version may look like before it goes
+          # anywhere: an empty value would install a floating `jsdom` (npm
+          # reads a bare `@` as `*`) under a cache key ending in `-`, and
+          # anything else in it would be shell. The reader below prints the
+          # version alone and this step writes it to $GITHUB_OUTPUT; the
+          # install step takes it from the environment, so no expression
+          # interpolation of it ever reaches a script.
+          version="$(awk '
+            /^importers:$/ {in_imp=1; next}
+            in_imp && /^  \.:$/ {in_root=1; next}
+            in_imp && /^  [^ ]/ {in_root=0}
+            in_root && /^      jsdom:$/ {want=1; next}
+            want && /^ {8}version: / {sub(/^ {8}version: */, ""); print; exit}
+          ' "$GITHUB_WORKSPACE/frontend/pnpm-lock.yaml")"
+          case "$version" in
+            '' | *[!0-9A-Za-z.+-]*)
+              echo "frontend/pnpm-lock.yaml names no usable jsdom version (got '$version')" >&2
+              exit 1
+              ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: jsdom-cache
+        if: matrix.layer == 'pure'
+        with:
+          path: ~/.cache/cheese-jsdom
+          key: jsdom-npm-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.jsdom.outputs.version }}
+      - name: Install jsdom for the preview bridge's snapshot test
+        if: matrix.layer == 'pure' && steps.jsdom-cache.outputs.cache-hit != 'true'
+        env:
+          JSDOM_VERSION: ${{ steps.jsdom.outputs.version }}
+        run: |
+          npm install --prefix "$HOME/.cache/cheese-jsdom" --no-audit --no-fund --prefer-offline \
+            "jsdom@$JSDOM_VERSION"
+      - name: Point the snapshot test at the installed jsdom
+        if: matrix.layer == 'pure'
+        run: echo "CHEESE_TEST_JSDOM=$HOME/.cache/cheese-jsdom/node_modules/jsdom" >> "$GITHUB_ENV"
 
       - name: Verify integration PostgreSQL storage
         if: matrix.layer == 'integration'

@@ -11,9 +11,18 @@
 // 给了同源，它的脚本就能读会话里的东西。只给 allow-scripts——不给就没有脚本可跑，而
 // 表格的多工作表标签正是靠页面自己的脚本切换的。网络由页面自带的 CSP meta 关着
 // （见后端 `attachment_as_html`），沙箱管不着网络。
+import { computed } from 'vue'
+
 import { t } from '../../../i18n'
 
-const props = defineProps<{ html: string | null }>()
+import { reflowDocPage } from './docReflow'
+
+const props = defineProps<{
+  html: string | null
+  /** 窄处的 Word：拆掉「一页纸」按这一格的宽度重排（见 `docReflow`）。 */
+  reflow?: boolean
+}>()
+const srcdoc = computed(() => (props.html && props.reflow ? reflowDocPage(props.html) : props.html ?? ''))
 </script>
 
 <template>
@@ -22,7 +31,7 @@ const props = defineProps<{ html: string | null }>()
   <iframe
     v-if="props.html"
     class="page-frame"
-    :srcdoc="props.html ?? ''"
+    :srcdoc="srcdoc"
     sandbox="allow-scripts"
     :title="t('work.room.preview.webView')"
   />

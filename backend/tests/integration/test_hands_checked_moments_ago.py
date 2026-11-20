@@ -110,7 +110,7 @@ async def test_hands_checked_a_moment_ago_are_handed_out_without_the_machine(
     # What it hands out works on the machine.
     ran = client.post(
         f"/topics/{room.topic_id}/execution/{room.lease['room_resource_id']}",
-        headers={"X-Cheese-Token": answer["token"]},
+        headers={"Authorization": f"Bearer {answer['token']}"},
         json={"method": "invoke", "params": {"id": "call-1", "tool": "Read"}},
     )
     assert ran.status_code == 200, ran.text
@@ -201,7 +201,7 @@ async def test_a_call_that_failed_on_the_machine_sends_the_next_ask_through_the_
     remote = _machine(monkeypatch, failing=failure)
     failed = client.post(
         f"/topics/{room.topic_id}/execution/{room.lease['room_resource_id']}",
-        headers={"X-Cheese-Token": answer["token"]},
+        headers={"Authorization": f"Bearer {answer['token']}"},
         json={"method": "invoke", "params": {"id": "call-1", "tool": "Read"}},
     )
     assert failed.status_code >= 400

@@ -16,6 +16,8 @@ import { decideMcpRun, listAwaitingMe, markAllAlertsRead, markRead, resolveAlert
 import { t } from '@/i18n'
 import { onInboxChange } from '@/lib/inboxLive'
 import { waitingKey } from '@/lib/waitingKey'
+import { keys } from '@/query/keys'
+import { fromSnapshot } from '@/query/snapshot'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 export function useWaitingList() {
@@ -32,7 +34,8 @@ export function useWaitingList() {
     failed.value = false
     errorReason.value = ''
     try {
-      const rows = (await listAwaitingMe()).data
+      const payload = quiet ? await listAwaitingMe() : await fromSnapshot(keys.awaitingMe(), () => listAwaitingMe())
+      const rows = payload.data
       if (mine === latest) items.value = rows
     } catch (e) {
       if (mine !== latest) return

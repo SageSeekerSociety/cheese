@@ -91,16 +91,35 @@ function collapse(rows: DiffRow[]): DiffRow[] {
   return out
 }
 
-/** `before` → `after` 改了什么。`before` 为 null 时（第一版）整篇算新加的。 */
-export function versionDiff(before: string | null, after: string): VersionDiff {
+/** `before` → `after` 改了什么。`before` 为 null 时（第一版）整篇算新加的。
+ *
+ *  `collapse: false` 给整篇（没改的段原样留着）：预览里的对比是在整份文档上标出增删，
+ *  读者要的是「在原文里看哪里变了」，不是一张改动清单。 */
+export function versionDiff(before: string | null, after: string, opts: { collapse?: boolean } = {}): VersionDiff {
   // 一段一行；段与段之间的空行不算一段，否则「加了一段」会数成两段，
   // 还多出一行空的绿底。
   const lines = (text: string) => text.split('\n').filter((line) => line.trim() !== '')
   const rows = pairChanges(lineOps(before === null ? [] : lines(before), lines(after)))
   return {
-    rows: collapse(rows),
+    rows: opts.collapse === false ? rows : collapse(rows),
     added: rows.filter((r) => r.kind === 'add').length,
     removed: rows.filter((r) => r.kind === 'del').length,
     changed: rows.filter((r) => r.kind === 'changed').length,
   }
+}
+
+/** Markdown 里空行是结构（段落、列表、表格靠它分开），逐段比时不能丢：先换成一个看不见
+ *  的占位字符，比完画的时候再换回空行（`components/panels/preview/PreviewVersionDiff.vue`）。 */
+export const BLANK_LINE = '\u2063'
+
+/** 「改了几处」：连在一起的增删算一处（重写了相邻两段是一次修改），只动了空行的不算。 */
+export function changeRuns(rows: readonly DiffRow[]): number {
+  let runs = 0
+  let inRun = false
+  for (const row of rows) {
+    const changed = row.kind !== 'same' && row.kind !== 'skip' && !('text' in row && row.text === BLANK_LINE)
+    if (changed && !inRun) runs += 1
+    inRun = changed || (inRun && row.kind !== 'same' && row.kind !== 'skip')
+  }
+  return runs
 }

@@ -250,7 +250,9 @@ def test_a_member_watching_a_task_sees_its_workers_checklist(client):
     task's channel and its own session's `todo_write` arrives there."""
     project, room = _project_topic(client, owner="alice")
     card = _task(client, room)
-    agent = {"X-Cheese-Token": mint_scoped_token(project_id=project, topic_id=card)}
+    agent = {
+        "Authorization": f"Bearer {mint_scoped_token(project_id=project, topic_id=card)}"
+    }
 
     with room_socket(client, card, "alice") as ws:
         # The pong says the subscription is live; the task's own session may

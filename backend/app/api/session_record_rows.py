@@ -11,7 +11,7 @@ session-records route.
 The journal keeps every line. This is the display only (`without_reminders`).
 """
 
-from app.domain.agent.harness.notices import without_reminders
+from app.domain.prompts import without_reminders
 
 
 def no_platform_reminders(parts: list[dict]) -> tuple[list[dict], bool]:

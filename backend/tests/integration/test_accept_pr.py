@@ -12,6 +12,7 @@ GitHub 全程是 test double：开 PR 走 `pr_publish.GitHubPRClient`（App 那�
 
 import asyncio
 import subprocess
+import threading
 import time
 import uuid
 import uuid as _uuid
@@ -22,6 +23,7 @@ import pytest
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.announce import announce
 from app.domain.delivery.agent import (
+    record_seat_instruction,
     record_task_instruction,
 )
 from app.domain.delivery.ledger import settle_card
@@ -41,7 +43,7 @@ from tests.integration.conftest import (
 from tests.landing import written_up
 from tests.machine_work import machine_commits
 from tests.support import git_store
-from tests.support.review_ports import task_teammate
+from tests.support.review_ports import task_teammate, uncommitted
 
 REPO = "acme/widgets"
 
@@ -219,7 +221,9 @@ def _poll(client) -> dict:
             announce,
             settle_card=settle_card,
             record_instruction=record_task_instruction,
+            record_seat=record_seat_instruction,
             task_teammate=task_teammate,
+            uncommitted=uncommitted,
         )
     )
 
@@ -321,6 +325,9 @@ class FakeGitHubPrClient:
         self.status_error: Exception | None = None
         # How long GitHub takes to say where a PR stands.
         self.status_delay_s: float = 0.0
+        # (entered, release): a status read sets `entered` and then waits for
+        # `release`, so a test can act while a reading is in flight.
+        self.status_gate: tuple[threading.Event, threading.Event] | None = None
         self.opened: list[dict] = []
         self.merge_calls: list[dict] = []
         self.status_calls: list[int] = []
@@ -433,6 +440,10 @@ class FakeGitHubPrClient:
     async def pull_request_status(
         self, *, owner, repo, number, token
     ) -> PullRequestStatus:
+        if self.status_gate is not None:
+            entered, release = self.status_gate
+            entered.set()
+            await asyncio.to_thread(release.wait, 30)
         if self.status_delay_s:
             await asyncio.sleep(self.status_delay_s)
         if self.status_error is not None:
@@ -822,6 +833,14 @@ def app_world(client, monkeypatch):
         }
 
     monkeypatch.setattr(project_forge, "provision_repository", provision)
+
+    # A project started from a task gets its repository prepared and then
+    # bound (`ProjectService.for_participation`), not provisioned: it joins
+    # this world the same way.
+    async def bind_repository(session, prepared):
+        return await provision(prepared.project_id, session)
+
+    monkeypatch.setattr(project_forge, "bind_repository", bind_repository)
     monkeypatch.setattr(project_forge, "default_branch", default_branch)
     monkeypatch.setattr(project_forge, "branch_head", branch_head)
     monkeypatch.setattr(pr_publish, "branch_head", branch_head)
@@ -1693,6 +1712,20 @@ def test_click_405_surfaces_githubs_reason_and_stops(client, app_world):
     assert "Merge commits are not allowed" in r.json()["message"]
     assert _cards(client, tid)[0]["status"] == "pending"
     assert _topic(client, tid)["accepted_at"] is None
+
+
+def test_a_merge_github_refuses_is_said_to_be_refused_by_github(client, app_world):
+    """On a project bound to GitHub the refusal names GitHub, which is where
+    the person goes to see why."""
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+    fake.merge_blocked_by_number[number] = "HTTP 405：Base branch was modified"
+
+    r = _accept(client, cid)
+
+    assert r.status_code == 422, r.text
+    assert "GitHub" in r.json()["message"]
 
 
 def _github_enforces(monkeypatch) -> None:
@@ -2610,7 +2643,7 @@ def test_a_pr_closed_without_merging_voids_its_card(client, app_world):
     assert result["errors"] == []
     card = _cards(client, tid)[0]
     assert card["status"] == "revoked"
-    assert f"PR #{number} 已在 GitHub 关闭且没有合并" in card["note"]
+    assert f"PR #{number} 已被关闭且没有合并" in card["note"]
     assert "作废" in card["note"]
     assert fake.merge_calls == []
 
@@ -3202,7 +3235,9 @@ def test_merge_anyway_is_for_humans_only(client, app_world):
     r = _merge_anyway(
         client,
         cid,
-        headers={"X-Cheese-Token": mint_scoped_token(project_id=pid, topic_id=tid)},
+        headers={
+            "Authorization": f"Bearer {mint_scoped_token(project_id=pid, topic_id=tid)}"
+        },
     )
     assert r.status_code == 422, r.text
     assert "AI" in r.json()["message"]
@@ -3595,7 +3630,9 @@ def test_a_quiet_branch_is_asked_about_without_locking_its_task(
             await other.execute(text("SET LOCAL lock_timeout = '200ms'"))
             try:
                 await other.scalar(
-                    select(Task.id).where(Task.id == task_id).with_for_update()
+                    select(Task.id)
+                    .where(Task.id == task_id)
+                    .with_for_update(key_share=True)
                 )
                 locked_elsewhere.append(False)
             except Exception:  # the lock wait is the observation
@@ -3632,7 +3669,9 @@ def test_github_is_asked_about_its_quota_without_the_task_locked(
             await other.execute(text("SET LOCAL lock_timeout = '200ms'"))
             try:
                 await other.scalar(
-                    select(Task.id).where(Task.id == task_id).with_for_update()
+                    select(Task.id)
+                    .where(Task.id == task_id)
+                    .with_for_update(key_share=True)
                 )
                 locked_while_asked.append(False)
             except Exception:  # the lock wait is the observation

@@ -83,10 +83,12 @@ async def test_a_project_whose_harness_this_machine_lacks_runs_the_next_one(
     async with factory() as session:
         sessions = AgentSessionService(session)
         assert (
-            await sessions.resume_token(topic_id, CHEESE_HANDLE, harness=CLAUDE_CODE)
-            == screen.new_session_id
-        )
-        assert await sessions.resume_token(topic_id, CHEESE_HANDLE, harness=PI) is None
+            await sessions.conversation(topic_id, CHEESE_HANDLE, harness=CLAUDE_CODE)
+            or (None,)
+        )[0] == screen.new_session_id
+        assert (
+            await sessions.conversation(topic_id, CHEESE_HANDLE, harness=PI) or (None,)
+        )[0] is None
 
 
 @pytest.mark.anyio
@@ -115,7 +117,8 @@ async def test_a_room_whose_machine_runs_none_of_the_listed_harnesses_does_not_r
     async with factory() as session:
         sessions = AgentSessionService(session)
         for harness in (PI, CLAUDE_CODE):
-            token = await sessions.resume_token(
-                topic_id, CHEESE_HANDLE, harness=harness
-            )
+            token = (
+                await sessions.conversation(topic_id, CHEESE_HANDLE, harness=harness)
+                or (None,)
+            )[0]
             assert token is None, harness

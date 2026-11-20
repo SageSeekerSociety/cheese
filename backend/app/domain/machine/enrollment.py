@@ -14,31 +14,37 @@ from the row the moment enrollment succeeds.
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
 import re
+import shlex
 import tempfile
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import Any
 
 from tenacity import AsyncRetrying, RetryCallState, retry_if_result, wait_fixed
 
 from app.core.config import settings
 from app.core.sentences import say
-from app.domain.agent import connector_build, toolchain
+from app.domain.agent import connector_build, sandbox_image, toolchain
 from app.domain.agent.harness.claude_code import (
     CLAUDE_MIN_VERSION,
     CLAUDE_PINNED_VERSION,
 )
 from app.domain.agent.place import footprint_root
 from app.domain.machine import claude_dist, toolchain_dist
+from app.domain.machine.microcloud import MicroCloudClient
+from app.domain.machine.supply import effective_spec, pick_offering
 
 logger = logging.getLogger("cheese.machine.enrollment")
 
 # One attempt should be slow enough to survive a cold download on a fresh
 # machine, and fast enough that a stuck one doesn't wedge the sweep.
 SSH_TIMEOUT_S = 180.0
+IMAGE_PREWARM_TIMEOUT_S = sandbox_image.PREWARM_TIMEOUT_S + SSH_TIMEOUT_S
 
 # Only these markers may reach the room; process output can contain credentials.
 STARTUP_STEPS = {
@@ -72,7 +78,11 @@ SSH_OPTS = [
 
 # What a Linux connector places for its rooms' sandboxes whatever the system
 # has (`cli/internal/devenv`), and enrollment hands a cloud machine first.
-SANDBOX_TOOLS = ("bubblewrap", "host-tools")
+SANDBOX_TOOLS = (
+    "bubblewrap",
+    "host-tools",
+    *(entry[0] for entry in toolchain.CLOUD_PLACEMENTS),
+)
 
 
 class EnrollmentError(RuntimeError):
@@ -122,7 +132,10 @@ DATA_DISK_LINE = re.compile(r"^CHEESE_SANDBOX_DISK_BYTES=([0-9]+)$", re.MULTILIN
 # directories the platform keeps homes and stores in, so no path changes.
 # mkfs.xfs without -f: a disk that carries any signature is refused, not
 # wiped. A host with no such disk is not enrolled: it could not hold a sandbox
-# to a disk limit, and no sandbox runs without one.
+# to a disk limit, and no sandbox runs without one. The same step keeps the
+# host's swap file (`cloud_host_swap_mb`, made with fallocate beside the
+# homes); the capacity a host reports its data disk as is what the sandboxes
+# may use, and `models.capacity` takes the swap file off it.
 #
 # The mkfs.xfs is the platform's, placed with the host tools before this runs
 # (`run_bootstrap`, where `cli/internal/devenv` keeps them), not a package of
@@ -182,6 +195,71 @@ mountpoint -q /data || {{ sudo -n mkdir -p /data && sudo -n mount /data; }}
 sudo -n install -d -o "$(id -u)" -g "$(id -g)" -m 0700 /data/home /data/store
 mountpoint -q "$root/home" || sudo -n mount "$root/home"
 mountpoint -q "$root/store" || sudo -n mount "$root/store"
+# A swap file on the data disk, so a burst in the machine's own processes is
+# paged out instead of the kernel killing the connector and every sandbox with
+# it (`cloud_host_swap_mb`). fallocate only: the disk is on a thin pool, where
+# every block a dd'd file writes would be claimed before anything trims it
+# back. Enrollment is retried, so this whole step runs again: a file already
+# swapped on is left alone (swapping it off to resize it would push a host
+# that is short on memory into the case the file exists for), and one that is
+# not swapped on but of a size this deployment no longer asks for is made
+# again. No sandbox swaps (`memory.swap.max` stays 0).
+swapfile=/data/swapfile
+swap_mb={swap_mb}
+if [ "$swap_mb" -gt 0 ]; then
+  if ! sudo -n swapon --show=NAME --noheadings 2>/dev/null | grep -qxF "$swapfile"; then
+    wanted=$(( swap_mb * 1024 * 1024 ))
+    have=$(stat -c %s "$swapfile" 2>/dev/null || true)
+    if [ "$have" != "$wanted" ]; then
+      sudo -n rm -f "$swapfile"
+      sudo -n fallocate -l "$wanted" "$swapfile" \\
+        || {{ echo "could not make the swap file $swapfile" >&2; exit 1; }}
+    fi
+    sudo -n chmod 600 "$swapfile"
+    sudo -n mkswap "$swapfile" >/dev/null
+    sudo -n swapon "$swapfile"
+  fi
+  mount_line "$swapfile none swap sw,nofail 0 0"
+  swap_sysctl=/etc/sysctl.d/90-cheese-swap.conf
+  echo "vm.swappiness={swappiness}" | sudo -n tee "$swap_sysctl" >/dev/null
+  sudo -n sysctl -p "$swap_sysctl" >/dev/null
+fi
+# zswap: pages on their way to the swap file are compressed into RAM first,
+# so what a frozen sandbox gives up costs about a third of its size and comes
+# back without a disk read (`cloud_host_zswap_max_pool_percent`). Only where
+# the kernel was built with it: Debian's cloud kernel was not, its generic one
+# is (CONFIG_ZSWAP=y in debian/config/config, unset in config.cloud; the host
+# template, MicroCloud's templates/vm/debian13/build.sh). Set now
+# and at every boot (systemd-tmpfiles writes the same values), and nothing
+# installed: the compressor is the first of zstd, lz4, lzo the kernel has.
+zswap=/sys/module/zswap/parameters
+zswap_percent={zswap_percent}
+if [ "$zswap_percent" -gt 0 ] && [ -e "$zswap/enabled" ]; then
+  compressor=
+  for one in zstd lz4 lzo; do
+    if grep -qw "$one" /proc/crypto 2>/dev/null || sudo -n modprobe -q "$one" 2>/dev/null; then
+      compressor=$one
+      break
+    fi
+  done
+  # zsmalloc packs compressed pages densely; Debian builds it as a module
+  # and leaves zbud as zswap's default, which fits at most two to a page.
+  pool=
+  if [ -e "$zswap/zpool" ] && sudo -n modprobe -q zsmalloc 2>/dev/null; then
+    pool=zsmalloc
+  fi
+  {{
+    [ -n "$compressor" ] && echo "w $zswap/compressor - - - - $compressor"
+    [ -n "$pool" ] && echo "w $zswap/zpool - - - - $pool"
+    # Cold compressed pages go on to the swap file instead of holding the pool
+    # (6.8 and later): what frozen sandboxes gave up leaves RAM in the end.
+    [ -e "$zswap/shrinker_enabled" ] && echo "w $zswap/shrinker_enabled - - - - Y"
+    echo "w $zswap/max_pool_percent - - - - $zswap_percent"
+    echo "w $zswap/enabled - - - - Y"
+  }} | sudo -n tee /etc/tmpfiles.d/90-cheese-zswap.conf >/dev/null
+  sudo -n systemd-tmpfiles --create /etc/tmpfiles.d/90-cheese-zswap.conf \
+    || echo "zswap could not be turned on; the swap file is used as it is" >&2
+fi
 set -- $(stat -f -c '%b %S' /data)
 echo "CHEESE_SANDBOX_DISK_BYTES=$(( $1 * $2 ))"
 """
@@ -197,11 +275,18 @@ def sandbox_disk_gb(output: str) -> int:
 
 
 def bootstrap_script(
-    *, origin: str, token: str, device_id: str, sandbox_disk: bool
+    *,
+    origin: str,
+    token: str,
+    device_id: str,
+    sandbox_disk: bool,
+    identity: bool = True,
 ) -> str:
     """What runs on the machine. Writes the cli's config, then connects.
     With ``sandbox_disk``, first sets up the data disk a pool host keeps its
-    sandboxes' homes on (``DATA_DISK``); a whole VM runs none.
+    sandboxes' homes on (``DATA_DISK``); a whole VM runs none. Without
+    ``identity`` the config the machine has is kept: what a host brought up
+    to date in place runs (`host_refresh`), the same machine to the platform.
 
     The connector is already on the machine: ``run_bootstrap`` put it there
     over the same SSH connection before this runs.
@@ -235,17 +320,48 @@ def bootstrap_script(
     # enforces is a machine that enrolls cleanly and then runs nothing.
     min_version = CLAUDE_MIN_VERSION
     pinned_version = CLAUDE_PINNED_VERSION
-    data_disk = DATA_DISK.format() if sandbox_disk else ""
-    return f"""set -eu
-mkdir -p "$HOME/.local/bin" "$HOME/.config/cheese"
-export PATH="$HOME/.local/bin:$PATH"
-# The credential the device flow would have stored. umask first: this file is
+    data_disk = (
+        DATA_DISK.format(
+            swap_mb=settings.cloud_host_swap_mb,
+            swappiness=settings.cloud_host_swappiness,
+            zswap_percent=settings.cloud_host_zswap_max_pool_percent
+            if settings.cloud_host_swap_mb
+            else 0,
+        )
+        if sandbox_disk
+        else ""
+    )
+    image = sandbox_image.default_image() if sandbox_disk else None
+    prewarm = (
+        "sudo -n install -D -o root -g root -m 0755 "
+        '"$HOME/.cheese/runtime/crane/crane" '
+        + shlex.quote(sandbox_image.CRANE)
+        + "\nsudo -n install -d -m 0755 /data/cheese-sandbox-images\n"
+        'sudo -n install -m 0644 "$HOME/.cheese/runtime/crane.sha256" /data/cheese-sandbox-images/crane.sha256'
+        + "\nsudo -n install -D -o root -g root -m 0755 "
+        '"$HOME/.cheese/runtime/sandbox-image.py" /usr/local/libexec/cheese-sandbox-image\n'
+        "sudo -n /usr/bin/python3 -I /usr/local/libexec/cheese-sandbox-image "
+        + shlex.quote(image["reference"])
+        + f" --keep {int(image['keep_old'])}"
+        + ' --host-helper "$(cat "$HOME/.cheese/runtime/sandbox-host.py")"'
+        if image
+        else ""
+    )
+    credential = (
+        f"""# The credential the device flow would have stored. umask first: this file is
 # the machine's identity to the platform.
 umask 077
 cat > "$HOME/.config/cheese/config.json" <<'CHEESE_CONFIG_EOF'
 {config}
 CHEESE_CONFIG_EOF
-# claude — the agent itself. A machine with no claude, or one too old, does not
+"""
+        if identity
+        else "umask 077\n"
+    )
+    return f"""set -eu
+mkdir -p "$HOME/.local/bin" "$HOME/.config/cheese"
+export PATH="$HOME/.local/bin:$PATH"
+{credential}# claude — the agent itself. A machine with no claude, or one too old, does not
 # fail here: it enrolls cleanly, reports healthy, and then every topic assigned
 # to it never starts, because the launcher refuses a build below the floor.
 # A loud failure now beats a silent one per topic later (#489, #501 are the
@@ -308,6 +424,7 @@ for tool in tmux git python3; do
     || {{ echo "$tool is missing and cheesehost could not place it" >&2; exit 1; }}
 done
 {data_disk}
+{prewarm}
 # A retried enrollment writes a new device identity. Starting an active service
 # leaves the old token in memory, so the room waits for a device that never joins.
 systemctl --user restart cheese
@@ -343,6 +460,146 @@ if [ "$(loginctl show-user "$(id -un)" -p Linger 2>/dev/null)" != "Linger=yes" ]
 fi
 echo "cheese.service active"
 """
+
+
+#: Characters of each half of an image version (`host_image_version`): wide
+#: enough that two versions do not collide by accident, short enough to read
+#: on the admin page.
+IMAGE_VERSION_CHARS = 16
+
+
+def same_machine(recorded: str | None, current: str) -> bool:
+    """Whether a host recorded as ``recorded`` is the machine a host created
+    now would be, its enrollment script aside. A version from before the two
+    halves (16 characters) or none at all says nothing of that."""
+    return (
+        recorded is not None
+        and len(recorded) == 2 * IMAGE_VERSION_CHARS
+        and recorded[:IMAGE_VERSION_CHARS] == current[:IMAGE_VERSION_CHARS]
+    )
+
+
+#: What stands in for the parts of the script that name ONE machine (its
+#: origin, token and device), so a version can be taken of what every machine
+#: gets rather than of one machine's credentials.
+_VERSION_PLACEHOLDER = "image-version-placeholder"
+
+
+def bootstrap_digest(*, sandbox_disk: bool) -> str:
+    """A digest of the script a host enrolls with, with its per-machine
+    credentials held at a placeholder: a change to anything the machine is set
+    up with changes the digest, and no token can ever reach it."""
+    script = bootstrap_script(
+        origin=_VERSION_PLACEHOLDER,
+        token=_VERSION_PLACEHOLDER,
+        device_id=_VERSION_PLACEHOLDER,
+        sandbox_disk=sandbox_disk,
+    )
+    if sandbox_disk:
+        script = script.replace(
+            sandbox_image.default_image()["reference"], _VERSION_PLACEHOLDER
+        )
+    return hashlib.sha256(script.encode()).hexdigest()
+
+
+def host_image_version(
+    offering: dict[str, Any], *, cores: int, memory_mb: int, disk_gb: int
+) -> str:
+    """What a host created now would be made of, as one value a host row keeps
+    and the sweep compares it against: the offering and its template, the size
+    the machine gets, its login user, and the script it enrolls with. Change any
+    of those and a host enrolled before is out of date, due to be rolled.
+
+    Two halves: the machine (`machine_version`) and then the script. A host
+    whose machine half still matches needs only the script run again, which
+    it gets where it is (`host_refresh`); any other needs a new machine."""
+    machine = machine_version(
+        offering, cores=cores, memory_mb=memory_mb, disk_gb=disk_gb
+    )
+    script = bootstrap_digest(sandbox_disk=True)[:IMAGE_VERSION_CHARS]
+    return machine + script
+
+
+def machine_version(
+    offering: dict[str, Any], *, cores: int, memory_mb: int, disk_gb: int
+) -> str:
+    """The machine half of a host's image version: what only a new machine
+    changes — the offering and its template, the size, the login user."""
+    payload = {
+        "offering": [
+            offering.get(key)
+            for key in (
+                "id",
+                "machineTypeName",
+                "zoneName",
+                "templateName",
+                "dataDiskGb",
+            )
+        ],
+        "spec": [int(cores), int(memory_mb), int(disk_gb)],
+        "user": settings.microcloud_login_user,
+        # The provider re-bakes a template under the same name (MicroCloud
+        # keeps `templateName` and makes a new image behind it), so nothing
+        # above changes when the image does: this does, bumped by hand.
+        "template_epoch": settings.cloud_host_template_epoch,
+    }
+    text = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode()).hexdigest()[:IMAGE_VERSION_CHARS]
+
+
+async def current_host_image_version(client: MicroCloudClient | None = None) -> str:
+    """The version a host created right now would record: the pool's offering
+    today, the size it asks for today, and the script it would enroll with.
+    Reads the provider, so call it with no lock held."""
+    return (await current_host_versions(client))[0]
+
+
+async def current_host_versions(
+    client: MicroCloudClient | None = None,
+) -> tuple[str, str]:
+    """``current_host_image_version``, and what a host made of the same
+    things recorded before the version had two halves (`legacy_image_version`).
+    Reads the provider, so call it with no lock held."""
+    offering = await pick_offering(client or MicroCloudClient())
+    spec = effective_spec(
+        offering,
+        cores=settings.microcloud_default_cores,
+        memory_mb=settings.microcloud_default_memory_mb,
+        disk_gb=settings.microcloud_default_disk_gb,
+    )
+    size = {
+        "cores": spec["cores"],
+        "memory_mb": spec["memoryMb"],
+        "disk_gb": spec["diskGb"],
+    }
+    return host_image_version(offering, **size), legacy_image_version(offering, **size)
+
+
+def legacy_image_version(
+    offering: dict[str, Any], *, cores: int, memory_mb: int, disk_gb: int
+) -> str:
+    """The one-digest version hosts recorded before it had two halves. A
+    host whose recorded version equals this for today's settings is made of
+    exactly what a host created now would be: it is given today's version
+    as it is, rather than rebuilt to learn what it already is."""
+    payload = {
+        "offering": [
+            offering.get(key)
+            for key in (
+                "id",
+                "machineTypeName",
+                "zoneName",
+                "templateName",
+                "dataDiskGb",
+            )
+        ],
+        "spec": [int(cores), int(memory_mb), int(disk_gb)],
+        "user": settings.microcloud_login_user,
+        "bootstrap": bootstrap_digest(sandbox_disk=True),
+        "template_epoch": settings.cloud_host_template_epoch,
+    }
+    text = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(text.encode()).hexdigest()[:IMAGE_VERSION_CHARS]
 
 
 def _last_result(state: RetryCallState):
@@ -510,14 +767,25 @@ async def run_bootstrap(
                 ) from exc
             digest = toolchain.ARTIFACTS[(tool, platform_key)].sha256
             placed, staged = f"{runtime}/{tool}", f"{runtime}/{tool}.ssh-new"
+            strip = 0 if tool == "crane" else 1
             await run(
                 *ssh,
                 f'set -e; mkdir -p "{runtime}"; rm -rf "{staged}"; '
                 f'mkdir -m 700 "{staged}"; '
-                f'tar -xzf - -C "{staged}" --strip-components=1; '
+                f'tar -xzf - -C "{staged}" --strip-components={strip}; '
                 f'rm -rf "{placed}"; mv "{staged}" "{placed}"; '
                 f'(umask 077; echo {digest} > "{placed}.sha256")',
                 stdin=archive,
+            )
+        if sandboxes:
+            await push(
+                Path(sandbox_image.__file__),
+                f"{footprint_root()}/runtime/sandbox-image.py",
+            )
+            await push(
+                Path(sandbox_image.__file__).parent
+                / "harness/claude_code/remote_execution/sandbox_host.py",
+                f"{footprint_root()}/runtime/sandbox-host.py",
             )
         command = [
             "ssh",
@@ -556,13 +824,12 @@ async def run_bootstrap(
             return bytes(output)
 
         try:
-            stdout = await asyncio.wait_for(collect(), timeout=SSH_TIMEOUT_S)
+            timeout = IMAGE_PREWARM_TIMEOUT_S if sandboxes else SSH_TIMEOUT_S
+            stdout = await asyncio.wait_for(collect(), timeout=timeout)
         except TimeoutError as exc:
             process.kill()
             await process.wait()
-            raise EnrollmentError(
-                f"bootstrap timed out after {SSH_TIMEOUT_S:.0f}s"
-            ) from exc
+            raise EnrollmentError(f"bootstrap timed out after {timeout:.0f}s") from exc
         except BaseException:
             if process.returncode is None:
                 process.kill()

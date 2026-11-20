@@ -2,6 +2,17 @@
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import {
+  LEARNING_CLASS_BEHAVIOR,
+  LEARNING_CLASS_OFF,
+  LEARNING_CLASS_OVERVIEW,
+  LEARNING_CLASS_POINT,
+  LEARNING_CLASS_POINTS,
+  LEARNING_CLASS_QUESTIONS,
+  LEARNING_CLASS_TASKS,
+  LEARNING_CLASS_TREND,
+  LEARNING_CLASS_WORDS,
+} from './catalogLearningClassFixtures'
+import {
   EMPTY_LEARNING_QUEUES,
   LEARNING_FILTERS,
   LEARNING_OUTLINE,
@@ -11,9 +22,12 @@ import {
   PENDING_REQUESTS,
   PROJECT_INVITATIONS,
 } from './catalogScenesMisc3Fixtures'
+import { LEARNING_PRACTICE_SET } from './catalogSpaceTasksFixtures'
 
 import { t } from '@/i18n'
+import LearningAnalysisView from '@/views/spaces/detail/analytics/LearningAnalysisView.vue'
 import LearningView from '@/views/spaces/detail/analytics/LearningView.vue'
+import LearningPracticeDialog from '@/views/spaces/detail/LearningPracticeDialog.vue'
 import PendingView from '@/views/teams/PendingView.vue'
 
 const UI_T_R: CatalogNeed[] = ['vuetify', 'i18n', 'router']
@@ -148,6 +162,173 @@ export const SCENES_MISC3_ENTRIES: CatalogEntry[] = [
     ],
   },
   {
+    id: 'learning-practice-dialog',
+    title: 'LearningPracticeDialog',
+    get about() {
+      return t('catalog.learningPracticeDialog.about')
+    },
+    file: 'src/views/spaces/detail/LearningPracticeDialog.vue',
+    component: LearningPracticeDialog,
+    needs: UI_T_R,
+    teleport: true,
+    args: { practice: LEARNING_PRACTICE_SET },
+    states: [
+      {
+        get name() {
+          return t('catalog.learningPracticeDialog.s1.name')
+        },
+        get note() {
+          return t('catalog.learningPracticeDialog.s1.note')
+        },
+        props: {},
+        expect: '再看一下：',
+      },
+      {
+        get name() {
+          return t('catalog.learningPracticeDialog.s2.name')
+        },
+        get note() {
+          return t('catalog.learningPracticeDialog.s2.note')
+        },
+        props: {
+          practice: {
+            ...LEARNING_PRACTICE_SET,
+            done: true,
+            questions: LEARNING_PRACTICE_SET.questions.map((q) => ({
+              ...q,
+              chosen: q.chosen ?? 1,
+              correct: q.correct ?? true,
+              answer: q.answer ?? 1,
+              explanation: q.explanation ?? '先按部门分组求平均，再拿每个员工去比。',
+            })),
+          },
+          result: {
+            practiceId: 70,
+            correct: 2,
+            total: 3,
+            levelBefore: 'weak',
+            levelAfter: 'weak',
+            nextReviewOn: '2026-11-17',
+          },
+        },
+        expect: '答对 2 / 3',
+      },
+    ],
+  },
+  {
+    id: 'learning-class-view',
+    title: 'LearningAnalysisView',
+    get about() {
+      return t('catalog.learningClassView.about')
+    },
+    file: 'src/views/spaces/detail/analytics/LearningAnalysisView.vue',
+    component: LearningAnalysisView,
+    needs: UI_T_R,
+    args: { sub: 'overview', enabled: true, overview: LEARNING_CLASS_OVERVIEW },
+    states: [
+      {
+        get name() {
+          return t('catalog.learningClassView.s1.name')
+        },
+        get note() {
+          return t('catalog.learningClassView.s1.note')
+        },
+        props: {},
+        expect: '下节课值得讲的',
+      },
+      {
+        get name() {
+          return t('catalog.learningClassView.s2.name')
+        },
+        get note() {
+          return t('catalog.learningClassView.s2.note')
+        },
+        props: { sub: 'points', points: LEARNING_CLASS_POINTS },
+        expect: '不足 3 人，不分析',
+      },
+      {
+        get name() {
+          return t('catalog.learningClassView.s3.name')
+        },
+        get note() {
+          return t('catalog.learningClassView.s3.note')
+        },
+        props: { pointId: 2, pointDetail: LEARNING_CLASS_POINT },
+        expect: '内层不知道怎样引用外层当前行',
+      },
+      {
+        get name() {
+          return t('catalog.learningClassView.s4.name')
+        },
+        get note() {
+          return t('catalog.learningClassView.s4.note')
+        },
+        props: { sub: 'questions', questions: LEARNING_CLASS_QUESTIONS },
+        expect: '成员 A7F3',
+      },
+      {
+        get name() {
+          return t('catalog.learningClassView.s5.name')
+        },
+        get note() {
+          return t('catalog.learningClassView.s5.note')
+        },
+        props: { sub: 'words', words: LEARNING_CLASS_WORDS },
+        expect: 'ERROR 1111',
+      },
+      {
+        get name() {
+          return t('catalog.learningClassView.s6.name')
+        },
+        get note() {
+          return t('catalog.learningClassView.s6.note')
+        },
+        props: { sub: 'tasks', tasks: LEARNING_CLASS_TASKS },
+        expect: 'T3 子查询与聚合',
+      },
+      {
+        get name() {
+          return t('catalog.learningClassView.s7.name')
+        },
+        get note() {
+          return t('catalog.learningClassView.s7.note')
+        },
+        props: { sub: 'behavior', behavior: LEARNING_CLASS_BEHAVIOR },
+        expect: '直接要答案',
+      },
+      {
+        get name() {
+          return t('catalog.learningClassView.s8.name')
+        },
+        get note() {
+          return t('catalog.learningClassView.s8.note')
+        },
+        props: { sub: 'trend', trend: LEARNING_CLASS_TREND },
+        expectSelector: '.lc-trend',
+      },
+      {
+        get name() {
+          return t('catalog.learningClassView.s9.name')
+        },
+        get note() {
+          return t('catalog.learningClassView.s9.note')
+        },
+        props: { enabled: false, overview: LEARNING_CLASS_OFF },
+        expect: '这个空间没有开启学情分析',
+      },
+      {
+        get name() {
+          return t('catalog.learningClassView.s10.name')
+        },
+        get note() {
+          return t('catalog.learningClassView.s10.note')
+        },
+        props: { failed: true, errorDetail: '学情分析接口超时' },
+        expect: '学情分析接口超时',
+      },
+    ],
+  },
+  {
     id: 'learning-view',
     title: 'LearningView',
     get about() {
@@ -166,7 +347,6 @@ export const SCENES_MISC3_ENTRIES: CatalogEntry[] = [
       failed: false,
       errorDetail: null,
       selected: [],
-      student: null,
       knowledgePoint: null,
     },
     states: [
@@ -231,7 +411,7 @@ export const SCENES_MISC3_ENTRIES: CatalogEntry[] = [
         get note() {
           return t('catalog.learningView.s6.note')
         },
-        props: { student: 'alice', knowledgePoint: 7, selected: ['b-1'] },
+        props: { knowledgePoint: 7, selected: ['b-1'] },
         expectSelector: 'input:checked',
       },
       {

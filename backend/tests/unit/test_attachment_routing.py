@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.domain.agent.harness.prompt import attachment_prompt_line
+from app.domain.agent.harness.lines import attachment_prompt_line
 from app.domain.agent.prompt import offered_attachments
 from app.domain.agent.session_host.contract import Image
 from app.domain.block.models import BlockKind
@@ -15,11 +15,13 @@ from tests.support.pictures import BROKEN_PNG, picture
 def _library(monkeypatch, data: bytes) -> None:
     # The library is substituted here; HTTP/WS integration covers real files.
     # The turn asks for a whole message at once, so the fakes answer per batch.
-    async def present(_session, _project_id, _room_id, paths):
+    async def present(_session, _project_id, _room_id, paths, **_):
         return set(paths)
 
-    async def stored(_session, _project_id, _room_id, paths):
-        return {path: data for path in paths}
+    async def stored(_session, _project_id, _room_id, paths, *, max_bytes, **_):
+        if len(data) > max_bytes:
+            return {}, set(paths)
+        return {path: data for path in paths}, set()
 
     monkeypatch.setattr(
         "app.domain.agent.prompt.library_records.attachments_present", present

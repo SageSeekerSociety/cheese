@@ -31,8 +31,9 @@ import { myHandle } from '../me'
 
 import LoadingSkeleton from './common/LoadingSkeleton.vue'
 import MobileActionSheet from './common/MobileActionSheet.vue'
+import { useAppNav } from './common/Navigation/appNav'
 import SecondaryNavigation from './common/Navigation/SecondaryNavigation.vue'
-import UserAvatar from './common/UserAvatar.vue'
+import ProjectAvatar from './common/ProjectAvatar.vue'
 import VirtualList from './common/VirtualList.vue'
 import TopicRailBrowseRow from './topic-sidebar/TopicRailBrowseRow.vue'
 import TopicRailHeader from './topic-sidebar/TopicRailHeader.vue'
@@ -156,6 +157,18 @@ const {
   toggleTitle,
   topicById,
 } = useTopicRail(props, { scrollToIndex: (key, index) => railLists.get(key)?.scrollToIndex(index) })
+
+// 项目里我看得到的、没归档的频道只有一个（没加入的也算进总数）：不画「频道」这一组的标题
+// 和「全部频道」，那一个频道的行写「对话」，新建频道的 ＋ 挂在那一行上。有了第二个就回到
+// 分组的样子。清单还没读回来（或读失败）时不下这个结论，免得先画一种再跳成另一种。电脑、
+// 平板和手机整页的列表是同一条规则。
+const singleChannel = computed(
+  () =>
+    !props.loadingTopics &&
+    !props.error &&
+    !!rootTopic.value &&
+    props.topics.filter((topic) => topic.status !== 'archived').length === 1
+)
 
 function ownTasks(channelId: string): RailTask[] {
   return props.roomTasks?.[channelId] ?? []
@@ -457,6 +470,21 @@ const onDocs = computed(() => !!props.activeDocs)
 
 // 项目名那一行：标识、搜索、项目菜单。手机上整页形态的频道列表把它交给顶栏。
 const railHeaderInBar = computed(() => props.page === true && props.column !== true)
+// 桌面：项目名、搜索和「首页」在顶栏上（Navigation/AppBar.vue），这里不再画头，项目菜单
+// 挂到总览、资料库下面的「更多」上。手机整页和平板两栏照旧。
+const appNav = useAppNav()
+const framed = computed(() => props.page !== true && props.column !== true && !!appNav)
+const pinnedMore = computed(() =>
+  framed.value && props.selectedProjectId
+    ? {
+        menuPages: menuPages.value,
+        docsActive: onDocs.value,
+        privateUnreadTotal: unref(privateUnreadTotal),
+        canTransfer: canTransfer.value,
+        canLeave: canLeave.value,
+      }
+    : null
+)
 const railHeaderBinding = computed(() => ({
   page: props.page === true,
   column: props.column === true,
@@ -517,7 +545,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
          本来就不随话题列表滚。 -->
     <div class="d-flex flex-column fill-height">
       <!-- 整页形态（手机的频道列表）下这一行是顶栏的内容，由这一屏声明；别处画在这里。 -->
-      <TopicRailHeader v-if="!railHeaderInBar" v-bind="railHeaderBinding" />
+      <TopicRailHeader v-if="!railHeaderInBar && !framed" v-bind="railHeaderBinding" />
 
       <TransferProjectDialog v-model="transferOpen" :project-id="selectedProjectId ?? ''" />
       <LeaveProjectDialog v-model="leaveOpen" :project-id="selectedProjectId ?? ''" />
@@ -535,10 +563,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             :aria-current="p.id === selectedProjectId ? 'true' : undefined"
             @click="switchProjectFromSheet(p.id)"
           >
-            <!-- 项目头像走 UserAvatar（kind="org" = 圆角方块，§3.14）：和左栏人像同一个组件、同一套
-                 「没图就退成底色首字母」的规矩，不再这里自己截首字、自己上色。种子用
-                 项目 id —— 颜色跟着项目走，改名不换色（契约 §3.14）。 -->
-            <UserAvatar kind="org" :name="p.name" :seed="p.id" :size="20" class="project-switch__avatar" />
+            <ProjectAvatar :id="p.id" :name="p.name" :avatar="p.avatar" :size="20" class="project-switch__avatar" />
             <span class="project-switch__name">{{ p.name }}</span>
             <v-icon v-if="p.id === selectedProjectId" size="18" class="project-switch__check" icon="mdi-check" />
           </button>
@@ -566,7 +591,11 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             :route-name="routeName"
             :terms="terms"
             :page="page === true"
+            :more="pinnedMore"
             @open-page="openProjectPage"
+            @select-docs="emit('select-docs', 'charter')"
+            @open-transfer="transferOpen = true"
+            @open-leave="leaveOpen = true"
             @hover-page="hoverProjectPage"
             @press-page="emit('press-page', $event)"
             @cancel-prefetch="cancelPrefetch()"
@@ -575,7 +604,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
           <!-- 新建频道就在这一组标题右边：常驻可见、不藏进 hover，点一下就地弹对话框，
                不再跳到「浏览频道」那一页（那里只管找和加入别人的频道）。位置钉在这一
                行上，频道再多也不动。 -->
-          <div class="t-eyebrow side-subhead">
+          <div v-if="!singleChannel" class="t-eyebrow side-subhead">
             <span class="side-subhead__label">{{ t('work.sidebar.topics') }}</span>
             <button
               v-if="canCreate"
@@ -603,7 +632,10 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
             :tasks-collapsed="!!rootTopic && tasksFoldOf(rootTopic.id)"
             :task-count="rootTopic ? taskCountOf(rootTopic.id) : undefined"
             :task-light="rootTopic ? tasksLight(rootTopic.id) : null"
+            :single="singleChannel"
+            :can-create="canCreate === true"
             @select-topic="emit('select-topic', $event)"
+            @new-channel="emit('new-channel')"
             @hover-topic="emit('hover-topic', $event)"
             @press-topic="emit('press-topic', $event)"
             @leave-topic="emit('leave-topic')"
@@ -779,6 +811,7 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
                  底下只剩这一行——「进行中的任务」那一行撤了，它的位置换成了项目名下面的
                  「总览」（.claude/rules/project-sidebar.md）。 -->
             <TopicRailBrowseRow
+              v-if="!singleChannel"
               :label="t('work.channel.browse')"
               icon="mdi-magnify"
               :selected="browsingChannels === true"

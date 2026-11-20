@@ -314,7 +314,7 @@ async def test_a_line_said_mid_turn_goes_into_that_turn(tmp_path):
 
 @pytest.mark.anyio
 async def test_an_idle_thread_is_asked_to_compact_at_once(tmp_path):
-    """`cheese_compact` reaches this runner as `request_compact`, and the ask
+    """`cheese_session(action=compact)` reaches this runner as `request_compact`, and the ask
     goes to app-server's `thread/compact/start`. Nothing is running, so it goes
     now; asked twice, the second is told the first is already on its way."""
     runner = Runner(tmp_path, AsyncMock())

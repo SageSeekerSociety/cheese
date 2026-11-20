@@ -27,6 +27,7 @@ from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
+import jwt
 import pytest
 from redis.asyncio import from_url
 from sqlalchemy import select, text, update
@@ -54,7 +55,7 @@ from app.domain.usage.credits import CREDIT_USD
 from app.domain.usage.models import ComputeGrant, ResourceUsage
 from app.domain.user.models import User
 from app.main import app
-from tests.conftest import seed_task_with_protocol, seed_user
+from tests.conftest import seed_problem_reader, seed_task_with_protocol, seed_user
 from tests.integration.conftest import (
     free_plan_credits,
     post_message,
@@ -413,7 +414,10 @@ _ASKED_FROM: dict[str, int] = {}
 
 
 def _start(client, task_id: int, headers: dict) -> str:
-    """A new topic, asked from ``task_id``'s page."""
+    """A new topic, asked from ``task_id``'s page by a member of its space."""
+    token = headers["Authorization"].removeprefix("Bearer ")
+    asker = int(jwt.decode(token, options={"verify_signature": False})["sub"])
+    seed_problem_reader(client, task_id=task_id, user_id=asker)
     r = client.post("/assistant/conversations", headers=headers)
     assert r.status_code == 201, r.text
     conversation = r.json()["data"]["id"]
@@ -780,7 +784,7 @@ def test_it_names_my_own_deadline_on_my_own_clock(client, gateway):
 
     told = json.dumps(gateway.requests[0], ensure_ascii=False)
     assert "你的提交截止：2030-10-24 01:30" in told
-    assert "题目截止：2030-10-24 23:59" in told
+    assert "申请截止：2030-10-24 23:59" in told
     assert "2030-10-25" not in told
 
 
@@ -1225,7 +1229,11 @@ def test_cheese_writes_the_draft_on_the_page_and_the_page_is_told(client, gatewa
     page = {"kind": "draft", "id": draft}
 
     gateway.script = [
-        ("tool", "cheese_problem_write", {"draft": draft, "difficulty": "高级"}),
+        (
+            "tool",
+            "cheese_problem",
+            {"action": "write", "draft": draft, "difficulty": "高级"},
+        ),
         ("text", "难度改成了高级。"),
     ]
     r = client.post(
@@ -1247,7 +1255,7 @@ def test_cheese_writes_the_draft_on_the_page_and_the_page_is_told(client, gatewa
     # What it did is kept with the answer: the conversation shows it again.
     kept = client.get(f"/assistant/conversations/{conversation}", headers=me).json()
     parts = kept["data"]["messages"][-1]["parts"]
-    assert [step["name"] for step in parts["steps"]] == ["cheese_problem_write"]
+    assert [step["name"] for step in parts["steps"]] == ["cheese_problem"]
     assert '"difficulty"' in parts["steps"][0]["args"]
     assert parts["edits"][0]["changed"] == {"rank": {"before": 2, "after": 3}}
 
@@ -1276,8 +1284,16 @@ def test_what_cheese_wrote_into_a_draft_is_undone_by_the_person(client, gateway)
         "id"
     ]
     gateway.script = [
-        ("tool", "cheese_problem_write", {"draft": draft, "difficulty": "初级"}),
-        ("tool", "cheese_problem_write", {"draft": draft, "difficulty": "高级"}),
+        (
+            "tool",
+            "cheese_problem",
+            {"action": "write", "draft": draft, "difficulty": "初级"},
+        ),
+        (
+            "tool",
+            "cheese_problem",
+            {"action": "write", "draft": draft, "difficulty": "高级"},
+        ),
         ("text", "难度改成了高级。"),
     ]
     r = client.post(

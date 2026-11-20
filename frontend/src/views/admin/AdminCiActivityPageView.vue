@@ -18,6 +18,7 @@ import AdminPage from '@/components/admin/AdminPage.vue'
 import AdminTabs from '@/components/admin/AdminTabs.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
+import { absDateTime, clockTime } from '@/lib/dateText'
 import { fmtNum } from '@/lib/usageFormat'
 
 defineOptions({ name: 'AdminCiActivityPageView' })
@@ -273,25 +274,44 @@ const roundRows = computed(() =>
   }))
 )
 
+// Moments on this page are the viewer's local time, written the site's way (`dateText`). The
+// hour-of-day chart keeps UTC buckets: they are counted that way on the server.
+const localAt = (iso: string) => absDateTime(Date.parse(iso))
+
 const sweepLine = computed(() => {
   const sweep = props.board?.sweep
   if (!sweep) return t('ciActivity.sweep.never')
-  const at = `${sweep.at.slice(0, 16).replace('T', ' ')}Z`
+  const at = localAt(sweep.at)
   if (!sweep.complete && sweep.covered_from)
     return t('ciActivity.sweep.backfilling', {
       at,
-      from: `${sweep.covered_from.slice(0, 16).replace('T', ' ')}Z`,
+      from: localAt(sweep.covered_from),
       owed: fmtNum(sweep.jobs_owed),
     })
   if (sweep.jobs_owed) return t('ciActivity.sweep.owed', { at, owed: fmtNum(sweep.jobs_owed) })
   return t('ciActivity.sweep.current', { at })
 })
 
+// The board is kept up to a minute per server worker, so it says when it was computed: the
+// time beside the title, the date and what it means on hover.
+const computedAt = computed(() =>
+  props.board ? t('ciActivity.computedAt', { at: clockTime(Date.parse(props.board.generated_at)) }) : ''
+)
+const computedHint = computed(() =>
+  props.board ? t('ciActivity.computedAtHint', { at: localAt(props.board.generated_at) }) : ''
+)
+
 const hostedLabel = (runner: string) => runner.replace(/^hosted: /, t('ciActivity.runners.hostedPrefix'))
 </script>
 
 <template>
   <AdminPage :title="t('navigation.admin.ciActivity')" :sub="t('ciActivity.page.subtitle')">
+    <template v-if="board" #meta>
+      <span class="aci__computed" tabindex="0">
+        {{ computedAt }}
+        <v-tooltip activator="parent" location="bottom" :text="computedHint" />
+      </span>
+    </template>
     <template #tools>
       <AdminTabs
         size="sm"
@@ -317,7 +337,7 @@ const hostedLabel = (runner: string) => runner.replace(/^hosted: /, t('ciActivit
             headline.rounds.covered_from
               ? t('ciActivity.note.roundsIncomplete', {
                   n: fmtNum(headline.rounds.incomplete_prs),
-                  from: headline.rounds.covered_from.slice(0, 16).replace('T', ' ') + 'Z',
+                  from: localAt(headline.rounds.covered_from),
                 })
               : t('ciActivity.note.historyUnknown')
           }}
@@ -502,6 +522,10 @@ const hostedLabel = (runner: string) => runner.replace(/^hosted: /, t('ciActivit
 
 .aci__prov {
   margin: 16px 0 0;
+}
+
+.aci__computed {
+  cursor: help;
 }
 
 .aci__kpis {

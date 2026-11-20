@@ -36,6 +36,7 @@ async def test_persist_human_message_replays_from_idempotency_store(
 
     place = SimpleNamespace(
         room=SimpleNamespace(project_id=project_id),
+        task=None,
         room_id=topic_id,
         conversation_id=topic_id,
     )

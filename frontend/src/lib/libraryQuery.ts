@@ -1,6 +1,10 @@
 // 资料库一页的查询条件，以及它怎么写成查询串。单放一处：`api.ts` 要用它，而
 // `libraryApi.ts` 反过来要 `api.ts` 的 request，放在那边就成了一个环。
 
+/** 资料库页那个排序框的三档。`off` 是默认：文件夹一拨、其余一拨，也是这一页原本
+ *  的样子；`asc` / `desc` 把文件夹和文件排进同一条时间线（后端 `app.core.rank`）。 */
+export type LibrarySort = 'off' | 'asc' | 'desc'
+
 /** 资料库一页的条件：不搜不筛时是 `dir` 那一层（文件夹在前），`flat` / `q` / `kind`
  *  给了就是整个资料库里对得上的文件。翻页用上一页的 `next`。 */
 export interface LibraryQuery {
@@ -9,6 +13,8 @@ export interface LibraryQuery {
   flat?: boolean
   q?: string
   kind?: string
+  /** 排序框选的档位；`off` 不写进查询串，走原来那条路。 */
+  sort?: LibrarySort
   cursor?: string | null
   limit?: number
 }

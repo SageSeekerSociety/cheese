@@ -4,8 +4,11 @@ import asyncio
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block, BlockKind
+from app.domain.day_windows import utc_now
 from app.domain.event_author import AuthorType
 from app.domain.memory.models import user_scope_id
 from app.domain.memory.scopes import MemoryScope
@@ -26,6 +29,10 @@ from tests.integration.conftest import (
     registered,
     session_auth_headers,
 )
+
+# Rows are dated from `utc_now()`, the moment the routes read too, held still
+# for each test (`pinned_clock`): a run across UTC midnight cannot split them.
+pytestmark = pytest.mark.usefixtures("pinned_clock")
 
 
 def _remember(client, project_id: str, about: str, content: str) -> None:
@@ -104,7 +111,7 @@ def _wrote(
 
 def _noon(days_ago: int) -> datetime:
     """Noon UTC, ``days_ago`` days back: well inside that UTC day."""
-    today = datetime.now(UTC).replace(hour=12, minute=0, second=0, microsecond=0)
+    today = utc_now().replace(hour=12, minute=0, second=0, microsecond=0)
     return today - timedelta(days=days_ago)
 
 

@@ -41,13 +41,12 @@ function loadRewards() {
 /** 栏位的名字来自词表。**键写成字面量的表**，不拼字符串：i18n 的闸门
  *  （`src/i18n/catalog.spec.ts`）照源码里的字面量认「这个键有人用」，拼出来的键既不算
  *  一次调用、那四个叶子又会被判成「没有任何文件引用」。 */
-// 「已完成」而不是某一级状态的名字：这一栏装的是**收尾的两级**（已修复 + 已上线），
-// 只写其中任一个，另一级都会在点进去之前看起来像丢了。`active` 反过来是
-// 精确的 —— 那一栏现在只剩「处理中」，已收录还没人接手，不算活跃。
+// 「已完成」而不是某一级状态的名字：这一栏装的是**收尾的三级**（已修复 + 已上线 +
+// 不修复），只写其中任一个，别的都会在点进去之前看起来像丢了。`active` 整栏删了
+// （2026-10-28）—— 它和状态药丸里的「处理中」是同一个切口，那个轴现在只剩药丸。
 const TAB_KEYS: Record<string, string> = {
   all: 'feedback.center.tab.all',
   hot: 'feedback.center.tab.hot',
-  active: 'feedback.center.tab.active',
   resolved: 'feedback.center.tab.resolved',
 }
 /** 服务端多出一个栏位时标成它自己的名字，而不是不显示（少一个 Tab 比多一个写着生词
@@ -55,7 +54,7 @@ const TAB_KEYS: Record<string, string> = {
 const labelOf = (tab: string) => (TAB_KEYS[tab] ? t(TAB_KEYS[tab]) : tab)
 
 const tabs = computed(() =>
-  (store.meta?.tabs ?? ['all', 'hot', 'active', 'resolved']).map((value) => ({
+  (store.meta?.tabs ?? ['all', 'hot', 'resolved']).map((value) => ({
     value: value as TabName,
     label: labelOf(value),
     count: store.tabCounts[value as TabName] ?? 0,

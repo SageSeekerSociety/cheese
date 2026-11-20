@@ -18,6 +18,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.request_facts import recall, remember
 from app.domain.agent.harness import HARNESSES
 from app.domain.agent.harness.driven.lifecycle import IDLE, RUNNING, StaleEpoch
 from app.domain.agent.models import SessionOffset, SessionState
@@ -222,6 +223,9 @@ async def exited(
     return True
 
 
+_SESSION_STATE_TABLES = frozenset({"session_states"})
+
+
 async def running_conversations(
     session: AsyncSession, conversation_ids: Collection[uuid.UUID] | None = None
 ) -> set[uuid.UUID]:
@@ -231,9 +235,35 @@ async def running_conversations(
         SessionState.worker_status == RUNNING
     )
     if conversation_ids is not None:
-        if not conversation_ids:
+        wanted = set(conversation_ids)
+        if not wanted:
             return set()
-        query = query.where(SessionState.conversation_id.in_(set(conversation_ids)))
+        if not isinstance(session, AsyncSession):
+            query = query.where(SessionState.conversation_id.in_(wanted))
+            return set(await session.scalars(query.distinct()))
+        if session.autoflush:
+            await session.flush()
+        known: set[uuid.UUID] = set()
+        missing: list[uuid.UUID] = []
+        for cid in wanted:
+            found, cached = recall(session, ("running_conversation", cid))
+            if found:
+                if cached:
+                    known.add(cid)
+            else:
+                missing.append(cid)
+        if not missing:
+            return known
+        query = query.where(SessionState.conversation_id.in_(missing))
+        found_running = set(await session.scalars(query.distinct()))
+        for cid in missing:
+            remember(
+                session,
+                ("running_conversation", cid),
+                cid in found_running,
+                tables=_SESSION_STATE_TABLES,
+            )
+        return known | found_running
     return set(await session.scalars(query.distinct()))
 
 

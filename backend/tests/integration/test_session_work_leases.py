@@ -161,7 +161,7 @@ async def test_each_session_in_a_room_acquires_its_own_environments_device(
     for session_id, device, token in identities:
         response = client.post(
             f"/topics/{topic_id}/sessions/{session_id}/work-lease",
-            headers={"X-Cheese-Token": token},
+            headers={"Authorization": f"Bearer {token}"},
             json={"env": {}},
         )
         assert response.status_code == 200, response.text
@@ -170,7 +170,7 @@ async def test_each_session_in_a_room_acquires_its_own_environments_device(
         tokens.append(answer["token"])
         response = client.post(
             f"/topics/{topic_id}/execution/{resource}",
-            headers={"X-Cheese-Token": answer["token"]},
+            headers={"Authorization": f"Bearer {answer['token']}"},
             json={
                 "method": "invoke",
                 "params": {"id": str(uuid.uuid4()), "tool": "Read"},
@@ -193,7 +193,7 @@ async def test_each_session_in_a_room_acquires_its_own_environments_device(
     for session_id, _device, token in identities:
         response = client.post(
             f"/topics/{topic_id}/sessions/{session_id}/work-lease",
-            headers={"X-Cheese-Token": token},
+            headers={"Authorization": f"Bearer {token}"},
             json={"env": {}},
         )
         assert response.status_code == 200, response.text
@@ -209,7 +209,7 @@ async def test_each_session_in_a_room_acquires_its_own_environments_device(
     )
     upgraded = client.post(
         f"/topics/{topic_id}/sessions/{identities[0][0]}/work-lease",
-        headers={"X-Cheese-Token": identities[0][2]},
+        headers={"Authorization": f"Bearer {identities[0][2]}"},
         json={"env": {}},
     )
     assert upgraded.status_code == 200, upgraded.text
@@ -230,7 +230,7 @@ async def test_each_session_in_a_room_acquires_its_own_environments_device(
     assert leases[0]["resource_id"] != leases[1]["resource_id"]
     wrong_session = client.post(
         f"/topics/{topic_id}/sessions/{identities[1][0]}/work-lease",
-        headers={"X-Cheese-Token": identities[0][2]},
+        headers={"Authorization": f"Bearer {identities[0][2]}"},
         json={"env": {}},
     )
     assert wrong_session.status_code == 403
@@ -252,7 +252,7 @@ async def test_each_session_in_a_room_acquires_its_own_environments_device(
         await db.commit()
     bob_tools = client.post(
         f"/topics/{topic_id}/sessions/{second_id}/work-lease",
-        headers={"X-Cheese-Token": identities[1][2]},
+        headers={"Authorization": f"Bearer {identities[1][2]}"},
         json={"env": {}},
     )
     assert bob_tools.status_code == 200, bob_tools.text
@@ -261,7 +261,7 @@ async def test_each_session_in_a_room_acquires_its_own_environments_device(
     remote.side_effect = TimeoutError("lost response")
     timed_out = client.post(
         f"/topics/{topic_id}/execution/{resource}",
-        headers={"X-Cheese-Token": tokens[0]},
+        headers={"Authorization": f"Bearer {tokens[0]}"},
         json={"method": "invoke", "params": {"id": "lost-write", "tool": "Write"}},
     )
     assert timed_out.status_code == 504, timed_out.text
@@ -319,7 +319,7 @@ async def test_each_session_in_a_room_acquires_its_own_environments_device(
         pending_call = requests.submit(
             client.post,
             f"/topics/{topic_id}/execution/{resource}",
-            headers={"X-Cheese-Token": tokens[0]},
+            headers={"Authorization": f"Bearer {tokens[0]}"},
             json={
                 "method": "invoke",
                 "params": {"id": "in-flight-read", "tool": "Read"},
@@ -365,13 +365,13 @@ async def test_each_session_in_a_room_acquires_its_own_environments_device(
         assert chosen.environment == on_second
     old_call = client.post(
         f"/topics/{topic_id}/execution/{resource}",
-        headers={"X-Cheese-Token": tokens[0]},
+        headers={"Authorization": f"Bearer {tokens[0]}"},
         json={"method": "invoke", "params": {"id": "stale", "tool": "Write"}},
     )
     assert old_call.status_code == 409
     response = client.post(
         f"/topics/{topic_id}/sessions/{first_id}/work-lease",
-        headers={"X-Cheese-Token": first_token},
+        headers={"Authorization": f"Bearer {first_token}"},
         json={"env": {}},
     )
     assert response.status_code == 200, response.text
@@ -388,7 +388,7 @@ async def test_each_session_in_a_room_acquires_its_own_environments_device(
     assert (
         client.post(
             f"/topics/{topic_id}/execution/{resource}",
-            headers={"X-Cheese-Token": tokens[0]},
+            headers={"Authorization": f"Bearer {tokens[0]}"},
             json={
                 "method": "invoke",
                 "params": {"id": "stale-after-replacement", "tool": "Write"},
@@ -408,7 +408,7 @@ async def test_each_session_in_a_room_acquires_its_own_environments_device(
         await db.commit()
     revoked = client.post(
         f"/topics/{topic_id}/execution/{resource}",
-        headers={"X-Cheese-Token": current_token},
+        headers={"Authorization": f"Bearer {current_token}"},
         json={"method": "invoke", "params": {"id": "revoked", "tool": "Write"}},
     )
     assert revoked.status_code == 403
@@ -433,7 +433,7 @@ async def test_each_session_in_a_room_acquires_its_own_environments_device(
     hub.is_online = lambda _device: False
     waiting = client.post(
         f"/topics/{topic_id}/sessions/{fresh_id}/work-lease",
-        headers={"X-Cheese-Token": fresh_token},
+        headers={"Authorization": f"Bearer {fresh_token}"},
         json={"env": {}},
     )
     assert waiting.status_code == 200, waiting.text
@@ -579,7 +579,7 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
     session_id, _, token = identities[0]
     path = f"/topics/{topic_id}/sessions/{session_id}/work-lease"
     body = {"env": {"CHEESE_ENVIRONMENT": '{"revision":"one"}'}}
-    first = client.post(path, headers={"X-Cheese-Token": token}, json=body)
+    first = client.post(path, headers={"Authorization": f"Bearer {token}"}, json=body)
     assert first.status_code == 200, first.text
     assert launch_env["CHEESE_PREVIEW_URL"].startswith(("ws://", "wss://"))
     assert launch_env["CHEESE_PREVIEW_URL"].endswith("/preview/tunnel")
@@ -645,7 +645,7 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
 
     with ThreadPoolExecutor(max_workers=1) as requests:
         pending_tool = requests.submit(
-            client.post, path, headers={"X-Cheese-Token": token}, json=body
+            client.post, path, headers={"Authorization": f"Bearer {token}"}, json=body
         )
         await asyncio.sleep(1.5)
         assert not pending_tool.done(), "The other installer is still preparing"
@@ -670,12 +670,14 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
         status.return_value = {"state": scenario, "error": "environment not ready"}
     if scenario == "prepare-failure":
         with pytest.raises(RuntimeError, match="prepare rejected"):
-            client.post(path, headers={"X-Cheese-Token": token}, json=body)
+            client.post(path, headers={"Authorization": f"Bearer {token}"}, json=body)
         assert hub.exec.await_count == 1, (
             "A failed prepare must not be retried as installation"
         )
     else:
-        next_tool = client.post(path, headers={"X-Cheese-Token": token}, json=body)
+        next_tool = client.post(
+            path, headers={"Authorization": f"Bearer {token}"}, json=body
+        )
         assert next_tool.status_code == 200, next_tool.text
         if scenario == "pending":
             assert next_tool.json()["data"]["target"]["resource_id"] == resource_id
@@ -688,7 +690,9 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
             assert "preparing" not in next_tool.json()["data"]
             assert hub.exec.await_count == 1
             status.return_value = {"state": "ready"}
-            retry = client.post(path, headers={"X-Cheese-Token": token}, json=body)
+            retry = client.post(
+                path, headers={"Authorization": f"Bearer {token}"}, json=body
+            )
             assert retry.json()["data"]["target"]["resource_id"] == resource_id
             assert hub.exec.await_count == 1
         else:
@@ -752,7 +756,7 @@ async def test_an_agent_may_put_itself_in_a_platform_sandbox(client, monkeypatch
     monkeypatch.setattr(environments, "cloud_provisionable", lambda settings: True)
     path = f"/topics/{topic_id}/sessions/{session_id}/environment"
     standard = {"kind": "sandbox", "spec": "standard"}
-    headers = {"X-Cheese-Token": token}
+    headers = {"Authorization": f"Bearer {token}"}
     selected = client.put(path, headers=headers, json={"environment": standard})
     assert selected.status_code == 200, selected.text
     assert selected.json()["data"]["environment"] == standard
@@ -921,7 +925,7 @@ async def test_each_dialer_gets_its_configured_base_not_the_request_host(
 
     response = client.post(
         f"/topics/{topic_id}/sessions/{session_id}/work-lease",
-        headers={"X-Cheese-Token": token, "Host": "172.17.0.1"},
+        headers={"Authorization": f"Bearer {token}", "Host": "172.17.0.1"},
         json={"env": {}},
     )
     assert response.status_code == 200, response.text
@@ -1035,20 +1039,25 @@ async def test_calls_on_held_hands_are_answered_while_they_are_rechecked(
 
     monkeypatch.setattr(execution, "call", AsyncMock(side_effect=execute))
     lease_path = f"/topics/{topic_id}/sessions/{session_id}/work-lease"
-    first = client.post(lease_path, headers={"X-Cheese-Token": token}, json={})
+    first = client.post(
+        lease_path, headers={"Authorization": f"Bearer {token}"}, json={}
+    )
     assert first.status_code == 200, first.text
     execution_token = first.json()["data"]["token"]
 
     hold["next_ping"] = True
     with ThreadPoolExecutor(1) as pool:
         recheck = pool.submit(
-            client.post, lease_path, headers={"X-Cheese-Token": token}, json={}
+            client.post,
+            lease_path,
+            headers={"Authorization": f"Bearer {token}"},
+            json={},
         )
         assert checking.wait(10), "the second acquire never re-checked the hands"
         try:
             during = client.post(
                 f"/topics/{topic_id}/execution/{resource}",
-                headers={"X-Cheese-Token": execution_token},
+                headers={"Authorization": f"Bearer {execution_token}"},
                 json={"method": "control", "params": {"subtype": "shell"}},
             )
         finally:
@@ -1172,7 +1181,9 @@ async def test_a_recheck_that_outlasts_its_request_leaves_the_session_startable(
     lease_path = f"/topics/{topic_id}/sessions/{session_id}/work-lease"
 
     def ask(**body):
-        response = client.post(lease_path, headers={"X-Cheese-Token": token}, json=body)
+        response = client.post(
+            lease_path, headers={"Authorization": f"Bearer {token}"}, json=body
+        )
         assert response.status_code == 200, response.text
         return response.json()["data"]
 
@@ -1269,7 +1280,7 @@ async def test_an_own_machine_that_just_dropped_is_called_not_refused(
     def lease():
         return client.post(
             f"/topics/{topic_id}/sessions/{session_id}/work-lease",
-            headers={"X-Cheese-Token": token},
+            headers={"Authorization": f"Bearer {token}"},
             json={"env": {}},
         )
 
@@ -1403,7 +1414,9 @@ async def test_an_installation_whose_backend_is_gone_does_not_hold_the_next_star
     hub = _a_machine_that_installs(monkeypatch, install)
 
     def ask(**body):
-        response = client.post(path, headers={"X-Cheese-Token": token}, json=body)
+        response = client.post(
+            path, headers={"Authorization": f"Bearer {token}"}, json=body
+        )
         assert response.status_code == 200, response.text
         return response.json()["data"]
 
@@ -1466,7 +1479,9 @@ async def test_an_installation_still_running_elsewhere_keeps_its_claim(
     hub = _a_machine_that_installs(monkeypatch, install)
 
     def ask(**body):
-        response = client.post(path, headers={"X-Cheese-Token": token}, json=body)
+        response = client.post(
+            path, headers={"Authorization": f"Bearer {token}"}, json=body
+        )
         assert response.status_code == 200, response.text
         return response.json()["data"]
 
@@ -1508,7 +1523,7 @@ async def test_a_wait_that_runs_out_on_the_rooms_lock_still_answers_preparing(
     async with client.test_factory() as switching:
         await TopicService(switching).lock_for_execution(room)
         response = client.post(
-            path, headers={"X-Cheese-Token": token}, json={"timeout": 0.001}
+            path, headers={"Authorization": f"Bearer {token}"}, json={"timeout": 0.001}
         )
         await switching.rollback()
 
@@ -1597,7 +1612,7 @@ async def test_a_machine_whose_environment_state_cannot_be_read_is_answered_in_w
     def lease():
         return client.post(
             f"/topics/{topic_id}/sessions/{session_id}/work-lease",
-            headers={"X-Cheese-Token": token},
+            headers={"Authorization": f"Bearer {token}"},
             json={"env": {"CHEESE_ENVIRONMENT": '{"revision":"one"}'}},
         )
 

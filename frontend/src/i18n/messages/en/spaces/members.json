@@ -1,19 +1,38 @@
 {
   "columns": {
-    "joinedVia": "Joined via",
     "member": "Member",
     "role": "Role"
   },
   "confirmRevoke": "Remove {name} as an admin?",
   "confirmTransfer": "Transfer ownership to {name}? You will become an admin.",
   "count": "{n} people",
-  "createdSpace": "Creator",
   "empty": "No members",
-  "invite": "Invite members",
-  "inviteCodes": "Invite codes",
   "inviteDomainGroups": "Email domain groups",
+  "joinLink": {
+    "approval": "Joining needs approval",
+    "approvalHint": "When on, people who open the link send a request that an owner or admin approves",
+    "copied": "Copied",
+    "copy": "Copy link",
+    "copyFailed": "Couldn't copy. Select the link and copy it by hand",
+    "failed": "That didn't work. Try again later",
+    "heading": "How people join",
+    "hint": "Anyone with the link can join this space after signing in. Resetting it stops the old link at once; members who already joined stay",
+    "loading": "Loading",
+    "reset": "Reset link",
+    "title": "Join link"
+  },
   "loadMembersFailed": "Couldn't load members",
   "makeAdmin": "Make admin",
+  "requests": {
+    "approve": "Approve",
+    "approveFailed": "Couldn't approve. Try again later",
+    "empty": "No join requests",
+    "loadFailed": "Couldn't load join requests",
+    "reject": "Reject",
+    "rejectFailed": "Couldn't reject. Try again later",
+    "requestedAt": "Requested {time}",
+    "title": "Join requests"
+  },
   "revoke": "Remove admin",
   "role": {
     "admin": "Admin",
@@ -26,6 +45,5 @@
   "search": "Search by name or username",
   "title": "Members",
   "transfer": "Transfer ownership",
-  "unknown": "Unknown",
   "you": "(you)"
 }

@@ -16,7 +16,7 @@ import shlex
 
 from app.domain.agent import gateway_catalog
 from app.domain.agent.harness.claude_code.cli import DISALLOWED_TOOLS
-from app.domain.agent.harness.prompt import SUBAGENT_RULES
+from app.domain.prompts import SUBAGENT_RULES
 
 #: The window Claude Code assumes for a model id it does not recognise.
 _ASSUMED_WINDOW = 200_000

@@ -8,7 +8,7 @@
 // 右边就打开哪样，侧栏不动。个人团队只有你一个人，所以没有「成员」这一样，也没有
 // 「邀请成员」。空间不展开：空间自己有一整套目录，点进去就是那个空间。
 //
-// **这一件只吃 props 出事件**（A 档）：名单、待办数、现在是哪个团队、四个弹窗的开合与
+// **这一件只吃 props 出事件**（A 档）：名单、待办数、现在是哪个团队、三个弹窗的开合与
 // 它们的进行中/出错，都是外面给的；取数、写回、跳地址在 `composables/useTeamNav.ts`。
 // 于是它能单独摆在组件预览站里看（`views/demo/catalogHome.ts`），不用起假后端。
 //
@@ -16,6 +16,7 @@
 // 每一行 ⋯ 里的操作清单长什么样。
 import type { MenuAction } from '@/components/common/menuAction'
 import type { SpaceLink, Team, TeamMember } from '@/types'
+import type { ProjectAvatarSpec } from '@/utils/projectAvatar'
 
 import { computed, ref, watch } from 'vue'
 
@@ -24,18 +25,19 @@ import { getAvatarUrl } from '@/utils/materials'
 import { useRowMenu } from '@/composables/useRowMenu'
 
 import CreateSpaceDialog from './CreateSpaceDialog.vue'
-import JoinSpaceDialog from './JoinSpaceDialog.vue'
 
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import ProjectAvatar from '@/components/common/ProjectAvatar.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
 import { storageGetStrings, storageSetJson } from '@/lib/browserStorage'
 import { spaceEntryRoute } from '@/lib/spaceEntry'
+import { countLabel } from '@/lib/topicTree'
 import DisbandTeamDialog from '@/views/teams/DisbandTeamDialog.vue'
 import TransferTeamDialog from '@/views/teams/TransferTeamDialog.vue'
 
 const props = defineProps<{
-  /** 手机上「待办」是底栏的一格，这里就不再列一次。 */
+  /** 手机上「待办」是底栏的一格，这里就不再列一次。桌面上这一行是首页这一格目录的第一行。 */
   inbox?: boolean
   /** 我所在的团队（含自己名下那一个）。 */
   teams: Team[]
@@ -43,6 +45,10 @@ const props = defineProps<{
   spaces: SpaceLink[]
   /** 待我处理的件数；0 或没给就不画那颗角标。 */
   awaiting?: number
+  /** 桌面首页侧栏：我的项目，各带它里面等我处理的件数，列在团队上面。不给就不画这一段。 */
+  projects?: { id: string; name: string; avatar?: ProjectAvatarSpec | null; to: string; awaiting?: number }[]
+  /** 「新建项目」那一行的字（项目这个词随外壳换）；不给就不画新建的入口。 */
+  newProjectLabel?: string
   /** 正在看的是哪个团队（`/teams/<handle>/…`）——那一个必须是展开的。 */
   currentHandle?: string | null
   /** 正在解散的团队；null 就是没在解散。 */
@@ -56,9 +62,6 @@ const props = defineProps<{
   transferLoading?: boolean
   transferBusy?: boolean
   transferError?: string | null
-  joinOpen: boolean
-  joinBusy?: boolean
-  joinError?: string
   createOpen: boolean
   createBusy?: boolean
   createError?: string
@@ -75,12 +78,11 @@ const emit = defineEmits<{
   confirmTransfer: [userId: number]
   /** 点了「退出团队」：确认那一下和退本身都由外面做。 */
   leave: [team: Team]
-  'update:joinOpen': [open: boolean]
-  /** 「加入」按下去了：邀请码在里面输好了。 */
-  join: [code: string]
   'update:createOpen': [open: boolean]
   /** 「提交审核」按下去了：payload 是弹窗里填的那三样。 */
   createSpace: [payload: { name: string; intro: string; avatarFile?: File }]
+  /** 点了「新建项目」。 */
+  createProject: []
 }>()
 
 // 自己名下（只有自己的那个团队，以自己的昵称出现）一组，真团队一组，后一组才有「团队」小标题。
@@ -188,7 +190,6 @@ const rowMenu = useRowMenu<number>()
 
 // 弹窗自己那一格开合：外面给的是「在编辑哪个团队」，这里翻成 `v-model` 要的布尔。
 // 关掉（点了取消、按了 Esc）就是把那一格交回空。
-const joinModel = computed({ get: () => props.joinOpen, set: (value: boolean) => emit('update:joinOpen', value) })
 const createModel = computed({
   get: () => props.createOpen,
   set: (value: boolean) => emit('update:createOpen', value),
@@ -225,6 +226,58 @@ const transferModel = computed({
         <span class="side-nav__count">{{ awaiting > 99 ? '99+' : awaiting }}</span>
       </template>
     </v-list-item>
+
+    <template v-if="projects">
+      <v-list-subheader class="home-nav__projects-head">
+        <span class="home-nav__subhead">
+          <span class="home-nav__subhead-label">{{ t('navigation.projects') }}</span>
+          <button
+            v-if="newProjectLabel"
+            type="button"
+            class="home-nav__subhead-add"
+            :title="newProjectLabel"
+            :aria-label="newProjectLabel"
+            @click="emit('createProject')"
+          >
+            <v-icon size="16" icon="mdi-plus" />
+          </button>
+        </span>
+      </v-list-subheader>
+      <v-list-item
+        v-for="project in projects"
+        :key="project.id"
+        rounded="lg"
+        :to="project.to"
+        data-testid="home-nav-project"
+        :aria-label="
+          project.awaiting ? t('global.labelWithAside', { label: project.name, aside: project.awaiting }) : project.name
+        "
+      >
+        <template #prepend>
+          <ProjectAvatar
+            :id="project.id"
+            :name="project.name"
+            :avatar="project.avatar"
+            :size="20"
+            class="home-nav__mark"
+          />
+        </template>
+        <v-list-item-title class="home-nav__name" :title="project.name" data-user-content>{{
+          project.name
+        }}</v-list-item-title>
+        <template v-if="project.awaiting" #append>
+          <span class="side-nav__count" aria-hidden="true">{{ countLabel(project.awaiting) }}</span>
+        </template>
+      </v-list-item>
+      <v-list-item
+        v-if="newProjectLabel"
+        rounded="lg"
+        class="home-nav__action"
+        prepend-icon="mdi-plus"
+        :title="newProjectLabel"
+        @click="emit('createProject')"
+      />
+    </template>
 
     <!-- 自己名下的项目在「团队」之上单独一行：底下是只有自己的那个团队，界面上不当团队说。 -->
     <template v-for="group in groups" :key="group.key">
@@ -326,13 +379,6 @@ const transferModel = computed({
     <v-list-item
       rounded="lg"
       class="home-nav__action"
-      prepend-icon="mdi-ticket-confirmation-outline"
-      :title="t('work.joinAction')"
-      @click="emit('update:joinOpen', true)"
-    />
-    <v-list-item
-      rounded="lg"
-      class="home-nav__action"
       prepend-icon="mdi-plus"
       :title="t('spaces.create.open')"
       @click="emit('update:createOpen', true)"
@@ -349,7 +395,6 @@ const transferModel = computed({
     />
   </v-list>
 
-  <JoinSpaceDialog v-model="joinModel" :busy="joinBusy" :error="joinError" @submit="(code) => emit('join', code)" />
   <CreateSpaceDialog
     v-model="createModel"
     :busy="createBusy"
@@ -408,6 +453,38 @@ const transferModel = computed({
    规则一旦漂移就会两处不一致。 */
 .home-nav__mark {
   flex: none;
+}
+
+.home-nav__projects-head :deep(.v-list-subheader__text) {
+  flex: 1;
+}
+
+.home-nav__subhead {
+  display: flex;
+  align-items: center;
+  width: 100%;
+}
+
+.home-nav__subhead-label {
+  flex: 1;
+}
+
+.home-nav__subhead-add {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  color: var(--faint);
+  cursor: pointer;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+
+.home-nav__subhead-add:hover {
+  color: var(--text);
+  background: var(--fill-2);
 }
 
 .home-nav__more {

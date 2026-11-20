@@ -22,6 +22,9 @@ vi.mock('@/components/panels/preview/PreviewSheet.vue', () => ({
 vi.mock('@/components/panels/preview/PreviewSlides.vue', () => ({
   default: { template: '<div data-testid="slides" />' },
 }))
+vi.mock('@/components/panels/preview/PreviewMarkdown.vue', () => ({
+  default: { props: ['source'], template: '<div data-testid="markdown">{{ source }}</div>' },
+}))
 vi.mock('@/components/panels/preview/DesignImage.vue', () => ({ default: { template: '<img />' } }))
 
 beforeEach(() => setLocale('en'))
@@ -59,5 +62,17 @@ describe('FileBytesPreview', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
     expect(await screen.findByText('hello from the file')).toBeTruthy()
     expect(read).toHaveBeenCalledTimes(2)
+  })
+
+  it('renders a markdown file through PreviewMarkdown instead of raw preformatted text', async () => {
+    const bytes = new TextEncoder().encode('# 资料库说明\n\n正文内容').buffer as ArrayBuffer
+    const view = render(FileBytesPreview, {
+      props: { filename: 'README.md', source: 'README.md#1', read: async () => bytes },
+      global: { plugins: [createVuetify({ components, directives })] },
+    })
+
+    const md = await view.findByTestId('markdown')
+    expect(md.textContent).toContain('# 资料库说明')
+    expect(view.container.querySelector('.file-preview__text')).toBeNull()
   })
 })

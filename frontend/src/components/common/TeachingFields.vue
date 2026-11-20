@@ -1,18 +1,37 @@
 <script setup lang="ts">
-// 「AI 队友辅导」那几格：方式、补充要求、可读取的资料。空间设置和发题页、改题页共用这一份。
+// 「AI 队友辅导」那几格：方式、补充要求、可读取的资料、技能，以及题目那一层的
+// 「涉及的知识点」。空间设置和发题页、改题页共用这一份。
+//
+// 技能那一格只在调用方递了候选（`skillCatalog`）时出现：发题页、改题页递，空间设置不递
+// —— 那边看不到这一格，存的时候原样带着（`buildTeaching`）。
+//
+// 「涉及的知识点」（`KnowledgePointField`）只在题目那一层（`inherit`）且这块板开着学情分析
+// （`knowledgeEnabled`）时出现 —— 空间设置摆的是「这份指导说了什么」，知识点清单在设置里
+// 自己那一栏维护；没开学情分析的空间不该看到这一栏。它不带在 `draft` 里：这一格的值是这道
+// 题的编号清单（`knowledgePointIds`），与指导那份配置不是一块，所以它单独一个
+// `knowledgePoints` 的 v-model，由调用方接住。
 //
 // 方式是四选一，每种下面一句说明它让 AI 队友怎么做。题目那一层（`inherit`）多一个
-// 「沿用空间设置」：题目和空间同时生效，题目不选方式就用空间的；底下折着空间那一份，
+// 「沿用上层设置」：题目和空间同时生效，题目不选方式就用空间的；底下折着空间那一份，
 // 写题目的要求时看得到它已经说了什么。
+import type { SkillChoice } from '@/composables/useSkillCatalog'
 import type { TeachingDraft } from '@/lib/teaching'
-import type { SpaceMaterial, SpaceMaterialsState, SpaceTeaching, TeachingMode } from '@/types'
+import type {
+  SpaceKnowledgePoint,
+  SpaceKnowledgeSuggestion,
+  SpaceMaterial,
+  SpaceMaterialsState,
+  SpaceTeaching,
+  TeachingMode,
+} from '@/types'
 
 import { computed, reactive, useId, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import KnowledgePointField from './KnowledgePointField.vue'
 import TeachingMaterialPicker from './TeachingMaterialPicker.vue'
 
-import { buildTeaching, draftFromConfig, emptyTeachingDraft, TEACHING_MODES } from '@/lib/teaching'
+import { buildTeaching, draftFromConfig, emptyTeachingDraft, pickTeachingMode, TEACHING_MODES } from '@/lib/teaching'
 
 const props = defineProps<{
   modelValue?: SpaceTeaching | null
@@ -25,8 +44,33 @@ const props = defineProps<{
   inherit?: boolean
   /** 空间那一份（`inherit` 时摆在底下）。 */
   spaceTeaching?: SpaceTeaching | null
+  /** 能选的技能（平台发货的那几个）。不给就不画技能那一格。 */
+  skillCatalog?: SkillChoice[]
+  /** 技能清单没读到：已选的照旧列着，只是没有别的可加。 */
+  skillCatalogFailed?: boolean
+  /** 这块板开着学情分析：「涉及的知识点」这一格才出现（没开就不该有这一栏）。 */
+  knowledgeEnabled?: boolean
+  /** 题目那一层：「涉及的知识点」这一格挂上的编号（`knowledgePointIds`）。 */
+  knowledgePoints?: number[]
+  /** 这块板的知识点清单（题目那一层当候选）。 */
+  knowledgePointList?: SpaceKnowledgePoint[]
+  /** 这块板清单读到哪一步了。`error` 时不判失效。 */
+  knowledgePointState?: 'loading' | 'ready' | 'error'
+  /** AI 读题面给出的建议，还没处理的那几条。 */
+  knowledgeSuggestions?: SpaceKnowledgeSuggestion[]
+  /** 正在读题面 / 上一次没读成。 */
+  knowledgeSuggesting?: boolean
+  knowledgeSuggestFailed?: boolean
+  /** 能不能让 AI 读题面（与建议那条路由同一道门）。 */
+  knowledgeCanSuggest?: boolean
 }>()
-const emit = defineEmits<{ 'update:modelValue': [SpaceTeaching] }>()
+const emit = defineEmits<{
+  'update:modelValue': [SpaceTeaching]
+  'update:knowledgePoints': [number[]]
+  'suggest-knowledge': []
+  /** 采用一条清单里还没有的知识点：调用方加进清单，再把编号报回来。 */
+  'adopt-new-knowledge': [string]
+}>()
 
 const { t } = useI18n()
 
@@ -57,7 +101,7 @@ watch(
   { deep: true, flush: 'sync' }
 )
 
-/** 方式那一组：题目那一层前面多一个「沿用空间设置」（值是 null）。 */
+/** 方式那一组：题目那一层前面多一个「沿用上层设置」（值是 null）。 */
 const modes = computed<{ value: TeachingMode | null; label: string; hint: string }[]>(() => [
   ...(props.inherit
     ? [
@@ -77,6 +121,16 @@ const modes = computed<{ value: TeachingMode | null; label: string; hint: string
   })),
 ])
 
+/** 技能的候选：清单里的，加上已经选上却不在清单里的（名字照旧列着，好让人删掉它）。 */
+const skillItems = computed(() => {
+  const catalog = props.skillCatalog ?? []
+  const known = new Set(catalog.map((skill) => skill.name))
+  return [
+    ...catalog.map((skill) => ({ value: skill.name, title: skill.name, subtitle: skill.description })),
+    ...draft.skills.filter((name) => !known.has(name)).map((name) => ({ value: name, title: name, subtitle: '' })),
+  ]
+})
+
 const spacePrompt = computed(() => props.spaceTeaching?.systemPrompt?.trim() ?? '')
 
 const labelId = `teaching-mode-${useId()}`
@@ -95,12 +149,34 @@ const labelId = `teaching-mode-${useId()}`
           class="teaching-fields__mode"
           :class="{ 'teaching-fields__mode--on': draft.mode === mode.value }"
           :aria-checked="draft.mode === mode.value"
-          @click="draft.mode = mode.value"
+          @click="pickTeachingMode(draft, mode.value)"
         >
           <span class="teaching-fields__mode-name">{{ mode.label }}</span>
           <span class="teaching-fields__mode-hint">{{ mode.hint }}</span>
         </button>
       </div>
+    </div>
+
+    <!-- 「引导为主」时的两项保护：只在这一层选了引导为主时出现；新选上时默认打开。 -->
+    <div v-if="draft.mode === 'guide'" class="teaching-fields__guards" data-testid="teaching-guards">
+      <span class="teaching-fields__guards-title">{{ t('spaces.teaching.guards.title') }}</span>
+      <v-checkbox
+        v-model="draft.hintLadder"
+        density="compact"
+        hide-details
+        color="primary"
+        data-testid="teaching-hint-ladder"
+        :label="t('spaces.teaching.guards.hintLadder')"
+      />
+      <v-checkbox
+        v-model="draft.outputCheck"
+        density="compact"
+        hide-details
+        color="primary"
+        data-testid="teaching-output-check"
+        :label="t('spaces.teaching.guards.outputCheck')"
+      />
+      <p class="teaching-fields__guards-note">{{ t('spaces.teaching.guards.note') }}</p>
     </div>
 
     <v-textarea
@@ -141,12 +217,58 @@ const labelId = `teaching-mode-${useId()}`
       :hint="t('spaces.teaching.fields.learningGoalsHint')"
     />
 
+    <!-- 「涉及的知识点」跟在「本节学习目标」后面（照设计稿）：它也是一句「这道题要教什么」，
+         只是这句话另外归一份清单管。只在题目那一层出现 —— 空间设置不摆它。 -->
+    <KnowledgePointField
+      v-if="inherit && knowledgeEnabled"
+      :model-value="knowledgePoints ?? []"
+      :knowledge-points="knowledgePointList ?? []"
+      :state="knowledgePointState ?? 'ready'"
+      :suggestions="knowledgeSuggestions ?? []"
+      :suggesting="knowledgeSuggesting ?? false"
+      :suggest-failed="knowledgeSuggestFailed ?? false"
+      :can-suggest="knowledgeCanSuggest ?? false"
+      @update:model-value="emit('update:knowledgePoints', $event)"
+      @suggest="emit('suggest-knowledge')"
+      @adopt-new="emit('adopt-new-knowledge', $event)"
+    />
+
     <TeachingMaterialPicker
       v-model="draft.materialIds"
       :materials="props.materials ?? []"
       :state="props.materialsState ?? 'ready'"
       :library-to="props.libraryTo"
     />
+
+    <v-autocomplete
+      v-if="skillCatalog"
+      v-model="draft.skills"
+      :items="skillItems"
+      item-title="title"
+      item-value="value"
+      multiple
+      chips
+      closable-chips
+      autocomplete="off"
+      variant="outlined"
+      density="compact"
+      hide-details="auto"
+      data-testid="teaching-skills"
+      :label="t('spaces.teaching.fields.skills')"
+      :hint="skillCatalogFailed ? t('spaces.teaching.fields.skillsLoadFailed') : t('spaces.teaching.fields.skillsHint')"
+      persistent-hint
+    >
+      <template #item="{ item, props: itemProps }">
+        <v-list-item v-bind="itemProps" :subtitle="item.raw.subtitle || undefined" />
+      </template>
+      <!-- A chosen skill keeps its description beside the id: `docx` alone does not say what it does. -->
+      <template #chip="{ item, props: chipProps }">
+        <v-chip v-bind="chipProps" class="teaching-fields__skill" :title="item.raw.subtitle || undefined">
+          <span class="teaching-fields__skill-name">{{ item.raw.title }}</span>
+          <span v-if="item.raw.subtitle" class="teaching-fields__skill-hint">{{ item.raw.subtitle }}</span>
+        </v-chip>
+      </template>
+    </v-autocomplete>
 
     <details v-if="inherit && spacePrompt" class="teaching-fields__space" data-testid="teaching-space-prompt">
       <summary>{{ t('spaces.teaching.fields.spacePrompt') }}</summary>
@@ -214,6 +336,45 @@ const labelId = `teaching-mode-${useId()}`
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--muted);
+}
+
+.teaching-fields__guards {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--canvas);
+}
+
+.teaching-fields__guards-title {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.teaching-fields__guards-note {
+  margin: 2px 0 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
+}
+
+.teaching-fields__skill {
+  max-width: 100%;
+}
+
+.teaching-fields__skill-name {
+  flex: none;
+}
+
+.teaching-fields__skill-hint {
+  min-width: 0;
+  margin-left: 6px;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .teaching-fields__space {

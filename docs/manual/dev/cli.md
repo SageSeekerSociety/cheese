@@ -21,16 +21,14 @@ covers:
 - **机器上**它是 `cheese` 命令，只保留必须在那台机器上作为进程跑的动作。顶层子命令共 15 个：
 
 ```text
-cheese worktree <任务 id>      准备任务工作目录并输出路径；新环境里第一次建时恢复平台快照；--prepare 依赖没变也重装
+cheese worktree <任务 id>      准备任务工作目录并输出路径；--prepare 依赖没变也重装
 cheese checkout                准备项目默认分支的代码并输出路径（支线）
-cheese sync                    同步任务提交并备份未提交的文件
-cheese recover <任务 id>       把最近一次备份恢复到一个独立目录
+cheese sync                    把任务的提交推上去
 cheese push-fix                把任务的新提交同步到它的 PR
 cheese serve <端口> "说明"      把跑在本机端口上的应用设为当前预览
 cheese show <路径>              把一份东西摆到房间里给人看
 cheese check <路径>             让平台的浏览器把一份 HTML 截成图并报出撑破版面的元素
 cheese pull <路径>              把房间里一份文件的最新保存取到这台机器上
-cheese transcript              把本会话的会话记录拉到本机（归一化后的 JSONL，含分身的）
 cheese library get <名字>       取一份项目资料到本机
 cheese mail attachment <连接> <邮件 uid> <序号>   取一封邮件的附件到本机
 cheese template list|new ...   列出平台标准模板，或从模板在房间里新建一份

@@ -22,11 +22,12 @@
     "topics": "Tags"
   },
   "tabs": {
+    "access": "Access",
     "basic": "Basics",
     "categories": "Categories and tags",
     "domainGroups": "Email domain groups",
     "guidance": "AI teammate guidance",
-    "inviteCodes": "Invite codes",
+    "learningAnalysis": "Learning analysis",
     "templates": "Challenge templates"
   },
   "title": "Settings"

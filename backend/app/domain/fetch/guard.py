@@ -49,7 +49,14 @@ from app.domain.fetch.addresses import (
     vetted,
 )
 
-__all__ = ["MAX_REDIRECTS", "NotPublic", "check", "client", "public_address"]
+__all__ = [
+    "MAX_REDIRECTS",
+    "NotPublic",
+    "PublicTransport",
+    "check",
+    "client",
+    "public_address",
+]
 
 #: A redirect chain longer than this is not a page, it is a loop or a probe.
 MAX_REDIRECTS = 5
@@ -143,7 +150,7 @@ class _PublicOnly(httpcore.AsyncNetworkBackend):
         await self._inner.sleep(seconds)
 
 
-class _PublicTransport(httpx.AsyncHTTPTransport):
+class PublicTransport(httpx.AsyncHTTPTransport):
     def __init__(self) -> None:
         super().__init__()
         # httpx does not take a network backend, but its connection pool does.
@@ -165,7 +172,7 @@ def client(**kwargs) -> httpx.AsyncClient:
     one for the backend; if one ever needs to, it has to be wired in here.
     """
     return httpx.AsyncClient(
-        transport=_PublicTransport(),
+        transport=PublicTransport(),
         trust_env=False,
         max_redirects=MAX_REDIRECTS,
         **kwargs,

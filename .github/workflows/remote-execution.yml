@@ -30,6 +30,9 @@ jobs:
       - name: The connector keeps screens as processes
         working-directory: cli
         run: go test ./internal/procscreen/...
+      - name: The connector updates itself without filling the disk
+        working-directory: cli
+        run: go test ./internal/update/...
       - name: The runner and the session's helpers
         working-directory: backend
         env:
@@ -84,7 +87,7 @@ jobs:
           context: .
           file: ./backend/sandbox/Dockerfile.private
           load: true
-          tags: cheese-private-executor:2.1.299
+          tags: cheese-private-executor:2.1.316
           cache-from: type=gha,version=2,scope=private-executor
       - name: Verify real scratch execution
         id: scratch
@@ -116,11 +119,55 @@ jobs:
             tmp/remote-execution/private-ci-*/
             tmp/remote-execution/ordinary-ci-*/
           retention-days: 3
+  # The judge's container held to its limits on a real docker: no network,
+  # a process limit a fork bomb meets, memory, the wall clock, the output cap,
+  # a read-only root and code, uid 1000 with no capabilities, and an expected
+  # output that never enters the container. Each check is a student program
+  # that tries to break one (scripts/remote_execution/judge_acceptance.py).
+  judge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+        with:
+          driver-opts: |
+            image=mirror.gcr.io/moby/buildkit:buildx-stable-1@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
+      # Loaded under the name the judge host runs it by
+      # (app/domain/judge/runtimes.py), from the layer cache build.yml writes
+      # for this recipe on main. Nothing is written back.
+      - name: Build the judge's Python image
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
+        with:
+          context: ./backend/sandbox/judge
+          file: ./backend/sandbox/judge/Dockerfile.python
+          load: true
+          tags: ghcr.io/sageseekersociety/cheese/judge-python:main
+          cache-from: type=gha,version=2,scope=judge-python
+      # The script and what it sends to the judge host use the standard
+      # library only, as on a judge host: the runner's Python is the system's.
+      - name: Hold the judge's container to its limits
+        run: >-
+          python3 scripts/remote_execution/judge_acceptance.py
+          --output tmp/judge-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        # Debug output only; see the private-chat job for why it is tolerated
+        # and bounded.
+        continue-on-error: true
+        timeout-minutes: 3
+        if: always()
+        with:
+          name: judge-acceptance-${{ github.sha }}
+          path: tmp/judge-acceptance-*/
+          retention-days: 3
   acceptance:
     runs-on: ubuntu-latest
     env:
-      ACCEPTANCE_OWNER_IMAGE: ghcr.io/sageseekersociety/cheese/backend@sha256:c45b38e7be6089a2a9830460ba5d2028e62c505a00d614ac452080ba72eafcbd
-      ACCEPTANCE_OWNER_REVISION: 071a67fc6eba30d63e8746bfb13ffd7c83587099
+      ACCEPTANCE_OWNER_IMAGE: ghcr.io/sageseekersociety/cheese/backend@sha256:48f693df661a2569cfdbdf260476973c710837fbdd138f5e50834c762ea86467
+      ACCEPTANCE_OWNER_REVISION: 151b1cf7226a6874d720b1008ebbb1f6d9038f9e
       ACCEPTANCE_COMMIT: ${{ github.sha }}
     permissions:
       contents: read
@@ -194,7 +241,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           OPENAI_API_KEY: test-openai-key
           ANTHROPIC_AUTH_TOKEN: test-anthropic-token
-        # Use the deployed team-owned owner with the schema after lending removal.
+        # The owner released with #4915, which reads every credential as a bearer.
         # Extract its connector too: the owner checks binary digests and updates mismatches.
         run: |
           backend/.venv/bin/python backend/scripts/device_connection_lifecycle_acceptance.py \

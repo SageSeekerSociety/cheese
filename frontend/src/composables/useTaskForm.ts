@@ -16,19 +16,23 @@ import type {
   TaskDraftFields,
   TaskFormSubmitData,
   TaskRubricLine,
+  TaskStage,
   TaskSubmissionSchemaEntry,
+  TaskTestSuite,
   Topic,
 } from '@/types'
 
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toTypedSchema } from '@vee-validate/zod'
 import { useForm } from 'vee-validate'
 import { z } from 'zod'
 
 import { truncateString, vuetifyConfig } from '@/utils/form'
 
 import { EMPTY_DOC, jsonContent, markdownContent } from '@/components/common/Editor/richText'
+import { settledStage } from '@/lib/taskStages'
+import { incompleteSuite, suitesAfterStageChange, suitesToSend } from '@/lib/taskTestSuite'
+import { toTypedSchema } from '@/lib/zodTypedSchema'
 
 /** 容器那份 props 的形状。`TaskForm.vue` 里仍写着同一份，靠结构对上。 */
 export interface TaskFormProps {
@@ -47,8 +51,26 @@ export interface TaskFormProps {
 /** 新发一道题时学生要交的东西：一个文件。 */
 export const DEFAULT_SUBMISSION_SCHEMA: TaskSubmissionSchemaEntry[] = [{ prompt: '提交文件', type: 'FILE' }] // i18n-data: 存进题目数据的提交项名，和出题人写的题面一样不随界面语言变
 
-/** 评分要点里一行还空着（加了没填）：提交时去掉，不算错。 */
-const blankLine = (line: TaskRubricLine) => !line.item.trim() && !line.criteria.trim()
+/** 评分要点里一行还空着（加了没填）：提交时去掉，不算错。自动算分那一行不算空着的
+ *  —— 它没有标准可写，名称由表单填好（`rubric.USAGE_DEFAULT_NAME`）。 */
+const blankLine = (line: TaskRubricLine) =>
+  (line.kind ?? 'manual') === 'manual' && !line.item.trim() && !line.criteria.trim()
+
+/** 有自动算分行的阶段，评分要点合计要到的数（后端 `rubric.AUTO_TOTAL`）。 */
+export const AUTO_TOTAL = 100
+
+/** 有自动算分那一行的阶段（不分阶段就是全部行）合计不是 100（`rubric._check_automatic`
+ *  会 400）；返回第一个这样的阶段的 id，没有就是 null。 */
+export function badAutoTotal(lines: TaskRubricLine[], stages: TaskStage[]): string | null {
+  const ids: (string | null)[] = stages.length ? stages.map((stage) => stage.id ?? null) : [null]
+  for (const id of ids) {
+    const own = lines.filter((line) => settledStage(stages, line.stage) === id)
+    if (!own.some((line) => (line.kind ?? 'manual') !== 'manual')) continue
+    const total = own.reduce((sum, line) => sum + (Number(line.points) || 0), 0)
+    if (total !== AUTO_TOTAL) return id
+  }
+  return null
+}
 
 /** 富文本那一份内容：编辑器的 JSON 文档（`description` 这个 ref 装的就是它）。 */
 export type DescriptionDoc = JSONContent
@@ -100,34 +122,29 @@ export function useTaskForm(
           name: props.parametersOnly
             ? z.string().optional()
             : z
-                .string({ required_error: t('tasks.form.validation.nameRequired') })
+                .string({ error: t('tasks.form.validation.nameRequired') })
                 .trim()
                 .min(1, t('tasks.form.validation.nameRequired'))
                 .max(100),
-          submitterType: z.enum(['USER', 'TEAM'], { required_error: t('tasks.form.validation.submitterTypeRequired') }),
+          submitterType: z.enum(['USER', 'TEAM'], { error: t('tasks.form.validation.submitterTypeRequired') }),
           registrationStartAt: z.date().optional().nullable(),
           deadline: z.date().nullable(),
+          startMode: z.enum(['DIRECT', 'APPLY']),
           defaultDeadline: z
-            .number({
-              required_error: t('tasks.form.validation.completionRequired'),
-              invalid_type_error: t('tasks.form.validation.completionRequired'),
-            })
+            .number({ error: t('tasks.form.validation.completionRequired') })
             .int()
             .min(1, t('tasks.form.validation.completionRequired')),
           rank: z
-            .number({
-              required_error: t('tasks.form.validation.rankRequired'),
-              invalid_type_error: t('tasks.form.validation.rankRequired'),
-            })
+            .number({ error: t('tasks.form.validation.rankRequired') })
             .int()
             .min(1, t('tasks.form.validation.rankRequired'))
             .max(3),
           topics: z.array(z.number()).optional(),
+          // 这道题归在这块板的哪几个知识点下（§ learning analysis, step 1）。不必填：
+          // 没标就是还没归类，和「话题」同一档。
+          knowledgePointIds: z.array(z.number()).optional(),
           categoryId: z
-            .number({
-              required_error: t('tasks.form.validation.categoryRequired'),
-              invalid_type_error: t('tasks.form.validation.categoryRequired'),
-            })
+            .number({ error: t('tasks.form.validation.categoryRequired') })
             .int()
             .min(1, t('tasks.form.validation.categoryRequired')),
           minTeamSize: z.number().int().min(1).optional(),
@@ -163,6 +180,8 @@ export function useTaskForm(
       minTeamSize: props.initialData?.minTeamSize ?? 1,
       maxTeamSize: props.initialData?.maxTeamSize ?? 10,
       defaultDeadline: props.initialData?.defaultDeadline ?? 30,
+      // 新题目默认直接开始；改题时是它原来的。
+      startMode: props.initialData?.startMode ?? 'DIRECT',
       // `||` 而不是 `??`：0 在这个表单里与「没有」是同一件事（后端不限时存的是 `null`，
       // 老行里可能是 0），留着它反而会被下面那条 `min(1)` 判成填错。
       participantLimit: props.initialData?.participantLimit || null,
@@ -178,7 +197,9 @@ export function useTaskForm(
   const [registrationStartAt, registrationStartAtProps] = defineField('registrationStartAt', vuetifyConfig)
   const [deadline, deadlineProps] = defineField('deadline', vuetifyConfig)
   const [defaultDeadline, defaultDeadlineProps] = defineField('defaultDeadline', vuetifyConfig)
+  const [startMode] = defineField('startMode', vuetifyConfig)
   const [topics] = defineField('topics', vuetifyConfig)
+  const [knowledgePointIds] = defineField('knowledgePointIds', vuetifyConfig)
   const [minTeamSize, minTeamSizeProps] = defineField('minTeamSize', vuetifyConfig)
   const [maxTeamSize, maxTeamSizeProps] = defineField('maxTeamSize', vuetifyConfig)
   const [categoryId, categoryIdProps] = defineField('categoryId', vuetifyConfig)
@@ -221,12 +242,47 @@ export function useTaskForm(
   )
   const rubric = ref<TaskRubricLine[]>((props.initialData?.rubric ?? []).map((line) => ({ ...line })))
   const rubricPublic = ref(props.initialData?.rubricPublic ?? true)
+  /** 各阶段挂的测试点（`lib/taskTestSuite.ts`）。 */
+  const testSuite = ref<TaskTestSuite[]>((props.initialData?.testSuite ?? []).map((suite) => ({ ...suite })))
+  /** 点过发布后，有测试点那一行、而那一套没写运行命令或没有用例。 */
+  const testSuiteIncomplete = ref(false)
+  watch(testSuite, () => (testSuiteIncomplete.value = false), { deep: true })
   /** 点过发布后，有写了标准却没写名称的那一行。 */
   const rubricMissingName = ref(false)
-  watch(rubric, () => (rubricMissingName.value = false), { deep: true })
+  /** 点过发布后，有自动算分行、而那个阶段合计不是 100 分。 */
+  const rubricBadTotal = ref(false)
+  watch(
+    rubric,
+    () => {
+      rubricMissingName.value = false
+      rubricBadTotal.value = false
+    },
+    { deep: true }
+  )
 
-  /** 点过发布之后还拦着的项数；没点过就是 0（打开页面不该满屏红字）。 */
-  const invalidCount = computed(() => (submitCount.value > 0 ? Object.keys(errors.value).length : 0))
+  // 阶段：每个已保存的阶段带着题目给它的 id，挪了位置也带着，已交的提交跟着它走
+  // （`app/domain/task/stages.py`）。
+  const stages = ref<TaskStage[]>((props.initialData?.stages ?? []).map((stage) => ({ ...stage })))
+  /** 点过发布后，有没写名称的阶段。 */
+  const stageMissingName = ref(false)
+  watch(stages, () => (stageMissingName.value = false), { deep: true })
+  // 加、删阶段时评分要点由阶段那一块跟着挪（`lib/taskStages.ts`），测试点在这里按同一套
+  // 规矩跟着挪。
+  watch(
+    () => stages.value.map((stage) => stage.id ?? ''),
+    (newIds, oldIds) => {
+      if (newIds.join() === oldIds.join()) return
+      testSuite.value = suitesAfterStageChange(testSuite.value, oldIds, newIds)
+    }
+  )
+
+  /** 点过发布之后还拦着的项数；没点过就是 0（打开页面不该满屏红字）。评分要点合计不对
+   *  也算一项：它不在 zod 表里，但一样是发不出去的。 */
+  const invalidCount = computed(() =>
+    submitCount.value > 0
+      ? Object.keys(errors.value).length + (rubricBadTotal.value ? 1 : 0) + (testSuiteIncomplete.value ? 1 : 0)
+      : 0
+  )
   watch(invalidCount, (count) => emit('invalid', count), { immediate: true })
 
   const pendingSubmission = ref<{ descriptionText: string | undefined; values: any } | null>(null)
@@ -249,9 +305,31 @@ export function useTaskForm(
       rubricMissingName.value = true
       return
     }
-    const items = submissionSchema.value
-      .map((entry) => ({ ...entry, prompt: entry.prompt.trim() }))
+    if (stages.value.some((stage) => !stage.name.trim())) {
+      stageMissingName.value = true
+      return
+    }
+    // 有自动算分行的阶段合计必须是 100（后端也会 400，这里先拦住、指出来）。
+    if (badAutoTotal(lines, stages.value) !== null) {
+      rubricBadTotal.value = true
+      return
+    }
+    // 测试点那一行的那一套要有运行命令和至少一个用例（后端也会 400）。
+    if (incompleteSuite(testSuite.value, lines, stages.value) !== undefined) {
+      testSuiteIncomplete.value = true
+      return
+    }
+    const written = submissionSchema.value
+      .map((entry) => ({ ...entry, stage: settledStage(stages.value, entry.stage), prompt: entry.prompt.trim() }))
       .filter((entry) => entry.prompt)
+    // 每个阶段都至少交一样东西：一样都没写的阶段交一个文件。
+    const stageIds = stages.value.length ? stages.value.map((stage) => stage.id ?? null) : [null]
+    const items = stageIds
+      .map((stage) => {
+        const own = written.filter((entry) => entry.stage === stage)
+        return own.length ? own : DEFAULT_SUBMISSION_SCHEMA.map((entry) => ({ ...entry, stage }))
+      })
+      .flat()
     const descriptionText = pendingSubmission.value?.descriptionText ?? readDescriptionText()
     const deadlineDate = values.deadline ? new Date(values.deadline) : null
     const registrationStartAtDate = values.registrationStartAt ? new Date(values.registrationStartAt) : null
@@ -269,20 +347,36 @@ export function useTaskForm(
       editable: true,
       requireRealName: requireRealName.value,
       categoryId: categoryId.value || undefined,
-      minTeamSize: submitterType.value === 'TEAM' ? minTeamSize.value : undefined,
-      maxTeamSize: submitterType.value === 'TEAM' ? maxTeamSize.value : undefined,
+      // As the form holds them whichever form is chosen: publishing the draft
+      // leaves them out of a 个人 题目 (`published_form`).
+      minTeamSize: minTeamSize.value,
+      maxTeamSize: maxTeamSize.value,
       participantLimit: participantLimit.value || undefined,
-      teamLockingPolicy: submitterType.value === 'TEAM' ? teamLockingPolicy.value : undefined,
+      teamLockingPolicy: teamLockingPolicy.value,
       accessControlEnabled: accessControlEnabled.value,
       accessDomainGroupIds: accessControlEnabled.value ? accessDomainGroupIds.value : undefined,
       mentors: mentorsJoin.value ? mentors.value : [],
-      submissionSchema: items.length ? items : DEFAULT_SUBMISSION_SCHEMA,
-      rubric: lines.map((line) => ({
-        item: line.item.trim(),
-        points: Number(line.points) || 0,
-        criteria: line.criteria.trim(),
-      })),
+      submissionSchema: items,
+      rubric: lines.map((line) => {
+        // An automatic line keeps who scores it and how; a manual one goes out
+        // the way it always did (`app/domain/task/rubric.py`).
+        const kind = line.kind ?? 'manual'
+        return {
+          item: line.item.trim(),
+          points: Number(line.points) || 0,
+          criteria: line.criteria.trim(),
+          stage: settledStage(stages.value, line.stage),
+          ...(kind === 'manual' ? {} : { kind, config: line.config ?? {} }),
+        }
+      }),
       rubricPublic: rubricPublic.value,
+      testSuite: suitesToSend(testSuite.value, lines, stages.value),
+      stages: stages.value.map((stage) => ({
+        name: stage.name.trim(),
+        description: stage.description.trim(),
+        dueAt: stage.dueAt,
+        id: stage.id ?? null,
+      })),
     }
     emit('submit', submissionData)
   }
@@ -297,7 +391,9 @@ export function useTaskForm(
       registrationStartAt: ms(registrationStartAt.value),
       deadline: ms(deadline.value),
       defaultDeadline: defaultDeadline.value,
+      startMode: startMode.value,
       topics: topics.value ?? [],
+      knowledgePointIds: knowledgePointIds.value ?? [],
       categoryId: categoryId.value,
       minTeamSize: minTeamSize.value,
       maxTeamSize: maxTeamSize.value,
@@ -311,6 +407,8 @@ export function useTaskForm(
       submissionSchema: submissionSchema.value,
       rubric: rubric.value,
       rubricPublic: rubricPublic.value,
+      testSuite: testSuite.value,
+      stages: stages.value,
     }
   }
 
@@ -324,7 +422,9 @@ export function useTaskForm(
     if ('registrationStartAt' in fields) registrationStartAt.value = date(fields.registrationStartAt)
     if ('deadline' in fields) deadline.value = date(fields.deadline)
     if ('defaultDeadline' in fields) defaultDeadline.value = fields.defaultDeadline as number
+    if (fields.startMode) startMode.value = fields.startMode
     if ('topics' in fields) topics.value = fields.topics ?? []
+    if ('knowledgePointIds' in fields) knowledgePointIds.value = fields.knowledgePointIds ?? []
     if ('categoryId' in fields) categoryId.value = fields.categoryId as number
     if ('minTeamSize' in fields) minTeamSize.value = fields.minTeamSize
     if ('maxTeamSize' in fields) maxTeamSize.value = fields.maxTeamSize
@@ -343,6 +443,8 @@ export function useTaskForm(
     if ('submissionSchema' in fields) submissionSchema.value = (fields.submissionSchema ?? []).map((e) => ({ ...e }))
     if ('rubric' in fields) rubric.value = (fields.rubric ?? []).map((line) => ({ ...line }))
     if ('rubricPublic' in fields) rubricPublic.value = fields.rubricPublic ?? true
+    if ('testSuite' in fields) testSuite.value = (fields.testSuite ?? []).map((suite) => ({ ...suite }))
+    if ('stages' in fields) stages.value = (fields.stages ?? []).map((stage) => ({ ...stage }))
   }
 
   const privacyDialogOpen = ref(false)
@@ -381,7 +483,9 @@ export function useTaskForm(
     deadlineProps,
     defaultDeadline,
     defaultDeadlineProps,
+    startMode,
     topics,
+    knowledgePointIds,
     minTeamSize,
     minTeamSizeProps,
     maxTeamSize,
@@ -402,6 +506,11 @@ export function useTaskForm(
     rubric,
     rubricPublic,
     rubricMissingName,
+    rubricBadTotal,
+    testSuite,
+    testSuiteIncomplete,
+    stages,
+    stageMissingName,
     isSubmitting,
     submitForm,
     check,

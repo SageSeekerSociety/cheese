@@ -94,12 +94,29 @@ def is_runtime_image_missing(value: BaseException | str) -> bool:
 # way. One list for both readers: the room's notice
 # (`turn.state.notices`) and whether the platform starts the turn again by
 # itself (`resumable_failures`).
+#
+# Every alternative names a spent balance or a paused account. The bare word
+# "billing" used to be one of them, and it read the platform's own transient
+# 503 — 「cheese: task billing attribution is temporarily unavailable」, the
+# metering proxy's answer when its admission check cannot answer — as an empty
+# account. Two things followed from that: the room was told to wait for a
+# top-up that was not owed, and no resume was scheduled, because a spent
+# balance is a state no wait changes (`resumable_failures.classify`).
+#
+# The word is not dropped, only tied to the account it is about. OpenAI names
+# three of its own refusals with it — 「You exceeded your current quota, please
+# check your plan and billing details」, 「Billing hard limit has been
+# reached」 and 「Your account is not active, please check your billing
+# details」 — and all three mean a state no wait changes. A bare "billing"
+# matched those and every other mention of the word besides.
 _PROVIDER_OUT_OF_CREDIT = re.compile(
     r"cheese_upstream_credit_exhausted"
     r"|insufficient[ _](balance|quota|funds)"
     r"|余额不足|请充值"
     r"|quota (exceeded|exhausted)"
-    r"|\bbilling"
+    r"|exceeded your current quota"
+    r"|billing[ _](hard[ _]limit|not[ _]active)"
+    r"|check your billing details"
     r"|\bsuspended\b"
     r"|credit balance is too low"
     r"|SetLimitExceeded|exceeded_current_quota",

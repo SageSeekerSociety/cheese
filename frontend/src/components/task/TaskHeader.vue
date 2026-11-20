@@ -5,6 +5,7 @@
 // 转交只归负责人；关了的任务，角色有「新建任务和审阅」的人都能重新打开）。
 import type { MenuCommand } from '@/commands'
 import type { RoomTask, Topic, TopicMemberRow } from '@/cx_types'
+import type { HandInAction } from '@/lib/handIn'
 import type { Environment, SessionEnvironment, TopicEnvironment } from '@/types/compute'
 
 import { computed, ref, watch } from 'vue'
@@ -58,14 +59,23 @@ const props = withDefaults(
     copyLink?: () => void
     /** 我的角色有「新建任务和审阅」：关了的任务我能重新打开。页面从项目的 `my_permissions` 读。 */
     worksTasks?: boolean
+    /** 有不在最近那一版里的修改：写「有未提交的修改」。 */
+    unhanded?: boolean
+    /** 给哪颗提交按钮（「提交审阅」「再提交一版」）；null 不给。 */
+    handIn?: HandInAction
+    /** 读者挪过这一页的摆法时给：⋯ 里多一项「恢复默认摆法」。 */
+    resetLayout?: () => void
+    /** 「概览」开合的那几块的 id（见 PanelToggle）。 */
+    panelControls?: string
   }>(),
   // 不给就是连着的：Vue 会把没传的布尔 prop 当成 false，那样每个页头都会写「未连接」。
-  { connected: true }
+  { connected: true, handIn: null, resetLayout: undefined, panelControls: undefined }
 )
 
 const emit = defineEmits<{
   (e: 'open-room'): void
   (e: 'toggle-panel'): void
+  (e: 'hand-in'): void
 }>()
 
 const { mdAndUp } = useDisplay()
@@ -106,6 +116,13 @@ const progressTitle = computed(() => {
 const otherPeople = computed(() => props.people.filter((m) => m.member_handle !== ME))
 const collaborators = computed(() => props.task?.contributor_handles ?? [])
 const nameOf = (handle: string) => props.memberNames[handle] || handle
+const metaEl = ref<HTMLElement | null>(null)
+watch(
+  () => state.value?.line,
+  () => {
+    if (metaEl.value) metaEl.value.scrollLeft = 0
+  }
+)
 // 这个人自己挑过的头像。没挑过（`avatar_id` 是 null）给空串，交给 `UserAvatar` 画按
 // handle 派生的彩色首字母：`getAvatarUrl(undefined)` 回的是全站默认那张脸，所有没挑过
 // 头像的人共用同一张，认不出是谁。
@@ -231,11 +248,19 @@ const menuActions = computed<MenuCommand[]>(() =>
           copyLink: props.copyLink ?? null,
           worksTasks: props.worksTasks,
         }
+      ).concat(
+        props.resetLayout
+          ? [{ id: 'room.resetLayout', title: t('shell.layout.reset'), icon: 'mdi-restore', run: props.resetLayout }]
+          : []
       )
     : []
 )
 // ⋯ 给参加这件活的人，和能重新打开这件关了的任务的人；只剩「复制链接」时不摆。
-const showsMenu = computed(() => takesPart.value || menuActions.value.some((action) => action.id === 'task.reopen'))
+const showsMenu = computed(
+  () =>
+    takesPart.value ||
+    menuActions.value.some((action) => action.id === 'task.reopen' || action.id === 'room.resetLayout')
+)
 // 两条既有用例按这两个 test id 找按钮：其余项不必有。
 function actionTestId(id: string): string | undefined {
   if (id === 'task.rename') return 'task-rename'
@@ -254,12 +279,12 @@ function actionTestId(id: string): string | undefined {
       <span class="task-header__title t-title" :title="task ? taskTitle(task) : ''">{{
         task ? taskTitle(task) : ''
       }}</span>
-      <span class="task-header__meta">
+      <span ref="metaEl" class="task-header__meta">
         <TaskStateMark
           v-if="state"
           class="task-header__state"
           data-testid="task-phrase"
-          :title="progressTitle"
+          :title="progressTitle ?? (state.tip || undefined)"
           :state="state"
           :emphasis="task?.needs_my_action === true"
           :size="13"
@@ -272,8 +297,20 @@ function actionTestId(id: string): string | undefined {
           :title="progressTitle ?? state?.line"
           >{{ state?.line }}</span
         >
+        <a
+          v-if="isOpen && task?.deploy_blocked_url"
+          class="task-header__run"
+          :href="task.deploy_blocked_url"
+          target="_blank"
+          rel="noopener"
+          data-testid="task-deploy-blocked-run"
+          >{{ t('work.taskState.blockedRun') }}</a
+        >
         <span v-if="agentLeft" class="task-header__left" data-testid="task-agent-left">{{
           t('work.task.progress.left', { name: leftName })
+        }}</span>
+        <span v-if="unhanded && isOpen" class="task-header__unhanded" data-testid="task-unhanded">{{
+          t('work.room.accept.handIn.unhanded')
         }}</span>
         <span v-if="connected === false" class="task-header__disconnected" role="status">{{
           t('work.room.header.disconnected')
@@ -447,7 +484,10 @@ function actionTestId(id: string): string | undefined {
       </v-card>
     </v-menu>
 
-    <PanelToggle v-if="mdAndUp" :open="!!panelOpen" @toggle="emit('toggle-panel')" />
+    <BaseButton v-if="handIn" kind="primary" size="sm" data-testid="task-hand-in" @click="emit('hand-in')">
+      {{ handIn === 'resubmit' ? t('work.room.accept.handIn.resubmit') : t('work.room.accept.handIn.submit') }}
+    </BaseButton>
+    <PanelToggle v-if="mdAndUp" :open="!!panelOpen" :controls="panelControls" @toggle="emit('toggle-panel')" />
     <v-menu v-if="task && showsMenu" location="bottom end">
       <template #activator="{ props: menuProps }">
         <BaseButton
@@ -595,7 +635,7 @@ function actionTestId(id: string): string | undefined {
   color: var(--faint);
 }
 .task-header__title {
-  min-width: 0;
+  min-width: 6em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -613,6 +653,13 @@ function actionTestId(id: string): string | undefined {
   font-weight: 600;
 }
 /* 队友报状态时留的那一句：它的原话，可能很长，截在一行里，悬停看全（`title`）。 */
+.task-header__run {
+  flex: none;
+  color: var(--accent-ink);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  white-space: nowrap;
+}
 .task-header__note {
   min-width: 0;
   max-width: 32ch;
@@ -623,7 +670,8 @@ function actionTestId(id: string): string | undefined {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.task-header__left {
+.task-header__left,
+.task-header__unhanded {
   flex: 0 0 auto;
   color: var(--muted);
   font-size: 13px;
@@ -655,21 +703,27 @@ function actionTestId(id: string): string | undefined {
 .task-header__owner-name {
   white-space: nowrap;
 }
+/* 状态那一格（在做什么、说要多久、谁离开了）可以缩到没有：主区被工作面板和助手面板
+   夹窄时，它原来写着 `flex: none`，把整行撑得比容器还宽——任务名被压成 0 宽，状态
+   那一句、负责人和状态标叠到一起。名字和负责人是不许让的（上面和下面各自有下限），
+   让的是这一句。 */
 .task-header__meta {
   display: flex;
-  flex: none;
+  flex: 0 1 auto;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+  overflow: hidden;
 }
-/* 手机顶栏里两行（和支线转成任务时的 ThreadHead 一个样子）：任务名独占第一行；状态和
+/* 手机顶栏里两行：任务名独占第一行；状态和
    负责人退到第二行，同一号字、同一种灰，各成一格，靠间距和小头像分开，不拿点号串。
    负责人那颗照旧点开任务信息，⋯ 竖跨两行贴右。 */
 .task-header--bar {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, auto) minmax(auto, 1fr) auto;
   grid-template-rows: auto auto;
   align-content: center;
-  column-gap: 16px;
+  column-gap: 8px;
   row-gap: 1px;
 }
 .task-header--bar .task-header__text {
@@ -683,6 +737,20 @@ function actionTestId(id: string): string | undefined {
 .task-header--bar .task-header__meta {
   grid-column: 1;
   grid-row: 2;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  gap: 6px;
+}
+.task-header--bar .task-header__meta::-webkit-scrollbar {
+  display: none;
+}
+.task-header--bar .task-header__note {
+  flex: none;
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
 }
 .task-header--bar .task-header__state,
 .task-header--bar .task-header__owner {
@@ -699,17 +767,16 @@ function actionTestId(id: string): string | undefined {
   grid-row: 2;
   justify-self: start;
   gap: 4px;
-  min-width: 0;
-  max-width: 100%;
   height: auto;
   padding-block: 8px;
   margin-block: -8px;
 }
 .task-header--bar .task-header__owner-name {
+  max-width: 8em;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.task-header--bar [data-testid='task-more'] {
+.task-header--bar :deep([data-testid='task-more']) {
   grid-column: 3;
   grid-row: 1 / 3;
   align-self: center;

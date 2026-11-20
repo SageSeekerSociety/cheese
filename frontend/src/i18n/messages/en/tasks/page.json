@@ -1,9 +1,12 @@
 {
   "claim": {
-    "claim": "Claim this challenge",
-    "notApproved": "Can be claimed once approved",
-    "pending": "Claim awaiting approval",
-    "rejected": "Claim declined"
+    "claim": "Apply to do this task",
+    "continue": "Continue",
+    "expired": "Expired",
+    "notApproved": "Can be applied for once approved",
+    "notApprovedStart": "Can be started once approved",
+    "pending": "Applied, awaiting approval",
+    "start": "Start this task"
   },
   "dateFormat": "MMM D",
   "delete": "Delete",
@@ -12,10 +15,13 @@
   "rejectReason": "Not approved: {reason}",
   "reviewTitle": "Submissions from {name}",
   "state": {
+    "applyClosed": "Applications closed",
     "closed": "Closed",
+    "ended": "Ended",
     "full": "Full",
     "notStarted": "Not started",
     "open": "Open",
+    "openToStart": "Open to start",
     "pending": "Pending review",
     "rejected": "Not approved"
   },
@@ -28,6 +34,12 @@
     "data": "Data",
     "label": "Challenge sections",
     "mine": "My submissions",
-    "roster": "Participants"
+    "roster": "Participants",
+    "versions": "Version history"
+  },
+  "mine": {
+    "doing": "In progress",
+    "pending": "Waiting for approval",
+    "rejected": "Not approved"
   }
 }

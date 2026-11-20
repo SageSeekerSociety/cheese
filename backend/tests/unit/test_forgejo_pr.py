@@ -5,7 +5,17 @@ import json
 import httpx
 import pytest
 
+from app.core.config import settings
 from app.domain.review.forgejo_pr import ForgejoClient, ForgejoPRClient
+
+
+@pytest.fixture(autouse=True)
+def _no_reachable_repository(tmp_path, monkeypatch):
+    """A `mergeable: false` here starts a test merge in the background
+    (`merge_check`); it finds no repository and leaves no answer."""
+    monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "workspace"))
+    missing = (tmp_path / "missing.git").as_uri()
+    monkeypatch.setattr(ForgejoClient, "git_url", lambda self, owner, repo: missing)
 
 
 class Tokens:
@@ -129,7 +139,60 @@ async def test_checks_use_latest_result_per_context_and_read_all_pages():
 
 
 @pytest.mark.anyio
-async def test_merge_refusal_does_not_echo_secret_or_claim_success():
+async def test_a_behind_pr_forgejo_is_still_checking_is_not_read_as_a_conflict():
+    """Forgejo answers `mergeable: false` while its merge check of a PR runs,
+    and a PR behind its base merges cleanly as often as not: nothing in that
+    answer establishes a conflict."""
+
+    def server(request):
+        if "/compare/" in request.url.path:
+            return httpx.Response(200, json={"total_commits": 1})
+        return httpx.Response(200, json=proposal(title="Report", mergeable=False))
+
+    client = ForgejoClient(
+        "https://forge.example/api/v1", transport=httpx.MockTransport(server)
+    )
+    status = await client.pull_request_status(
+        owner="acme", repo="docs", number=7, token="secret"
+    )
+    assert status.mergeable is None
+    assert status.mergeable_state != "dirty"
+
+
+@pytest.mark.anyio
+async def test_a_push_forgejo_has_not_taken_in_is_not_read_as_mergeable():
+    """Right after a push the PR reports the new head while its `mergeable`
+    is still the verdict on the previous one; a merge of the new head is
+    refused until Forgejo has taken the push in."""
+    taken_in = {"sha": "old"}
+
+    def server(request):
+        if request.url.path.endswith("/git/refs/pull/7/head"):
+            return httpx.Response(
+                200, json=[{"ref": "refs/pull/7/head", "object": taken_in}]
+            )
+        return httpx.Response(
+            200,
+            json=proposal(title="Report", head={"ref": "task/report", "sha": "new"}),
+        )
+
+    client = ForgejoClient(
+        "https://forge.example/api/v1", transport=httpx.MockTransport(server)
+    )
+    args = dict(owner="acme", repo="docs", number=7, token="secret")
+
+    pushed = await client.pull_request_status(**args)
+    assert pushed.mergeable is None
+    assert pushed.mergeable_state == "unknown"
+
+    taken_in["sha"] = "new"
+    checked = await client.pull_request_status(**args)
+    assert checked.mergeable is True
+    assert checked.mergeable_state == "clean"
+
+
+@pytest.mark.anyio
+async def test_merge_refusal_does_not_echo_secret_or_claim_success_or_conflict():
     def server(request):
         if request.method == "POST":
             return httpx.Response(405, json={"message": "request had token secret"})
@@ -144,7 +207,7 @@ async def test_merge_refusal_does_not_echo_secret_or_claim_success():
     assert result.sha is None
     assert not result.stale_head
     assert "secret" not in result.blocked_reason
-    assert "冲突" in result.blocked_reason
+    assert "冲突" not in result.blocked_reason
 
 
 def test_unmerged_test_commit_is_never_reported_as_a_delivery():

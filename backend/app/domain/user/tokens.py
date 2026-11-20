@@ -1,4 +1,5 @@
-"""Shared token operations for user credentials."""
+"""Shared token operations for credentials kept as digests: user sessions,
+trusted devices and the durable tokens enrolled machines connect with."""
 
 import hashlib
 

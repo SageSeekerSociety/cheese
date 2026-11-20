@@ -36,7 +36,7 @@ def test_prepared_executor_can_start_offline_forge_transport(tmp_path, monkeypat
 
 
 def test_executor_prepares_room_without_model_credentials(tmp_path):
-    pin = Path.home() / ".local/share/claude/versions/2.1.299"
+    pin = Path.home() / ".local/share/claude/versions/2.1.316"
     binary = os.environ.get("CHEESE_TEST_CLAUDE") or (
         str(pin) if pin.exists() else None
     )
@@ -46,7 +46,7 @@ def test_executor_prepares_room_without_model_credentials(tmp_path):
             "running the pure layer"
         )
     owner = tmp_path / "owner"
-    destination = owner / ".cheese/claude/versions/2.1.299"
+    destination = owner / ".cheese/claude/versions/2.1.316"
     destination.parent.mkdir(parents=True)
     destination.symlink_to(binary)
     project, resource = uuid.uuid4(), uuid.uuid4()
@@ -89,6 +89,11 @@ def test_executor_prepares_room_without_model_credentials(tmp_path):
     try:
         info = json.loads(launch().stdout)
         assert info["workspace"] == str(work)
+        # How long its own steps took, for the platform's preparation record;
+        # no sandbox here, so no sandbox step.
+        assert {"release", "claude", "ready"} <= info["timings"].keys()
+        assert "sandbox" not in info["timings"]
+        assert all(seconds >= 0 for seconds in info["timings"].values())
         deadline = time.monotonic() + 15
         while True:
             try:
@@ -135,9 +140,10 @@ def test_executor_prepares_room_without_model_credentials(tmp_path):
         assert (work / "draft.txt").read_text() == "retain this draft"
         assert not (work / "startup-result").exists()
         assert json.loads(task_config.read_text()) == configuration
+        # Whatever credential the install is handed, the running room is left
+        # holding none: it asks the platform on its socket.
         assert (
-            json.loads((state / "config.json").read_text())["env"]["CHEESE_TOKEN"]
-            == "rotated-token"
+            json.loads((state / "config.json").read_text())["env"]["CHEESE_TOKEN"] == ""
         )
         # The existing environment reset must stop the execution daemon too.
         reset = subprocess.run(

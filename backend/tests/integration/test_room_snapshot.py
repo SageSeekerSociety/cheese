@@ -47,7 +47,11 @@ def _rows(payload) -> list:
 
 
 def test_a_channel_opens_with_what_its_routes_say(client):
-    room = _room(client, _project(client))
+    project = _project(client)
+    # Someone else in the project: the message pinned below stays among people
+    # and starts no turn that would change it between the two reads.
+    join_project_team(client, project, "bob")
+    room = _room(client, project)
     said = post_message(client, room, "alice", {"content": "定一下发版时间"})
     r = client.put(f"/topics/{room}/pins/{said['id']}", headers=ALICE)
     assert r.status_code == 200, r.text

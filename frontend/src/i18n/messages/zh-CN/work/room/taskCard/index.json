@@ -1,7 +1,7 @@
 {
-  "acceptedPr": "已采纳 · PR #{pr}",
+  "acceptedPr": "PR #{pr}",
   "acceptedTimes": "已采纳 {n} 次",
-  "acceptedTimesPr": "已采纳 {n} 次 · PR #{pr}",
+  "acceptedTimesPr": "共采纳 {n} 次，PR #{pr}",
   "created": "新建了任务",
   "owner": "{name} 负责"
 }

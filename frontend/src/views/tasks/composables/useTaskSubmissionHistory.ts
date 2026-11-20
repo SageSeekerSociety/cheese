@@ -1,12 +1,13 @@
+import type { TaskUsage } from '@/types'
 import type { PostTaskSubmissionReviewRequestData } from '@/types/taskBoard'
 
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { toast } from 'vuetify-sonner'
 
 import { usePaging } from '@/utils/paging'
 
 import { TaskBoardApi } from '@/api/taskBoard'
+import { toast } from '@/lib/toast'
 
 /**
  * 一版提交历史的取数与评审写入。
@@ -16,13 +17,19 @@ import { TaskBoardApi } from '@/api/taskBoard'
  * 只发 `changed`。谁渲染它、判完之后谁要重读，由外面决定。
  *
  * `ids` 传 getter 而不是数字：切题/切领取者时（`props.taskId` 变了）取数要跟着换，
- * `usePaging` 的取数函数每次调用现取一次。
+ * `usePaging` 的取数函数每次调用现取一次。`stage` 给了就只取这个阶段的提交：分了阶段的题
+ * 每个阶段单独批改，「最新那一版」是这个阶段的。
+ *
+ * 额度（`usage`）是这份领题在这个阶段用掉的总量 + 那一行的分，和提交列表一起回来
+ * （`usage_score.usage_of_claims`）—— 它不随翻页变，所以第一页记下就行。
  */
 export function useTaskSubmissionHistory(
-  ids: { taskId: () => number; participantId: () => number },
+  ids: { taskId: () => number; participantId: () => number; stage?: () => string | null },
   onChanged: () => void = () => undefined
 ) {
   const { t } = useI18n()
+
+  const usage = ref<TaskUsage | null>(null)
 
   const {
     data: submissions,
@@ -33,15 +40,19 @@ export function useTaskSubmissionHistory(
     loadingMore,
     total,
   } = usePaging(async (pageStart) => {
-    const { submissions, page } = await TaskBoardApi.listSubmissions(ids.taskId(), ids.participantId(), {
+    const res = await TaskBoardApi.listSubmissions(ids.taskId(), ids.participantId(), {
       allVersions: true,
       sort_by: 'createdAt',
       sort_order: 'desc',
       pageStart: pageStart,
       pageSize: 10,
       queryReview: true,
+      stage: ids.stage?.() ?? undefined,
     })
-    return { data: submissions, page }
+    // 翻下一页时后端照旧把同一个 `usage` 放在顶层；以最后一页回的那份为准，
+    // 免得先记了旧值再被翻页覆盖成空。
+    usage.value = res.usage ?? usage.value
+    return { data: res.submissions, page: res.page }
   })
 
   const latestSubmission = computed(() => submissions.value[0])
@@ -87,6 +98,7 @@ export function useTaskSubmissionHistory(
   return {
     submissions,
     latestSubmission,
+    usage,
     refresh,
     loadMore,
     hasMore,

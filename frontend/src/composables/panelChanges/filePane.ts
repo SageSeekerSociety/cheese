@@ -176,11 +176,9 @@ export function usePanelFilePane(deps: FilePaneDeps) {
   const openImage = useRawImage(() => (openIsImage.value ? openRawUrl.value : ''))
   async function downloadOpenFile() {
     if (!openRawUrl.value || !openPath.value) return
-    try {
-      await downloadFile(openRawUrl.value, openPath.value.split('/').pop() || 'file')
-    } catch (e) {
-      errorMsg.value = e instanceof Error ? e.message : t('work.room.changes.downloadFailed')
-    }
+    // 成功和失败各弹一句，都在 `downloadFile` 那一层（`lib/download`）。这里的
+    // `errorMsg` 还给读文件、切源那些事用，下载不再往它上面写。
+    await downloadFile(openRawUrl.value, openPath.value.split('/').pop() || 'file')
   }
 
   // 文件 state is per-source. openPath/fileDraft describe a file in the CURRENT

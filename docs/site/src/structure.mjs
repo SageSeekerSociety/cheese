@@ -31,7 +31,7 @@ export const DEV = [
   ['导读', ['overview', 'turn', 'delivery']],
   ['会话与骨架', ['session', 'harness', 'context', 'ref-prompt', 'memory', 'skills', 'mcp', 'remote-mcp', 'cli', 'doc-agent']],
   ['模型与计费', ['llm', 'metering-proxy', 'gateway', 'admission', 'billing', 'assistant']],
-  ['机器与执行', ['machines', 'execution', 'preview', 'sites', 'local-fs', 'cleanup']],
+  ['机器与执行', ['machines', 'execution', 'judge', 'preview', 'sites', 'local-fs', 'cleanup']],
   ['交付与成果', ['tasks', 'accept', 'forge', 'documents', 'library', 'boards']],
   ['协作', ['teams', 'spaces', 'notifications', 'feedback', 'routine', 'integrations']],
   ['平台与安全', ['auth', 'seats', 'admins', 'run-records', 'session-records', 'architecture', 'backend-app', 'frontend', 'arch-metrics', 'scenes', 'feature-stats']],
@@ -45,7 +45,7 @@ export const DEV = [
 // section of the old page. A key that names a section (`page#anchor`) is a
 // section that moved off a page that still exists: that page sends the old
 // #fragment on to the target.
-const SPACE_SECTIONS = ['spaces', 'create', 'invite-codes', 'members', 'publish', 'audit', 'participants', 'space-library', 'teaching']
+const SPACE_SECTIONS = ['spaces', 'create', 'join-link', 'members', 'publish', 'audit', 'participants', 'space-library', 'teaching']
 export const REDIRECTS = {
   compute: 'devices',
   members: 'teams',

@@ -15,6 +15,10 @@ link answers 404 to everyone else.
 
 Sent after the transaction commits, never before: a report whose insert rolls
 back must not be announced.
+
+On a deployment an unset webhook is not a quiet default: `health()` is the
+`feedback_announce` entry of the health report, and reads `down` with the
+setting's name until the group is named.
 """
 
 from __future__ import annotations
@@ -47,6 +51,18 @@ def text_of(row: Feedback) -> str:
         lines.append(body if len(body) <= EXCERPT else body[:EXCERPT] + "…")
     lines.append(link)
     return "\n".join(lines)
+
+
+async def health() -> dict:
+    """The `feedback_announce` entry of the health report (`app.core.health`)."""
+    if settings.feishu_feedback_webhook.strip():
+        return {"status": "up"}
+    if not settings.deployed_via_compose:
+        return {"status": "skipped"}
+    return {
+        "status": "down",
+        "error": "FEISHU_FEEDBACK_WEBHOOK 未设置：新反馈不会推到团队群里",
+    }
 
 
 def after_commit(session: AsyncSession, row: Feedback) -> None:

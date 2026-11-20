@@ -16,11 +16,13 @@ validating a chosen model id when a teammate is created or edited) takes it as
 a callable handed in by the caller, the way `project.ports.ComputeCredits` is.
 """
 
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
+from enum import StrEnum
 from typing import get_args
 
 from app.core import model_roles
 from app.core.config import settings
+from app.core.errors import ValidationError
 from app.domain.agent import gateway_catalog
 from app.domain.agent.harness import HARNESSES, Harness, harness_for
 from app.domain.agent.market import (
@@ -32,6 +34,8 @@ from app.domain.agent.market import (
 from app.domain.agent.supply import GATEWAY, SUBSCRIPTION
 from app.domain.agent_instance.configuration import Effort
 from app.domain.policy import gate
+from app.domain.room_task import binding
+from app.domain.room_task.binding import WorkBinding
 
 #: What each subscription model honours: Claude Code reads Claude's own
 #: capabilities, so every effort the platform offers reaches the model.
@@ -177,47 +181,139 @@ def _drives(harness: Harness, model: dict) -> bool:
     return model["id"] in settings.agent_harness_models.get(harness.name, [])
 
 
-def entitled(model_id: str, choices: dict[str, dict], policy: gate.Policy) -> bool:
-    """May this project run ``model_id`` without anyone being asked: in its
-    catalogue, and through the gate admission puts every turn and subagent
-    request through (``policy.gate.check``: the team's plan tiers, the
-    administrator's overseas approval, the project's own tier policy). The
-    catalogue applies none of those, so being in it is not enough."""
-    choice = choices.get(model_id)
-    if choice is None:
-        return False
-    try:
-        verdict = gate.check(
-            gate.Call(
-                resource=gate.Resource.model,
-                subject=model_id,
-                label=choice.get("label", model_id),
-                tier=choice.get("tier", TIER_INCLUDED),
-                approver="",
-                overseas=bool(choice.get("overseas")),
-            ),
-            policy,
-            actor="",
-        )
-    except gate.OverTier:  # OverPlan and OverseasNotApproved are this too
-        return False
-    return isinstance(verdict, gate.Allowed)
+class Scene(StrEnum):
+    """Where a model is about to run, which decides whose choice applies.
+
+    ``conversation`` is a channel's main line, a 支线 or a private chat;
+    ``task`` is a task's own conversation; ``subagent`` is a subagent any of
+    them spawns."""
+
+    conversation = "conversation"
+    task = "task"
+    subagent = "subagent"
 
 
-def subagent_default(
-    project_settings: dict | None, choices: dict[str, dict], policy: gate.Policy
+#: The platform role each scene runs on when nobody chose a model (「自动」).
+SCENE_ROLES: dict[Scene, str] = {
+    Scene.conversation: "agent_model",
+    Scene.task: "task_model",
+    Scene.subagent: "subagent_model",
+}
+
+#: The teammate's own choice for a scene, read before its model
+#: (``AgentConfiguration.task_model`` / ``subagent_model``).
+_TEAMMATE_SCENE_KEYS: dict[Scene, str] = {
+    Scene.task: "task_model",
+    Scene.subagent: "subagent_model",
+}
+
+
+def scene_of(task_id: object | None) -> Scene:
+    """A teammate's scene in a conversation: a task when it is a task's own
+    (``Place.task_id``), else a conversation."""
+    return Scene.task if task_id is not None else Scene.conversation
+
+
+@dataclass(frozen=True, slots=True)
+class Pick:
+    """The model a scene runs on, and whether the platform chose it.
+
+    ``automatic`` is true when nobody chose: neither the teammate nor the
+    project named a model, so the scene's platform role did. The team's plan
+    does not limit such a model (``gate.Call.automatic``): the plan limits
+    what a person may pick, and nobody picked this one."""
+
+    binding: WorkBinding
+    automatic: bool
+
+    @property
+    def model(self) -> str:
+        return self.binding.model
+
+
+def _named(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def chosen_model(
+    scene: Scene, *, project_settings: dict | None, teammate: dict | None = None
 ) -> str | None:
-    """The model a project's subagents default to: the project's own subagent
-    default, then the platform's (``subagent_model`` role) when the project is
-    entitled to it (``entitled``: the same gate its turns pass), then the
-    project's main default. None leaves it to the catalogue's.
+    """The model somebody chose for ``scene``, in the order ``pick`` reads
+    them; None when nobody did (「自动」)."""
+    own = teammate or {}
+    scene_key = _TEAMMATE_SCENE_KEYS.get(scene)
+    for chosen in (
+        _named(own.get(scene_key)) if scene_key else None,
+        _named(own.get("model")),
+        _named((project_settings or {}).get("default_model")),
+    ):
+        if chosen is not None:
+            return chosen
+    return None
+
+
+def pick(
+    scene: Scene,
+    choices: dict[str, dict],
+    *,
+    project_settings: dict | None,
+    teammate: dict | None = None,
+) -> Pick:
+    """The one answer to "which model does this run on".
+
+    The teammate's choice for this scene (in a task, or for a subagent), then
+    the teammate's model, then the project main model; only when none of them
+    names one does the scene's platform role (``SCENE_ROLES``) run it. A job
+    with no teammate (``teammate`` None) starts at the project main model.
+
+    A chosen model the catalogue cannot serve is refused by name
+    (``binding.resolve``, I27), never swapped for another. A role model this
+    project's harness cannot drive gives way to the catalogue's default:
+    nobody chose it, so nothing anyone chose is swapped.
     """
-    configured = project_settings or {}
-    own = configured.get("default_subagent_model")
-    if isinstance(own, str) and own:
-        return own
-    platform = model_roles.get("subagent_model")
-    if platform and entitled(platform, choices, policy):
-        return platform
-    main = configured.get("default_model")
-    return main if isinstance(main, str) and main else None
+    chosen = chosen_model(scene, project_settings=project_settings, teammate=teammate)
+    if chosen is not None:
+        return Pick(
+            binding.resolve(None, choices, default_model=chosen), automatic=False
+        )
+    role = model_roles.get(SCENE_ROLES[scene])
+    if role is not None and role in choices:
+        return Pick(binding.resolve(None, choices, default_model=role), automatic=True)
+    return Pick(binding.resolve(None, choices), automatic=True)
+
+
+def shown_model(
+    scene: Scene,
+    choices: dict[str, dict],
+    *,
+    project_settings: dict | None,
+    teammate: dict | None = None,
+) -> str | None:
+    """The model a screen names for ``scene``: ``pick``'s, or the chosen name
+    as written when the catalogue cannot serve it — refusing is the run's
+    business, not the screen's."""
+    try:
+        return pick(
+            scene, choices, project_settings=project_settings, teammate=teammate
+        ).model
+    except ValidationError:
+        return chosen_model(scene, project_settings=project_settings, teammate=teammate)
+
+
+def gate_call(picked: Pick, choices: dict[str, dict], *, approver: str) -> gate.Call:
+    """``picked`` as the call the tier gate judges (``policy.gate.check``)."""
+    choice = choices[picked.model]
+    return gate.Call(
+        resource=gate.Resource.model,
+        subject=picked.model,
+        label=choice.get("label", picked.model),
+        tier=choice.get("tier", TIER_INCLUDED),
+        approver=approver,
+        overseas=bool(choice.get("overseas")),
+        automatic=picked.automatic,
+    )
+
+
+def automatic_models() -> dict[str, str | None]:
+    """What 「自动」 runs on now, scene by scene: the three roles' models."""
+    return {scene.value: model_roles.get(role) for scene, role in SCENE_ROLES.items()}

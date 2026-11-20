@@ -89,7 +89,7 @@ export const NOTIFICATION_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '截止不到一天',
-        note: '已领取还没交：离个人提交截止不到 24 小时的这一条也推送到手机和桌面。',
+        note: '在做还没交：离个人提交截止不到 24 小时的这一条也推送到手机和桌面。',
         props: { notification: taskNotification('dueSoon') },
         expect: '距提交截止不到 24 小时',
       },
@@ -171,7 +171,7 @@ export const NOTIFICATION_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '题目上等你的',
-        note: '你出的题目上有领取要批准、提交要评审：按空间分组，一道题一行，点开去「领取者」页签。',
+        note: '你出的题目上有申请要通过、提交要评审：按空间分组，一道题一行，点开去「参与者」页签。',
         props: {
           items: [
             {
@@ -196,7 +196,7 @@ export const NOTIFICATION_ENTRIES: CatalogEntry[] = [
             },
           ],
         },
-        expect: '2 份领取待批准，1 份提交待评审',
+        expect: '2 份申请待通过，1 份提交待评审',
       },
       {
         name: '没有要处理的',
@@ -237,7 +237,7 @@ export const NOTIFICATION_ENTRIES: CatalogEntry[] = [
     id: 'render-task-notification',
     title: 'RenderTaskNotification',
     about:
-      '空间里一道题目上的事：领取通过与否、提交评审了、提交要求或个人截止时间改了、截止快到了、有人过了截止没交。标题是后端说的那一句，底下是空间；点开去题目页，评审结果去「我的提交」。',
+      '空间里一道题目上的事：申请通过与否、提交评审了、提交要求或个人截止时间改了、截止快到了、有人过了截止没交。标题是后端说的那一句，底下是空间；点开去题目页，评审结果去「我的提交」。',
     file: 'src/components/common/Notification/renders/RenderTaskNotification.vue',
     component: RenderTaskNotification,
     needs: TEXT,
@@ -250,7 +250,7 @@ export const NOTIFICATION_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '截止不到一天',
-        note: '已领取还没交、离个人提交截止不到 24 小时：这一条也推送到手机和桌面。',
+        note: '在做还没交、离个人提交截止不到 24 小时：这一条也推送到手机和桌面。',
         props: { notification: taskNotification('dueSoon') },
         expect: '距提交截止不到 24 小时',
       },

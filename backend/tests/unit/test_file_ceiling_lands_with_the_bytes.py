@@ -118,7 +118,7 @@ def test_a_room_file_over_the_ceiling_is_refused_and_leaves_no_bytes(
     assert refused.value.status_code == 422
     # 报的是「超限」，不是权限；同一句话里带着上限是多大。
     assert refused.value.message.key == "fileTooLarge"
-    assert refused.value.message.params == {"mb": 4}
+    assert refused.value.message.params == {"size": "4 MB"}
     root = Path(tmp_path) / ".room-files" / str(project_id) / str(room_id)
     assert list(root.rglob("*")) == []
 
@@ -188,7 +188,7 @@ async def test_a_library_replace_over_the_ceiling_is_refused_before_bytes_are_st
     with pytest.raises(UnprocessableEntityError) as refused:
         await records.replace(
             session,
-            shelf=Shelf.of_project(project),
+            shelf=Shelf.of_project(project, with_task=False),
             name="预算.xlsx",
             data=b"x" * (CEILING + 1),
             by="user-1",
@@ -214,7 +214,7 @@ async def test_a_material_over_the_ceiling_is_refused_before_the_service(
         )
 
     assert refused.value.message.key == "fileTooLarge"
-    assert refused.value.message.params == {"mb": 4}
+    assert refused.value.message.params == {"size": "4 MB"}
     # 限读：读到上限多一个字节就停，整份 body 没有进过内存。
     assert file.file.tell() == CEILING + 1
 
@@ -268,3 +268,12 @@ async def test_an_avatar_under_the_ceiling_gets_all_the_way_through(
 
         assert result["code"] == 200
         assert (tmp_path / "7").read_bytes() == content
+
+
+def test_a_ceiling_in_gigabytes_is_said_in_gigabytes():
+    """The files bucket takes up to 20 GB a file; a file past it is told
+    「上限 20 GB」, not a count of megabytes nobody reads at a glance."""
+    with pytest.raises(UnprocessableEntityError) as refused:
+        service.refuse_oversize(20 * 1024**3 + 1, "数据集.tar", limit=20 * 1024**3)
+
+    assert str(refused.value.message) == "文件太大（上限 20 GB）"

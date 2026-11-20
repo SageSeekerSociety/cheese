@@ -1,9 +1,9 @@
 <script setup lang="ts">
 // 频道详情：点频道页头的频道名打开。「关于」是名称、说明、管理者和创建时间，「设置」是我的
-// 通知、私密、归档。频道里的人都能看，只有管理者能改（后端按同一条规则再判一次）；
+// 通知、谁能在主线发言（#4795）、私密、归档。频道里的人都能看，只有管理者能改（后端按同一条规则再判一次）；
 // 成员在页头那一串头像里。动作都交给外面做。
 import type { Topic } from '@/cx_types'
-import type { TopicNotifyLevel } from '@/types/channels'
+import type { ChannelSpeakers, TopicNotifyLevel } from '@/types/channels'
 
 import { computed, ref, watch } from 'vue'
 
@@ -27,6 +27,8 @@ const props = defineProps<{
   managerName: string | null
   level: TopicNotifyLevel
   mutedUntil: string | null
+  /** 项目的角色，选「谁能发言」用：key 和名字。 */
+  roles: { key: string; name: string }[]
 }>()
 const open = defineModel<boolean>({ required: true })
 const emit = defineEmits<{
@@ -41,7 +43,21 @@ const emit = defineEmits<{
   /** 「成员」（清单第 5 条）：开的是页头那串头像点开的同一份名单，这里不另造一份。 */
   (e: 'open-members'): void
   (e: 'notify', level: TopicNotifyLevel, until: string | null): void
+  /** 谁能在主线发言（空着是所有人），以及支线是否人人能回。 */
+  (e: 'speakers', roles: string[] | null, threadsOpen: boolean): void
 }>()
+
+// 谁能发言：「所有人」，或「指定角色」再勾几个。至少留一个角色；改了就存。
+const speakers = computed(() => (props.topic as Topic & ChannelSpeakers).speaker_roles ?? null)
+const threadsOpen = computed(() => (props.topic as Topic & ChannelSpeakers).thread_replies_open !== false)
+function limitTo(mode: unknown) {
+  if (mode === 'everyone') emit('speakers', null, threadsOpen.value)
+  else if (!speakers.value) emit('speakers', ['admin', 'member'], threadsOpen.value)
+}
+function pick(keys: unknown) {
+  const next = Array.isArray(keys) ? keys.map(String) : []
+  if (next.length) emit('speakers', next, threadsOpen.value)
+}
 
 type Tab = 'about' | 'settings'
 const tab = ref<Tab>('about')
@@ -195,6 +211,45 @@ const canMakePublic = computed(
           @set="(lv: TopicNotifyLevel, until: string | null) => emit('notify', lv, until)"
         />
       </div>
+      <div v-if="canManage && !archived" class="details__row details__row--top">
+        <div class="details__what">
+          <span class="details__label">{{ t('work.channelDetails.speakers') }}</span>
+          <v-radio-group
+            :model-value="speakers ? 'some' : 'everyone'"
+            density="compact"
+            hide-details
+            class="details__radios"
+            @update:model-value="limitTo"
+          >
+            <v-radio value="everyone" :label="t('work.channelDetails.speakersEveryone')" />
+            <v-radio value="some" :label="t('work.channelDetails.speakersSome')" />
+          </v-radio-group>
+          <v-chip-group
+            v-if="speakers"
+            :model-value="speakers"
+            multiple
+            filter
+            class="details__chips"
+            :aria-label="t('work.channelDetails.speakersSome')"
+            @update:model-value="pick"
+          >
+            <v-chip v-for="r in roles" :key="r.key" :value="r.key" variant="outlined" size="small">{{ r.name }}</v-chip>
+          </v-chip-group>
+        </div>
+      </div>
+      <div v-if="canManage && !archived && speakers" class="details__row">
+        <div class="details__what">
+          <span class="details__label">{{ t('work.channelDetails.threadsOpen') }}</span>
+        </div>
+        <v-switch
+          density="compact"
+          color="primary"
+          hide-details
+          :model-value="threadsOpen"
+          :aria-label="t('work.channelDetails.threadsOpen')"
+          @update:model-value="emit('speakers', speakers, Boolean($event))"
+        />
+      </div>
       <div v-if="canMakePrivate || canMakePublic" class="details__row">
         <div class="details__what">
           <span class="details__label">{{
@@ -317,5 +372,14 @@ const canMakePublic = computed(
 .details__label {
   font-weight: 600;
   color: var(--ink);
+}
+.details__row--top {
+  align-items: flex-start;
+}
+.details__radios {
+  margin-top: 4px;
+}
+.details__chips {
+  padding-inline-start: 32px;
 }
 </style>

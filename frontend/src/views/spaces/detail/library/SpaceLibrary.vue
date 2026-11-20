@@ -33,12 +33,13 @@ import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
-import { toast } from 'vuetify-sonner'
 
 import SpaceLibraryView from './SpaceLibraryView.vue'
 
 import { SpacesApi } from '@/api/spaces'
 import { useTopBarBack } from '@/components/common/topBarBack'
+import { announceDownload, announceDownloadFailure, saveBlob } from '@/lib/download'
+import { toast } from '@/lib/toast'
 
 const route = useRoute()
 const router = useRouter()
@@ -139,23 +140,13 @@ async function remove(item: SpaceMaterial) {
   }
 }
 
-/** 把取回来的字节存成文件，名字用资料自己的名字。 */
-function saveBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
-}
-
 async function download(item: SpaceMaterial) {
   try {
+    // 存字节和说一句「已下载」都在 `lib/download` 里，这里从它取，不再自己造一套。
     saveBlob(await SpacesApi.downloadMaterial(spaceId, item.id), item.name)
+    announceDownload()
   } catch {
-    toast.error(t('spaces.materials.toast.downloadFailed'))
+    announceDownloadFailure(t('spaces.materials.toast.downloadFailed'))
   }
 }
 </script>

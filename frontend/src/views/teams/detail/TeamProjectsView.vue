@@ -82,7 +82,7 @@ const error = defineModel<string | null>('error', { required: true })
           </AdaptiveMenu>
           <div class="d-flex align-center mb-1">
             <v-icon size="20" color="primary" class="mr-2">mdi-robot-happy-outline</v-icon>
-            <span class="text-subtitle-2 font-weight-medium text-truncate">{{ p.name }}</span>
+            <span class="text-subtitle-2 font-weight-medium text-truncate" data-user-content>{{ p.name }}</span>
           </div>
           <div class="text-caption text-medium-emphasis">
             {{ t('teams.projects.createdAt', { date: fmtDate(p.created_at) }) }}

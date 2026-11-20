@@ -29,11 +29,18 @@
  *   后面等着，界面看着就是死的，只有整页重开才清得掉。等不到答案按「落后」处理：
  *   落一次旧版，也好过停在一次点击上。
  *
- * 代价是一个一直不点任何东西的页面会一直停在旧版本上，直到下一次点击。
+ * 代价是一个一直不点任何东西的页面会一直停在旧版本上，直到下一次点击。修严重问题的
+ * 那一版等不起这一下：它把 index.html 里的 `cx-min-build` 调高，落在它之前的页面就
+ * 提示刷新（`promptIfBelowMinBuild`）。普通发版不动这个数，照旧不问人。改坏了旧页面在用
+ * 的接口的那一版也等不起：它调高 API 代数，后端拒掉旧页面的请求，旧页面提示刷新
+ * （lib/apiGeneration.ts）。
  */
 import type { Router } from 'vue-router'
 
 import { registerSW } from 'virtual:pwa-register'
+
+import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 
 /**
  * 有了新 worker 之后，这一页的代码是不是落后于服务器上现在那一版。为真时下一次
@@ -95,12 +102,61 @@ let lastCheckAt = 0
 const CHECK_INTERVAL_MS = 60 * 60 * 1000
 const VISIBILITY_THROTTLE_MS = 10 * 60 * 1000
 
-function checkForUpdate() {
+function checkForUpdate(router: Router) {
   const now = Date.now()
   if (now - lastCheckAt < VISIBILITY_THROTTLE_MS) return
   lastCheckAt = now
   void swRegistration?.update().catch(() => {
     // 断网、或者服务器刚重启，都会走到这里；下一次再看机会。
+  })
+  void promptIfBelowMinBuild(router)
+}
+
+/** index.html 里 `<meta name="cx-min-build">` 的值：只增不减的整数，见 index.html。 */
+function minBuildOf(root: ParentNode): number | undefined {
+  const value = Number.parseInt(root.querySelector('meta[name="cx-min-build"]')?.getAttribute('content') ?? '', 10)
+  return Number.isNaN(value) ? undefined : value
+}
+
+/** 把服务器发的 HTML 解析成不执行、不加载任何东西的节点（`<template>` 的内容是惰性的）。 */
+function inert(html: string): ParentNode {
+  const template = document.createElement('template')
+  template.innerHTML = html
+  return template.content
+}
+
+let minBuildPrompted = false
+
+/**
+ * 这一页早于服务器现在要求的最低版本（修严重问题的那一版）时，提示刷新，一直留着。
+ *
+ * 拿这一页自己 HTML 里的数和服务器现在的 index.html 里的数比：两边都是构建时从同一行
+ * 写进去的，修复所在的那一版和它之后的每一版都带着调高后的数，所以只有落在修复之前的
+ * 页面会小于它。问不到服务器、或者哪一边没有这个数，都不提示。
+ *
+ * 门口那几页（`meta.publicLanding`，App.vue 不给它们套外框）没有挂提示条，在那儿弹出的
+ * 提示谁也看不见，事后挂上的提示条也不会补出来。所以停在那几页时不算提示过：留到下一次
+ * 例行检查，或者人从门口走进应用的那一下（见 `registerPwa`）。
+ */
+async function promptIfBelowMinBuild(router: Router) {
+  if (minBuildPrompted) return
+  const own = minBuildOf(document)
+  if (own === undefined) return
+  const html = await fetchEntryHtml()
+  if (html === undefined) return
+  const required = minBuildOf(inert(html))
+  if (required === undefined || own >= required || minBuildPrompted) return
+  if (router.currentRoute.value.meta.publicLanding) return
+  minBuildPrompted = true
+  toast.warning(t('global.requiredUpdate.message'), {
+    // 不刷新，这一页就一直带着那个严重问题；提示留到人点为止。
+    duration: Number.POSITIVE_INFINITY,
+    action: {
+      label: t('global.requiredUpdate.refresh'),
+      onClick: () => {
+        void takeWaitingWorker({ check: true }).then(() => window.location.reload())
+      },
+    },
   })
 }
 
@@ -183,12 +239,17 @@ export function registerPwa(router: Router): void {
     onNeedReload: onNewWorker,
     onRegisteredSW(_swUrl, registration) {
       swRegistration = registration ?? null
-      if (!registration) return
-      window.setInterval(checkForUpdate, CHECK_INTERVAL_MS)
-      document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible') checkForUpdate()
-      })
     },
+  })
+  // 不挂在 worker 注册成功上：没有 service worker 的浏览器（一些应用的内置浏览器）
+  // 也要能收到「修了严重问题，刷新」的提示。
+  window.setInterval(() => checkForUpdate(router), CHECK_INTERVAL_MS)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') checkForUpdate(router)
+  })
+  // 从门口走进应用：在门口时没能弹出的提示，这时补上。
+  router.afterEach((to, from) => {
+    if (from.meta.publicLanding && !to.meta.publicLanding) void promptIfBelowMinBuild(router)
   })
   // 首次导航（`from` 没有匹配的路由）本来就是整页加载出来的；只换 hash 或 query
   // 的跳转不算离开这一页。

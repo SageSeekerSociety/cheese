@@ -102,7 +102,6 @@ export const useFeedbackStore = defineStore('feedback', {
       return {
         all: state.counts.all,
         hot: state.counts.hot,
-        active: state.counts.active,
         resolved: state.counts.resolved,
       }
     },

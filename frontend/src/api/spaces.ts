@@ -1,10 +1,23 @@
 import type { AxiosProgressEvent } from 'axios'
 import type {
   DomainGroup,
+  LearningExplanation,
+  LearningPracticeAnswer,
+  LearningPracticeResult,
+  LearningPracticeSet,
+  MyLearningInsight,
+  MyLearningPractice,
   Space,
   SpaceAnnouncement,
   SpaceCategory,
-  SpaceInviteCode,
+  SpaceInvite,
+  SpaceJoinLink,
+  SpaceJoinRequest,
+  SpaceKnowledgePoint,
+  SpaceKnowledgeSuggestion,
+  SpaceLearningAnalysis,
+  SpaceLearningAnalysisSwitch,
+  SpaceLearningNoticeState,
   SpaceMaterial,
   SpaceMaterialVisibility,
   SpaceMember,
@@ -12,20 +25,21 @@ import type {
 } from '@/types'
 import type {
   GetSpacesResponseData,
+  KnowledgePointRequestData,
+  KnowledgeSuggestionRequestData,
+  PatchLearningAnalysisRequestData,
   PatchSpaceAdminRequestData,
   PatchSpaceAnnouncementRequestData,
   PatchSpaceCategoryRequestData,
   PatchSpaceDomainGroupRequestData,
-  PatchSpaceInviteCodeRequestData,
   PatchSpaceRequestData,
   PostSpaceAdminRequestData,
   PostSpaceAnnouncementRequestData,
   PostSpaceCategoryRequestData,
   PostSpaceDomainGroupRequestData,
-  PostSpaceInviteCodeRequestData,
-  PostSpaceJoinRequestData,
   PostSpaceMemberRequestData,
   PostSpaceRequestData,
+  PutSpaceAccessRequestData,
   SpaceAnnouncementList,
   SpaceApplication,
 } from '@/types/apiSpaces'
@@ -54,17 +68,14 @@ export const SpacesApi = {
       { url: '/admin/spaces', method: 'GET', params: { status, offset, limit } },
       true
     ),
-  review: (id: number, approved: boolean, reason = '') =>
+  /** `openScope`：审开放申请时带上页面显示的范围；申请在那之后被改过，服务端回 409。 */
+  review: (id: number, approved: boolean, reason = '', openScope?: string[]) =>
     axiosRequest<{ application: SpaceApplication }>(
-      { url: `/admin/spaces/${id}/review`, method: 'POST', data: { approved, reason } },
+      { url: `/admin/spaces/${id}/review`, method: 'POST', data: { approved, reason, openScope } },
       true
     ),
   create: (data: PostSpaceRequestData) =>
-    changesSpaces(
-      axiosRequest<{ space: Space; inviteCode: SpaceInviteCode | null }>({ url: '/spaces', method: 'POST', data }, true)
-    ),
-  join: (data: PostSpaceJoinRequestData) =>
-    changesSpaces(axiosRequest<{ space: Space }>({ url: '/spaces/join', method: 'POST', data }, true)),
+    changesSpaces(axiosRequest<{ space: Space }>({ url: '/spaces', method: 'POST', data }, true)),
   listMembers: (spaceId: number) =>
     axiosRequest<{ members: SpaceMember[] }>({ url: `/spaces/${spaceId}/members`, method: 'GET' }, true),
   addMember: (spaceId: number, data: PostSpaceMemberRequestData) =>
@@ -86,20 +97,27 @@ export const SpacesApi = {
     ),
   deleteAnnouncement: (spaceId: number, announcementId: number) =>
     axiosMutation({ url: `/spaces/${spaceId}/announcements/${announcementId}`, method: 'DELETE' }, true),
-  listInviteCodes: (spaceId: number) =>
-    axiosRequest<{ inviteCodes: SpaceInviteCode[] }>({ url: `/spaces/${spaceId}/invite-codes`, method: 'GET' }, true),
-  createInviteCode: (spaceId: number, data: PostSpaceInviteCodeRequestData = {}) =>
-    axiosRequest<{ inviteCode: SpaceInviteCode }>(
-      { url: `/spaces/${spaceId}/invite-codes`, method: 'POST', data },
-      true
+  // 加入链接：每个空间一条，所有者和管理员读、重置、切换「加入需要批准」。
+  getJoinLink: (spaceId: number) =>
+    axiosRequest<SpaceJoinLink>({ url: `/spaces/${spaceId}/join-link`, method: 'GET' }, true),
+  updateJoinLink: (spaceId: number, data: { approval: boolean }) =>
+    axiosRequest<SpaceJoinLink>({ url: `/spaces/${spaceId}/join-link`, method: 'PATCH', data }, true),
+  resetJoinLink: (spaceId: number) =>
+    axiosRequest<SpaceJoinLink>({ url: `/spaces/${spaceId}/join-link/reset`, method: 'POST' }, true),
+  listJoinRequests: (spaceId: number) =>
+    axiosRequest<{ requests: SpaceJoinRequest[] }>({ url: `/spaces/${spaceId}/join-requests`, method: 'GET' }, true),
+  approveJoinRequest: (spaceId: number, requestId: number) =>
+    axiosMutation({ url: `/spaces/${spaceId}/join-requests/${requestId}/approve`, method: 'POST' }, true),
+  rejectJoinRequest: (spaceId: number, requestId: number) =>
+    axiosMutation({ url: `/spaces/${spaceId}/join-requests/${requestId}/reject`, method: 'POST' }, true),
+  // 拿着链接的人那一侧：先看是哪个空间、自己在哪一步，按下确认才加入（或申请）。
+  // 令牌进路径前编码：它来自地址栏，不能让一个斜杠改了请求的是哪条路由。
+  detailByJoinLink: (token: string) =>
+    axiosRequest<SpaceInvite>({ url: `/space-invites/${encodeURIComponent(token)}`, method: 'GET' }, true),
+  joinByJoinLink: (token: string) =>
+    changesSpaces(
+      axiosRequest<SpaceInvite>({ url: `/space-invites/${encodeURIComponent(token)}/join`, method: 'POST' }, true)
     ),
-  updateInviteCode: (spaceId: number, codeId: number, data: PatchSpaceInviteCodeRequestData) =>
-    axiosRequest<{ inviteCode: SpaceInviteCode }>(
-      { url: `/spaces/${spaceId}/invite-codes/${codeId}`, method: 'PATCH', data },
-      true
-    ),
-  revokeInviteCode: (spaceId: number, codeId: number) =>
-    axiosMutation({ url: `/spaces/${spaceId}/invite-codes/${codeId}`, method: 'DELETE' }, true),
   listMaterials: (spaceId: number) =>
     axiosRequest<{ materials: SpaceMaterial[]; canManage: boolean }>(
       { url: `/spaces/${spaceId}/materials`, method: 'GET' },
@@ -138,6 +156,97 @@ export const SpacesApi = {
     ).data,
   update: (spaceId: number, data: PatchSpaceRequestData) =>
     axiosRequest<{ space: Space }>({ url: `/spaces/${spaceId}`, method: 'PATCH', data }, true),
+  // ---- 学情分析（§ learning analysis, step 1）--------------------------------------
+  //
+  // 一块题目板的学情分析底座：读开关 + 知识点清单（成员可读，发题页也用它判显不
+  // 显示那一块）、改开关、清单 CRUD、AI 建议、告知卡。服务端在
+  // `app/api/routes/spaces_learning_analysis.py`。写那几条要 `edit_settings`。
+  /** 开关 + 清单 + 我能不能改。成员读得到（`view`）。 */
+  readLearningAnalysis: (spaceId: number) =>
+    axiosRequest<SpaceLearningAnalysis>({ url: `/spaces/${spaceId}/learning-analysis`, method: 'GET' }, true),
+  /** 开 / 关这块板的学情分析。 */
+  updateLearningAnalysis: (spaceId: number, data: PatchLearningAnalysisRequestData) =>
+    axiosRequest<{ learningAnalysis: SpaceLearningAnalysisSwitch }>(
+      { url: `/spaces/${spaceId}/learning-analysis`, method: 'PATCH', data },
+      true
+    ),
+  /** 往清单末尾加一条。 */
+  createKnowledgePoint: (spaceId: number, data: KnowledgePointRequestData) =>
+    axiosRequest<{ knowledgePoint: SpaceKnowledgePoint }>(
+      { url: `/spaces/${spaceId}/learning-analysis/knowledge-points`, method: 'POST', data },
+      true
+    ),
+  /** 改一条的名字。 */
+  updateKnowledgePoint: (spaceId: number, pointId: number, data: KnowledgePointRequestData) =>
+    axiosRequest<{ knowledgePoint: SpaceKnowledgePoint }>(
+      { url: `/spaces/${spaceId}/learning-analysis/knowledge-points/${pointId}`, method: 'PATCH', data },
+      true
+    ),
+  /** 删一条（软删：已经归在它下面的题还显示这个名字，同一个名字以后还能再加）。 */
+  deleteKnowledgePoint: (spaceId: number, pointId: number) =>
+    axiosMutation({ url: `/spaces/${spaceId}/learning-analysis/knowledge-points/${pointId}`, method: 'DELETE' }, true),
+  /** AI 读题面给出的知识点建议（挂 / 超预算会是非 200 的信封，按普通 apiError 处理）。 */
+  suggestKnowledgePoints: (spaceId: number, data: KnowledgeSuggestionRequestData) =>
+    axiosRequest<{ suggestions: SpaceKnowledgeSuggestion[] }>(
+      { url: `/spaces/${spaceId}/learning-analysis/knowledge-points/suggestions`, method: 'POST', data },
+      true
+    ),
+  /** 进这块板时要不要弹告知卡。 */
+  readLearningNotice: (spaceId: number) =>
+    axiosRequest<SpaceLearningNoticeState>({ url: `/spaces/${spaceId}/learning-analysis/notice`, method: 'GET' }, true),
+  /** 点了「我已阅读并知悉」。幂等：再点一次不会出错，也不改第一次的时间。 */
+  acknowledgeLearningNotice: (spaceId: number) =>
+    axiosRequest<{ acknowledged: true }>({ url: `/spaces/${spaceId}/learning-analysis/notice`, method: 'POST' }, true),
+  /** 我的学习洞察（step 2）：只有本人的那份；板没开时 `enabled` 为假。 */
+  readMyLearningInsight: (spaceId: number) =>
+    axiosRequest<MyLearningInsight>({ url: `/spaces/${spaceId}/learning-analysis/me`, method: 'GET' }, true),
+  /** 把我的一条判断标成「不准」。只能标自己的；再标一次不出错。 */
+  disputeLearningJudgment: (spaceId: number, judgmentId: number) =>
+    axiosRequest<{ judgmentId: number; disputed: true }>(
+      { url: `/spaces/${spaceId}/learning-analysis/me/judgments/${judgmentId}/dispute`, method: 'POST' },
+      true
+    ),
+  // ---- 巩固练习、复习提醒、讲解（step 4）：只有本人 ---------------------------------
+  // `app/api/routes/spaces_learning_practice.py`。要问模型的几条可能答 429 / 503（今天
+  // 的次数用完、网关不可用），按普通 apiError 处理。
+  /** 我没做完的几组、复习提醒、今天还能要几次。 */
+  readMyLearningPractice: (spaceId: number) =>
+    axiosRequest<MyLearningPractice>({ url: `/spaces/${spaceId}/learning-analysis/me/practice`, method: 'GET' }, true),
+  /** 「生成 3 道巩固题」（`fresh` 为换一组，`source: 'review'` 为复习时再做一组）。 */
+  startLearningPractice: (
+    spaceId: number,
+    data: { knowledgePointId: number; source?: 'self' | 'review'; fresh?: boolean }
+  ) =>
+    axiosRequest<LearningPracticeSet>(
+      { url: `/spaces/${spaceId}/learning-analysis/me/practice`, method: 'POST', data },
+      true
+    ),
+  readLearningPractice: (spaceId: number, practiceId: number) =>
+    axiosRequest<LearningPracticeSet>(
+      { url: `/spaces/${spaceId}/learning-analysis/me/practice/${practiceId}`, method: 'GET' },
+      true
+    ),
+  /** 答一道：第一次选的定下来，当场交回对错和讲解。 */
+  answerLearningPractice: (spaceId: number, practiceId: number, data: { question: number; choice: number }) =>
+    axiosRequest<LearningPracticeAnswer>(
+      { url: `/spaces/${spaceId}/learning-analysis/me/practice/${practiceId}/answers`, method: 'POST', data },
+      true
+    ),
+  /** 「做完了」：并进这个知识点的判断，排下一次复习。 */
+  completeLearningPractice: (spaceId: number, practiceId: number) =>
+    axiosRequest<LearningPracticeResult>(
+      { url: `/spaces/${spaceId}/learning-analysis/me/practice/${practiceId}/complete`, method: 'POST' },
+      true
+    ),
+  /** 「先看一段讲解」：判断没变时读缓存。 */
+  explainLearningPoint: (spaceId: number, data: { knowledgePointId: number }) =>
+    axiosRequest<LearningExplanation>(
+      { url: `/spaces/${spaceId}/learning-analysis/me/explanation`, method: 'POST', data },
+      true
+    ),
+  /** 只对成员开放，或开放给一组邮箱后缀。扩大范围要等平台审核，回来的空间带着那条申请。 */
+  setAccess: (spaceId: number, data: PutSpaceAccessRequestData) =>
+    axiosRequest<{ space: Space }>({ url: `/spaces/${spaceId}/access`, method: 'PUT', data }, true),
   del: (spaceId: number) => changesSpaces(axiosMutation({ url: `/spaces/${spaceId}`, method: 'DELETE' }, true)),
   detail: (spaceId: number, params: { queryClassificationTopics?: boolean; queryMyRank?: boolean } = {}) =>
     axiosRequest<{ space: Space }>({ url: `/spaces/${spaceId}`, method: 'GET', params }, true),

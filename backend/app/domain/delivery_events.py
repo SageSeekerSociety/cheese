@@ -97,10 +97,15 @@ class NotificationType(str, Enum):
 
     #: 个人芝士自己做事时告诉这个人的（`routine.personal`）：一条例行事务运行完了、
     #: 有操作待他确认、例行事务因额度或久未登录暂停了，或者芝士用
-    #: `cheese_notify_me` 发给他的一句话。说的话是 `payload.content`（平台的句子
+    #: `cheese_notify` 发给他的一句话。说的话是 `payload.content`（平台的句子
     #: 带键），哪一种看 `payload.event`；`payload.assistantConversation` 是点开要打开
     #: 的那段对话。
     ASSISTANT_NOTICE = "ASSISTANT_NOTICE"
+
+    #: 团队、项目或成员的额度快用完了（`usage.alerts`）。收件人是会被停下的人：
+    #: 团队额度到团队全体、项目预算到项目里的人、成员上限到本人。说的话是
+    #: 平台算好的那一句（`payload.content` 带键），哪一种看 `payload.layer`。
+    CREDIT_WARNING = "CREDIT_WARNING"
 
     #: 平台报告自己的那三种（原 `AlertKind`）。值保持小写原样：`cheese_notify
     #: --kind` 和前端的 `NOTIF_KIND` 标签表按它写，存量行里也是这几个字。

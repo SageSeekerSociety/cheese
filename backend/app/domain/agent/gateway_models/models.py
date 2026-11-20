@@ -26,7 +26,6 @@ from app.domain.agent.gateway_models.guards import (
 )
 from app.domain.agent.gateway_models_helpers import (
     _api_base_for,
-    _capped,
     _daily_model_row,
     _offered,
     _prices_for_gateway,
@@ -85,7 +84,7 @@ async def listing(service: pkg.GatewayModelsService, *, days: int) -> dict:
     # 就没有「部分正确」可给：一张空表会被读成「这里一个模型都没有」。
     models = await service._require_models()
     usage = await service._usage_window(start, end)
-    ledger = await service._ledger_window(end) if _capped(models) else None
+    ledger = await service._cap_spend(models, end)
     await roles.refresh(service._db)
     return {
         "gateway": {
@@ -105,7 +104,7 @@ async def detail(service: pkg.GatewayModelsService, *, name: str, days: int) -> 
     start, end, since, until = service._window(days)
     model = await service._current_model(name)
     usage = await service._usage_window(start, end)
-    ledger = await service._ledger_window(end) if _capped([model]) else None
+    ledger = await service._cap_spend([model], end)
     await roles.refresh(service._db)
     return {
         "model": service._item(model, usage, ledger),
@@ -237,6 +236,7 @@ async def _add(service: pkg.GatewayModelsService, name: str, data: dict) -> dict
         capabilities=capabilities,
         tier=data.get("tier"),
         overseas=data.get("overseas"),
+        cache_lifetime_s=data.get("cache_lifetime_s"),
         order=data.get("order") or _FIRST_ORDER,
         free=free or None,
         upstream_headers=data.get("upstream_headers") or None,
@@ -319,7 +319,7 @@ async def _update(service: pkg.GatewayModelsService, name: str, data: dict) -> d
             }
 
     model_kwargs: dict[str, Any] = {}
-    for field in ("label", "selectable", "tier", "overseas"):
+    for field in ("label", "selectable", "tier", "overseas", "cache_lifetime_s"):
         if field in data:
             model_kwargs[field] = data[field]
     if data.get("capabilities") is not None:

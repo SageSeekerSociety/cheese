@@ -157,6 +157,7 @@ export const DEVICES: MyDevice[] = [
 /** 一条开版申请：`types/spaces.ts` 的 `SpaceApplication`。 */
 export function spaceApplication(over: Partial<SpaceApplication> = {}): SpaceApplication {
   return {
+    kind: 'create',
     id: 1,
     avatarId: 4,
     name: '计算机视觉兴趣组',

@@ -17,12 +17,22 @@
   "silent": "芝士没有给出回答",
   "today": "今天",
   "steps": {
-    "folded": "{first}等 {n} 步",
     "thinking": "思考中",
     "thought": "思考了 {s} 秒",
     "notFound": "内容不存在",
     "denied": "没有权限",
-    "failed": "调用失败"
+    "failed": "调用失败",
+    "count": "完成 {n} 步",
+    "sent": "发送 {n} 条消息",
+    "acted": "执行 {n} 项操作",
+    "readCount": "查阅 {n} 项资料",
+    "reading": "正在{what}…",
+    "and": "，",
+    "verbs": {
+      "read": "读取",
+      "find": "查找",
+      "search": "搜索"
+    }
   },
   "changes": {
     "memory": {
@@ -105,6 +115,7 @@
   },
   "dock": "固定到右侧",
   "undock": "取消固定",
+  "dragHint": "拖动可以换个位置，双击回到右下角",
   "anywhere": {
     "greeting": "有什么想问的，或者要我做的事，都可以说。",
     "placeholder": "输入问题或要做的事",
@@ -141,7 +152,11 @@
     "expired": "已过期"
   },
   "run": {
-    "routine": "例行事务「{title}」开始运行"
+    "routine": "例行事务「{title}」开始运行",
+    "wait": "「{title}」开始运行",
+    "filed": "任务「{task}」提交审阅了",
+    "accepted": "任务「{task}」的提交已采纳",
+    "rejected": "任务「{task}」的提交已退回"
   },
   "page": {
     "channel": "频道「{name}」",
@@ -177,5 +192,22 @@
       "problem": "题目"
     },
     "label": "引用"
+  },
+  "rule": {
+    "waiting": "等待中",
+    "on": "已开启",
+    "started": "已开始",
+    "gaveUp": "{days} 天内没有发生，已停止等待",
+    "cancelled": "已取消",
+    "ended": "已结束",
+    "paused": {
+      "person": "已暂停",
+      "credits": "额度已用完，已暂停",
+      "away": "长时间未登录，已暂停"
+    },
+    "cancel": "取消",
+    "pause": "暂停",
+    "resume": "恢复",
+    "failed": "操作失败"
   }
 }

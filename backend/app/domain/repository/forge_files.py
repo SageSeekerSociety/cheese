@@ -2,14 +2,18 @@
 
 import asyncio
 import base64
+import json
+import logging
 import uuid
 from typing import Any
 from urllib.parse import quote
 
+from redis.exceptions import RedisError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.core.config import settings
 from app.core.db import release_read_session
-from app.core.device_failures import DeviceCallError, DeviceNotReady, DeviceOffline
+from app.core.device_failures import DeviceCallError, DeviceOffline
 from app.core.errors import (
     ConflictError,
     GatewayUnavailableError,
@@ -17,6 +21,7 @@ from app.core.errors import (
     UpstreamUnavailableError,
     ValidationError,
 )
+from app.core.redis import get_redis_client
 from app.core.sentences import say
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.forge import (
@@ -26,14 +31,19 @@ from app.domain.project.forge import (
     repository_data,
 )
 from app.domain.repository import merge3, task_rows
-from app.domain.repository.ports import CompareStatus, ExecutorCall
+from app.domain.repository.kept_work import kept_work
+from app.domain.repository.ports import CompareStatus, ExecutorCall, WakeWorkingCopy
 from app.domain.textfile import (
     MAX_TEXT_BYTES,
+    PREVIEW_TEXT_BYTES,
     compare_bytes,
     content_version,
     decode_text,
+    head_text,
 )
 from app.domain.topic.models import Topic
+
+logger = logging.getLogger(__name__)
 
 #: How many changed files one comparison reads for a line diff.
 MAX_DIFFED_FILES = 200
@@ -64,6 +74,16 @@ def clean_path(path: str) -> str:
     return path
 
 
+#: How long one head's changed paths are kept. The comparison is three-dot,
+#: from the merge base, so it moves only when the head does; the expiry covers
+#: the base branch being merged into the task branch's history some other way.
+_CHANGED_FILES_TTL = 6 * 3600
+
+
+def _changed_files_key(project_id: uuid.UUID, base: str, head: str) -> str:
+    return f"cheesex:changed-files:{project_id}:{base}:{head}"
+
+
 def _landed_head(task: Any) -> str | None:
     """The head the task's landed delivery left, while that is still the task's
     code: the task closed on it, or is being written up after its last step.
@@ -82,6 +102,9 @@ def _landed_head(task: Any) -> str | None:
 #: ``missing`` can say: it answers a file operation the same way whether the
 #: directory or the file is gone, and that answer stays "not on the machine".
 _WHOLE_COPY = ("tree", "diff")
+#: The operations that only read the task's files: answered from the forge
+#: while no machine holds them.
+_READS = ("tree", "diff", "read")
 
 
 class _NoWorkingCopy(NotFoundError):
@@ -99,6 +122,7 @@ class ProjectFiles:
         release_session: bool = False,
         executor: ExecutorCall | None = None,
         compare_status: CompareStatus | None = None,
+        wake: WakeWorkingCopy | None = None,
     ):
         """``executor`` 是在任务那台机器上跑一次文件操作的东西（`ports.ExecutorCall`）；
         ``compare_status`` 是问托管方「这个提交交付过没有」那一次调用
@@ -113,6 +137,10 @@ class ProjectFiles:
         self.release_session = release_session
         self._executor = executor
         self._compare_status = compare_status
+        # 叫醒冻住的环境（`ports.WakeWorkingCopy`）；不给就不叫醒。
+        self._wake = wake
+        # The task's laid-back kept snapshot, once asked (`_laid_back`).
+        self._kept: tuple[str] | None = None
 
     async def _data(self, *args, **kwargs):
         if self.release_session:
@@ -145,11 +173,12 @@ class ProjectFiles:
         task = await self.task()
         if requested != "live" or task is None or not task_rows.is_open(task):
             return "committed"
-        if await self._working_copy(task) is None and await self._pushed(task):
-            # No machine holds a working copy of it, and the next one starts
-            # from the branch (`cheese worktree`): its files are the committed
-            # ones, and they are read, not edited, until a machine has them.
-            return "committed"
+        found = await self._working_copy(task)
+        if (found is None or found[1]) and await self._pushed(task):
+            # No machine holds a working copy of it now, and the next one
+            # starts from the forge (`cheese worktree`): its files are read
+            # there, and not edited, until a machine has them.
+            return await self._forge_source(task)
         return "live"
 
     async def _working_copy(self, task: Any):
@@ -160,26 +189,69 @@ class ProjectFiles:
             task.id, str(room.resource_id or room.id)
         )
 
+    async def _laid_back(self, task: Any) -> str | None:
+        """The task's kept snapshot (`kept_work`) when a new checkout lays it
+        back over the branch: the commit whose tree is the files its last
+        machine had, committed or not. None when nothing was kept, when the
+        branch moved on since, or when the forge cannot say: the branch is
+        then what a new checkout holds. Asked once per view."""
+        if not task.branch_name:
+            return None
+        if self._kept is None:
+            try:
+                kept = await kept_work(
+                    self.project_id,
+                    self.session,
+                    task.id,
+                    task.branch_name,
+                    task.base_branch,
+                )
+            except Exception:  # the branch is still there to read
+                logger.info(
+                    "could not read kept work of task %s", task.id, exc_info=True
+                )
+                kept = None
+            self._kept = (kept.commit if kept is not None and kept.laid_back else "",)
+        return self._kept[0] or None
+
+    async def _copy_revision(self, task: Any) -> str | None:
+        """The commit a new checkout of the task starts as: its laid-back kept
+        snapshot, else the head it landed or its branch's head. None while the
+        forge has nothing of it."""
+        laid_back = await self._laid_back(task)
+        if laid_back:
+            return laid_back
+        landed = _landed_head(task)
+        if landed:
+            return landed
+        if not task.branch_name:
+            return None
+        return await self._head(self.project_id, self.session, task.branch_name)
+
+    async def _forge_source(self, task: Any) -> str:
+        """How a copy read off the forge is named: the task's own files
+        (``live``) when they are its kept snapshot, its commits otherwise."""
+        return "live" if await self._laid_back(task) else "committed"
+
     async def _pushed(self, task: Any) -> bool:
-        """Whether the task has a version on the forge to start a copy from."""
-        return bool(
-            _landed_head(task)
-            or (
-                task.branch_name
-                and await self._head(self.project_id, self.session, task.branch_name)
-            )
-        )
+        """Whether the forge has a version of the task to start a copy from."""
+        return bool(await self._copy_revision(task))
 
     async def _without_working_copy(self, task: Any, operation: str) -> dict[str, Any]:
         """The task's files and changes while no machine holds them: what a new
-        working copy would start from, its branch. A task that has pushed
-        nothing yet has no files and no changes of its own."""
-        if not await self._pushed(task):
+        working copy would start from (`_copy_revision`). A task that has
+        pushed and kept nothing yet has no files and no changes of its own.
+
+        The changes are the branch's: a kept snapshot's own are not compared
+        here, since the comparison would need the merge base the platform's
+        forge does not answer."""
+        revision = await self._copy_revision(task)
+        if not revision:
             if operation not in _WHOLE_COPY:
                 raise NotFoundError(say("taskFileNotOnMachine"))
             return {"tree": {"files": []}, "diff": {"diff": ""}}[operation]
         if operation == "tree":
-            return {"files": (await self.files("committed"))[0]}
+            return {"files": await self._listing(revision)}
         if operation == "diff":
             return {"diff": await self.diff("committed")}
         raise _NoWorkingCopy(say("taskFileNotOnMachine"))
@@ -189,35 +261,54 @@ class ProjectFiles:
         if task is None:
             raise ValidationError(say("taskRequired"))
         found = await self._working_copy(task)
-        if found is None:
-            # No session of this task has taken a machine yet, so no machine
-            # holds a working copy of it: the same as a machine without one.
+        if (
+            found is not None
+            and found[1]
+            and (operation not in _READS or not await self._pushed(task))
+        ):
+            # Its sandbox was destroyed with its home (idle, or given up with
+            # its host) or parked with its processes stopped, and the lease
+            # still names it until the task's next tool call places it again.
+            # What it held is read from the forge; nothing is written to it,
+            # and a task with nothing there is told what became of its work.
+            raise UpstreamUnavailableError(await self._released(task))
+        if found is None or found[1]:
+            # No machine holds a working copy of it: the same as a machine
+            # without one.
             return await self._without_working_copy(task, operation)
-        target, lost = found
-        if lost:
-            # Its cloud sandbox was destroyed with its home (idle, or given up
-            # with its host), and the lease still names it until the task's
-            # next tool call places it in a new one.
-            raise UpstreamUnavailableError(say("taskSandboxReleased"))
+        target = found[0]
         if self._executor is None:  # pragma: no cover - 接线漏了才会走到
             # i18n-exempt: developer miswiring, not a refusal a reader can act on
             raise RuntimeError("executor was not handed in")
         await self._release()
+        if self._wake is not None:
+            # Frozen while idle, it answers nothing until it is woken.
+            await self._wake(task.id)
         try:
             # Interactive file requests must not inherit the agent's 11-minute
             # command timeout; cancellation also cancels the pending device call.
             async with asyncio.timeout(30):
+                # A task with no branch has no checkout of its own: its work is
+                # where its session works, the room's workspace.
                 result = await self._executor(
                     target,
                     "task_fs",
-                    {"task_id": str(task.id), "operation": operation, **params},
+                    {
+                        "task_id": str(task.id),
+                        "operation": operation,
+                        "in_workspace": not task.branch_name,
+                        **params,
+                    },
                 )
-        except (TimeoutError, DeviceOffline, DeviceNotReady) as exc:
+        except (TimeoutError, DeviceOffline) as exc:
             raise GatewayUnavailableError(say("taskMachineNotResponding")) from exc
         except DeviceCallError as exc:
-            raise UpstreamUnavailableError(
-                say("taskMachineFailed", error=str(exc))
-            ) from exc
+            # The machine's own words name its sockets and paths: they go to
+            # the log, and the person is told what they can act on.
+            logger.warning(
+                "task %s: %s on its machine failed: %s", task.id, operation, exc
+            )
+            raise GatewayUnavailableError(say("taskMachineNotResponding")) from exc
         if result.get("error") == "not_found":
             if result.get("missing") == "worktree" or operation in _WHOLE_COPY:
                 return await self._without_working_copy(task, operation)
@@ -225,6 +316,30 @@ class ProjectFiles:
         if result.get("error") == "conflict":
             raise ConflictError(say("taskFileChangedReload"))
         return result
+
+    async def _released(self, task: Any):
+        """What a person is told of a task whose sandbox is gone: what it had
+        not committed was kept (`kept_work`), and whether the next one lays it
+        back. A forge that cannot say leaves the plain sentence."""
+        try:
+            kept = (
+                await kept_work(
+                    self.project_id,
+                    self.session,
+                    task.id,
+                    task.branch_name,
+                    task.base_branch,
+                )
+                if task.branch_name
+                else None
+            )
+        except Exception:  # the sentence without it is still true
+            kept = None
+        if kept is None:
+            return say("taskSandboxReleased")
+        if kept.laid_back:
+            return say("taskSandboxReleasedKept")
+        return say("taskSandboxReleasedKeptBranchMoved")
 
     async def revision(self):
         task = await self.task()
@@ -247,13 +362,15 @@ class ProjectFiles:
         source = await self.source(source)
         if source == "live":
             return (await self.live("tree"))["files"], source
-        head = await self.revision()
-        entries = await self.committed_entries(head)
+        return await self._listing(await self.revision()), source
+
+    async def _listing(self, revision: str) -> list[dict]:
+        """Every file one commit has, as the 文件 panel lists them."""
         return [
             {"path": entry["path"], "bytes": entry["bytes"]}
-            for entry in entries
+            for entry in await self.committed_entries(revision)
             if entry["kind"] == "blob"
-        ], source
+        ]
 
     async def committed_entries(self, revision: str):
         """List immutable entries, retaining unsafe modes for release validation.
@@ -414,7 +531,9 @@ class ProjectFiles:
             )
         return changes
 
-    async def comparison(self):
+    async def _refs(self) -> tuple[str, str] | None:
+        """The base branch and head commit the task's changes are read between,
+        or None while the task has no pushed commit."""
         task = await self.task()
         if task is None or not task.branch_name:
             return None
@@ -424,6 +543,13 @@ class ProjectFiles:
         if not head:
             return None  # The task has not pushed its first commit yet.
         base = task.base_branch or await default_branch(self.project_id, self.session)
+        return base, head
+
+    async def comparison(self, refs: tuple[str, str] | None = None):
+        refs = refs or await self._refs()
+        if refs is None:
+            return None
+        base, head = refs
         comparison = await self._data(
             self.project_id,
             self.session,
@@ -485,13 +611,80 @@ class ProjectFiles:
             for item in commits
         ]
 
+    async def commits(self, path: str | None = None, limit: int = 30) -> list[dict]:
+        """The default branch's commits, newest first: what landed, when, and
+        whose name the commit carries. With ``path``, only the commits that
+        changed that one file.
+
+        The project's current version, never a task's: this is the history the
+        project's files show, the one every task's delivery lands on."""
+        if path is not None:
+            path = clean_path(path)
+        head = await self.revision()
+        query = (
+            f"/commits?sha={head}&per_page={limit}&limit={limit}"
+            "&stat=false&files=false&verification=false"
+        )
+        if path:
+            query += f"&path={quote(path, safe='')}"
+        items = await self._data(self.project_id, self.session, query) or []
+        return [
+            {
+                "sha": item["sha"],
+                "subject": (item["commit"]["message"].splitlines() or [""])[0],
+                "author": item["commit"]["author"]["name"],
+                "at": item["commit"]["committer"]["date"],
+            }
+            for item in items
+        ]
+
     async def changed_files(self):
-        comparison = await self.comparison()
+        """The task's changed paths. A head commit's changes against its base
+        stay what they were, so they are kept by commit (`_CHANGED_FILES_TTL`)
+        and an unchanged branch costs one head lookup instead of a comparison."""
+        refs = await self._refs()
+        if refs is None:
+            return []
+        key = _changed_files_key(self.project_id, *refs)
+        redis = get_redis_client()
+        if redis is not None:
+            # The comparison is the answer; a cache that is slow, down or holds
+            # something this code did not write is a miss, never the page's
+            # error. `request_limit_redis_timeout_s` is the request path's bound.
+            try:
+                cached = await asyncio.wait_for(
+                    redis.get(key),
+                    timeout=settings.request_limit_redis_timeout_s,
+                )
+            except (RedisError, TimeoutError):
+                cached = None
+            if cached is not None:
+                # Only the shape this code writes counts: valid JSON of another
+                # shape (`null`, a string, an object) is not a list of paths
+                # and is a miss too, not a TypeError in the route's `sorted`.
+                try:
+                    paths = json.loads(cached)
+                except (TypeError, ValueError):
+                    paths = None
+                if isinstance(paths, list) and all(
+                    isinstance(path, str) for path in paths
+                ):
+                    return paths
+        comparison = await self.comparison(refs)
         if comparison is None:
             return []
         if comparison.get("files") is None:
             raise GatewayUnavailableError(say("forgeNoChangedFiles"))
-        return [entry["filename"] for entry in comparison["files"]]
+        paths = [entry["filename"] for entry in comparison["files"]]
+        if redis is not None:
+            try:
+                await asyncio.wait_for(
+                    redis.set(key, json.dumps(paths), ex=_CHANGED_FILES_TTL),
+                    timeout=settings.request_limit_redis_timeout_s,
+                )
+            except (RedisError, TimeoutError):
+                pass
+        return paths
 
     async def diff(self, source: str, ref: str | None = None):
         if ref and ref.startswith("-"):
@@ -606,13 +799,24 @@ class ProjectFiles:
     async def raw(self, path: str, source: str):
         path = clean_path(path)
         source = await self.source(source)
+        head = None
         if source == "live":
             try:
                 return await self._live_bytes(path), source
             except _NoWorkingCopy:
-                source = "committed"
-        head = await self.revision()
+                head, source = await self._forge_copy()
+        head = head or await self.revision()
         return await self._blob(await self._entry(path, head), self.session), source
+
+    async def _forge_copy(self) -> tuple[str, str]:
+        """The commit a task's files are read from while no machine holds
+        them, and the source that names it (`_forge_source`)."""
+        task = await self.task()
+        assert task is not None  # Only a task's live read gets here.
+        revision = await self._copy_revision(task)
+        if revision is None:  # pragma: no cover - `_without_working_copy` said
+            raise NotFoundError(say("taskFileNotOnMachine"))
+        return revision, await self._forge_source(task)
 
     async def _live_bytes(self, path: str) -> bytes:
         first = await self.live("read", path=path, size=2 * 1024 * 1024)
@@ -653,16 +857,17 @@ class ProjectFiles:
         path = clean_path(path)
         source = await self.source(source)
         read = None
+        revision = None
         if source == "live":
             try:
                 read = await self.live("read", path=path, size=MAX_TEXT_BYTES)
             except _NoWorkingCopy:
-                source = "committed"
+                revision, source = await self._forge_copy()
         if read is not None:
             size, version = read["bytes"], read["version"]
             data = base64.b64decode(read["data"])
         else:
-            entry = await self._entry(path, await self.revision())
+            entry = await self._entry(path, revision or await self.revision())
             size = entry.get("size", 0)
             data = (
                 await self._blob(entry, self.session) if size <= MAX_TEXT_BYTES else b""
@@ -670,15 +875,29 @@ class ProjectFiles:
             version = content_version(data) if size <= MAX_TEXT_BYTES else None
         large = size > MAX_TEXT_BYTES
         text = None if large else decode_text(data)
+        if not large:
+            head = text
+        elif data:
+            # live 那一支读的是前 `MAX_TEXT_BYTES`，手里有开头，给得出来。
+            head = head_text(data[:PREVIEW_TEXT_BYTES])
+        else:
+            # committed 那一支超上限时一个字节都没读（不为了开头把整份拉回来），
+            # 那就没有开头可给：空串会被读者当成「是文本、但一个字都没有」。
+            head = None
         return {
             "path": path,
             "bytes": size,
             "content": text,
+            # 读者看的那一份：整份，或者开头（见 `textfile.text_payload`）。这一格
+            # 用的是编辑器，读的是 `content`；`head` 只为同一份契约在别处一致。
+            "head": head,
             "binary": not large and text is None,
             "too_large": large,
             "version": version,
             "source": source,
-            "editable": source == "live" and not large and text is not None,
+            # Only a copy on a machine takes a save; one read off the forge
+            # is the task's files, waiting for a machine to hold them.
+            "editable": read is not None and not large and text is not None,
         }
 
     async def write(self, path: str, content: str, version: str | None):

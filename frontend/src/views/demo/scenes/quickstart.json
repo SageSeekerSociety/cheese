@@ -58,8 +58,8 @@
           "do": "act",
           "who": "cheese",
           "turn": "t1",
-          "tool": "cheese_worktree",
-          "arg": "a3f2 · 欢迎说明",
+          "tool": "Bash",
+          "arg": "cheese worktree a3f2",
           "platform": true
         },
         { "at": 800, "do": "act", "who": "cheese", "turn": "t1", "tool": "Bash", "arg": "ls" },

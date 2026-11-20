@@ -18,7 +18,6 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 
 import { SudoCancelledError, withSudo } from '@/utils/sudo'
 
@@ -28,6 +27,7 @@ import PasskeyOfferView from './PasskeyOfferView.vue'
 
 import { UserApi } from '@/api/users'
 import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 
 const router = useRouter()
 

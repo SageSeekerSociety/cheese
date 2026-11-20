@@ -77,7 +77,7 @@ from fastapi import APIRouter, Depends
 from app.api.auth import ActorResolverDep
 from app.api.deps import get_broker, get_chat_service, get_work_runner
 from app.api.request_deps import DbSession
-from app.api.response import ok
+from app.api.response import ok, typed_response
 from app.api.topics_deps import (
     BlockOut,
     BlockRepository,
@@ -85,7 +85,7 @@ from app.api.topics_deps import (
     reply_preview,
     require_person_speaks,
 )
-from app.api.write_access import CHEESE_ONLY_IN_ROOM, ROUTE_DECIDES
+from app.api.write_access import ROUTE_DECIDES, Can, InChannel
 from app.auth.project_roles import may
 from app.core import raster_images
 from app.core.errors import (
@@ -94,29 +94,43 @@ from app.core.errors import (
     ForbiddenError,
     ValidationError,
 )
-from app.core.sentences import listing, say
-from app.domain.agent.announce import announce
+from app.core.sentences import listing, say, size_text
+from app.domain.agent.announce import announce, who_started_the_open_turn
+from app.domain.agent.ask import DEFAULT_QUESTION_LIFETIME
 from app.domain.agent.chat import ChatService, project_refs_text
-from app.domain.agent.mentions import mentioned_outside
+from app.domain.agent.mentions import _MENTION_RE, mentioned_outside, unasked
 from app.domain.agent.runtime import AgentWorkRunner
-from app.domain.agent.turn.store.human import HumanHandoff
-from app.domain.block.message_input import ChatAttachmentIn, ChatMessageIn
+from app.domain.agent.turn.intake.human import preview_addressing
+from app.domain.agent.turn.intake.rooms import _is_dm, room_roster
+from app.domain.agent.turn.store.human import AddressingChanged, HumanHandoff
+from app.domain.agent_instance.adapters import project_team
+from app.domain.block.message_input import (
+    TASK_TAG,
+    ChatAddressingIn,
+    ChatAddressingOut,
+    ChatAttachmentIn,
+    ChatMessageIn,
+)
+from app.domain.block.questions import quick_replies_meta
 from app.domain.delivery.agent import dispatch_pending
 from app.domain.delivery.input_identity import InputReconciliationPending
 from app.domain.delivery.note import send_note
 from app.domain.library import service as library
+from app.domain.mentions import expand_mention_names
 from app.domain.notice_meta import (
     EVENT_MENTION_FUSED,
     SEVERITY_WARN,
     WHO_PLATFORM,
     notice,
 )
+from app.domain.project.address import Numbered, things_by_ref
 from app.domain.project.reads import load_project
 from app.domain.project_permissions import Permission
 from app.domain.room_task import naming
 from app.domain.room_task.place import place_or_404
-from app.domain.thread.services import answered_in
+from app.domain.task import guide
 from app.domain.topic_membership.services import TopicMemberService
+from app.domain.user.services import user_by_handle
 
 router = APIRouter(prefix="/topics", tags=["topics"])
 
@@ -155,6 +169,8 @@ async def send_chat_message(
     session publishes there, in its turn.
     """
     place = await place_or_404(db, topic_id)
+    if place.inner_id is None:
+        await TopicMemberService(db)._repo.list_for_topic(place.room_id)
     actor = await _actor_in_place(resolver, place)
     if not actor.authenticated:
         raise AuthenticationRequiredError("Sign in to send a message")
@@ -178,37 +194,98 @@ async def send_chat_message(
     ]
     if not content and not attachments:
         raise ValidationError(say("messageOrAttachment"))
-    # The turn a person's message starts is named after the block it anchors.
-    anchor_id = await get_work_runner().receive_message(
-        chat,
-        place.conversation_id,
-        author=actor.handle,
-        content=content,
-        reply_to=str(body.reply_to) if body.reply_to else None,
-        attachments=attachments,
-        quoted_context=body.quoted_context.model_dump(mode="json")
-        if body.quoted_context
-        else None,
-        client_id=str(body.request_id),
-        may_summon=await may(db, place.project_id, actor.handle, Permission.ask_agent),
-        # The writer opens its own session; what this request already read of
-        # the project goes with the message instead of being read there again.
-        handoff=HumanHandoff(
-            project=await load_project(db, place.project_id),
-            roster=members,
-            place=place,
-        ),
-        by_assistant=actor.by_assistant,
+    may_summon = await may(db, place.project_id, actor.handle, Permission.ask_agent)
+    # Compute the room's people before `receive_message` commits its writer
+    # session and invalidates `request_facts`, reusing the roster and agent
+    # binding facts already loaded above.
+    people = (
+        [m.handle for m in members if not m.agent]
+        if members is not None
+        else await TopicMemberService(db).people_in(place.room, team=project_team)
     )
-    stored = await BlockRepository(db).get(anchor_id)
-    sent = BlockOut.model_validate(stored).model_dump(mode="json")
-    # The sender's own copy may be the first one the client sees. It carries the
-    # same one-line preview as the broadcast, or the cue would blink out when the
-    # parent is on a page this client never loaded.
-    if stored is not None and stored.reply_to is not None:
-        parent = await BlockRepository(db).get(stored.reply_to)
-        if parent is not None and parent.conversation_id == stored.conversation_id:
-            sent["reply_preview"] = reply_preview(parent)
+
+    async def addressed_now() -> AddressingChanged:
+        """Refuse a send shown as one for an AI teammate that is for none now,
+        saying whom it is for now."""
+        if place.task is not None:
+            # This request read the task before the writer refused the send;
+            # whom it is for now turns on the task as it is now.
+            await db.refresh(place.task)
+        now = await preview_addressing(
+            db,
+            place,
+            content,
+            actor.handle,
+            reply_to=body.reply_to,
+            with_text=bool(content),
+            may_summon=may_summon,
+        )
+        return AddressingChanged(now.as_json())
+
+    if body.expects_agent and not may_summon:
+        raise await addressed_now()
+    landed: list[dict] = []
+    try:
+        # The turn a person's message starts is named after the block it anchors.
+        anchor_id = await get_work_runner().receive_message(
+            chat,
+            place.conversation_id,
+            author=actor.handle,
+            content=content,
+            reply_to=str(body.reply_to) if body.reply_to else None,
+            attachments=attachments,
+            quoted_context=body.quoted_context.model_dump(mode="json")
+            if body.quoted_context
+            else None,
+            client_id=str(body.request_id),
+            may_summon=may_summon,
+            # The writer opens its own session; what this request already read of
+            # the project goes with the message instead of being read there again.
+            handoff=HumanHandoff(
+                project=await load_project(db, place.project_id),
+                roster=members,
+                place=place,
+            ),
+            by_assistant=actor.by_assistant,
+            expects_agent=body.expects_agent,
+            landed=landed,
+        )
+    except AddressingChanged:
+        raise await addressed_now() from None
+    # The anchor as the room was told it, preview of the parent included: what
+    # reading it back produced, without the reads.
+    told = next((p for p in landed if p.get("id") == str(anchor_id)), None)
+    if told is not None:
+        sent = dict(told)
+    else:
+        # A runner that does not report what it stored (a stand-in, or a path
+        # that returned before storing): read the anchor back as before.
+        stored = await BlockRepository(db).get(anchor_id)
+        sent = BlockOut.model_validate(stored).model_dump(mode="json")
+        # The sender's own copy may be the first one the client sees. It
+        # carries the same one-line preview as the broadcast, or the cue would
+        # blink out when the parent is on a page this client never loaded.
+        if stored is not None and stored.reply_to is not None:
+            parent = await BlockRepository(db).get(stored.reply_to)
+            if parent is not None and parent.conversation_id == stored.conversation_id:
+                sent["reply_preview"] = reply_preview(parent)
+    # Told to the sender alone, in this answer, and never stored: the message
+    # asked nobody while the sender looks to be waiting for the AI teammate
+    # (`unasked` says when), so they are offered to hand it over. Said once,
+    # under their message; a reload does not bring it back.
+    if sent:
+        why = await unasked(
+            db,
+            conversation_id=uuid.UUID(str(sent["conversation_id"])),
+            seq=sent["seq"],
+            content=sent.get("content") or "",
+            meta=sent.get("meta"),
+            author=actor.handle,
+            people=people,
+            may_summon=may_summon,
+        )
+        if why is not None:
+            sent["unasked"] = why
     # Told to the sender alone, in this answer, and never stored: whom the
     # message names that the channel does not seat (Slack's "X isn't in this
     # channel"). The sender decides whether to add them.
@@ -216,6 +293,38 @@ async def send_chat_message(
     if outside is not None:
         sent["mentioned_outside"] = outside.as_json()
     return ok(sent)
+
+
+@router.post(
+    "/{topic_id}/messages/addressing",
+    operation_id="chat-addressing",
+    **typed_response(ChatAddressingOut),
+)
+async def preview_message_addressing(
+    body: ChatAddressingIn,
+    db: DbSession,
+    at: Annotated[InChannel, Can(Permission.speak, at="topic_id")],
+) -> dict:
+    """Who a person's message would be for if sent now: the AI teammate it
+    would start a turn for and the rule that calls it, or none; and the people
+    it @-s. The composer shows it before the message is sent, so it asks what
+    sending asks: someone who may speak in this channel.
+
+    It reads the draft the way sending reads a message
+    (`agent.turn.intake.human.preview_addressing`) and writes nothing: no
+    block, no seat, no turn."""
+    addressing = await preview_addressing(
+        db,
+        at.place,
+        body.content.strip(),
+        at.actor.handle,
+        reply_to=body.reply_to,
+        with_text=body.with_text,
+        may_summon=await may(
+            db, at.place.project_id, at.actor.handle, Permission.ask_agent
+        ),
+    )
+    return ok(addressing.as_json())
 
 
 def _read_agent_attachments(items: list[ChatAttachmentIn]) -> list[dict]:
@@ -240,7 +349,7 @@ def _read_agent_attachments(items: list[ChatAttachmentIn]) -> list[dict]:
             raise ValidationError(say("emptyFile"))
         if len(raw) > library.MAX_FILE_BYTES:
             raise ValidationError(
-                say("fileTooLarge", mb=library.MAX_FILE_BYTES // (1024 * 1024))
+                say("fileTooLarge", size=size_text(library.MAX_FILE_BYTES))
             )
         mime = raster_images.sniff(raw[:12])
         if mime is None:
@@ -308,7 +417,16 @@ async def _publish_as_agent(
         if parent is None or parent.conversation_id != place.conversation_id:
             raise ValidationError("reply_to must belong to this conversation")
         reply_parent = parent
+    tagged = await _tagged_task(db, place, body.task) if body.task else None
+    quick = (
+        await _quick_replies(db, place, author, content, body.replies)
+        if body.replies
+        else {}
+    )
     content = await project_refs_text(db, place.project_id, place.room_id, content)
+    # 引导为主的题：提示阶梯的标记去掉、长代码换成提示；别的回复原样过（`guide`）。
+    screened = await guide.screen_reply(db, project_id=place.project_id, text=content)
+    content = screened.text
     prepared = (
         await asyncio.to_thread(_read_agent_attachments, body.attachments)
         if body.attachments
@@ -377,9 +495,16 @@ async def _publish_as_agent(
         topic_refs=[],
         author=author,
         publication_id=publication_id,
-        extra_meta={"quoted_context": body.quoted_context.model_dump(mode="json")}
-        if body.quoted_context
-        else None,
+        extra_meta={
+            **(
+                {"quoted_context": body.quoted_context.model_dump(mode="json")}
+                if body.quoted_context
+                else {}
+            ),
+            **({TASK_TAG: str(tagged)} if tagged is not None else {}),
+            **quick,
+        }
+        or None,
     )
     await get_broker().publish(
         str(place.conversation_id), {"type": "assistant_block", "block": payload}
@@ -392,10 +517,68 @@ async def _publish_as_agent(
     if turn_id is not None:
         runner.note_session_output(turn_id, tool=False)
     if payload is not None:
+        if screened.changed:
+            await _record_guide(db, place, payload, author, screened)
         if place.task is not None:
             naming.nudge(place.conversation_id, "message")
         await _summon_the_named(chat, runner, place, payload, author)
     return payload
+
+
+async def _record_guide(db, place, payload: dict, author: str, screened) -> None:
+    """What the guide-mode guards did to this reply, under the person whose
+    turn it answers (none when the platform started it)."""
+    starter = await who_started_the_open_turn(
+        db, place.project_id, place.conversation_id, author
+    )
+    person = await user_by_handle(db, starter) if starter else None
+    await guide.record(
+        db,
+        screened=screened,
+        project_id=place.project_id,
+        block_id=uuid.UUID(str(payload["id"])),
+        user_id=person.id if person is not None else None,
+    )
+    await db.commit()
+
+
+async def _quick_replies(db, place, seat: str, content: str, replies) -> dict:
+    """What makes a main-line message offer ``replies`` under it
+    (`quick_replies_meta`). It asks the people it @-mentions; naming nobody,
+    whoever started the turn it answers; started by the platform, nobody in
+    particular. Only a channel's main line offers them: in a task, a 支线 or
+    a private chat a question is asked with `cheese_ask`."""
+    if place.inner_id is not None or _is_dm(place.room):
+        raise ValidationError(say("chatRepliesMainLineOnly"))
+    roster = await room_roster(db, place.project_id, place.room)
+    people = {row["handle"] for row in roster if not row.get("agent")}
+    named = [
+        handle
+        for handle in _MENTION_RE.findall(expand_mention_names(content, roster))
+        if handle in people
+    ]
+    if not named:
+        starter = await who_started_the_open_turn(
+            db, place.project_id, place.conversation_id, seat
+        )
+        named = [starter] if starter else []
+    return quick_replies_meta(
+        replies,
+        asked=tuple(dict.fromkeys(named)),
+        deadline=datetime.now(UTC) + DEFAULT_QUESTION_LIFETIME,
+    )
+
+
+async def _tagged_task(db, place, ref: str) -> uuid.UUID:
+    """The task of this channel an AI teammate's message is about, by its
+    number or id; a ref that names none of this channel's tasks is refused
+    with what to use instead."""
+    found = (
+        await things_by_ref(db, place.project_id, Numbered.task, [ref.strip()])
+    ).get(ref.strip())
+    if found is None or found.room_id != place.room_id:
+        raise ValidationError(say("chatTaskUnknown", task=ref.strip()))
+    return found.id
 
 
 async def _summon_the_named(
@@ -404,19 +587,21 @@ async def _summon_the_named(
     """这条消息 @ 到的 AI 队友，各起一轮（`delivery/mention.py`）。
 
     消息先落库、先广播，再记投递：被点名的那位醒来时，房间里已经有它要读的那一行。
+
+    频道主线上不这样：AI 队友在主线的话不叫醒别的 AI 队友，要别的队友做的事开成
+    任务交给它（`cheese_task(action=open)` 的 ``teammate``）。任务和支线里照旧。
     """
+    if place.inner_id is None:
+        return
     # deferred-import: tests patch this name on app.domain.delivery.mention
     from app.domain.delivery.mention import AGENT_MENTIONS_PER_HOUR, record_mentions
 
     async with chat.session_factory() as session:
-        block = await BlockRepository(session).get(uuid.UUID(payload["id"]))
         summoned = await record_mentions(
             session,
             project_id=place.project_id,
             room_id=place.room_id,
-            conversation_id=await answered_in(session, block)
-            if block is not None
-            else place.conversation_id,
+            conversation_id=place.conversation_id,
             block_id=uuid.UUID(payload["id"]),
             author=author,
             content=payload["content"],
@@ -456,12 +641,11 @@ async def _summon_the_named(
         await dispatch_pending(chat.session_factory, chat=chat, runner=runner)
 
 
-@router.post("/{topic_id}/note", dependencies=[CHEESE_ONLY_IN_ROOM])
+@router.post("/{topic_id}/note")
 async def leave_a_note(
-    topic_id: uuid.UUID,
+    at: Annotated[InChannel, Can(Permission.note_own_threads, at="topic_id")],
     body: dict,
     db: DbSession,
-    resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
 ) -> dict:
     """同 handle 便条的写侧（结论 11）：给自己的另一条线程留一句话。
@@ -474,12 +658,11 @@ async def leave_a_note(
     房间里的一条消息。那边这一刻没有在干活的会话就没人接住，如实回 `delivered: false`。
     """
 
-    place = await place_or_404(db, topic_id)
-    actor = await _actor_in_place(resolver, place)
+    place, actor = at.place, at.actor
     sender = actor.handle
     if not actor.authenticated:
         sender = await TopicMemberService(db).resolve_agent_handle(
-            topic_id, room_id=place.room_id
+            place.conversation_id, room_id=place.room_id
         )
     thread = (body.get("thread") or "").strip()
     try:

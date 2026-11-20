@@ -873,9 +873,9 @@ def test_another_tasks_session_cannot_redeliver_this_tasks_card(client):
     other = delivery_task(client, room_id, new=True)
     _put(client, mine, "out/别人的.pdf", "另一条任务塞进来的\n")
     other_session = {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=str(other.project_id), topic_id=str(other.id)
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(project_id=str(other.project_id), topic_id=str(other.id))
+        }"
     }
 
     r = _redeliver(client, mine, other_session, deliver="out/别人的.pdf")
@@ -927,7 +927,7 @@ def test_an_accept_that_lands_during_a_redeliver_keeps_what_it_accepted(
 ):
     """读机器上那一份要几秒，人正好在这几秒里采纳了：采纳的那一版不能被换掉，
     它的字节也不能被删。换的那一方拿到 409。"""
-    from app.api.routes.accept import _accept_service
+    from app.api.accept_service import accept_service
     from app.domain.review.services import cards as cards_mod
 
     project_id = _project(client)
@@ -947,7 +947,7 @@ def test_an_accept_that_lands_during_a_redeliver_keeps_what_it_accepted(
     async def read_while_someone_accepts(*args, **kwargs):
         data = await read(*args, **kwargs)
         async with client.test_factory() as session:
-            await _accept_service(session).accept(
+            await accept_service(session).accept(
                 card_id=uuid.UUID(card_id),
                 decided_by="alice",
                 head_sha=head,
@@ -979,7 +979,7 @@ def test_a_redeliver_during_an_accept_does_not_slip_in_unseen_bytes(
     409 —— 不能是「卡采纳了，挂着的却是没人看过的那一份」。"""
     import time
 
-    from app.api.routes.accept import _accept_service
+    from app.api.accept_service import accept_service
     from app.domain.library import service as library_service
     from app.domain.review.services import cards as cards_mod
 
@@ -1008,7 +1008,7 @@ def test_a_redeliver_during_an_accept_does_not_slip_in_unseen_bytes(
     async def accept_from_the_old_screen():
         async with client.test_factory() as session:
             try:
-                card = await _accept_service(session).accept(
+                card = await accept_service(session).accept(
                     card_id=uuid.UUID(card_id),
                     decided_by="alice",
                     head_sha=head,

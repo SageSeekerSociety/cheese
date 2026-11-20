@@ -1,6 +1,5 @@
 {
   "acceptAction": "Accept",
-  "acceptAndComplete": "Accept and complete the task",
   "accepted": "Accepted",
   "approve": "Approve",
   "approvedCount": "{done}/{total} approved",
@@ -46,5 +45,19 @@
   "voidReason": "Reason for voiding (optional)",
   "waitingOn": "Waiting for {'@'}{name} to review",
   "waitingOnYou": "Waiting for your review",
-  "youApproved": "You approved"
+  "youApproved": "You approved",
+  "handIn": {
+    "unhanded": "Unsubmitted changes",
+    "submit": "Submit for review",
+    "resubmit": "Submit another version",
+    "submitAndAdopt": "Submit and accept",
+    "note": "Description",
+    "drafting": "Drafting",
+    "body": "More details",
+    "files": "Changed files",
+    "reviewer": "Review",
+    "you": "{name} (you)",
+    "loadFailed": "Can't read these changes",
+    "submitFailed": "Submitting for review failed"
+  }
 }

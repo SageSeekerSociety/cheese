@@ -2,7 +2,7 @@
   "commentDeleteOwnOnly": "You can only delete your own comments",
   "commentNotFound": "Comment not found",
   "feedbackAdminRequired": "Feedback admin required",
-  "feedbackAgentCannotPublish": "An AI teammate can't publish feedback directly. Propose it with `cheese_feedback_propose`, and a person confirms it before it's sent",
+  "feedbackAgentCannotPublish": "An AI teammate can't publish feedback directly. Propose it with `cheese_feedback(action=propose)`, and a person confirms it before it's sent",
   "feedbackAlreadySent": "This issue was just sent as feedback. Don't propose it again",
   "feedbackAttachmentFiled": "Those files already belong to another report",
   "feedbackAttachmentNotFound": "Attachment not found",

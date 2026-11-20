@@ -4,6 +4,7 @@
 搬去了 ``app/api/task_deps.py`` —— 那道装配不只题目路由在用（见那个模块的说明）。
 """
 
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -15,17 +16,23 @@ from app.api.task_teaching import (
     coerce_teaching,
     validate_task_teaching,
 )
-from app.auth.space_access import may_publish_in_space
+from app.core.content_review import TextKind, readable_text, review_text
 from app.core.errors import (
     BadRequestError,
     ForbiddenError,
 )
+from app.domain.space import permissions as space_seats
+from app.domain.space.learning_analysis_service import SpaceLearningAnalysisService
 from app.domain.space.repositories import (
     SpaceCategoryRepository,
     SpaceDomainGroupDomainRepository,
     SpaceRepository,
 )
+from app.domain.task import claims
 from app.domain.task.inputs import (
+    APPROVE_DISAPPROVED,
+    START_DIRECT,
+    map_start_mode,
     map_submitter_type,
 )
 from app.domain.task.mentors import require_consent, set_mentors
@@ -35,6 +42,8 @@ from app.domain.task.services import (
     ensure_domain_groups_belong_to_space,
     validate_and_get_category_id,
 )
+from app.domain.task.stages import new_stage_key, stage_lines, with_stage_index
+from app.domain.task.test_suite import suite_lines
 
 # 给了题目的「给 AI 队友的指导」(#944)：请求体沿用 项目集 PATCH 那个严格模型，
 # 读写与引用校验在 app.api.task_teaching 里，接口形状在 app.api.task_serialization。
@@ -52,6 +61,10 @@ class CreateTaskRequest(BaseModel):
     space: int
     participant_limit: int | None = Field(default=None, alias="participantLimit")
     default_deadline: int = Field(default=30, alias="defaultDeadline")
+    # How a claim starts: ``DIRECT`` (straight away; ``deadline``, when set,
+    # is everyone's) or ``APPLY`` (on approval, ``defaultDeadline`` days from
+    # then). A new task starts directly unless its publisher says otherwise.
+    start_mode: str = Field(default="DIRECT", alias="startMode")
     deadline: int | None = None
     registration_start_at: int | None = Field(default=None, alias="registrationStartAt")
     require_real_name: bool = Field(default=False, alias="requireRealName")
@@ -61,19 +74,33 @@ class CreateTaskRequest(BaseModel):
     category_id: int | None = Field(default=None, alias="categoryId")
     team_locking_policy: str = Field(default="NO_LOCK", alias="teamLockingPolicy")
     topics: list[int] = Field(default_factory=list)
+    # 这道题涉及的知识点（§ learning analysis, step 1）：这块板知识点清单里的 id。
+    # 与 ``topics`` 同一形状；不属于本板（或不在了）的 id 会被丢掉，见
+    # ``SpaceLearningAnalysisService.valid_point_ids``。
+    knowledge_point_ids: list[int] = Field(
+        default_factory=list, alias="knowledgePointIds"
+    )
     submission_schema: list[dict] = Field(
         default_factory=list, alias="submissionSchema"
     )
     # 评分要点：每行 ``{item, points, criteria}``，见 app.domain.task.rubric。
     rubric: list[dict] = Field(default_factory=list)
     rubric_public: bool = Field(default=True, alias="rubricPublic")
+    # 阶段：每个 ``{name, description, dueAt}``，见 app.domain.task.stages。提交项与
+    # 评分要点各用 ``stage`` 指它属于第几个；不给就是一个阶段。
+    stages: list[dict] = Field(default_factory=list)
+    # 测试点（§数据结构）：一个阶段一套，每套 ``{kind, runtime, ..., cases}``，见
+    # app.domain.task.test_suite。不给就是这道题没有测试点，和现在完全一样。
+    test_suite: list[dict] = Field(default_factory=list, alias="testSuite")
     access_control_enabled: bool = Field(default=False, alias="accessControlEnabled")
     access_domain_group_ids: list[int] = Field(
         default_factory=list, alias="accessDomainGroupIds"
     )
-    # 出题时带的材料。文件先经 ``POST /attachments`` 传上来拿到 id，建题时一次挂上
-    # —— 见 ``TaskAttachmentService.attach_uploaded`` 里对这条顺序的说明。
+    # 出题时带的材料。文件先经 ``POST /attachments`` 传上来拿到 id，建题时拷进题目
+    # 资料库（``package.add_uploads``）：题目还没建好时没有资料库可放。
     attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
+    # 起始代码 (#4767)：同样先传成附件的一份 .zip，建题时查过、放进题目资料库。
+    starter_attachment_id: int | None = Field(default=None, alias="starterAttachmentId")
     # 这道题自己的「给 AI 队友的指导」(#944)，盖过 空间/项目集 那份。省略 =
     # 不设，于是这道题沿用上层的；给了就整份替换掉上层的（见 resolve 的生效语义）。
     teaching: TeachingRequest | None = None
@@ -90,7 +117,6 @@ class TaskParticipantRequest(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
-    deadline: int | None = None
     email: str | None = None
     phone: str | None = None
     apply_reason: str | None = Field(default=None, alias="applyReason")
@@ -104,7 +130,6 @@ class JoinTaskAsTeamRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     team_id: int = Field(..., alias="teamId", gt=0)
-    deadline: int | None = None
     email: str | None = None
     phone: str | None = None
     apply_reason: str | None = Field(default=None, alias="applyReason")
@@ -145,6 +170,7 @@ class PatchTaskRequest(BaseModel):
         default=None, alias="hasParticipantLimit"
     )
     default_deadline: int | None = Field(default=None, alias="defaultDeadline")
+    start_mode: str | None = Field(default=None, alias="startMode")
     rank: int | None = None
     has_rank: bool | None = Field(default=None, alias="hasRank")
     approved: str | None = None
@@ -157,7 +183,16 @@ class PatchTaskRequest(BaseModel):
     # 评分要点：给了就整份替换，省略不动。
     rubric: list[dict] | None = None
     rubric_public: bool | None = Field(default=None, alias="rubricPublic")
+    # 阶段：给了就整份替换，省略不动；已有的阶段带回它的 ``id``，提交跟着它走。
+    stages: list[dict] | None = None
+    # 测试点：给了就整份替换，省略不动。
+    test_suite: list[dict] | None = Field(default=None, alias="testSuite")
     topics: list[int] | None = None
+    # 这道题涉及的知识点（§ learning analysis, step 1）：给了就整份替换，省略不动，
+    # 与 ``topics`` 同一语义。
+    knowledge_point_ids: list[int] | None = Field(
+        default=None, alias="knowledgePointIds"
+    )
     access_control_enabled: bool | None = Field(
         default=None, alias="accessControlEnabled"
     )
@@ -175,14 +210,28 @@ class PatchTaskRequest(BaseModel):
     default_role: str | None = Field(default=None, alias="defaultRole")
     # The whole list of mentors; omitted leaves it as it is.
     mentors: list[str] | None = None
+    # Files the person uploaded (``POST /attachments``) to add to the 题目's
+    # materials with this change: the ones 芝士 put into the changes it wrote.
+    # A published 题目's own files page adds them one at a time instead.
+    attachment_ids: list[int] = Field(default_factory=list, alias="attachmentIds")
+    # A .zip the person uploaded the same way, to become the 题目's starter code
+    # with this change (replacing the one it has); omitted leaves it as it is.
+    starter_attachment_id: int | None = Field(default=None, alias="starterAttachmentId")
+    # True: the 题目 keeps no starter code after this change (芝士 wrote
+    # ``starter: 0``). Ignored when ``starterAttachmentId`` names a new one.
+    remove_starter: bool = Field(default=False, alias="removeStarter")
 
 
 class CreateSubmissionReviewRequest(BaseModel):
+    # ``score`` 是这一阶段**手动**几项的分（挂了自动行的题，总分后面加自动行的分，
+    # 由 ``auto_score.compose_review`` 合成，前端不必自己算）。``testsOverride``
+    # （``{score, reason}``）是老师手动改 tests 行分时的原因，只有挂了测试点的题用。
     model_config = ConfigDict(populate_by_name=True)
 
     accepted: bool
-    score: int
+    score: int | None = None
     comment: str
+    tests_override: dict | None = Field(default=None, alias="testsOverride")
 
 
 class PatchSubmissionReviewRequest(BaseModel):
@@ -191,6 +240,7 @@ class PatchSubmissionReviewRequest(BaseModel):
     accepted: bool | None = None
     score: int | None = None
     comment: str | None = None
+    tests_override: dict | None = Field(default=None, alias="testsOverride")
 
 
 async def _create_task_entity(
@@ -210,6 +260,7 @@ async def _create_task_entity(
         space_id = payload.space
         participant_limit = payload.participant_limit
         default_deadline = payload.default_deadline
+        start_mode = map_start_mode(payload.start_mode)
         deadline_ms = payload.deadline
         registration_start_ms = payload.registration_start_at
         require_real_name = payload.require_real_name
@@ -219,11 +270,14 @@ async def _create_task_entity(
         category_id = payload.category_id
         team_locking_policy = payload.team_locking_policy
         topics = payload.topics
+        knowledge_point_ids = payload.knowledge_point_ids
         access_control_enabled = payload.access_control_enabled
         access_domain_group_ids = payload.access_domain_group_ids
         submission_schema = payload.submission_schema or []
         rubric_raw = payload.rubric
         rubric_public = payload.rubric_public
+        stages_raw = payload.stages
+        test_suite_raw = payload.test_suite or []
         teaching = coerce_teaching(payload.teaching)
         default_role = payload.default_role
     else:
@@ -267,6 +321,7 @@ async def _create_task_entity(
             default_deadline = int(default_deadline_raw)
         except (TypeError, ValueError) as exc:
             raise BadRequestError(f"Invalid defaultDeadline: {exc}") from exc
+        start_mode = map_start_mode(str(payload.get("startMode") or START_DIRECT))
 
         deadline_ms = payload.get("deadline")
         registration_start_ms = payload.get("registrationStartAt")
@@ -308,6 +363,15 @@ async def _create_task_entity(
                 except (TypeError, ValueError):
                     continue
 
+        knowledge_point_ids_raw = payload.get("knowledgePointIds") or []
+        knowledge_point_ids = []
+        if isinstance(knowledge_point_ids_raw, list):
+            for point_id in knowledge_point_ids_raw:
+                try:
+                    knowledge_point_ids.append(int(point_id))
+                except (TypeError, ValueError):
+                    continue
+
         schema_raw = payload.get("submissionSchema") or []
         submission_schema = (
             [e for e in schema_raw if isinstance(e, dict)]
@@ -322,11 +386,36 @@ async def _create_task_entity(
 
         rubric_raw = payload.get("rubric") or []
         rubric_public = bool(payload.get("rubricPublic", True))
+        stages_raw = payload.get("stages") or []
+        test_suite_raw = payload.get("testSuite") or []
 
+    # Every stage gets its id now, so the items and lines sent with it can name
+    # it; one naming a stage the task will not have is refused before anything
+    # is written.
+    stages = [
+        replace(line, key=line.key or new_stage_key())
+        for line in stage_lines(
+            [e for e in stages_raw if isinstance(e, dict)]
+            if isinstance(stages_raw, list)
+            else []
+        )
+    ]
+    keys = [line.key for line in stages if line.key]
+    submission_schema = with_stage_index(submission_schema, keys)
+    # 测试点先定：评分要点里设为「测试点」的那一项要指着有测试点的阶段，
+    # ``rubric_lines`` 据此拒掉落空的项。
+    test_suite = suite_lines(
+        with_stage_index(
+            [e for e in test_suite_raw if isinstance(e, dict)]
+            if isinstance(test_suite_raw, list)
+            else [],
+            keys,
+        )
+    )
+    suite_stage_indexes = [line.stage for line in test_suite]
     rubric = rubric_lines(
-        [e for e in rubric_raw if isinstance(e, dict)]
-        if isinstance(rubric_raw, list)
-        else []
+        with_stage_index(rubric_raw if isinstance(rubric_raw, list) else [], keys),
+        suite_stages=suite_stage_indexes,
     )
 
     if team_locking_policy not in {"NO_LOCK", "LOCK_ON_APPROVAL"}:
@@ -361,18 +450,26 @@ async def _create_task_entity(
     if space is None or space.review_status != "APPROVED":
         raise BadRequestError("Space must be approved before creating tasks")
 
-    # 发题的门是「本板的成员」，判据在 ``app.auth.space_access.may_publish_in_space``
+    # 发题的门是「本板的成员」，判据在 ``app.domain.space.permissions``（``publish``）
     # —— 更早它是管理员专属（收权：那时的 ``POST /tasks`` 几乎不校验，任何登录用户
     # 拿着 space id 就能发），#1783 之后放开成任何人：发题是成员的能力，上不上板才是
     # 管理员的判断（审核走 ``PATCH /tasks/{id}``，另一条判据）。放在这里，是因为
     # ``POST /tasks`` 与草稿发布都从这里走，漏掉任一条就等于少了半道门。
-    if not await may_publish_in_space(
-        session=db, space_id=space_id, user_id=creator_user_id
+    if not await space_seats.SPACE.allows(
+        db, space_id, creator_user_id, space_seats.Permission.publish
     ):
         raise ForbiddenError("Only a member of this board can publish tasks here")
 
     # 指导里的引用先查再建：拒了就不该留下半道题（同 项目集 PATCH 的顺序）。
     await validate_task_teaching(db, teaching=teaching, actor_user_id=creator_user_id)
+
+    # An open space is read by everyone in its scope, so what a problem says
+    # there is published (``app.core.content_review``); in a members-only space
+    # it is not, and is not reviewed.
+    if space.open_scope is not None:
+        await review_text(
+            TextKind.PUBLIC_TEXT, [name, intro, readable_text(description)]
+        )
 
     # 确认 space 存在并获取有效的 category id（传入或默认）
     effective_category_id = await validate_and_get_category_id(
@@ -404,6 +501,7 @@ async def _create_task_entity(
         max_team_size=max_team_size,
         team_locking_policy=team_locking_policy,
         access_control_enabled=access_control_enabled,
+        start_mode=start_mode,
     )
 
     # 题目级「给 AI 队友的指导」(#944)：整份替换，见 apply_task_teaching。
@@ -434,12 +532,29 @@ async def _create_task_entity(
     if topics:
         await task_service.add_topic_relations(task_id=task.id, topic_ids=topics)
 
+    # 知识点关联（§ learning analysis, step 1）：与话题同一形状，但会先挑一遍 ——
+    # 题目只能归在自己板上的知识点下，给来的别处 id 当它不存在（见 service）。
+    if knowledge_point_ids:
+        valid_points = await SpaceLearningAnalysisService.of(db).valid_point_ids(
+            space_id=space_id, point_ids=knowledge_point_ids
+        )
+        if valid_points:
+            await task_service.add_knowledge_point_relations(
+                task_id=task.id, knowledge_point_ids=valid_points
+            )
+
     # 提交表单：发布页总会带上这张表（至少一个「提交文件」项）。建题时不写，
     # 题目的提交页就一个输入项都没有，成员无处上传 —— 和 PATCH 写的是同一张表。
+    if stages:
+        await task_service.replace_stages(task.id, stages)
     if submission_schema:
         await task_service.replace_submission_schema(task.id, submission_schema)
     if rubric:
         await task_service.replace_rubric(task.id, rubric)
+    # 测试点整份写：入参里的每个阶段一套，用例的输入/期望输出写私有存储。写在评分
+    # 要点之后（两者都在同一个事务里，顺序不影响结果）。
+    if test_suite:
+        await task_service.replace_test_suites(task.id, test_suite)
 
     return task
 
@@ -451,5 +566,17 @@ async def set_task_mentors(
     await set_mentors(db, task=task, handles=handles, creator_user_id=creator_user_id)
 
 
-async def require_mentor_consent(db, *, task, agreed: bool) -> None:
-    await require_consent(db, task=task, agreed=agreed)
+async def consent_before_a_direct_start(
+    db, membership_service, *, task, member_id: int, is_team: bool, agreed: bool
+) -> None:
+    """A new claim on a task started directly is approved and started in the
+    same request, so the mentor consent that starting asks for
+    (``task_claims.start_claim``) is checked before the claim, and the place
+    it takes, are written. A claim already held asks nothing here."""
+    if not claims.starts_now(task):
+        return
+    held = await membership_service.get_membership_by_task_and_member(
+        task_id=task.id, member_id=member_id, is_team=is_team
+    )
+    if held is None or held.approved == APPROVE_DISAPPROVED:
+        await require_consent(db, task=task, agreed=agreed)

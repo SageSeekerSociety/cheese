@@ -51,7 +51,6 @@ BASELINE: tuple[str, ...] = (
     "backend/app/domain/space/group_repositories.py::SpaceDomainGroupRepository",
     "backend/app/domain/space/repositories.py::SpaceCategoryRepository",
     "backend/app/domain/space/repositories.py::SpaceRepository",
-    "backend/app/domain/task/repositories.py::TaskMembershipRepository",
     "backend/app/domain/task/submission_repositories.py::TaskSubmissionRepository",
     "backend/app/domain/team/recruitment_repositories.py::RecruitmentRepository",
     "backend/app/domain/team/recruitment_services.py::RecruitmentService",

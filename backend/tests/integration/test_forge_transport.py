@@ -86,7 +86,6 @@ def test_native_traffic_streams_with_original_project_authority(client, relay, s
             "Authorization": f"{scheme} {token}",
             "Git-Protocol": "version=2",
             "Content-Type": "application/x-git-upload-pack-request",
-            "X-Cheese-Token": "must-not-forward",
             "Cookie": "must-not-forward",
         },
         content=b"request\x00bytes",
@@ -102,7 +101,6 @@ def test_native_traffic_streams_with_original_project_authority(client, relay, s
     assert body == b"request\x00bytes"
     assert request.headers["authorization"] == f"{scheme} {token}"
     assert request.headers["git-protocol"] == "version=2"
-    assert "x-cheese-token" not in request.headers
     assert "cookie" not in request.headers
     assert closed == [True]
 

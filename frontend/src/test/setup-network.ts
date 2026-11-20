@@ -26,6 +26,27 @@ globalThis.fetch = async (input, init) => {
       headers: { 'Content-Type': 'application/json' },
     })
   }
+  // Every composer asks who its draft is for (useAddressing). A test that is not
+  // about that is told: nobody in particular, in a channel.
+  if (new URL(url, 'http://test').pathname.endsWith('/messages/addressing')) {
+    const data = { agent: null, reason: null, people: [], place: 'channel', task_status: null }
+    return new Response(JSON.stringify({ code: 200, message: 'ok', data }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
+  // The error reporter (errorReporter.ts) posts every failure the page did not
+  // handle, ten seconds after the first one — including on pages outside every
+  // project, where 新建空间 and 创建团队 live. A test that drives a failure is
+  // not about reporting it, and being told the batch was kept keeps the report
+  // from becoming the test's own failure.
+  if (new URL(url, 'http://test').pathname.endsWith('/frontend-errors')) {
+    const data = { accepted: 0, dropped: 0 }
+    return new Response(JSON.stringify({ code: 200, message: 'ok', data }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
   return trappedFetch(input, init)
 }
 

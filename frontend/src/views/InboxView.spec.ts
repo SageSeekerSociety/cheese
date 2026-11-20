@@ -2,7 +2,7 @@
  *
  *  一个刚注册的人手上一个项目都没有，`landingForMember` 就把他放在这一页。这里锁
  *  的是他头一眼能看见什么：不是一句「这里什么都没有」，而是平台上有哪几条路可走
- *  ——建项目、用邀请码加入、去看团队——以及 AI 队友和代码仓库进项目之后在哪儿配。
+ *  ——建项目、去看团队——以及 AI 队友和代码仓库进项目之后在哪儿配。
  */
 import type { Component } from 'vue'
 
@@ -44,9 +44,8 @@ const refreshProjects = vi.fn()
 const store = { projectsSettled: true, projects: [] as { id: string }[], refreshProjects }
 vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => store }))
 
-const spaceJoin = vi.fn()
 vi.mock('@/api/spaces', () => ({
-  SpacesApi: { join: (...a: unknown[]) => spaceJoin(...a), list: async () => ({ spaces: [] }) },
+  SpacesApi: { list: async () => ({ spaces: [] }) },
 }))
 
 const showNewProject = vi.fn()
@@ -94,7 +93,6 @@ beforeEach(async () => {
   respondToInvitation.mockReset().mockResolvedValue({})
   for (const call of Object.values(teams)) call.mockReset().mockResolvedValue(undefined)
   showNewProject.mockReset()
-  spaceJoin.mockReset()
   router = createRouter({
     history: createMemoryHistory(),
     routes: [
@@ -114,16 +112,15 @@ async function mount() {
   return render(View, {
     global: {
       plugins: [vuetify, router],
-      stubs: { JoinSpaceDialog: true, NotificationFeed: true },
+      stubs: { NotificationFeed: true },
     },
   })
 }
 
 describe('待办页零项目时的第一屏', () => {
-  it('三条起步路都在，各自一句话说清进去能得到什么', async () => {
+  it('两条起步路都在，各自一句话说清进去能得到什么', async () => {
     await mount()
     expect(await screen.findByText(t('work.startPaths.project.title', termParams(DEFAULT_SHELL)))).toBeTruthy()
-    expect(screen.getByText(t('work.startPaths.invite.title'))).toBeTruthy()
     expect(screen.getByText(t('work.startPaths.teams.title'))).toBeTruthy()
   })
 
@@ -137,19 +134,6 @@ describe('待办页零项目时的第一屏', () => {
     await utils.findByText(t('work.startPaths.project.title', termParams(DEFAULT_SHELL)))
     await utils.getByRole('button', { name: t('navigation.newProject', termParams(DEFAULT_SHELL)) }).click()
     expect(showNewProject).toHaveBeenCalled()
-  })
-
-  // 这一页上的「用邀请码加入」和首页目录里那一行是同一件事（同一个 `useJoinSpace`）：
-  // 加进去了就直接进那个空间，留在原地等于什么都没发生。
-  it('用邀请码加入：加进去了就进那个空间', async () => {
-    spaceJoin.mockResolvedValue({ space: { id: 9 } })
-    await render(View, { global: { plugins: [vuetify, router], stubs: { NotificationFeed: true } } })
-    await fireEvent.click(await screen.findByRole('button', { name: t('work.startPaths.invite.action') }))
-    await fireEvent.update(await screen.findByLabelText(t('work.joinLabel')), 'abc123')
-    await fireEvent.click(screen.getByRole('button', { name: t('work.joinSubmit') }))
-
-    await waitFor(() => expect(spaceJoin).toHaveBeenCalledWith({ code: 'abc123' }))
-    await waitFor(() => expect(router.currentRoute.value.fullPath).toBe('/spaces/9/tasks'))
   })
 
   it('手上有项目的人看到的还是平常那一页，不摆起步路', async () => {

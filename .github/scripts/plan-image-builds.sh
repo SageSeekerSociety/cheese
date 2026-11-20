@@ -16,7 +16,19 @@ retry_wait="${REGISTRY_RETRY_WAIT_SECONDS:-5}"
 # Every image this workflow publishes, by the name of its registry path. Its
 # build job is `build-<name>`, and its output flag is the name with `_`.
 images=(backend frontend office-render browser-render gateway
-  metering-proxy private-executor collab)
+  metering-proxy private-executor collab judge)
+
+# The judge's one build job publishes an image per runtime, `judge-<runtime>`
+# (backend/sandbox/judge/Dockerfile.<runtime>); every other image is published
+# under its own name.
+judge_runtimes=(python cpp java node go)
+published_as() {
+  if [[ "$1" == judge ]]; then
+    printf 'judge-%s\n' "${judge_runtimes[@]}"
+  else
+    printf '%s\n' "$1"
+  fi
+}
 
 # The tag the image built from <sha> is published under: build.yml tags
 # metering-proxy with the full sha and every other image with the first seven
@@ -74,14 +86,16 @@ if [[ -z "${BASE_SHA+x}" && "$event_name" == push && "$ref_type" == branch ]]; t
     complete=true
     for image in "${images[@]}"; do
       builds_image "$image" "$candidate" || continue
-      status=0
-      registry_has "$image" "$candidate" || status=$?
-      if [[ "$status" -eq 1 ]]; then
-        complete=false
-        break
-      elif [[ "$status" -ne 0 ]]; then
-        exit 1
-      fi
+      while IFS= read -r name; do
+        status=0
+        registry_has "$name" "$candidate" || status=$?
+        if [[ "$status" -eq 1 ]]; then
+          complete=false
+          break 2
+        elif [[ "$status" -ne 0 ]]; then
+          exit 1
+        fi
+      done < <(published_as "$image")
     done
     if [[ "$complete" == true ]]; then
       base_sha="$candidate"
@@ -104,6 +118,7 @@ gateway=false
 metering_proxy=false
 private_executor=false
 collab=false
+judge=false
 
 # Tags and manual runs are explicit release/rebuild requests. A repository with
 # no earlier complete image set also needs a complete bootstrap.
@@ -131,6 +146,7 @@ if [[ "$event_name" != "push" || "$ref_type" == "tag" || -z "$base_sha" ]] \
   metering_proxy=true
   private_executor=true
   collab=true
+  judge=true
 else
   while IFS= read -r -d '' changed_path; do
     case "$changed_path" in
@@ -168,7 +184,17 @@ else
       docs/manual/* | docs/site/* | backend/sandbox/cheese \
         | backend/app/core/config.py \
         | backend/app/core/sandbox_config.py \
-        | backend/app/core/machine_config.py)
+        | backend/app/core/machine_config.py \
+        | backend/app/core/db_config.py)
+        frontend=true
+        ;;
+    esac
+
+    # The web build bakes in the API generation it sends with every request
+    # (frontend/Dockerfile, the `api` context). A backend whose generation rose
+    # while the frontend image stayed would refuse every page, new ones too.
+    case "$changed_path" in
+      backend/api-generation)
         frontend=true
         ;;
     esac
@@ -188,8 +214,16 @@ else
     # dependencies both are installed from.
     case "$changed_path" in
       frontend/collab/* | frontend/src/lib/docSchema/* \
-        | frontend/package.json | frontend/pnpm-lock.yaml | frontend/patches/*)
+        | frontend/package.json | frontend/pnpm-lock.yaml | frontend/pnpm-workspace.yaml \
+        | frontend/patches/*)
         collab=true
+        ;;
+    esac
+
+    # The judge's runtime images are built from their own recipes alone.
+    case "$changed_path" in
+      backend/sandbox/judge/*)
+        judge=true
         ;;
     esac
 
@@ -223,7 +257,7 @@ fi
 echo "planned: backend=$backend frontend=$frontend" \
   "office_render=$office_render browser_render=$browser_render" \
   "gateway=$gateway metering_proxy=$metering_proxy" \
-  "private_executor=$private_executor" "collab=$collab" \
+  "private_executor=$private_executor" "collab=$collab" "judge=$judge" \
   "base=${base_sha:-none}" >&2
 
 {
@@ -235,6 +269,7 @@ echo "planned: backend=$backend frontend=$frontend" \
   echo "metering_proxy=$metering_proxy"
   echo "private_executor=$private_executor"
   echo "collab=$collab"
+  echo "judge=$judge"
   echo "base_sha=$base_sha"
   echo "base_tag=${base_sha:0:7}"
   echo "current_tag=$("$(dirname "$0")/../../deploy/image-tag.sh" "$current_sha")"

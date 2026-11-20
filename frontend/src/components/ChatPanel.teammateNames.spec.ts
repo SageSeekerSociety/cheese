@@ -97,6 +97,9 @@ const ask = (to: string, turn: string) =>
   block({ author: 'me', content: '请看一下', meta: { agent_recipient: { handle: to }, consumed_turn: turn } })
 const reply = (seat: string, turn: string, content: string) => block({ author: seat, turn_id: turn, content })
 // 平台替这一轮写的通知。`seat` 是后端记下的那一轮是谁的。
+// 后端那张表给这几类的样子（`notice_meta.shown_as`）：没做完要人来，兜底投递是平台
+// 自己的运行。
+const SHOWN_AS: Record<string, Block['shown_as']> = { turn_failed: 'for_agent', timed_delivery: 'hidden' }
 const notice = (turn: string, eventType: string, who: string, content: string, seat?: string) =>
   block({
     kind: 'event',
@@ -104,6 +107,7 @@ const notice = (turn: string, eventType: string, who: string, content: string, s
     author: 'system',
     turn_id: turn,
     content,
+    shown_as: SHOWN_AS[eventType] ?? 'happening',
     meta: { event_type: eventType, severity: 'error', who, detail: '服务原话：No response', ...(seat ? { seat } : {}) },
   })
 
@@ -145,7 +149,6 @@ function notices(container: Element) {
     text: row.textContent ?? '',
   }))
 }
-const as = (name: string) => ({ avatar: name, name })
 
 beforeEach(() => {
   setLocale('zh-CN')
@@ -159,7 +162,7 @@ beforeEach(() => {
 beforeAll(loadMarkdownReader)
 
 describe('一间房里几位队友，各署各的名', () => {
-  it('回复、正在处理、失败通知都署那一轮的队友', async () => {
+  it('回复署那一轮的队友；平台替它说的失败认得出是哪一位，但不署它的名', async () => {
     listBlocks.mockResolvedValue({
       data: [
         ask(KIMI.own, 'kimi-turn'),
@@ -167,19 +170,11 @@ describe('一间房里几位队友，各署各的名', () => {
         notice('kimi-turn', 'turn_failed', 'human', 'Kimi 这一轮失败了'),
         ask(OPUS.own, 'opus-turn-1'),
         reply(OPUS.seat, 'opus-turn-1', 'Opus 的回复'),
-        // 这一轮它一句话都还没说：只有人交给它的那一条说得出是谁的。
+        // 平台自己的运行：不在对话里。
         ask(OPUS.own, 'opus-turn-2'),
         notice('opus-turn-2', 'timed_delivery', 'cheese', 'Opus 的兜底投递'),
         ask(OPUS.own, 'opus-turn-3'),
         notice('opus-turn-3', 'turn_failed', 'human', 'Opus 这一轮失败了'),
-        // 不属于哪位队友那一轮的：人编辑了文档。
-        block({
-          kind: 'event',
-          author_type: 'platform',
-          author: 'me',
-          content: '我 编辑了文档',
-          meta: { action: 'doc', detail: '改了第二节' },
-        }),
       ],
       has_more: false,
     })
@@ -195,14 +190,12 @@ describe('一间房里几位队友，各署各的名', () => {
       const row = rows.find((r) => r.text.includes(text))
       return row && { avatar: row.avatar, name: row.name }
     }
-    expect(find('Kimi 这一轮失败了')).toEqual(as('芝士K'))
-    expect(find('Opus 这一轮失败了')).toEqual(as('芝士Opus'))
-    expect(find('Opus 的兜底投递')).toEqual(as('芝士Opus'))
-    expect(rows.find((r) => r.text.includes('Opus 的兜底投递'))?.text).toContain('芝士Opus正在处理')
-    expect(find('编辑了文档')).toEqual({ avatar: null, name: null })
+    expect(find('Kimi 这一轮失败了')).toEqual({ avatar: '芝士K', name: null })
+    expect(find('Opus 这一轮失败了')).toEqual({ avatar: '芝士Opus', name: null })
+    expect(container.textContent).not.toContain('Opus 的兜底投递')
   })
 
-  it('一轮还没开始就失败了，通知署它记下的那位队友；说不出是谁的就不署队友', async () => {
+  it('一轮还没开始就失败了，认得出它记下的那位队友；说不出是谁的就只是平台的', async () => {
     listBlocks.mockResolvedValue({
       data: [
         // 交给 Kimi 的那一轮没起来：时间线上只有平台替它写的这一条。
@@ -220,7 +213,7 @@ describe('一间房里几位队友，各署各的名', () => {
       const row = rows.find((r) => r.text.includes(text))
       return row && { avatar: row.avatar, name: row.name }
     }
-    expect(find('Kimi 这一轮没起来')).toEqual(as('芝士K'))
+    expect(find('Kimi 这一轮没起来')).toEqual({ avatar: '芝士K', name: null })
     expect(find('说不出是谁的那一轮')).toEqual({ avatar: null, name: null })
   })
 

@@ -10,6 +10,8 @@ import ChannelBrowseView from './ChannelBrowseView.vue'
 
 import { listChannels } from '@/api/channels'
 import { myHandle } from '@/me'
+import { keys } from '@/query/keys'
+import { fromSnapshot } from '@/query/snapshot'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const props = defineProps<{ projectId: string }>()
@@ -23,15 +25,20 @@ const busyId = ref<string | null>(null)
 const creating = ref(false)
 const creatingOpen = ref(false)
 
-async function load() {
+async function load(fresh = false) {
+  const pid = props.projectId
   loading.value = true
   error.value = null
   try {
-    channels.value = (await listChannels(props.projectId)).items
+    const read = () => listChannels(pid)
+    const res = fresh ? await read() : await fromSnapshot(keys.projectChannels(pid), read)
+    if (props.projectId !== pid) return
+    channels.value = res.items
   } catch (e) {
+    if (props.projectId !== pid) return
     error.value = e instanceof Error ? e.message : String(e)
   } finally {
-    loading.value = false
+    if (props.projectId === pid) loading.value = false
   }
 }
 
@@ -52,7 +59,7 @@ async function setJoined(id: string, joined: boolean) {
   try {
     if (await store.setJoined(id, joined)) {
       channels.value = channels.value.map((c) => (c.id === id ? { ...c, joined } : c))
-      void load()
+      void load(true)
     }
   } finally {
     busyId.value = null
@@ -64,7 +71,7 @@ async function setArchived(id: string, archived: boolean) {
   try {
     if (archived) await store.archive(id)
     else await store.unarchive(id)
-    await load()
+    await load(true)
   } finally {
     busyId.value = null
   }
@@ -98,6 +105,6 @@ async function create(channel: { title: string; description: string; membersOnly
     @archive="(id) => setArchived(id, true)"
     @unarchive="(id) => setArchived(id, false)"
     @create="create"
-    @retry="load"
+    @retry="load(true)"
   />
 </template>

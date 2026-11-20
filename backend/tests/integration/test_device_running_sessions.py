@@ -135,7 +135,10 @@ async def test_running_sessions_roles_visibility_and_completion(
             )
         )
         await db.commit()
-        device_id, device_token = device.device_id, device.token
+        device_token = await devices.issue_token(device.device_id)
+        assert device_token
+        await db.commit()
+        device_id = device.device_id
 
     url = f"/connector/devices/{device_id}/running-sessions"
     assert (await client.get(url)).status_code == 401
@@ -170,13 +173,15 @@ async def test_running_sessions_roles_visibility_and_completion(
     assert visible.status_code == 200, visible.text
     assert [row["agent_name"] for row in visible.json()["sessions"]] == ["public"]
     local = await client.get(
-        "/connector/device/running-sessions", headers={"X-Cheese-Session": device_token}
+        "/connector/device/running-sessions",
+        headers={"Authorization": f"Bearer {device_token}"},
     )
     assert local.status_code == 200, local.text
     assert local.json() == response.json()
     assert (
         await client.get(
-            "/connector/device/running-sessions", headers={"X-Cheese-Session": "wrong"}
+            "/connector/device/running-sessions",
+            headers={"Authorization": f"Bearer {'wrong'}"},
         )
     ).status_code == 401
 

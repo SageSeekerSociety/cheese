@@ -6,16 +6,19 @@ who started the flow; GitHub's user-token API proves which repos they can connec
 
 import logging
 import uuid
+from typing import Annotated
 from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.app_return import back_in_app, started_in_app
 from app.api.auth import ActorResolverDep
-from app.api.response import ok
-from app.api.write_access import ROUTE_DECIDES
+from app.api.github_migration import move_to_github, refuse_unless_movable
+from app.api.response import ok, typed_response
+from app.api.write_access import ROUTE_DECIDES, Can, InProject
 from app.auth.project_access import may_read_project
 from app.core.config import settings
 from app.core.db import get_db
@@ -25,6 +28,7 @@ from app.core.errors import (
     ForbiddenError,
     GatewayUnavailableError,
     InternalServerError,
+    ValidationError,
 )
 from app.core.github_install_state import (
     INSTALL_TTL_S,
@@ -38,7 +42,7 @@ from app.domain.identity.actor import Actor
 from app.domain.membership.services import MemberService
 from app.domain.oauth.repositories import OAuthConnectionRepository
 from app.domain.oauth.services import OAuthService
-from app.domain.project.forge import follow_github_rename
+from app.domain.project.forge import binding_for_project, follow_github_rename
 from app.domain.project.github_app import (
     GitHubAppError,
     fetch_user_installation_repos,
@@ -228,6 +232,79 @@ async def connect_github_repo(
     )
 
 
+class GithubMigrationOut(BaseModel):
+    """The answer to a move: done and bound (``connected``), or the GitHub
+    page to install the App on the repository first (``install_url``)."""
+
+    connected: bool
+    repo: str | None = None
+    account: str | None = None
+    moved: bool | None = None
+    reopened_prs: int | None = None
+    install_url: str | None = None
+
+
+@router.post(
+    "/projects/{project_id}/github/migrate", **typed_response(GithubMigrationOut)
+)
+async def migrate_to_github(
+    at: Annotated[InProject, Can(Permission.edit_settings)],
+    body: dict,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Move a platform-hosted project to the GitHub repository at ``url``.
+
+    The repository must be empty and reachable through an installation of the
+    App the caller can write with; until it is, this answers with the
+    installation page, whose callback lands back on the settings page to ask
+    again (``github_install=migrate``). See ``app/api/github_migration.py``."""
+    project_id, actor = at.project.id, at.actor
+    raw = str(body.get("url") or "").strip()
+    parsed = parse_github_repo(raw) if raw else None
+    if parsed is None:
+        raise ValidationError(say("githubRepoUrlRequired"))
+    await refuse_unless_movable(db, project_id)
+    target = f"{parsed[0]}/{parsed[1]}"
+    service = ProjectService(db)
+    project = at.project
+    # The callback finds the repository here, as it does for a GitHub project.
+    await service.merge_settings(
+        project, {"github_repository_url": f"https://github.com/{target}"}
+    )
+    user_id, token = await _user_token(db, actor)
+    try:
+        for installation in await list_user_installations(token):
+            for repo in await fetch_user_installation_repos(token, installation["id"]):
+                if str(repo.get("full_name", "")).lower() != target.lower():
+                    continue
+                if not _writable(repo):
+                    raise ForbiddenError(say("githubRepoWriteRequired"))
+                try:
+                    moved = await move_to_github(
+                        db, project_id, installation["id"], repo
+                    )
+                except RepositoryTakenError as taken:
+                    holder = await _visible_holder(db, taken, actor.handle)
+                    raise ConflictError(
+                        say("repoTakenVisible", repo=taken.repo, project=holder)
+                        if holder
+                        else say("repoTakenHidden", repo=taken.repo)
+                    ) from None
+                return ok(moved)
+    except GitHubAppError as exc:
+        raise GatewayUnavailableError(say("githubRepoAccessUnverified")) from exc
+    await db.commit()
+    return ok(
+        {
+            "connected": False,
+            "install_url": await _install_url(
+                project_id, actor, user_id, in_app=started_in_app(request)
+            ),
+        }
+    )
+
+
 @router.get("/projects/{project_id}/github/install-url")
 async def get_github_install_url(
     project_id: uuid.UUID,
@@ -243,6 +320,7 @@ async def get_github_install_url(
 
 @router.get("/github/app/callback")
 async def github_app_install_callback(
+    request: Request,
     installation_id: int | None = Query(default=None),
     setup_action: str | None = Query(default=None),
     state: str | None = Query(default=None),
@@ -250,7 +328,7 @@ async def github_app_install_callback(
 ) -> RedirectResponse:
     claims = verify_install_state(state) if state else None
     landing = await _install(installation_id, setup_action, claims, db)
-    return back_in_app(landing) if claims and claims.in_app else landing
+    return back_in_app(request, landing) if claims and claims.in_app else landing
 
 
 async def _install(
@@ -302,6 +380,14 @@ async def _install(
             return failure("repository_selection_required")
         if not _writable(repo):
             return failure("repository_write_required")
+        binding = await binding_for_project(project_id, db)
+        if binding is not None and binding.kind == "forgejo":
+            # A hosted project moving to GitHub: the installation now reaches
+            # the repository; the settings page asks for the move itself
+            # (`POST …/github/migrate`), which copies the branches first.
+            return _settings_redirect(
+                project_id, github_install="migrate", repo=repo["full_name"]
+            )
         await ProjectGitInstallationRepository(db).upsert(
             project_id=project_id,
             installation_id=installation_id,

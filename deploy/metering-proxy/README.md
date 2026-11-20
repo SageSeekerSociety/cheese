@@ -34,10 +34,10 @@ decision rather than something pinned into the sandbox's launch environment:
 The backend decides (`POST /llm/admission` answers both "may it run" and "where
 does it go", from the pool that serves the model the request is bound to); this
 proxy only carries it out. That is why a project can switch to a model on the
-other pool without restarting its agent. The proxy asks with the session's scoped
-token, which names the room, and with its own credential (`CHEESE_SCOPED_SECRET`
-as `X-Cheese-Token`): the backend hands a gateway project's key only to a caller
-presenting that credential, since the session holds the same scoped token. Fail-open has a direction: an unreachable
+other pool without restarting its agent. The proxy asks as itself (its own
+credential, `CHEESE_SCOPED_SECRET`, as its bearer) and names the session by its
+scoped token in the body: the backend hands a gateway project's key only to the
+proxy, since the session holds its own token. Fail-open has a direction: an unreachable
 control plane falls back to the subscription — the destination this proxy has
 always had — never to a gateway whose per-project key it would not hold.
 
@@ -239,7 +239,14 @@ that account until someone logs it in again. Use `<proxy home>/chatgpt-login.sh`
   egress, exactly like the Claude one; its login, refreshes and requests all
   leave through it. Two accounts may share an egress only with the same login
   on it: mitmproxy keeps one tunnel per proxy address, so the proxy refuses
-  their requests rather than let one ride the other's tunnel.
+  their requests rather than let one ride the other's tunnel. The egress is
+  checked the same way before a request goes out; one that does not answer
+  gets a 503 saying the subscription egress is offline, with no `retry-after`
+  (the gateway would sleep it out). The session's own proxy hop finds those
+  words in the gateway's answer and passes the session the same 503 a Claude
+  turn gets, but with `x-should-retry: false`, so the turn fails within
+  seconds and the platform's resume waits the egress out; it also reports the
+  failure as an offline egress, which the backend alerts an operator on.
 
 The gateway reaches the accounts on a third listener, `:8445`
 (`--mode reverse:https://chatgpt.com@8445`). It is published nowhere: the

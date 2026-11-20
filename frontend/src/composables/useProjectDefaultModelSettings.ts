@@ -1,16 +1,14 @@
-// 「项目默认模型」那一块的数据与动作。
+// 「项目主模型」那一块的数据与动作。
 //
 // 拆自 `components/ProjectDefaultModelSettings.vue`：那件现在只吃 props、只往上发事件
 // （`frontend_grade.py` 的 A 级），取数与发请求落在这里，页面接线。和
 // `useBranchProtection.ts` 一个路子（`.claude/rules/architecture.md`「组件不取数」）。
 //
-// 编辑草稿（还没保存的那个下拉值、分身那一档）留在组件里：那份 `state` 一换（首次取到、
-// 或保存后服务端回话）草稿就归位，是组件自己一眼看得见的事，不用往上报。
+// 编辑草稿（还没保存的那个下拉值）留在组件里：那份 `state` 一换（首次取到、或保存后
+// 服务端回话）草稿就归位，是组件自己一眼看得见的事，不用往上报。
 //
-// #1365 之后主线（房间聊天）读 `binding.resolve(None, …)`，它拿 catalog 里 default=True
-// 的那条；catalog 由 model_choices 算，项目 settings 里显式写过 default_model 就把那条
-// 标 True。这一节就是那个写入口——之前只能手改数据库，对应事故就是「agent 配了 deepseek，
-// 主线静默换到订阅 sonnet」。
+// 模型是 AI 队友的设置；项目主模型是没单独设置的队友的默认。不设就是「自动」：对话、
+// 任务、分身各用平台指的模型（`model_catalog.pick`），`state.automatic` 说的就是这三个。
 //
 // `enabled`：设置页一次只画一栏，这一栏没被打开过就不读（原来那一件只有被画出来才会
 // 挂上、才会取数）。
@@ -23,6 +21,8 @@ import { useSaveState } from '@/composables/useSaveState'
 
 import { getProjectDefaultModel, setProjectDefaultModel } from '@/api'
 import { t } from '@/i18n'
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
 
 export interface UseProjectDefaultModelSettingsOptions {
   /** 这一栏此刻在不在屏幕上：第一次为真才读。不给就是挂上即读。 */
@@ -59,7 +59,12 @@ export function useProjectDefaultModelSettings(
     loadError.value = ''
     reset()
     try {
-      const result = await getProjectDefaultModel(projectId())
+      const id = projectId()
+      const result = await queryClient.fetchQuery({
+        queryKey: keys.projectDefaultModel(id),
+        queryFn: () => getProjectDefaultModel(id),
+        staleTime: 0,
+      })
       if (current === generation) state.value = result
     } catch (e) {
       if (current === generation)
@@ -69,11 +74,11 @@ export function useProjectDefaultModelSettings(
     }
   }
 
-  async function save(model: string | null, subagent: string | null) {
+  async function save(model: string | null) {
     if (!state.value) return
     const current = generation
     await run(async () => {
-      const result = await setProjectDefaultModel(projectId(), model, subagent)
+      const result = await setProjectDefaultModel(projectId(), model)
       if (current === generation) state.value = result
     })
   }
@@ -87,13 +92,15 @@ export function useProjectDefaultModelSettings(
     if (on) void load()
     else {
       generation++
+      void queryClient.cancelQueries({ queryKey: keys.projectDefaultModel(projectId()), exact: true })
       settled.value = false
       state.value = null
       loadError.value = ''
       reset()
     }
   })
-  watch(projectId, () => {
+  watch(projectId, (_next, prev) => {
+    if (prev) void queryClient.cancelQueries({ queryKey: keys.projectDefaultModel(prev), exact: true })
     if (enabled()) void load()
   })
 

@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.auth import ActorResolverDep
 from app.api.auth.resolver import ActorResolver
 from app.api.deps import get_chat_service
-from app.api.model_keys import credit_refusal, dreams, task_credit_context_of
+from app.api.model_keys import credit_refusal, task_credit_context_of
 from app.api.refusal import refuse
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
@@ -197,9 +197,7 @@ async def _caller_key(
             credit_owner_handle=context.owner_handle,
         )
     else:
-        key = await chat.project_gateway_key(
-            owner.id, dream=await dreams(db, owner, claims)
-        )
+        key = await chat.project_gateway_key(owner.id)
     return CallerKey(key, agent_model)
 
 

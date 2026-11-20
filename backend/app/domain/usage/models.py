@@ -245,7 +245,7 @@ class ComputeGrant(UuidPk, Timestamps, Base):
 #: call (``usage.compute``): no tokens, and no part of any count of calls.
 COMPUTE_ROUTE = "compute"
 #: The ``route`` of a usage row that charges web searches the platform asked
-#: for (`cheese_web_search`): like a compute charge, credits and no call. The
+#: for (`cheese_web(action=search)`): like a compute charge, credits and no call. The
 #: searches are made on the caller's gateway key and drained with its model
 #: calls (``agent.gateway_spend``), which lands the gateway's search line
 #: (``GATEWAY_SEARCH_MODEL``) under this route and ``SEARCH_KIND``.
@@ -346,6 +346,35 @@ class TaskGatewayAccount(Base):
     budget_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
 
 
+class MachineGatewayAccount(Base):
+    """The gateway key a conversation's sandboxes call models on, for one
+    budget holder (``""`` when the project pays): apart from the session's own
+    key, with a daily cap on the gateway, so a machine whose owner relays its
+    platform socket spends that much a day at most. Kept, like the task's, so
+    late spend is still charged."""
+
+    __tablename__ = "machine_gateway_accounts"
+
+    conversation_id: Mapped[uuid.UUID] = mapped_column(primary_key=True)
+    owner_handle: Mapped[str] = mapped_column(String(64), primary_key=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "projects.id",
+            ondelete="CASCADE",
+            name="fk_machine_gateway_accounts_project_id_projects",
+        ),
+        index=True,
+    )
+    gateway_key: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    checkpoint: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    daily_budget_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+
+#: The usage rows a project's gateway key spent: `ix_resource_usage_gateway_spend`
+#: covers exactly these, so the predicate is written once, as a literal.
+GATEWAY_ROWS = text("route = 'gateway'")
+
+
 class ResourceUsage(UuidPk, Timestamps, Base):
     __tablename__ = "resource_usage"
     #: 平台看板按天聚合这张表：`created_at` 的范围扫。等值的四条索引
@@ -369,6 +398,16 @@ class ResourceUsage(UuidPk, Timestamps, Base):
             "credit_owner_handle",
             "created_at",
             postgresql_include=["credits"],
+        ),
+        # What a project's gateway key has spent ever, read on every model
+        # admission (`UsageRepository.gateway_spend`): answered from the index
+        # alone. Query and index share `GATEWAY_ROWS`, a literal, so the planner
+        # can prove the predicate for a prepared statement as well.
+        Index(
+            "ix_resource_usage_gateway_spend",
+            "project_id",
+            postgresql_include=["cost_usd"],
+            postgresql_where=GATEWAY_ROWS,
         ),
     )
 

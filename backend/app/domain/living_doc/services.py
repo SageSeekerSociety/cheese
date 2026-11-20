@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError
 from app.core.rank import Rank
+from app.core.rank import Spot as TimelineSpot
 from app.core.sentences import say
 from app.domain.living_doc.doc_tree import markdown_to_nodes
 from app.domain.living_doc.models import (
@@ -64,8 +65,34 @@ class Documents:
             project_id, after=after, limit=limit, also_of_room=also_of_room
         )
 
+    async def of_project_timeline(
+        self,
+        project_id: uuid.UUID,
+        *,
+        after: TimelineSpot | None,
+        limit: int,
+        descending: bool,
+        also_of_room: uuid.UUID | None = None,
+    ) -> list[Document]:
+        """The project's own documents on the library page's ascending or
+        descending timeline (the library's files use the same one)."""
+        return await self._repo.of_project_timeline(
+            project_id,
+            after=after,
+            limit=limit,
+            descending=descending,
+            also_of_room=also_of_room,
+        )
+
     async def of_team(self, team_id: int) -> list[Document]:
         return await self._repo.of_team(team_id)
+
+    async def of_team_timeline(
+        self, team_id: int, *, descending: bool
+    ) -> list[Document]:
+        """A team's own documents on the library page's ascending or
+        descending timeline."""
+        return await self._repo.of_team_timeline(team_id, descending=descending)
 
     async def of_room(self, room_id: uuid.UUID) -> list[Document]:
         """The documents 芝士 wrote in this channel or private chat (#3828)."""
@@ -124,6 +151,7 @@ class Documents:
         not change keeps its id and its author; a new one is ``author``'s.
         ``keep_author`` leaves the document's own author as it was.
         """
+        prev_content = doc.content
         written = await self._repo.set_content(
             doc,
             content,
@@ -133,7 +161,11 @@ class Documents:
         if written is None:
             return None
         new_nodes = markdown_to_nodes(content)
-        existing = await self._repo.nodes(doc.id)
+        existing = (
+            []
+            if expected_version == 0 and not (prev_content or "")
+            else await self._repo.nodes(doc.id)
+        )
         matcher = difflib.SequenceMatcher(
             a=[n.content for n in existing],
             b=[n.content for n in new_nodes],
@@ -187,8 +219,10 @@ class DocumentJournal:
         action: str,
         operation_id: uuid.UUID,
         payload: dict,
+        locked: bool = False,
     ) -> DocumentOperation:
-        await self.lock(document_id)
+        if not locked:
+            await self.lock(document_id)
         fingerprint = payload_fingerprint(payload)
         row = await self.session.scalar(
             select(DocumentOperation).where(
@@ -343,11 +377,15 @@ class DocumentJournal:
         ``reasons`` are the reasons given for suggestions this store proposes;
         a suggestion proposed earlier keeps the reason it was stored with.
         """
-        kept = {
-            item.get("id"): item.get("reason")
-            for item in await self.suggestions(document_id)
-            if item.get("reason")
-        }
+        kept = (
+            {
+                item.get("id"): item.get("reason")
+                for item in await self.suggestions(document_id)
+                if item.get("reason")
+            }
+            if suggestions
+            else {}
+        )
         pending = [
             {
                 "id": str(item["id"]),

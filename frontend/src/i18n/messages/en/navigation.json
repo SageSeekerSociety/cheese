@@ -14,8 +14,10 @@
     "skills": "Skills",
     "pages": "Project pages",
     "overview": "Overview",
-    "tasks": "All tasks"
+    "tasks": "All tasks",
+    "more": "More"
   },
+  "projects": "Projects",
   "spaces": "Spaces",
   "teams": "Teams",
   "term": {
@@ -39,6 +41,7 @@
     "queue": "Feedback",
     "models": "Models",
     "spaces": "Space applications",
+    "tasks": "Challenge review",
     "members": "Members",
     "integrations": "Feishu app",
     "featureStats": "Feature data",
@@ -140,6 +143,7 @@
   },
   "sidebar": {
     "resize": "Drag to resize",
+    "title": "sidebar",
     "expand": "Expand sidebar",
     "collapse": "Collapse sidebar"
   },
@@ -174,6 +178,7 @@
     "terms": "Terms of service",
     "feedbackDetail": "Feedback details",
     "openPreview": "Open preview",
+    "slidesPresenter": "Presenter view",
     "openSite": "Open site",
     "openDocs": "Open docs",
     "connect": "Connect a device",
@@ -195,6 +200,13 @@
     "projectWorkspace": "Project workspace",
     "dm": "Direct message",
     "artifact": "Artifact",
-    "member": "Member"
+    "member": "Member",
+    "taskVersions": "Version history"
+  },
+  "switcher": {
+    "label": "Switch project or space",
+    "search": "Search projects and spaces",
+    "empty": "No project or space matches “{q}”",
+    "actions": "Actions for {name}"
   }
 }

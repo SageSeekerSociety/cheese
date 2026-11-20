@@ -55,7 +55,7 @@ def backend_over_http(client):
                 content=body,
                 headers={
                     "Content-Type": "application/json",
-                    "X-Cheese-Token": self.headers["X-Cheese-Token"],
+                    "Authorization": f"Bearer {self.headers['Authorization'].removeprefix('Bearer ')}",
                 },
             )
             self.send_response(answer.status_code)

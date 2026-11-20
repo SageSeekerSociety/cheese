@@ -16,6 +16,7 @@ import { useProjectTransfer } from '@/composables/useProjectTransfer'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
+import { memberName, memberOriginalName } from '@/lib/agentNames'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -92,10 +93,14 @@ async function submit() {
           @click="picked = m.user_handle"
         >
           <template #prepend>
-            <UserAvatar :name="m.name || m.user_handle" :avatar="faceUrl(m)" :size="28" class="me-3" />
+            <UserAvatar :name="memberName(m) || m.user_handle" :avatar="faceUrl(m)" :size="28" class="me-3" />
           </template>
-          <v-list-item-title class="t-body">{{ m.name || m.user_handle }}</v-list-item-title>
-          <v-list-item-subtitle class="t-meta">{{ m.user_handle }}</v-list-item-subtitle>
+          <v-list-item-title class="t-body">{{ memberName(m) || m.user_handle }}</v-list-item-title>
+          <v-list-item-subtitle class="t-meta">
+            <span v-if="m.remark && memberOriginalName(m) && memberOriginalName(m) !== m.remark"
+              >{{ memberOriginalName(m) }} · </span
+            ><span>{{ m.user_handle }}</span>
+          </v-list-item-subtitle>
         </v-list-item>
       </v-list>
       <v-alert v-if="error" type="error" density="comfortable" class="mt-4">

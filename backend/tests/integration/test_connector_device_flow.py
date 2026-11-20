@@ -273,7 +273,9 @@ def test_agent_ws_rejects_unknown_token(client):
 
     # An unknown device token must be rejected at the handshake (1008).
     with contextlib.suppress(WebSocketDisconnect):
-        with client.websocket_connect("/connector/agent?token=bogus") as ws:
+        with client.websocket_connect(
+            "/connector/agent", headers={"Authorization": "Bearer bogus"}
+        ) as ws:
             ws.receive_text()  # should not get here; the server closes 1008
 
 
@@ -307,7 +309,9 @@ def test_a_closed_device_link_records_who_hung_up(client, monkeypatch, caplog):
     monkeypatch.setattr("app.api.deps.get_chat_service", lambda: Chat())
 
     with caplog.at_level(logging.INFO, logger="app.api.routes.connector.devices"):
-        with client.websocket_connect(f"/connector/agent?token={device_token}") as ws:
+        with client.websocket_connect(
+            "/connector/agent", headers={"Authorization": f"Bearer {device_token}"}
+        ) as ws:
             ws.close()
 
     closed = [
@@ -381,7 +385,9 @@ def test_agent_ws_does_not_park_a_session_idle_in_transaction(client, monkeypatc
     # Baseline: nothing parked before the socket exists.
     assert asyncio.run(_parked_on_device()) == 0
 
-    with client.websocket_connect(f"/connector/agent?token={device_token}") as ws:
+    with client.websocket_connect(
+        "/connector/agent", headers={"Authorization": f"Bearer {device_token}"}
+    ) as ws:
         # The handshake has completed → the handler ran verify_token and is parked in
         # its receive loop. With the fix its auth transaction is already committed;
         # without it the connection is idle-in-transaction on the device read.
@@ -423,7 +429,9 @@ def test_a_machine_that_went_away_says_when_it_was_last_seen(client, monkeypatch
         return mine["last_seen_at"]
 
     assert last_seen() is None
-    with client.websocket_connect(f"/connector/agent?token={approved['token']}") as ws:
+    with client.websocket_connect(
+        "/connector/agent", headers={"Authorization": f"Bearer {approved['token']}"}
+    ) as ws:
         ws.close()
         # The server keeps it as the link winds down, after the close.
         deadline = time.monotonic() + 5

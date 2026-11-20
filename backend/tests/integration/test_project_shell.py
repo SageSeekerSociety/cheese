@@ -9,19 +9,15 @@ nothing errors.
 
 import uuid
 
-from tests.conftest import seed_claim, seed_task_with_protocol
+from tests.conftest import seed_task_with_protocol, start_task_project
 from tests.integration.conftest import post_project, session_auth_headers
 
 OWNER = "shell-owner"
 
 
-def _project_from(client, task_id: int) -> dict:
-    seed_claim(client, task_id, handle=OWNER)
-    return post_project(
-        client,
-        json={"name": "壳测试", "external_task_id": task_id},
-        owner=OWNER,
-    ).json()["data"]
+def _project_from(client, task_id: int) -> str:
+    """The project ``OWNER`` starts from the 赛题; returns its id."""
+    return start_task_project(client, task_id, handle=OWNER)
 
 
 def _get(client, project_id: str) -> dict:
@@ -32,9 +28,9 @@ def _get(client, project_id: str) -> dict:
 
 def test_a_project_reports_the_shell_its_category_declared(client):
     task_id = seed_task_with_protocol(client, shell="course-student")
-    project = _project_from(client, task_id)
+    project_id = _project_from(client, task_id)
 
-    shell = _get(client, project["id"])["shell"]
+    shell = _get(client, project_id)["shell"]
 
     assert shell["name"] == "course-student"
     # The RESOLVED declaration, not just the name: the frontend must not own a
@@ -75,9 +71,9 @@ def test_a_task_override_replaces_the_categories_shell(client):
     task_id = seed_task_with_protocol(
         client, shell="course-student", override={"shell": "workbench"}
     )
-    project = _project_from(client, task_id)
+    project_id = _project_from(client, task_id)
 
-    shell = _get(client, project["id"])["shell"]
+    shell = _get(client, project_id)["shell"]
 
     assert shell["name"] == "workbench"
     assert shell["terms"] == {"project": "工作", "topic": "议题"}
@@ -87,8 +83,8 @@ def test_the_projects_own_setting_outranks_the_whole_protocol(client):
     task_id = seed_task_with_protocol(
         client, shell="course-student", override={"shell": "workbench"}
     )
-    project = _project_from(client, task_id)
-    pid = uuid.UUID(project["id"])
+    project_id = _project_from(client, task_id)
+    pid = uuid.UUID(project_id)
 
     import asyncio
 
@@ -104,7 +100,7 @@ def test_the_projects_own_setting_outranks_the_whole_protocol(client):
 
     asyncio.run(_set())
 
-    shell = _get(client, project["id"])["shell"]
+    shell = _get(client, project_id)["shell"]
 
     assert shell["name"] == "course-teacher"
     assert shell["home"] == "workspace-overview"
@@ -123,6 +119,6 @@ def test_the_list_route_carries_each_projects_own_shell(client):
     ]["data"]
     by_id = {p["id"]: p["shell"] for p in listing}
 
-    assert by_id[declared["id"]]["name"] == "workbench"
+    assert by_id[declared]["name"] == "workbench"
     assert by_id[plain["id"]]["name"] == "default"
     assert by_id[plain["id"]]["home"] == "workspace-overview"

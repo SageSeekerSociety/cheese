@@ -1,10 +1,13 @@
 {
   "details": "题目详情",
   "empty": "暂无详情",
-  "materials": "材料",
-  "submission": "提交内容",
   "kindFile": "文件",
   "kindText": "文字",
+  "materials": "材料",
   "rubric": "评分要点",
-  "rubricPrivate": "仅批改的人可见"
+  "rubricPrivate": "仅批改的人可见",
+  "rubricRuleRank": "按全班排名：交过作业的人里用得越少分越高，题目截止后定稿",
+  "rubricRuleThreshold": "按阈值：不超过 {full} 额度得满分，达到 {zero} 额度得 0 分，中间按比例",
+  "stages": "阶段",
+  "submission": "提交内容"
 }

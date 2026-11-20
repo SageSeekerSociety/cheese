@@ -65,13 +65,14 @@ async def documents_of_projects_team(
     return await documents_among(db, team_id, ids) if team_id is not None else []
 
 
-async def sync(db: AsyncSession, doc: Document, content: str) -> None:
+async def sync(
+    db: AsyncSession, doc: Document, content: str, *, before: str | None = None
+) -> None:
     """Keep what ``doc`` links to as its stored ``content`` says."""
-    targets = [
-        t
-        for t in await documents_among(db, doc.team_id, referenced(content))
-        if t != doc.id
-    ]
+    refs = referenced(content)
+    if not refs and before is not None and not referenced(before):
+        return
+    targets = [t for t in await documents_among(db, doc.team_id, refs) if t != doc.id]
     await db.execute(delete(DocumentLink).where(DocumentLink.source_id == doc.id))
     for target in targets:
         db.add(DocumentLink(source_id=doc.id, target_id=target))

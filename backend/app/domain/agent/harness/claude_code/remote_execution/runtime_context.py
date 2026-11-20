@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import uuid
 from pathlib import Path
 
@@ -103,11 +104,17 @@ def context(self, known_files=None):
 
 
 def task_fs(self, params):
-    """Read or edit one task's live worktree, never the room's host filesystem."""
+    """Read or edit one task's live worktree, never the room's host filesystem.
+
+    A task without a checkout (``in_workspace``: its project has no
+    repository) is worked in the room's workspace, and is read there."""
     task_id = str(uuid.UUID(params["task_id"]))
     home = Path(self.env["HOME"]).resolve()
-    root = (home / ".cheese" / "tasks" / task_id).resolve()
-    root.relative_to(home)
+    if params.get("in_workspace"):
+        root = self.root
+    else:
+        root = (home / ".cheese" / "tasks" / task_id).resolve()
+        root.relative_to(home)
     if not root.is_dir():
         return {"error": "not_found", "missing": "worktree"}
     operation = params["operation"]
@@ -240,8 +247,51 @@ def task_fs(self, params):
             os.replace(temporary, path)
         finally:
             temporary.unlink(missing_ok=True)
+        if not params.get("in_workspace"):
+            keep_soon(self, task_id)
         return {"version": hashlib.sha256(data).hexdigest()[:16]}
     raise ValueError("Unknown task filesystem operation")
+
+
+#: How long after a person's save the task's checkout is kept off the machine
+#: (`cheese keep`). An editor saving every few seconds is kept once for the
+#: burst, this long after its first save, with every save of the burst in it.
+KEEP_AFTER_SAVE_S = 10.0
+_keeping: set[str] = set()
+_keeping_lock = threading.Lock()
+
+
+def keep_soon(self, task_id, delay=KEEP_AFTER_SAVE_S):
+    """Keep the task checkout's uncommitted work shortly after a person saved
+    into it, so the save outlives the sandbox even if no turn ends here
+    before it goes. Off the save's path: the save has answered by then, and a
+    snapshot that fails is logged, never the save's failure."""
+    with _keeping_lock:
+        if task_id in _keeping:
+            return
+        _keeping.add(task_id)
+
+    def keep():
+        with _keeping_lock:
+            _keeping.discard(task_id)
+        try:
+            self.invoke(
+                {
+                    "id": f"keep-{uuid.uuid4().hex}",
+                    "tool": "Bash",
+                    "args": {"command": f"cheese keep --task {task_id}"},
+                    # The platform's own command, as a turn's checkpoint is:
+                    # the project's tool hooks never see it.
+                    "platform": True,
+                }
+            )
+        except Exception as exc:  # logged; the save went through
+            with contextlib.suppress(Exception):
+                self.log("keep", "failed", task=task_id, error=str(exc))
+
+    timer = threading.Timer(delay, keep)
+    timer.daemon = True
+    timer.start()
 
 
 def repo_search(self, params):

@@ -150,5 +150,15 @@
     "unlimited": "不限量",
     "models": "可用模型",
     "noModels": "暂无可用模型"
+  },
+  "warning": {
+    "teamTitle": "团队额度快用完了",
+    "teamBody": "方案额度还剩 {n} 点，{at}重置。",
+    "teamHoursBody": "{hours} 小时的方案额度还剩 {n} 点，{at}恢复。",
+    "teamWeekBody": "本周的方案额度还剩 {n} 点，{at}恢复。",
+    "teamMonthBody": "本月的方案额度还剩 {n} 点，{at}恢复。",
+    "projectTitle": "项目额度预算快用完了",
+    "projectBody": "还剩 {n} 点。这个上限不会自动恢复，请项目管理员调整。",
+    "memberTitle": "你在本项目的任务额度快用完了"
   }
 }

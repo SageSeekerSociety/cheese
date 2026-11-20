@@ -1,8 +1,7 @@
-import { toast } from 'vuetify-sonner'
-
 import { ApiError } from '@/api/http'
 import { reportError } from '@/errorReporter'
 import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 
 // 定义错误处理器类型
 export type ErrorHandler<T extends Error = Error> = (error: T) => Promise<boolean> | boolean
@@ -57,20 +56,26 @@ class ErrorHandlerService {
     const fallback = opts.defaultMessage || t('shell.errors.actionFailed')
     reportError(error.message || fallback, error.stack, `ui:${error.name || 'Error'}`)
 
-    // 服务端回绝了这次请求、却没有专属处理器：说服务端那句话，别拿通用文案把它盖掉。
-    if (hasServerRefusal(error)) {
-      if (opts.showToast) {
-        toast.error(error.message || fallback)
-      }
-      return false
-    }
-
-    // 未知错误
     if (opts.showToast) {
-      toast.error(fallback)
+      toast.error(this.sentence(error, fallback))
     }
 
     return false
+  }
+
+  /** 这次失败对人说的那句话：服务端回绝了（又没有专属处理器）就说服务端那句话，别拿
+   *  通用文案把它盖掉；网络断了、未知错误说 `fallback`。 */
+  sentence(error: Error, fallback: string): string {
+    return hasServerRefusal(error) ? error.message || fallback : fallback
+  }
+
+  /** 自己有一处地方要显示这次失败（弹窗里的一格、toast 那一行），不想再弹一个 toast：
+   *  记一笔照旧走上面那条路，把人该看到的那句话交回去——服务端回绝了就是它自己那句，
+   *  网络断了、未知错误没有话可说，就用 `fallback`。只有一句话：服务端说了原因时，
+   *  「稍后重试」那句就不再出现，它俩说的是同一件事，摆两遍只是占地方。 */
+  async explain(error: Error, fallback: string): Promise<string> {
+    await this.handle(error, { showToast: false, defaultMessage: fallback })
+    return this.sentence(error, fallback)
   }
 
   // 包装 async 函数，提供自动错误处理

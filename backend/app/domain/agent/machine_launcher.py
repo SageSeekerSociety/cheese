@@ -33,6 +33,7 @@ whichever agent the room asked for.
 
 import hashlib
 import json
+from functools import cache
 from pathlib import Path
 
 from app.core.config import settings
@@ -434,6 +435,10 @@ def screen_env(
         "CHEESE_HOME": place.home,
         "CHEESE_WORK": place.workdir,
     }
+    if place.homes:
+        # Where the machine's rooms are: the session is kept to its own
+        # (`remote_execution/namespace._keep_only`).
+        env["CHEESE_HOMES"] = place.homes
     if place.store:
         # Absent rather than empty, for the reason spelled out below: a screen
         # with no project (a probe, a fixture) has no project store, and the
@@ -482,6 +487,33 @@ def screen_env(
     return env
 
 
+@cache
+def _shipped_sources() -> tuple[str, str, str, str, str]:
+    """The five programs the launcher carries, read from disk once per process.
+
+    They are shipped by reading each module's own bytes rather than by keeping a
+    second copy here: they are real, linted, unit-tested modules precisely so
+    there is only one version of them to be wrong. What was wrong was doing it
+    on every launch: `sandbox/cheese` alone is 376 KiB, and reading it lands on
+    the request that happens to start a screen — production's stall board has
+    two 130-140 ms stalls whose whole stack is `read_text` under
+    `machine_launcher.screen_launch`, one in `open` and one in `decode`.
+
+    A file on disk does not change under a running process: these are the
+    image's own code, baked at build time. A test that edits one has to start a
+    new process to be testing the new bytes, which is what shipping it means.
+    """
+    return (
+        (Path(__file__).resolve().parents[3] / "sandbox" / "cheese").read_text(
+            encoding="utf-8"
+        ),
+        Path(forge_cli.__file__).read_text(),
+        Path(environment_runner.__file__).read_text().rstrip("\n") + "\n",
+        Path(machine_tunnel.__file__).read_text().rstrip("\n") + "\n",
+        Path(preview_tunnel.__file__).read_text().rstrip("\n") + "\n",
+    )
+
+
 def launch_script(
     *,
     configure: str = "",
@@ -494,18 +526,9 @@ def launch_script(
     Every value the harness needs beyond these reaches it as environment: the
     channel builds one environment for the session and both halves read it.
     """
-    cli_source = (Path(__file__).resolve().parents[3] / "sandbox" / "cheese").read_text(
-        encoding="utf-8"
+    cli_source, forge_source, environment_helper, tunnel_helper, preview_helper = (
+        _shipped_sources()
     )
-    forge_source = Path(forge_cli.__file__).read_text()
-    # Shipped by reading each module's own bytes rather than by keeping a second
-    # copy here: they are real, linted, unit-tested modules precisely so there is
-    # only one version of them to be wrong.
-    environment_helper = (
-        Path(environment_runner.__file__).read_text().rstrip("\n") + "\n"
-    )
-    tunnel_helper = Path(machine_tunnel.__file__).read_text().rstrip("\n") + "\n"
-    preview_helper = Path(preview_tunnel.__file__).read_text().rstrip("\n") + "\n"
     tunnel_up = CHEESE_TUNNEL_UP
     preview_up = CHEESE_PREVIEW_UP
     toolchain = toolchain_block()
@@ -587,7 +610,10 @@ case "$CS" in "\\$HOME"*) CS="$REAL_HOME${{CS#\\$HOME}}";; esac
 if [ -n "$CS" ] && mkdir -p "$CS" 2>/dev/null; then
   export UV_CACHE_DIR="$CS/uv-cache"
   export UV_PYTHON_INSTALL_DIR="$CS/uv-python"
+  # pnpm 11 and later read only `pnpm_config_*`; pnpm 10 and older only
+  # `npm_config_*`. Both name the one store, so either version lands in it.
   export npm_config_store_dir="$CS/pnpm-store"
+  export pnpm_config_store_dir="$CS/pnpm-store"
   export npm_config_cache="$CS/npm-cache"
   export PIP_CACHE_DIR="$CS/pip-cache"
   # Re-export it RESOLVED. What arrived carries a literal `$HOME` the backend
@@ -604,6 +630,18 @@ mkdir -p "$HOME" "$CHEESE_WORK"
 # a tmux-hosted agent runs from a fresh server with a cwd of its own.
 export HOME="$(cd "$HOME" && pwd -P)"
 export CHEESE_WORK="$(cd "$CHEESE_WORK" && pwd -P)"
+# Where the machine's rooms are, as the platform says (`MachinePlace.homes`):
+# the session is kept to its own room among them
+# (`remote_execution/namespace._keep_only`), and only when its home is one of
+# them. A home outside it (a probe, a fixture) is kept apart from its room's
+# other seats only.
+unset CHEESE_HOMES_ROOT
+CHS="${{CHEESE_HOMES:-}}"
+case "$CHS" in "\$HOME"*) CHS="$REAL_HOME${{CHS#\$HOME}}";; esac
+if [ -n "$CHS" ] && [ -d "$CHS" ]; then
+  CHS="$(cd "$CHS" && pwd -P)"
+  case "$HOME/" in "$CHS"/*) export CHEESE_HOMES_ROOT="$CHS" ;; esac
+fi
 # The session's temporary files go where the system keeps those it keeps on
 # disk (`/var/tmp`), one directory per room that its cleanup removes with it.
 # The machine's `/tmp` is often a tmpfs: what a session leaves there is memory

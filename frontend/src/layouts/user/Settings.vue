@@ -43,6 +43,9 @@ import { teamDataInjectionKey } from '@/keys'
 import { closeOverlay } from '@/lib/backOut'
 import { pageBeforeSettings } from '@/lib/settingsReturn'
 import { myHandle } from '@/me'
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
+import { fromSnapshot } from '@/query/snapshot'
 import AccountService from '@/services/account'
 import { settingsGroups } from '@/views/user/settings/sections'
 
@@ -73,7 +76,16 @@ watch(
   needsOwnTeam,
   async (needed) => {
     if (!needed || ownTeam.value) return
-    ownTeam.value = (await TeamsApi.detailByHandle(myHandle())).team
+    const handle = myHandle()
+    const cached = queryClient
+      .getQueryData<Team[]>(keys.myTeams())
+      ?.find((team) => team.handle.toLowerCase() === handle.toLowerCase())
+    if (cached) ownTeam.value = cached
+    try {
+      ownTeam.value = (await fromSnapshot(keys.ownTeam(handle), () => TeamsApi.detailByHandle(handle))).team
+    } catch (e) {
+      if (!ownTeam.value) throw e
+    }
   },
   { immediate: true }
 )

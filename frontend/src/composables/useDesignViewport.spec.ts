@@ -38,6 +38,25 @@ describe('Design viewport and raster coordinates', () => {
     expect(region).toEqual({ x: 400, y: 200, width: 400, height: 200 })
     expect(displayedRegion(region, image)).toEqual({ x: 100, y: 50, width: 100, height: 50 })
   })
+  it('reads the scale off the turned side when a rotated picture carries no explicit scale', () => {
+    // 转过 90°：屏幕上的宽是原图的高（400 × 1 = 400），拿 width / naturalWidth = 200 / 400
+    // 当比例会把它算成一半，框会画小一半、位置也偏。
+    const turned = {
+      left: 0,
+      top: 0,
+      width: 200,
+      height: 400,
+      naturalWidth: 400,
+      naturalHeight: 200,
+      adjust: { rotate: 90, flip: false },
+    }
+    expect(displayedRegion({ x: 40, y: 20, width: 80, height: 40 }, turned)).toEqual({
+      x: 40,
+      y: 20,
+      width: 80,
+      height: 40,
+    })
+  })
   it('clamps drags to authorized image bounds and rejects invalid geometry/empty regions', () => {
     const image = { left: 20, top: 20, width: 400, height: 200, naturalWidth: 1600, naturalHeight: 800 }
     expect(imageRegion({ x: -50, y: -50 }, { x: 900, y: 900 }, image)).toEqual({ x: 0, y: 0, width: 1600, height: 800 })

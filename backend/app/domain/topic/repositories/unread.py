@@ -438,19 +438,24 @@ async def mark_read_many(
     if not topic_ids:
         return
     now = datetime.now(UTC)
-    newest = (
-        select(
-            func.gen_random_uuid(),
-            Conversation.id,
-            literal(user_handle),
-            func.coalesce(func.max(_blocks.c.seq), 0),
-            literal(now),
-            literal(now),
-        )
-        .outerjoin(_blocks, _blocks.c.conversation_id == Conversation.id)
-        .where(Conversation.id.in_(topic_ids))
-        .group_by(Conversation.id)
+    # Each conversation's newest number, asked of it alone: a correlated
+    # ``max`` walks ``ix_blocks_conversation_seq`` backwards to one row, where
+    # joining every block of the conversation and grouping read all of them
+    # (30,000 blocks: 10.7 ms against 0.46 ms), on every opening of a room.
+    last_seq = (
+        select(func.max(_blocks.c.seq))
+        .where(_blocks.c.conversation_id == Conversation.id)
+        .correlate(Conversation)
+        .scalar_subquery()
     )
+    newest = select(
+        func.gen_random_uuid(),
+        Conversation.id,
+        literal(user_handle),
+        func.coalesce(last_seq, 0),
+        literal(now),
+        literal(now),
+    ).where(Conversation.id.in_(topic_ids))
     stmt = pg_insert(TopicReadState).from_select(
         [
             "id",

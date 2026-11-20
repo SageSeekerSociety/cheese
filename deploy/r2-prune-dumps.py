@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
-"""Tiered retention for local DB dumps, gated on a verified R2 copy.
+"""Tiered retention for local DB dumps.
 
-    r2-prune-dumps.py <backup-dir> --hourly-days 7 --retention-days 30 [--dry-run] [--log FILE]
+    r2-prune-dumps.py <backup-dir> --hourly-days 7 --retention-days 30 [--local-only] [--dry-run] [--log FILE]
 
-Policy, by the timestamp in the dump's name (local time, as db-backup.sh writes it):
+With --local-only, retain all recent hourly dumps and the latest readable
+dump per older day; delete the other local dumps without contacting R2.
+A day without a readable dump is kept until the retention horizon (exit 3).
+
+The timestamp in the dump's name is local time, as db-backup.sh writes it.
+Without --local-only, the policy is:
   - younger than --hourly-days: kept, every hour;
   - older: one dump per calendar day is kept -- the last one whose R2 copy
     matches (db-backup.sh uploads only dumps that passed `pg_restore --list`),
@@ -14,8 +19,9 @@ Policy, by the timestamp in the dump's name (local time, as db-backup.sh writes 
   - older than --retention-days full days: deleted, as `find -mtime +N` always
     did. The bucket's own 30-day lifecycle has expired the R2 copy by then.
 
-The uploader records no checksum, so size is the only comparison available.
-Exit 0: done; 3: some dumps kept because their copy could not be verified;
+The uploader records no checksum, so size is the only R2 comparison available.
+Exit 0: done; 3: some dumps kept without a verified daily copy (--local-only)
+or without a verified R2 copy (default mode);
 anything else: the pruner itself failed. Writes one line per dump (kept /
 deleted / uploaded, reason, R2 key) to stdout and to --log. R2 configuration
 comes from r2-common (~/ops/r2.env). A file not named like db-backup.sh's
@@ -25,6 +31,7 @@ dumps is left to db-backup.sh's plain `find -mtime +N` prune.
 import argparse
 import importlib
 import re
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -42,6 +49,8 @@ def main() -> int:
     parser.add_argument("--retention-days", type=int, required=True)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--log", type=Path)
+    parser.add_argument("--local-only", action="store_true",
+                        help="thin local dumps independently of R2, keeping a readable daily copy")
     args = parser.parse_args()
     if not 0 < args.hourly_days <= args.retention_days:
         parser.error("need 0 < --hourly-days <= --retention-days")
@@ -69,7 +78,7 @@ def main() -> int:
             stamp = time.mktime(time.strptime(match[1] + match[2], "%Y%m%d%H%M%S"))
             dumps.append((path, match[1], stamp))
 
-    env = common.load_config()
+    env = None if args.local_only else common.load_config()
     prefix = (env or {}).get("R2_PREFIX", "db").strip("/")
     s3 = remote = None
     unavailable = "R2 not configured"
@@ -101,6 +110,15 @@ def main() -> int:
         if verified(path):
             last_of_day[day] = path
 
+    if args.local_only:
+        last_of_day = {}
+        for path, day, stamp in reversed(dumps):
+            if day in last_of_day or time.time() - stamp < args.hourly_days * DAY:
+                continue
+            if subprocess.run(["pg_restore", "--list", str(path)],
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+                last_of_day[day] = path
+
     def unlink(path: Path) -> None:
         if not args.dry_run:
             path.unlink(missing_ok=True)
@@ -117,8 +135,14 @@ def main() -> int:
             record("deleted", path, size, key, f"older than {args.retention_days} days (existing horizon)")
         elif age < args.hourly_days * DAY:
             record("kept", path, size, key, f"within {args.hourly_days} days (hourly)")
+        elif args.local_only and day not in last_of_day:
+            unverified = True
+            record("kept", path, size, key, "no readable daily copy")
         elif last_of_day[day] == path:
             record("kept", path, size, key, f"daily copy for {day}")
+        elif args.local_only:
+            unlink(path)
+            record("deleted", path, size, key, "not the readable daily copy; local retention")
         elif remote is None:
             unverified = True
             record("kept", path, size, key, f"unverified: {unavailable}")

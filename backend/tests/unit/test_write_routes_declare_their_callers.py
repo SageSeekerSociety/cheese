@@ -8,29 +8,41 @@ rename carries it along; a route without one stops the app from starting.
 
 from __future__ import annotations
 
+import uuid
+
 from fastapi import APIRouter, Depends, FastAPI, WebSocket
 from fastapi.testclient import TestClient
 
 from app.api.write_access import (
-    CHEESE_ONLY_IN_PROJECT,
-    CHEESE_ONLY_IN_ROOM,
     ROUTE_DECIDES,
+    Can,
     refuse_unsealed_writes,
     seal,
     violations,
     write_routes,
 )
+from app.auth import can
 from app.core.errors import register_exception_handlers
+from app.domain.assistant.permissions import Permission as RoutinePermission
+from app.domain.project_permissions import AGENT_ONLY, Permission
+from app.domain.team.permissions import Permission as TeamPermission
 from app.main import app
 
-# The routes only a 芝士 credential may call. Widening one to ROUTE_DECIDES lets
-# a person's browser session through, so it is a decision, not a refactor:
-# change this set in the same commit, on purpose.
-_CHEESE_ONLY = {
-    ("POST", "/topics/{topic_id}/webhook-token", "cheese_only_in_room"),
-    ("POST", "/topics/{topic_id}/note", "cheese_only_in_room"),
-    ("POST", "/topics/{topic_id}/session-records", "cheese_only_in_room"),
-    ("POST", "/projects/{project_id}/memory", "cheese_only_in_project"),
+# The routes only an AI teammate may call: each needs a permission no person's
+# role holds. Moving one onto another declaration lets a person's browser
+# session through, so it is a decision, not a refactor: change this set in the
+# same commit, on purpose.
+_AGENTS_ONLY = {
+    ("POST", "/topics/{topic_id}/webhook-token", "can mint_webhook_token"),
+    ("POST", "/topics/{topic_id}/note", "can note_own_threads"),
+    ("POST", "/topics/{topic_id}/session-records", "can record_machine_status"),
+    ("POST", "/topics/{topic_id}/tasks/{ref}/tell", "can coordinate_tasks"),
+    ("POST", "/topics/{topic_id}/tasks/{ref}/close", "can coordinate_tasks"),
+    ("POST", "/topics/{topic_id}/tasks/{ref}/reopen", "can coordinate_tasks"),
+    ("POST", "/topics/{topic_id}/tasks/{ref}/accept", "can coordinate_tasks"),
+    ("POST", "/topics/{topic_id}/report", "can coordinate_tasks"),
+    ("POST", "/topics/{topic_id}/hand-in/prepare", "can hand_in_for_members"),
+    ("POST", "/topics/{topic_id}/hand-in/confirm", "can hand_in_for_members"),
 }
 
 
@@ -38,13 +50,36 @@ def test_the_app_has_no_write_route_without_a_declaration() -> None:
     assert violations(app) == []
 
 
-def test_the_cheese_only_surface_is_the_one_decided() -> None:
+def test_a_route_that_makes_the_callers_own_row_declares_it() -> None:
+    """Making one's own row has no object to judge: the declaration says the
+    caller is the one it is made for (``AS_ONESELF``), and it is a declaration
+    of its own — a route may not carry it beside ``Can``."""
+    found = {
+        (r.method, r.path): r.declared
+        for r in write_routes(app)
+        if "assistant/routines" in r.path
+    }
+    assert found[("POST", "/assistant/routines")] == ("as_oneself",)
+    assert found[("PUT", "/assistant/routines/{routineId}")] == ("can manage",)
+
+
+def test_a_kind_named_by_a_uuid_declares_its_path_parameter_as_one() -> None:
+    """A route's declared parameter is typed the way its kind's policy says
+    its ids are, so a path that is not one is a malformed request. A rule's id
+    is a UUID; a team's is a number."""
+    rule = can.policy_of(RoutinePermission.manage)
+    assert rule.id_type is uuid.UUID
+    assert can.policy_of(TeamPermission.edit_settings).id_type is int
+
+
+def test_the_surface_only_ai_teammates_call_is_the_one_decided() -> None:
+    agents_only = {f"can {p}" for p in AGENT_ONLY}
     found = {
         (r.method, r.path, r.declared[0])
         for r in write_routes(app)
-        if r.declared and r.declared[0].startswith("cheese_only")
+        if r.declared and r.declared[0] in agents_only
     }
-    assert found == _CHEESE_ONLY
+    assert found == _AGENTS_ONLY
 
 
 def _app(*routers: APIRouter, guarded: bool = False) -> FastAPI:
@@ -79,30 +114,11 @@ def test_a_router_declares_for_its_routes_and_a_route_declares_once() -> None:
 
     twice = APIRouter(prefix="/twice", dependencies=[ROUTE_DECIDES])
 
-    @twice.post("/{topic_id}", dependencies=[CHEESE_ONLY_IN_ROOM])
+    @twice.post("/{topic_id}", dependencies=[Can(Permission.speak, at="topic_id")])
     async def both(topic_id: str) -> None: ...
 
     [found] = violations(_app(twice))
-    assert "cheese_only_in_room and route_decides" in found
-
-
-def test_a_cheese_only_route_refuses_a_caller_without_a_credential() -> None:
-    router = APIRouter()
-
-    @router.post("/topics/{topic_id}/x", dependencies=[CHEESE_ONLY_IN_ROOM])
-    async def room(topic_id: str) -> dict:
-        return {"reached": True}
-
-    @router.post("/projects/{project_id}/x", dependencies=[CHEESE_ONLY_IN_PROJECT])
-    async def project(project_id: str) -> dict:
-        return {"reached": True}
-
-    client = TestClient(_app(router))
-    for path in ("/topics/t1/x", "/projects/p1/x"):
-        for headers in ({}, {"x-cheese-token": "not-a-token"}):
-            res = client.post(path, headers=headers)
-            assert res.status_code == 401, (path, headers)
-            assert res.json()["message"] == "invalid sandbox token"
+    assert "can speak and route_decides" in found
 
 
 def test_the_main_app_refuses_writes_seal_did_not_admit() -> None:
@@ -141,22 +157,21 @@ def test_a_write_route_mounted_after_seal_is_refused_at_request_time() -> None:
 
 
 def test_a_router_wide_declaration_leaves_its_sockets_and_reads_alone() -> None:
-    for declaration in (ROUTE_DECIDES, CHEESE_ONLY_IN_ROOM):
-        router = APIRouter(prefix="/topics", dependencies=[declaration])
+    router = APIRouter(prefix="/topics", dependencies=[ROUTE_DECIDES])
 
-        @router.websocket("/{topic_id}/socket")
-        async def socket(websocket: WebSocket, topic_id: str) -> None:
-            await websocket.accept()
-            await websocket.send_text("hello")
-            await websocket.close()
+    @router.websocket("/{topic_id}/socket")
+    async def socket(websocket: WebSocket, topic_id: str) -> None:
+        await websocket.accept()
+        await websocket.send_text("hello")
+        await websocket.close()
 
-        @router.get("/{topic_id}/read")
-        async def read(topic_id: str) -> dict:
-            return {"reached": True}
+    @router.get("/{topic_id}/read")
+    async def read(topic_id: str) -> dict:
+        return {"reached": True}
 
-        built = _app(router, guarded=True)
-        seal(built)
-        client = TestClient(built)
-        with client.websocket_connect("/topics/t1/socket") as ws:
-            assert ws.receive_text() == "hello"
-        assert client.get("/topics/t1/read").json() == {"reached": True}
+    built = _app(router, guarded=True)
+    seal(built)
+    client = TestClient(built)
+    with client.websocket_connect("/topics/t1/socket") as ws:
+        assert ws.receive_text() == "hello"
+    assert client.get("/topics/t1/read").json() == {"reached": True}

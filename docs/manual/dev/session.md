@@ -31,7 +31,7 @@ covers:
 
 `agent_sessions` 的唯一索引是 `(conversation_id, agent_handle, harness)`（`uq_agent_sessions_conversation`），所以一间房可以同时坐几个队友、各留各的对话，每条任务也有自己的会话。`conversation_id` 指向登记表 `conversations(id, project_id, kind)`：`kind` 是 `room`、`task` 或 `thread`，id 就是频道、任务或支线自己的 id，由数据库触发器在它们插入和删除时维护，应用不写它。支线原地转成任务时任务沿用支线的 id，这一行只把 `kind` 改成 `task`，会话照旧挂在它上面（见[任务与工作目录](/dev/tasks)）。房间范围的问题（房间的机器、换机、清理）问的是房间自己和它所有任务的会话：`conversation/services.of_room`。`agent_handle` 取的是 `ResolvedAgent.handle`——和这个 agent 的记忆池同名，不是实例的 uuid，也不是署名的 handle（`cheese-<频道十六进制>`）：后者答「谁做了这件事」，它答「这是谁的对话」。一个从没配过 agent 的项目根本没有实例行，而 `NULL` 在唯一索引里不等于 `NULL`。把频道交给另一个队友不丢东西：新队友查一个不存在的键、从头开始，交回来时旧行还在。
 
-任务的会话和同一位队友在房间里的会话分开：状态目录按 `<队友>@<任务 id>` 取（`room/sessions/`），会话凭证带 `k` = 任务 id，只能对这条任务动手（`core/sandbox_auth.py`）；支线的会话凭证带 `scratch`：改动留不下（见[支线的会话](#scratch)），启动环境里是 `CHEESE_KEEPS_NOTHING`；支线转成任务后，空闲的会话带着改动留得下的凭证重开，接着同一段对话。broker 上任务的频道就是任务 id。
+任务的会话和同一位队友在房间里的会话分开：状态目录按 `<队友>@<任务 id>` 取（`room/sessions/`），会话凭证带 `k` = 任务 id，只能对这条任务动手（`core/sandbox_auth.py`）；频道主线和支线的会话凭证带 `scratch`：改动留不下（见[频道里的会话](#scratch)），启动环境里是 `CHEESE_KEEPS_NOTHING`；支线转成任务后，空闲的会话带着改动留得下的凭证重开，接着同一段对话。broker 上任务的频道就是任务 id。
 
 ## 一轮是一个区间 {#turn}
 
@@ -50,9 +50,9 @@ covers:
 
 `work_lease` 是另一回事，它是这位队友的执行环境落到一台机器上的那一份。执行环境是每位队友在每个对话里自己的（`agent_environments`，见[同一频道里的几个 AI 队友](/dev/turn#seats-machine)）：沙箱放在规格给得出的哪台机器上由平台定，不进沙箱时就是那一台电脑。
 
-### 支线的会话 {#scratch}
+### 频道里的会话 {#scratch}
 
-支线的会话改动留不下：判断在 `Place.keeps_work`（`room_task/place.py`），支线里例行任务执行的那一轮除外。这时一轮的执行凭证带 `scratch`（`core/sandbox_auth.py`），执行路由（`api/routes/execution.py`）按机器分两种：
+频道主线和支线的会话改动留不下：判断在 `Place.keeps_work`（`room_task/place.py`），只有开着的任务留得下，支线里例行任务执行的那一轮除外。主线上叫到芝士，答在主线，由频道自己那条会话答（`agent_sessions` 的键是频道 id）；它的开场和支线一样说明在哪、主线上之前说了什么、频道里还在进行的任务（`room/thread_context.py` 的 `channel_context`），只少了支线挂着的那条消息。这时一轮的执行凭证带 `scratch`（`core/sandbox_auth.py`），执行路由（`api/routes/execution.py`）按机器分两种：
 
 - 机器是这条会话独占的（它自己的沙箱，租约上 `own` 为真）：读、跑命令、改文件都照常，只拒绝把改动带出机器的调用——同步检查点和项目的 MCP 服务。
 - 不在自己的沙箱里（直接跑在一台人自己的电脑上）：只能读，和文档芝士借房间机器时一样，外加 Claude Code 自己的 `Read`。
@@ -73,6 +73,7 @@ covers:
 
 - `sweep_orphans` 收拾还开着的区间。`SWEEP_MIN_AGE_S`（60 秒）挡掉刚出现、可能正被别的路径处理的那些；启动时用 `resume_orphans` 跑同一个函数，把这道门关掉（`min_age_s=0.0`）——那一刻开着的区间全属于上一任，没有东西在跟它赛跑。
 - `_wedged_turns` 找**两个**信号都安静了的轮：频道里最新块的时间，以及这个进程为它发过的最后一帧；阈值 `SILENT_TURN_S`（1800 秒）。启动时不传 `last_activity`，这个探针整个跳过。
+- 已送达、没有哪个进程接得上、也没人说它的会话死了的一轮（`death_evidence.unknown_row`）不因为够不着就关；但它自己写下的最后一条记录（带它 id 的块或运行记录，没有就是送达时刻）过了同一个阈值，钟点扫描就按卡死处理：关掉区间、在房间里说一声，排在它后面的消息随后起自己的一轮（`_silent_unknown_turns`）。只在钟点扫描里判，接手那一趟不判，因为设备的会话可能几分钟后才连回来。房间里别人说话不算这一轮在动。
 - 一轮算不算被接着做（`_adopted`）问的是**这一轮自己那个席位**的会话还在不在，不是房间里有没有哪个会话还在：同房间另一个队友还在干活，不能让一个会话已经没了的队友那一轮一直开着。
 - `resume_lost_messages` 补上重启丢掉的排队：项目级并发闸是纯 asyncio 的，进程一换就没了。它按席位判：点名的那个队友没有轮次在跑就起一轮，每个队友最多一轮；别的队友在跑不挡它，因为那一轮不会读一条不是点给它的消息。还没组装、说不出是谁的一轮，按整间房在忙算。它不只在接手时跑：这个进程跑完一件活时、runner 报告会话空闲或退出（或者一条写进去没读的输入被放掉）时、Stop 关掉这一轮区间时各唤醒一次（排在 Stop 后面的消息要等它），另有每 10 秒一次的兜底扫描（`queued_message_sweep_interval_s`），读的是部分索引 `ix_blocks_queued_messages`，所以一次唤醒漏了，消息最多再等一个间隔。
 

@@ -338,6 +338,15 @@ services:
       # value as the backend's FRONTEND_URL. It refuses to start without it.
       - DOCS_ORIGIN=${DOCS_ORIGIN:-}
       - FRONTEND_URL=${FRONTEND_URL:-}
+      # The deployment's other origins, as the backend reads them. This container
+      # has no env_file, so nothing else could carry them: without this the
+      # mainland redirect knows only FRONTEND_URL and never sends a visitor
+      # arriving on an alias of the entry to it.
+      - FRONTEND_ALIASES=${FRONTEND_ALIASES:-}
+      # The mainland entry: visitors in China opening a page on this deployment's
+      # Hong Kong origin are sent here (frontend/nginx/mainland). Empty — the
+      # default — redirects nobody; turning it on needs no rebuild.
+      - MAINLAND_ENTRY=${MAINLAND_ENTRY:-}
     # Lets API_UPSTREAM name the host; unused otherwise.
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -498,7 +507,7 @@ services:
   # backend over this network. Optional like the renderers above: without it the
   # room still previews files, and says editing is unavailable.
   office-editor:
-    image: ${OFFICE_EDITOR_IMAGE:-onlyoffice/documentserver:8.3@sha256:0daa2d1d414d49286bfa9495fc0c936e7e73edaf8944a61102a7a6353a952297}
+    image: ${OFFICE_EDITOR_IMAGE:-onlyoffice/documentserver:9.4@sha256:e3da62a847b9a5d51a11f73cfea1d9c13c3be3809614490d4edddcf01dcf919b}
     container_name: cheese-office-editor
     environment:
       - JWT_ENABLED=true

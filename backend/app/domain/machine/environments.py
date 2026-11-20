@@ -75,11 +75,13 @@ async def environment_of(
     device = (
         (instance.configuration or {}).get("execution_device_id") if instance else None
     )
-    chosen = (
-        Default(Sandbox(spec=TEAM_DEVICES), "agent")
-        if device
-        else default_for(topic, task, project.settings if project else None)
-    )
+    spec = (instance.configuration or {}).get("execution_spec") if instance else None
+    if device:
+        chosen = Default(Sandbox(spec=TEAM_DEVICES), "agent")
+    elif spec:
+        chosen = Default(Sandbox(spec=spec), "agent")
+    else:
+        chosen = default_for(topic, task, project.settings if project else None)
     written = await sessions.set_environment(
         row.conversation_id,
         row.agent_handle,
@@ -90,7 +92,9 @@ async def environment_of(
     return stored(written.environment) or default_environment()
 
 
-async def offered_specs(db: AsyncSession, project) -> list[dict]:
+async def offered_specs(
+    db: AsyncSession, project, *, project_devices: list | None = None
+) -> list[dict]:
     """The sandbox specs this project may choose, each with the words a
     reader sees for it — its name, and what it is and what it costs: the
     platform's machines where this deployment has them, and the project's team
@@ -101,8 +105,14 @@ async def offered_specs(db: AsyncSession, project) -> list[dict]:
     if cloud_vm_provisionable(settings):
         out.append(_spec(VM, say("specVm"), _vm_about()))
     devices = sql_device_service(db)
-    mine = await devices.list_devices_for_project(project.id)
-    refusing = await devices.refusing_sandboxes([d.device_id for d in mine])
+    mine = (
+        project_devices
+        if project_devices is not None
+        else await devices.list_devices_for_project(project.id)
+    )
+    refusing = (
+        await devices.refusing_sandboxes([d.device_id for d in mine]) if mine else set()
+    )
     if any(d.device_id not in refusing for d in mine):
         out.append(
             _spec(TEAM_DEVICES, say("specTeamDevices"), say("specTeamDevicesAbout"))

@@ -16,6 +16,43 @@ export type Space = {
   reviewReason?: string | null
   /** 这块板的「AI 队友辅导」：题目上的设置和它同时生效。全空 = 没说。 */
   teaching?: SpaceTeaching
+  /**
+   * 谁读得到这块板。`null` 是只对成员开放；一组邮箱后缀（`ruc.edu.cn`）是开放空间：
+   * 注册邮箱在范围内的登录用户不用加入就能看、领题、出题。
+   */
+  openScope?: string[] | null
+  /** 最近一次「设为开放空间」的申请；只有管理员读得到，没申请过是 `null`。 */
+  openRequest?: SpaceOpenRequest | null
+  /**
+   * 读者在这块板上能做的事（服务端 `app/domain/space/permissions.py` 的 `Permission`）。
+   * 管理这块板的不一定在 `admins` 里：平台管理员不占席位也管每一块板。
+   */
+  viewerPermissions?: SpacePermission[]
+}
+
+/** 一块板上的一样权限，服务端 `app/domain/space/permissions.py` 的 `Permission`。 */
+export type SpacePermission =
+  | 'view'
+  | 'publish'
+  | 'teach'
+  | 'edit_settings'
+  | 'manage_members'
+  | 'announce'
+  | 'manage_materials'
+  | 'view_analytics'
+  | 'manage_admins'
+  | 'delete'
+  | 'resubmit'
+
+/** 把空间设为开放空间（或扩大范围）的申请，平台审核通过前空间保持原样。 */
+export type SpaceOpenRequest = {
+  id: number
+  scope: string[]
+  status: 'PENDING' | 'APPROVED' | 'REJECTED'
+  /** 被驳回时审核人写的原因。 */
+  reason: string | null
+  createdAt: string
+  reviewedAt: string | null
 }
 
 /** AI 队友怎么帮学生：引导为主、讲解与示例、先明确需求再实现、不加限制。 */
@@ -46,6 +83,230 @@ export type SpaceTeaching = {
   materialIds?: number[]
   /** 课程让 AI 队友读的团队文档（#3774）。 */
   documentIds?: string[]
+  /** 项目里每个 AI 队友每一轮都带上的技能名。 */
+  skills?: string[]
+  /** 「引导为主」时的提示阶梯：问思路 → 给方向 → 给伪代码 → 给片段，逐级给。 */
+  hintLadder?: boolean
+  /** 「引导为主」时的输出检查：AI 回复里的大段代码改成提示。 */
+  outputCheck?: boolean
+}
+
+// ---- 学情分析（§ learning analysis, step 1）--------------------------------------
+//
+// 一块题目板的学情分析底座：开关、知识点清单、加入时的告知卡。代码与文案都不叫「课程」——
+// 这是板级功能。契约见 `SpacesApi` 那五条 `learning-analysis` 方法；服务端在
+// `app/api/routes/spaces_learning_analysis.py` 与 `app/domain/space/learning_analysis_*`。
+
+/** 一条知识点：这块板的清单里的一行，所有题目共用。 */
+export type SpaceKnowledgePoint = {
+  id: number
+  name: string
+  displayOrder: number
+}
+
+/** 开关读回来的三格。`enabled` 是判据；后两格只用于展示（谁开的、什么时候开的）。 */
+export type SpaceLearningAnalysisSwitch = {
+  enabled: boolean
+  /** 打开它的那个人的 user id；从没开过是 null。 */
+  enabledBy: number | null
+  /** 打开它的那一刻，epoch 毫秒；从没开过是 null。 */
+  enabledAt: number | null
+}
+
+/** `GET /spaces/{spaceId}/learning-analysis` 的载荷：开关 + 清单 + 我能不能改。 */
+export type SpaceLearningAnalysis = {
+  learningAnalysis: SpaceLearningAnalysisSwitch
+  knowledgePoints: SpaceKnowledgePoint[]
+  /** 我在这块板能不能改设置（`edit_settings`）。摆不摆管理入口用它。 */
+  canManage: boolean
+}
+
+/** AI 建议里「把握」那一格：模型只给这两档，别的值由服务端归到 `medium`。 */
+export type SpaceKnowledgeConfidence = 'high' | 'medium'
+
+/** AI 读题面给出的一条知识点建议（`POST .../knowledge-points/suggestions`）。 */
+export type SpaceKnowledgeSuggestion = {
+  name: string
+  /** 为什么建议它。 */
+  why: string
+  /** 判断的把握，高 / 中。 */
+  confidence: SpaceKnowledgeConfidence
+  /** 清单里没有这个名字：采用它要连清单一起加（「加入清单并采用」）。 */
+  isNew: boolean
+}
+
+/** 进这块板时那张告知卡的状态（`GET .../notice`）：要不要弹。 */
+export type SpaceLearningNoticeState = {
+  enabled: boolean
+  /** `enabled && !acknowledged` 才为真 —— 据此决定弹不弹。 */
+  needsAcknowledge: boolean
+  acknowledged: boolean
+}
+
+// ---- 我的学习洞察（§ learning analysis, step 2）-------------------------------------
+//
+// 每晚分析写下的结果，成员只读得到自己的那一份。契约见 `SpacesApi.readMyLearningInsight`
+// / `disputeLearningJudgment`；服务端在 `app/domain/space/learning_insight_service.py`。
+
+/** AI 判断的三档。「未涉及」不是一档：没有判断（`judgment: null`）就是它。 */
+export type LearningLevel = 'mastered' | 'shaky' | 'weak'
+
+/** 一条提问的类型：问概念、贴报错、要答案、验证思路、其他。 */
+export type LearningQuestionKind = 'concept' | 'error' | 'answer' | 'verify' | 'other'
+
+/** 一条依据：我自己的一条消息的摘录，以及它在哪道题里。 */
+export type LearningEvidence = {
+  blockId: string
+  taskId: number | null
+  taskName: string
+  quote: string
+  /** epoch 毫秒。 */
+  createdAt: number | null
+}
+
+/** AI 对一个知识点的当前判断。 */
+export type LearningJudgment = {
+  id: number
+  level: LearningLevel
+  /** 一句话：为什么是这一档。 */
+  summary: string
+  /** 我标过「不准」：降权（不当「最该补的」），下次分析时复核。 */
+  disputed: boolean
+  analyzedAt: number | null
+  evidence: LearningEvidence[]
+  /** 最近一组巩固题的作答（第 4 步）：做完一组改了档位时，它就是那次的依据。没做过为空。 */
+  practice?: LearningJudgmentPractice | null
+}
+
+/** 判断上记着的最近一组巩固题：答对几道、共几道、什么时候做完（epoch 毫秒）。 */
+export type LearningJudgmentPractice = { correct: number; total: number; at: number | null }
+
+/** 清单里的一个知识点，带上我的判断；`judgment` 为空即「未涉及」。 */
+export type LearningInsightPoint = {
+  id: number
+  name: string
+  judgment: LearningJudgment | null
+}
+
+/** 「我常问的」一类：一个知识点（可能归不进清单）× 一种提问类型。 */
+export type LearningFrequentQuestion = {
+  knowledgePointId: number | null
+  knowledgePointName: string | null
+  kind: LearningQuestionKind
+  count: number
+  /** 最近一条的概括（模型的话，不是原文）。 */
+  example: string
+}
+
+/** 「我的学习洞察」（`GET /spaces/{spaceId}/learning-analysis/me`）。 */
+export type MyLearningInsight = {
+  /** 这块板开没开学情分析；没开时其余都是空的。 */
+  enabled: boolean
+  /** 最近一次更新，epoch 毫秒；还没分析过是 null。 */
+  updatedAt: number | null
+  /** 全部知识点，按清单顺序。 */
+  knowledgePoints: LearningInsightPoint[]
+  /** 最该补的那个知识点；没有要补的是 null。 */
+  focusKnowledgePointId: number | null
+  frequentQuestions: LearningFrequentQuestion[]
+  /** 读了什么：一共几条发言、哪几道题各几条。 */
+  sources: {
+    messagesRead: number
+    tasks: { taskId: number; name: string; messagesRead: number }[]
+  }
+}
+
+// ---- 巩固练习与复习提醒（§ learning analysis, step 4）--------------------------------
+//
+// 只有本人：契约见 `SpacesApi` 里 `me/practice`、`me/explanation` 那几条；服务端在
+// `app/domain/space/learning_practice_service.py`。
+
+/** 一组巩固题从哪来：自己点的、老师推送的、复习提醒里再做的一组。 */
+export type LearningPracticeSource = 'self' | 'pushed' | 'review'
+
+/** 一道选择题。`chosen` 为空即还没答；答过之后才带正确答案与讲解。 */
+export type LearningPracticeQuestion = {
+  stem: string
+  options: string[]
+  chosen: number | null
+  correct: boolean | null
+  answer: number | null
+  explanation: string | null
+}
+
+/** 一组巩固题。`ready` 为假是老师推送、还在出题。 */
+export type LearningPracticeSet = {
+  id: number
+  knowledgePointId: number
+  knowledgePointName: string
+  source: LearningPracticeSource
+  ready: boolean
+  done: boolean
+  questions: LearningPracticeQuestion[]
+  correct: number | null
+  levelBefore: LearningLevel | null
+  levelAfter: LearningLevel | null
+  createdAt: number | null
+  completedAt: number | null
+}
+
+/** 答一道之后当场交回的：对错、正确答案、讲解。第一次选的定下来。 */
+export type LearningPracticeAnswer = {
+  question: number
+  chosen: number
+  correct: boolean
+  answer: number
+  explanation: string
+}
+
+/** 「做完了」之后：答对几道、档位前后、下一次复习的日子（YYYY-MM-DD）。 */
+export type LearningPracticeResult = {
+  practiceId: number
+  correct: number
+  total: number
+  levelBefore: LearningLevel | null
+  levelAfter: LearningLevel | null
+  nextReviewOn: string | null
+}
+
+/** 一条复习提醒：哪个知识点、哪天该复习（平台日历 YYYY-MM-DD）、连对几组。 */
+export type LearningReview = {
+  knowledgePointId: number
+  knowledgePointName: string
+  dueOn: string
+  streak: number
+}
+
+/** 没做完的一组（列在「待做的巩固题」里）。 */
+export type LearningOpenPractice = {
+  id: number
+  knowledgePointId: number
+  knowledgePointName: string
+  source: LearningPracticeSource
+  ready: boolean
+  answered: number
+  total: number
+  createdAt: number | null
+}
+
+/** 本人的巩固练习一览（`GET /spaces/{spaceId}/learning-analysis/me/practice`）。 */
+export type MyLearningPractice = {
+  enabled: boolean
+  /** 每人每天能要几次（出题、换一组、讲解都算），今天用了几次。 */
+  dailyLimit: number
+  usedToday: number
+  open: LearningOpenPractice[]
+  /** 已经到期的复习。 */
+  due: LearningReview[]
+  /** 还没到期的下一次复习。 */
+  upcoming: LearningReview | null
+}
+
+/** 「先看一段讲解」。 */
+export type LearningExplanation = {
+  knowledgePointId: number
+  text: string
+  generatedAt: number | null
 }
 
 /** One person the space is visible to — see `SpacesApi.listMembers`. */
@@ -56,53 +317,40 @@ export type SpaceMember = {
     id: number
     username: string
     nickname?: string
+    /** 当前查看者给这个人设的私人称呼；没设过是 null/缺省。 */
+    remark?: string | null
     avatarId?: number | null
     intro?: string
   }
-  /**
-   * 加入方式：这个人当初是靠哪张码进来的。
-   *
-   * `null`（老接口里则是缺这一格）是**「没有记录」**，不是「没用过码」：
-   * 加这一格之前进来的成员谁都没记过，所有者直接加进来的人本来就没用码，而成员行
-   * 分不开这两种。所以界面一律说「未知」，绝不替它认领一张码 —— 见
-   * `views/spaces/board/pages/Members.vue`。
-   *
-   * 可选，因为它比这个类型新；缺了按 `null` 读。
-   */
-  inviteCode?: { id: number; code: string } | null
 }
 
-/**
- * A space's own invite code. Not the registration `InviteCode`: redeeming
- * this one puts you in the space, it does not create an account.
- */
-export type SpaceInviteCode = {
+/** A space's join link — see `SpacesApi.getJoinLink`. Each space has one, until an
+ *  owner or admin resets it. */
+export type SpaceJoinLink = {
+  token: string
+  /** 加入需要批准：开着时，打开链接加入的人先成为一份待批准的申请。 */
+  approval: boolean
+}
+
+/** One request waiting for an owner or admin, made through the join link while
+ *  approval is on — see `SpacesApi.listJoinRequests`. */
+export type SpaceJoinRequest = {
   id: number
-  spaceId: number
-  code: string
-  maxUses: number
-  useCount: number
-  expiresAt: number | null
+  userId: number
+  /** Same shape a member row's `user` carries. */
+  user?: SpaceMember['user']
+  /** Epoch milliseconds. */
   createdAt: number
-  /**
-   * 这张码给谁 / 干什么用，建码人自己写的一句话（「十月这批同学」）。
-   * `null` = 他什么都没写，包括每一张在这一格存在之前建的码 —— 那不是「未知」，
-   * 是「本来就没有」，所以界面说的是「没写说明」而不是「未知」。
-   * 可选，因为它比这个类型新；缺了按 `null` 读。
-   */
-  note?: string | null
-  /**
-   * 谁建的这张码。**没有这一格时不要显示「未知」以外的东西** —— `created_by`
-   * 可空，一个没有 actor 的调用者建的码会留着空，界面那行就写「未知」。
-   * 形状与成员行的 `user` 同一个（同一次批量查询给的）。可选，同上。
-   */
-  createdBy?: {
-    id: number
-    username: string
-    nickname?: string
-    avatarId?: number | null
-    intro?: string
-  } | null
+}
+
+/** Where the reader stands with the space a join link names. */
+export type SpaceJoinStatus = 'member' | 'pending' | 'none'
+
+/** What a join link shows its holder — see `SpacesApi.detailByJoinLink`. */
+export type SpaceInvite = {
+  space: { id: number; name: string; intro: string; avatarId: number | null }
+  joinApproval: boolean
+  joinStatus: SpaceJoinStatus
 }
 
 export type SpaceCategory = {
@@ -236,6 +484,8 @@ export type SpaceTaskVisibilityStatus =
 export type SpaceMyPublishedTask = {
   taskId: number
   taskName: string
+  /** 怎么开始：直接开始的题没有申请。 */
+  startMode?: 'DIRECT' | 'APPLY'
   category: SpaceMyPublishedTaskCategory
   approved: AnalyticsApproveType
   visibilityStatus: SpaceTaskVisibilityStatus
@@ -285,7 +535,14 @@ export type SpaceAnalyticsAlerts = {
 
 /** 一条开版申请：谁、申请了什么版、什么时候、说了什么，以及审到哪一步。 */
 export type SpaceApplication = {
+  /** `create`：新建空间待审；`open`：已有空间申请设为开放空间。 */
+  kind: 'create' | 'open'
+  /** 空间的 id（两种申请都是，审核也按它）。 */
   id: number
+  /** `open` 申请自己的 id；同一个空间可以有好几条已审过的开放申请。 */
+  requestId?: number
+  /** `open` 申请要开放给的邮箱后缀。 */
+  openScope?: string[]
   avatarId?: number | null
   name: string
   intro: string

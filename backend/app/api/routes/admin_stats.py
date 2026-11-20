@@ -34,6 +34,7 @@ from app.api.admin_deps import PlatformAdminDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
 from app.core.config import settings
+from app.core.heap_census import heap_census
 from app.domain.agent import preview_hub as preview_hub_module
 from app.domain.agent import turn_counts
 from app.domain.agent.device_hub import device_hub
@@ -239,6 +240,8 @@ async def performance_stats(
     service: StatsServiceDep,
     handle: PlatformAdminDep,
     request: Request,
+    heap: Annotated[bool, Query()] = False,
+    owners: Annotated[bool, Query()] = False,
 ) -> dict:
     """第四类：**这一刻**的接口耗时，按路由，外加投递与事件积压。
 
@@ -258,6 +261,12 @@ async def performance_stats(
     # 会话主机的内存和当前会话数（#1824 第二轮的补测量）：新会话能不能起只看
     # `MemAvailable >= agent_session_memory_max_mb`，而此前没有任何接口暴露它。
     snap["session_host"] = await session_host_snapshot()
+    # 要的时候才数：数一遍和做一次完整回收一样久，也一样占着事件循环
+    # （`core/heap_census.py`）。
+    # `owners` 再追查排前几类是谁持有的，最多再扫三遍堆，要久几倍。那几遍是
+    # Python 循环，放到线程里跑，事件循环能在字节码之间接着服务别的请求。
+    if heap:
+        snap["heap"] = await asyncio.to_thread(heap_census, owners=owners)
     return ok(snap)
 
 

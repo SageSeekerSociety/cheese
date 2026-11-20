@@ -8,37 +8,19 @@
     @dragleave="onDragLeave"
     @drop.prevent="onDrop"
   >
-    <header class="ap__head">
-      <span class="ap__mark" aria-hidden="true"><CheeseAvatar :size="22" :state="busy ? 'think' : null" /></span>
-      <span class="ap__who">
-        <span class="ap__name">{{ t('work.agentAvatar.defaultName') }}</span>
-      </span>
-      <span class="ap__grow" />
-      <BaseButton
-        icon="mdi-pencil-outline"
-        size="sm"
-        :disabled="busy || (messages.length === 0 && streaming === null)"
-        :title="t('tasks.assistant.newTopic')"
-        :aria-label="t('tasks.assistant.newTopic')"
-        @click="!busy && emit('new')"
-      />
-      <BaseButton
-        v-if="dockable"
-        :icon="docked ? 'mdi-dock-window' : 'mdi-dock-right'"
-        size="sm"
-        :title="docked ? t('tasks.assistant.undock') : t('tasks.assistant.dock')"
-        :aria-label="docked ? t('tasks.assistant.undock') : t('tasks.assistant.dock')"
-        @click="emit('dock', !docked)"
-      />
-      <BaseButton
-        v-if="closable"
-        icon="mdi-close"
-        size="sm"
-        :title="t('tasks.assistant.close')"
-        :aria-label="t('tasks.assistant.close')"
-        @click="emit('close')"
-      />
-    </header>
+    <AssistantPanelHead
+      :busy="busy"
+      :new-topic-disabled="messages.length === 0 && streaming === null"
+      :closable="closable"
+      :dockable="dockable"
+      :docked="docked"
+      :draggable="draggable"
+      @new="emit('new')"
+      @dock="(next) => emit('dock', next)"
+      @close="emit('close')"
+      @drag-start="(event) => emit('dragStart', event)"
+      @recenter="emit('recenter')"
+    />
 
     <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- only catches clicks on the links in the answers; Enter on a focused link fires the same click -->
     <div ref="scroller" class="ap__chat" @click="followLink" @scroll.passive="nearTop">
@@ -74,6 +56,7 @@
               :results="m.results ?? []"
               :proposals="m.proposals ?? []"
               :files="m.handed ?? []"
+              :rules="m.rules ?? []"
               @download-file="(file) => emit('downloadFile', file)"
             >
               <template #text="{ text }">
@@ -131,6 +114,7 @@
             :results="m.results ?? []"
             :proposals="m.proposals ?? []"
             :files="m.handed ?? []"
+            :rules="m.rules ?? []"
             :sending="sendingProposal"
             @send-proposal="(id, edited) => emit('sendProposal', id, edited)"
             @dismiss-proposal="(id) => emit('dismissProposal', id)"
@@ -165,6 +149,7 @@
           :results="results"
           :proposals="proposals"
           :files="handed"
+          :rules="rules"
           :sending="sendingProposal"
           @send-proposal="(id, edited) => emit('sendProposal', id, edited)"
           @dismiss-proposal="(id) => emit('dismissProposal', id)"
@@ -311,7 +296,7 @@ import type { VoiceHeard } from '@/composables/useVoiceInput'
 import type { PanelChange, PanelProposal, PanelResult, PanelStep, TurnPiece } from '@/lib/assistantView'
 import type { PendingAttachment } from '@/lib/attachments'
 import type { RefNames } from '@/lib/refChip'
-import type { AssistantCited, AssistantHanded } from '@/stores/agentThread'
+import type { AssistantCited, AssistantHanded, AssistantRule, AssistantShown } from '@/stores/agentThread'
 import type { Citable } from '@/types/citable'
 
 import { computed, nextTick, ref, watch } from 'vue'
@@ -324,6 +309,7 @@ import { useComposerVoice } from '@/composables/useComposerVoice'
 
 import AssistantAsked from './AssistantAsked.vue'
 import AssistantContextRow from './AssistantContextRow.vue'
+import AssistantPanelHead from './AssistantPanelHead.vue'
 import AssistantTurn from './AssistantTurn.vue'
 import CiteMenu from './CiteMenu.vue'
 
@@ -334,6 +320,7 @@ import NavLink from '@/components/common/NavLink.vue'
 import ComposerActions from '@/components/room/ComposerActions.vue'
 import ComposerEditor from '@/components/room/ComposerEditor.vue'
 import ComposerVoiceBar from '@/components/room/ComposerVoiceBar.vue'
+import { runLine } from '@/lib/agentRules'
 import { checklistOf, interleave } from '@/lib/assistantView'
 
 /** 之前的一个话题：读回来只给看。 */
@@ -349,8 +336,8 @@ export interface PanelTopic {
 export interface PanelMessage {
   role: 'user' | 'assistant' | 'platform'
   text: string
-  /** 平台开始一次运行的那一句：哪条例行事务。 */
-  shown?: { routine?: string }
+  /** 平台开始一次运行的那一句：哪条自动化、发生了什么。 */
+  shown?: AssistantShown
   /** 回答被停下了，`text` 是停下时写出的部分。 */
   stopped?: boolean
   at: string
@@ -364,8 +351,9 @@ export interface PanelMessage {
   changes?: PanelChange[]
   results?: PanelResult[]
   proposals?: PanelProposal[]
-  /** 芝士交给人的文件。 */
+  /** 芝士交给人的文件、建或改的自动化。 */
   handed?: AssistantHanded[]
+  rules?: AssistantRule[]
   /** 做了事，却一个字没写。 */
   silent?: boolean
 }
@@ -422,6 +410,8 @@ const props = withDefaults(
     /** 桌面上能停在右边：头上给一颗「固定到右侧」或「取消固定」。 */
     dockable?: boolean
     docked?: boolean
+    /** 取消固定之后是一块能挪的浮层：按住头上那一条拖，双击回到右下角。 */
+    draggable?: boolean
     /** 输入框上方那一排：这一页叫什么（没有就不画）、人关掉了没有，和选中交给芝士的那段字。 */
     pageLabel?: string | null
     pageOff?: boolean
@@ -433,6 +423,7 @@ const props = withDefaults(
     /** 用 @ 挑过的东西，输入框里的标签照它写名字。 */
     cited?: NonNullable<RefNames['cited']>
     searchProblems?: (query: string) => Promise<Citable[]>
+    rules?: AssistantRule[]
   }>(),
   {
     earlier: () => [],
@@ -440,6 +431,7 @@ const props = withDefaults(
     currentEarlier: false,
     dockable: false,
     docked: false,
+    draggable: false,
     queued: false,
     creditRefused: false,
     personalTeamHandle: undefined,
@@ -466,6 +458,7 @@ const props = withDefaults(
     project: null,
     cited: () => ({}),
     searchProblems: undefined,
+    rules: () => [],
   }
 )
 
@@ -476,6 +469,10 @@ const emit = defineEmits<{
   /** 读一个话题（`null` 是当前这个）更早的那一页消息。 */
   olderMessages: [topic: string | null]
   dock: [docked: boolean]
+  /** 按住头顶那一条拖了起来（只有浮层能拖）：位置由外面那头管。 */
+  dragStart: [event: PointerEvent]
+  /** 双击头顶那一条：回到默认的角落。 */
+  recenter: []
   stop: []
   close: []
   undo: [changeId: number, key: string]
@@ -511,10 +508,6 @@ function followLink(event: MouseEvent) {
 
 const { t } = useI18n()
 
-/** 平台开始一次运行的那一句：芝士读到的是平台的说明，人看到的是这一行。 */
-function runLine(shown?: { routine?: string }): string {
-  return t('tasks.assistant.run.routine', { title: shown?.routine ?? '' })
-}
 const markdown = new MarkdownRenderer()
 
 /** 正在答的这一轮，按发生的顺序。最后做的几步都已回来、还没开始写下一段话时，末尾是
@@ -694,35 +687,9 @@ function nearTop() {
   background: var(--surface);
 }
 
-.ap__head {
-  display: flex;
-  gap: 4px;
-  align-items: center;
-  height: 48px;
-  padding: 0 8px 0 12px;
-  border-bottom: 1px solid var(--line);
-}
-
-.ap__mark,
 .ap__avatar {
   display: inline-flex;
   flex-shrink: 0;
-}
-
-.ap__who {
-  display: inline-flex;
-  gap: 6px;
-  align-items: baseline;
-  min-width: 0;
-  padding: 0 6px;
-}
-
-.ap__name {
-  font-size: 14px;
-  font-weight: 600;
-  line-height: var(--lh-14);
-  color: var(--ink);
-  white-space: nowrap;
 }
 
 .ap__older {
@@ -758,10 +725,6 @@ function nearTop() {
   flex: 1;
   border-top: 1px solid var(--line-2);
   content: '';
-}
-
-.ap__grow {
-  flex: 1;
 }
 
 .ap__chat {

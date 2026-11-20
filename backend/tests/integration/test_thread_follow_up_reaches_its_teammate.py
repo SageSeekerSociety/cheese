@@ -1,16 +1,17 @@
-"""A 支线 is a conversation with the teammate who was called into it, and a
-message without an @ calls nobody there either.
+"""A 支线 is a conversation with the teammate who was called into it.
 
-Once a person has called an AI teammate into a 支线, what they say there next
-without an @ is said to that teammate: while it is working the message joins
-that turn, and while it is idle the message waits for the next time someone
-calls it. It never starts a turn by itself, in the 支线 as in the channel's
-main line: a teammate answers only when someone @-s it.
+Once a person has called an AI teammate into a 支线, everything a person says
+there is said to that teammate, as in a task: while it is working the message
+joins that turn, and while it is idle the message starts its next one. A
+message that @-s only people is said to them, and the teammate does not pick
+it up. A teammate's own message calls nobody, and in the channel's main line a
+teammate still answers only when someone @-s it.
 """
 
 import asyncio
 import time
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 
@@ -19,6 +20,7 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.chat import ChatService
 from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner
+from app.domain.team.models import TeamMemberRole, TeamUserRelation
 from app.domain.topic.services import TopicService
 from tests.conftest import (
     StubChannel,
@@ -36,7 +38,9 @@ from tests.integration.conftest import (
     room_agent_seat,
     room_socket,
     session_auth_headers,
+    shared_team_of,
 )
+from tests.support.prompt_lines import without_id
 from tests.support.threads import thread_in
 
 
@@ -89,7 +93,8 @@ async def _until(cond, timeout: float = 5.0) -> None:
 
 class _Channel:
     """A channel with one AI teammate, a 支线 under one of its messages, and
-    ``u`` who talks there."""
+    ``u`` who talks there. ``bob`` is in the project too: with a second person
+    in it, the main line is people talking to each other."""
 
     def __init__(self, factory, tmp_path) -> None:
         self.factory = factory
@@ -108,8 +113,19 @@ class _Channel:
     async def open(self) -> "_Channel":
         async with self.factory() as session:
             await registered(session, "u")
-            await registered(session, "bob")
+            bob = await registered(session, "bob")
             project = await project_service(session).create(name="P", owner_handle="u")
+            team = await shared_team_of(session, project.id, joiner_user_id=bob)
+            now = datetime.now(UTC)
+            session.add(
+                TeamUserRelation(
+                    team_id=team,
+                    user_id=bob,
+                    role=TeamMemberRole.MEMBER,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
             room = await TopicService(session).create(
                 project_id=project.id, title="讨论", created_by="u"
             )
@@ -144,7 +160,7 @@ class _Channel:
 
 
 @pytest.mark.anyio
-async def test_a_follow_up_without_an_at_does_not_wake_the_idle_teammate(
+async def test_a_follow_up_without_an_at_wakes_the_idle_teammate(
     business_db_factory, tmp_path
 ):
     channel = await _Channel(business_db_factory, tmp_path).open()
@@ -152,7 +168,40 @@ async def test_a_follow_up_without_an_at_does_not_wake_the_idle_teammate(
 
     await channel.say("再查一下出处")
 
-    await channel.nothing_more_started()
+    await _until(lambda: len(channel.screen.prompts) == 2)
+    assert len(channel.screen.prompts) == 2, channel.screen.prompts
+    assert "再查一下出处" in channel.screen.prompts[1]
+    await finish_turn(channel.service, channel.thread)
+    await channel.runner.drain()
+
+
+@pytest.mark.anyio
+async def test_someone_else_in_the_channel_wakes_the_teammate_too(
+    business_db_factory, tmp_path
+):
+    """A 支线 has no owner: whoever speaks there speaks to its teammate."""
+    channel = await _Channel(business_db_factory, tmp_path).open()
+    await channel.called_and_answered()
+
+    await channel.say("我补充一个出处", author="bob")
+
+    await _until(lambda: len(channel.screen.prompts) == 2)
+    assert len(channel.screen.prompts) == 2, channel.screen.prompts
+    assert "我补充一个出处" in channel.screen.prompts[1]
+    await finish_turn(channel.service, channel.thread)
+    await channel.runner.drain()
+
+
+@pytest.mark.anyio
+async def test_a_thread_nobody_called_a_teammate_into_calls_nobody(
+    business_db_factory, tmp_path
+):
+    channel = await _Channel(business_db_factory, tmp_path).open()
+
+    await channel.say("这个周五前能定吗")
+
+    await channel.runner.drain()
+    assert channel.screen.prompts == []
 
 
 @pytest.mark.anyio
@@ -165,7 +214,7 @@ async def test_a_follow_up_joins_the_turn_running(business_db_factory, tmp_path)
 
     await _until(lambda: len(channel.screen.merged) == 1)
     assert len(channel.screen.prompts) == 1
-    assert [p.split("\n\n", 1)[0] for p in channel.screen.merged] == [
+    assert [without_id(p.split("\n\n", 1)[0]) for p in channel.screen.merged] == [
         "[u]: 直接说你准备怎么改"
     ]
     channel.screen.release.set()
@@ -196,15 +245,13 @@ async def test_a_message_at_someone_else_does_not_call_the_teammate(
 
 
 @pytest.mark.anyio
-async def test_a_reply_to_another_person_does_not_call_the_teammate(
+async def test_an_at_of_a_person_said_by_anyone_does_not_call_the_teammate(
     business_db_factory, tmp_path
 ):
     channel = await _Channel(business_db_factory, tmp_path).open()
     await channel.called_and_answered()
-    bob_said = await channel.say("<@u> 我觉得是第二种", author="bob")
-    await channel.nothing_more_started()
 
-    await channel.say("同意", reply_to=str(bob_said))
+    await channel.say("<@u> 我觉得是第二种", author="bob")
 
     await channel.nothing_more_started()
 
@@ -258,18 +305,13 @@ def _wait_for_prompt(stub_hooks, needle: str) -> None:
     raise AssertionError(f"the teammate never got it: {stub_hooks.last_prompt!r}")
 
 
-def test_a_follow_up_rides_into_the_next_call_of_the_teammate_called_there(
-    client, stub_hooks
-):
+def test_a_follow_up_reaches_the_teammate_called_there(client, stub_hooks):
     """Not the channel's default: the teammate called into this 支线."""
     room, teammate, _ = _room_with_two_teammates(client)
     thread = in_thread(client, room, "alice")
     _say(client, thread, f"<@{teammate}> 这段说明读一下")
 
-    post_message(client, thread, "alice", {"content": "再查一下出处"})
-    _settle(client, thread)
-    assert "再查一下出处" not in (stub_hooks.last_prompt or "")
-    _say(client, thread, f"<@{teammate}>")
+    _say(client, thread, "再查一下出处")
 
     _wait_for_prompt(stub_hooks, "再查一下出处")
     assert client.get(f"/topics/{thread}/thread").json()["data"]["teammate"] == (
@@ -277,9 +319,7 @@ def test_a_follow_up_rides_into_the_next_call_of_the_teammate_called_there(
     )
 
 
-def test_a_follow_up_rides_into_the_next_call_of_the_teammate_called_in_the_main_line(
-    client, stub_hooks
-):
+def test_a_follow_up_reaches_the_teammate_called_in_the_main_line(client, stub_hooks):
     """Called from the channel's main line, the teammate answers in the 支线
     under that message: the 支线 is a conversation with it from the start."""
     room, teammate, _ = _room_with_two_teammates(client)
@@ -295,10 +335,7 @@ def test_a_follow_up_rides_into_the_next_call_of_the_teammate_called_in_the_main
     thread = opened.json()["data"]["id"]
     _settle(client, thread)
 
-    post_message(client, thread, "alice", {"content": "再查一下出处"})
-    _settle(client, thread)
-    assert "再查一下出处" not in (stub_hooks.last_prompt or "")
-    _say(client, thread, f"<@{teammate}>")
+    _say(client, thread, "再查一下出处")
 
     _wait_for_prompt(stub_hooks, "再查一下出处")
 
@@ -315,7 +352,7 @@ def test_a_teammates_own_message_calls_nobody(client, stub_hooks):
     said = client.post(
         f"/topics/{thread}/messages",
         json={"request_id": str(uuid.uuid4()), "content": "我这边查完了"},
-        headers={"X-Cheese-Token": token},
+        headers={"Authorization": f"Bearer {token}"},
     )
     assert said.status_code == 200, said.text
     _settle(client, thread)

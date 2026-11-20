@@ -148,6 +148,9 @@ def test_a_deployment_that_cannot_reach_redis_stops(db_before_the_migration):
         ENVIRONMENT="production",
         JWT_SECRET="a-genuinely-random-48-char-secret-value",
         PLATFORM_ADMIN_HANDLES='["ops"]',
+        # A deployment also needs its content review key (test_content_review.py).
+        ALIYUN_GREEN_ACCESS_KEY_ID="key-id",
+        ALIYUN_GREEN_ACCESS_KEY_SECRET="key-secret",
     )
     assert step.returncode != 0
     assert "Cannot reach Redis" in step.stderr

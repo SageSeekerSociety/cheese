@@ -46,7 +46,7 @@ def _room(client, owner: str = "user-1") -> tuple[str, str, dict]:
     # 芝士 answers in a 支线, so that is where this file's conversation is.
     thread = in_thread(client, topic["id"], owner)
     token = mint_scoped_token(project_id=project["id"], topic_id=thread)
-    return project["id"], thread, {"X-Cheese-Token": token}
+    return project["id"], thread, {"Authorization": f"Bearer {token}"}
 
 
 def _say(client, topic_id: str, text: str, *, summon: bool) -> None:

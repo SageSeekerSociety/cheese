@@ -7,7 +7,6 @@
   "current": "当前",
   "deliveredAt": "{when}交付",
   "download": "下载",
-  "downloadError": "下载失败",
   "downloadVersion": "下载第 {number} 版",
   "fallbackTitle": "产物",
   "firstVersion": "这是第一版，没有可比较的上一版",

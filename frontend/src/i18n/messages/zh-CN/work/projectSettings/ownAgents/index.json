@@ -1,8 +1,12 @@
 {
-  "intro": "从团队的连接中选择模型和执行设备。成员归属只通过提示词约定，不限制其他成员调用",
+  "intro": "从团队的连接中选择模型，并选择执行环境。成员归属只通过提示词约定，不限制其他成员调用",
   "connection": "模型连接",
   "model": "模型",
-  "device": "执行设备",
+  "environment": "执行环境",
+  "standardSandbox": "平台标准沙箱",
+  "noEnvironments": "暂无可用执行环境",
+  "sandboxUnavailable": "平台当前不提供标准沙箱，可选择团队接入的设备",
+  "sandboxAbout": "在平台的隔离沙箱中运行，无需自有设备，按运行时长计费",
   "add": "添加 AI 队友",
   "loadFailed": "模型连接加载失败",
   "saveFailed": "添加 AI 队友失败"

@@ -1,14 +1,18 @@
 // 「AI 队友辅导」那几格的控件。空间设置和发题页、改题页共用它，所以这里量的是它出什么：
-//   1. 方式四选一；题目那一层多一个「沿用空间设置」，底下给出空间那一份要求；
+//   1. 方式四选一；题目那一层多一个「沿用上层设置」，底下给出空间那一份要求；
 //   2. 每改一格都把**整份**报回去；
-//   3. 人敲的字不要在回程里被改写（那个还没成形的空格）。
+//   3. 人敲的字不要在回程里被改写（那个还没成形的空格）；
+//   4. 选上的技能在格子里带着它的说明；
+//   5. 「涉及的知识点」只在题目那一层且这块板开着学情分析时出现；
+//   6. 「引导为主」的两项保护：新选上时出现并默认打开，已有的设置不自己打开。
+import type { SkillChoice } from '@/composables/useSkillCatalog'
 import type { SpaceMaterial, SpaceMaterialsState, SpaceTeaching } from '@/types'
 
 import { defineComponent, h, type PropType } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, waitFor, within } from '@testing-library/vue'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('vue-i18n', async () => {
@@ -35,6 +39,7 @@ const Host = defineComponent({
     },
     inherit: { type: Boolean, default: false },
     spaceTeaching: { type: Object as PropType<SpaceTeaching | null>, default: null },
+    skillCatalog: { type: Array as PropType<SkillChoice[]>, default: undefined },
   },
   data() {
     return { value: (this.modelValue ?? {}) as SpaceTeaching }
@@ -46,6 +51,7 @@ const Host = defineComponent({
       materialsState: this.materialsState,
       inherit: this.inherit,
       spaceTeaching: this.spaceTeaching,
+      skillCatalog: this.skillCatalog,
       'onUpdate:modelValue': (next: SpaceTeaching) => {
         captured = next
         this.value = next
@@ -68,6 +74,20 @@ afterEach(() => {
 })
 
 describe('TeachingFields', () => {
+  it('选上的技能在格子里带着它的说明，不只是一个标识', () => {
+    const view = mount({
+      modelValue: { skills: ['documents'] },
+      skillCatalog: [
+        { name: 'documents', description: '读写或修改 Word、PowerPoint、Excel、PDF 文件时用' },
+        { name: 'wolfram', description: '用户问可以算出来的问题时用' },
+      ],
+    })
+
+    const field = view.getByTestId('teaching-skills')
+    expect(within(field).getByText('读写或修改 Word、PowerPoint、Excel、PDF 文件时用')).toBeTruthy()
+    expect(within(field).queryByText('用户问可以算出来的问题时用')).toBeNull()
+  })
+
   it('三样：方式、补充要求、可读取的资料；方式是四选一', () => {
     const view = mount()
 
@@ -125,16 +145,64 @@ describe('TeachingFields', () => {
         learningGoals: [],
         materialIds: [],
         documentIds: [],
+        skills: [],
+        hintLadder: false,
+        outputCheck: false,
       })
     )
   })
 
-  it('题目那一层：多一个「沿用空间设置」，底下给出空间那一份要求', async () => {
+  it('新选上「引导为主」时两项保护出现并默认打开；换走就不再交出去', async () => {
+    const view = mount()
+    expect(view.queryByTestId('teaching-guards')).toBeNull()
+
+    await fireEvent.click(view.getByRole('radio', { name: /spaces.teaching.mode.guide/ }))
+    await waitFor(() => expect(captured).toMatchObject({ mode: 'guide', hintLadder: true, outputCheck: true }))
+    expect(view.getByTestId('teaching-guards')).toBeTruthy()
+
+    await fireEvent.input(within(view.getByTestId('teaching-output-check')).getByRole('checkbox'), {
+      target: { checked: false },
+    })
+    await waitFor(() => expect(captured).toMatchObject({ hintLadder: true, outputCheck: false }))
+
+    await fireEvent.click(view.getByRole('radio', { name: /spaces.teaching.mode.free/ }))
+    await waitFor(() => expect(captured).toMatchObject({ mode: 'free', hintLadder: false, outputCheck: false }))
+    expect(view.queryByTestId('teaching-guards')).toBeNull()
+  })
+
+  it('已经是「引导为主」的设置不会自己打开两项保护', async () => {
+    const view = mount({ modelValue: { mode: 'guide', systemPrompt: '先问他试过什么。' } })
+
+    const ladder = within(view.getByTestId('teaching-hint-ladder')).getByRole('checkbox') as HTMLInputElement
+    expect(ladder.checked).toBe(false)
+    await fireEvent.click(view.getByRole('radio', { name: /spaces.teaching.mode.guide/ }))
+    expect(captured === null || captured.hintLadder === false).toBe(true)
+  })
+
+  it('题目那一层：多一个「沿用上层设置」，底下给出空间那一份要求', async () => {
     const view = mount({ inherit: true, spaceTeaching: { mode: 'guide', systemPrompt: '先问他试过什么。' } })
 
     expect(view.getByText('spaces.teaching.mode.inherit')).toBeTruthy()
     expect(view.getByLabelText('spaces.teaching.fields.taskPrompt')).toBeTruthy()
     expect(view.getByTestId('teaching-space-prompt').textContent).toContain('先问他试过什么。')
+  })
+
+  it('「涉及的知识点」只在题目那一层且这块板开着学情分析时出现', async () => {
+    const spaceLevel = mount({ knowledgeEnabled: true })
+    expect(spaceLevel.queryByTestId('knowledge-points')).toBeNull()
+
+    cleanup()
+    const off = mount({ inherit: true, knowledgeEnabled: false })
+    expect(off.queryByTestId('knowledge-points')).toBeNull()
+
+    cleanup()
+    const shown = mount({
+      inherit: true,
+      knowledgeEnabled: true,
+      knowledgePoints: [],
+      knowledgePointList: [{ id: 91, name: '相关子查询', displayOrder: 1 }],
+    })
+    expect(shown.getByTestId('knowledge-points')).toBeTruthy()
   })
 
   it('人敲的字不在回程里被改写：还没成形的空格留着', async () => {

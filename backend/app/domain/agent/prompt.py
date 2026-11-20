@@ -26,13 +26,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import raster_images
+from app.core.model_images import MAX_BYTES as MODEL_IMAGE_MAX_BYTES
 from app.core.model_images import model_media_type
 from app.core.sentences import say
-from app.domain.agent.harness.prompt import (
-    is_inline_image,
-    platform_prompt,
-    strip_platform_notice,
-)
+from app.domain.agent.harness.lines import is_inline_image
 from app.domain.agent.service import AgentCompacting
 from app.domain.agent.session_host.contract import Image
 from app.domain.block.models import (
@@ -41,7 +38,9 @@ from app.domain.block.models import (
     agent_notice,
     consumed_turn,
 )
+from app.domain.library import mount
 from app.domain.library import records as library_records
+from app.domain.library import service as library
 from app.domain.notice_meta import (
     EVENT_CONTEXT_COMPACT,
     SEVERITY_INFO,
@@ -49,6 +48,8 @@ from app.domain.notice_meta import (
     WHO_PLATFORM,
     notice,
 )
+from app.domain.prompts import NoticeType, piece, platform_prompt, strip_platform_notice
+from app.domain.task import package
 from app.domain.topic.models import (
     Topic,
     TopicKind,
@@ -73,16 +74,12 @@ def _progress_lines(items: list[dict]) -> list[str]:
     """
     if not items:
         return []
-    lines = ["- 上次的任务清单（之前几次留下的进度，换了机器也还在，不是这次新建的）："]
+    lines = [piece("environment/progress_head")]
     for item in items:
         mark = _PROGRESS_MARK.get(str(item.get("status", "")), " ")
         subject = str(item.get("subject", "")).strip() or "（任务）"
         lines.append(f"    - [{mark}] {subject}")
-    lines.append(
-        "  已完成的别重做，接着没做完的往下干。**用 `todo_write` 重新写清单时把已完成"
-        "的也列进去并标成 completed**——清单会整份覆盖上面这份，只列剩下的等于把做过"
-        "的抹掉。"
-    )
+    lines.append(piece("environment/progress_tail"))
     return lines
 
 
@@ -122,7 +119,7 @@ def _session_opening_lines(
     complaint was 29 turns timing out against a 900s ceiling nobody had been
     told about. Two things happened to it. The ceiling went away (there is no
     countdown; saying there was one made the agent rush — dev, 2026-08-08), and
-    `cheese_status` — added in that same commit, for that same complaint — took
+    `cheese_session(action=status)` — added in that same commit, for that same complaint — took
     over the rest: cards, gate output and disk are all one call away, and the
     header was restating them every turn, from a snapshot that stopped being
     true after the first one. What is left is the part no call and no turn can
@@ -140,30 +137,20 @@ def _session_opening_lines(
         mem_mb, cores = sandbox
         gb = mem_mb / 1024
         shown = f"{gb:.0f}" if gb == int(gb) else f"{gb:.1f}"
-        lines.append(
-            f"- 这台机器：内存 {shown}GB、{cores} 核。吃内存的命令"
-            "（前端 build/typecheck、大型编译）可能被内核 OOM 杀掉——那不是代码"
-            "有问题，也不是工具链坏了。"
-        )
+        lines.append(piece("environment/machine", gb=shown, cores=cores))
     lines.extend(_progress_lines(progress or []))
     # A server the project's .mcp.json names but nobody has connected yet: the
     # agent would otherwise go looking for tools that are not there, or take
     # their absence for a broken setup. What to do about it is a person's.
     if unconnected_mcp:
         lines.append(
-            "- 项目的远程 MCP 服务器 "
-            + "、".join(unconnected_mcp)
-            + " 需要项目成员在项目设置里连接，这个会话里用不了它们的工具。"
+            piece("environment/unconnected_mcp", names="、".join(unconnected_mcp))
         )
     # A session that opens in a room with history has read none of it, while
     # the people in the room assume it has. The living docs, memory and the
     # checklist reach it as conclusions; what was said is only in the chat.
     if earlier_messages:
-        lines.append(
-            f"- 这里已经有 {earlier_messages} 条聊天消息，这个会话一条都没读过。"
-            "动手之前先用 `cheese_chat(action=list)` 读最近的记录；"
-            "要找某句原话或某个决定，用 `cheese_chat(action=search)`。"
-        )
+        lines.append(piece("environment/earlier_messages", count=earlier_messages))
     return lines
 
 
@@ -180,14 +167,8 @@ def _platform_preamble(notices: list[Block]) -> str:
     forgeable from the content side.
     """
     said = "\n".join(str(agent_notice(b)) for b in notices)
-    return platform_prompt(strip_platform_notice(said)) if said else ""
-
-
-def _resume_notice() -> str:
-    """The one thing that is true of a turn rather than of its session."""
     return (
-        "这次接着上次做：上次中途断了，这是同一件事的继续。"
-        "先确认上次做到哪了再继续（翻消息记录、git status），别凭印象重做。"
+        platform_prompt(strip_platform_notice(said), NoticeType.change) if said else ""
     )
 
 
@@ -198,7 +179,7 @@ def _topic_ref_lists(
 
     故意成对返回：这两份**必须**从同一批话题推导，且**必须**保持不同。全量那份
     喂给 `expand_mention_names`（`@标题` → `<#id>` 的解析表，含已归档话题）；子集
-    那份只喂给 `build_system_prompt`。合成一份就会把"少注入"变成"少了引用能力"
+    那份只喂给开场的频道列表（`prompts.build_session_opening`）。合成一份就会把"少注入"变成"少了引用能力"
     ——用户自己打 `@某个已归档话题` 会不再变成链接。
     """
     visible = [t for t in topics if t.id != exclude_id and t.kind != TopicKind.root]
@@ -259,6 +240,20 @@ async def live_inputs(
     return stored, replied
 
 
+async def _reads_task_files(
+    session: AsyncSession, project_id: uuid.UUID, paths: list[str]
+) -> bool:
+    """Whether the room's agent reads the `题目/` files among ``paths``: while
+    the claim the project came from is live and approved
+    (`package.task_folder_shown`). No question asked when none of them is one."""
+    if not any(
+        (name := library.library_name(path)) is not None and mount.under(name)
+        for path in paths
+    ):
+        return False
+    return await package.task_folder_shown(session, project_id)
+
+
 async def model_images(
     session: AsyncSession,
     project_id: uuid.UUID,
@@ -266,7 +261,9 @@ async def model_images(
     files: list[tuple[str, str]],
 ) -> tuple[dict[str, Image], set[str]]:
     """Which of ``files`` (path, media type the message gave) go to the model as
-    pictures, read now, and which look like pictures but do not decode.
+    pictures, read now, and which look like pictures but cannot go as one: their
+    bytes do not decode, or there are more of them than a model takes in one
+    picture (`MODEL_IMAGE_MAX_BYTES`, never read).
 
     A file goes as a picture only when its message calls it one AND its bytes
     decode (`model_media_type`), under the type they decode as: the message's
@@ -288,11 +285,23 @@ async def model_images(
     if not wanted:
         return images, undecodable
     # One read for the whole message: a path the message does not call a picture
-    # and whose name does not say one needs no bytes at all (`wanted`).
-    stored = await library_records.read_attachments(
-        session, project_id, room_id, [path for path, _ in wanted]
+    # and whose name does not say one needs no bytes at all (`wanted`), and one
+    # larger than a model takes as a picture is not read either: it is a file of
+    # its own, however it was sent, and goes to the session as one.
+    stored, too_large = await library_records.read_attachments(
+        session,
+        project_id,
+        room_id,
+        [path for path, _ in wanted],
+        max_bytes=MODEL_IMAGE_MAX_BYTES,
+        with_task=await _reads_task_files(
+            session, project_id, [path for path, _ in wanted]
+        ),
     )
+    undecodable.update(too_large)
     for path, claimed in wanted:
+        if path in too_large:
+            continue
         data = stored[path]
         decoded = await asyncio.to_thread(model_media_type, data)
         if decoded is None:
@@ -322,7 +331,13 @@ async def offered_attachments(
     # One answer for the whole message: asking per attachment was a query and a
     # disk call each, on the first-byte path of every turn.
     present_paths = await library_records.attachments_present(
-        session, project_id, room_id, [b.content for b in attachments]
+        session,
+        project_id,
+        room_id,
+        [b.content for b in attachments],
+        with_task=await _reads_task_files(
+            session, project_id, [b.content for b in attachments]
+        ),
     )
     gone = {b.id for b in attachments if b.content not in present_paths}
     present = [b for b in attachments if b.content in present_paths]

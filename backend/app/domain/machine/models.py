@@ -36,6 +36,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.config import settings
 from app.core.db import Base
+from app.domain.agent import sandbox_image
 from app.domain.common import Timestamps, UuidPk
 
 
@@ -140,6 +141,7 @@ class WarmMachine(UuidPk, Timestamps, Base):
     # What the machine's data disk holds, found when it enrolled; handed to the
     # host it becomes (``CloudHost.sandbox_disk_gb``).
     sandbox_disk_gb: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    sandbox_image: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 class CloudHost(UuidPk, Timestamps, Base):
@@ -197,6 +199,7 @@ class CloudHost(UuidPk, Timestamps, Base):
     # it enrolled (`enrollment.bootstrap_script`). A pool host enrolls only with
     # one; NULL on a whole VM, which runs no sandbox.
     sandbox_disk_gb: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    sandbox_image: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # Why the last attempt failed. Kept so a stuck host explains itself.
     enroll_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     enroll_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
@@ -240,6 +243,31 @@ class CloudHost(UuidPk, Timestamps, Base):
     released_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # What a host created right now would be made of, as one digest: the
+    # enrollment script, the offering's identity and template, the machine's
+    # size and its login user (`enrollment.current_host_image_version`). The
+    # sweep rolls a host whose version is no longer current. NULL on a host from
+    # before this column existed, or claimed from the warm pool, which kept no
+    # record of what it was prepared from: unknown, and treated as out of date.
+    image_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Since when the host is being rebuilt: it takes no new sandbox, and is
+    # released as soon as no sandbox is on it — without the idle hold, since it
+    # is going anyway (`reaper.maintain`). NULL on a host that stays.
+    draining_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Whether that host is brought up to date where it is rather than
+    # rebuilt: only its enrollment script changed, so once no sandbox but the
+    # parked ones is on it, the script runs again on the machine and its
+    # homes, stores and parked sandboxes stay (`host_refresh`). False while it
+    # is rebuilt, and on a host that is not draining.
+    refresh_in_place: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    # When that run began on the machine; NULL before it has.
+    refresh_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # A whole cloud VM for one session, not a host of sandboxes: created for
     # that session from ``microcloud_vm_offering_id``, its executor runs with
     # the whole machine (``host`` visibility, sudo), it takes no other session
@@ -272,6 +300,7 @@ class SandboxHome(UuidPk, Timestamps, Base):
     """
 
     __tablename__ = "sandbox_homes"
+    sandbox_image: Mapped[str | None] = mapped_column(String(255), nullable=True)
     __table_args__ = (
         Index(
             "uq_sandbox_homes_current_session",
@@ -345,11 +374,75 @@ class SandboxHome(UuidPk, Timestamps, Base):
     active_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
+    # When the sandbox was frozen once idle (`machine/lifecycle.py`): its
+    # processes are stopped on the host and it is not billed. The row stays, so
+    # the session's next tool call wakes this same home. NULL while it runs.
+    frozen_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Since when a frozen sandbox past its keep time is parked: its processes
+    # stopped and its slot given up, its home left on the host's disk for the
+    # session to start again there (`lifecycle._park`). `frozen_at` stays set
+    # with it: a parked sandbox is a frozen one that holds no slot.
+    parked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # Since when the sandbox is being destroyed: its home is being deleted
     # from the host, and the row goes once it is. A tool call meanwhile waits.
     stopped_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+
+class HostProjectStore(Base):
+    """That a host has kept a project's store: its dependencies, its build
+    cache, what a sandbox of that project left in the project's namespace and
+    a sandbox of it placed there again starts warm with.
+
+    Written whenever a home is placed on a host (``CloudHostRepository.put_home``)
+    and kept after that home is destroyed: the store is the project's, not the
+    session's, and survives the sandbox that filled it. Placement prefers a
+    host that has it over one that does not, before it packs sandboxes onto
+    the host with the fewest free slots (``HostPool._place_on_free``). A row
+    goes with its host (CASCADE).
+
+    ``project_key`` is the namespace the home's directories sit under
+    (``holder.namespace_of``): the project, or the conversation itself for a
+    sandbox in no project. Rows for a project outlive that project's homes
+    and its sandboxes; nothing reads a deleted project's rows.
+    """
+
+    __tablename__ = "host_project_stores"
+
+    host_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "cloud_hosts.id",
+            ondelete="CASCADE",
+            name="fk_host_project_stores_host_id_cloud_hosts",
+        ),
+        primary_key=True,
+    )
+    project_key: Mapped[uuid.UUID] = mapped_column(primary_key=True, index=True)
+    last_placed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class SandboxRootSnapshot(Timestamps, Base):
+    """The last root diff saved for a session, independent of any host home."""
+
+    __tablename__ = "sandbox_root_snapshots"
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "agent_sessions.id",
+            ondelete="CASCADE",
+            name="fk_sandbox_root_snapshots_session_id_agent_sessions",
+        ),
+        primary_key=True,
+    )
+    image: Mapped[str] = mapped_column(String(255))
+    key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    md5: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    status: Mapped[str] = mapped_column(String(32))
 
 
 class RetainedHomeArchive(UuidPk, Timestamps, Base):
@@ -402,6 +495,25 @@ class HostReading(UuidPk, Base):
     memory_available_bytes: Mapped[int | None] = mapped_column(
         BigInteger, nullable=True
     )
+    # The host's swap file, and the pressure the kernel reports on its memory
+    # (percent of the last minute and five the kernel spent stalled, from
+    # /proc/pressure/memory), and whether zswap is on — NULL on a machine
+    # that reports none of them, as macOS's does.
+    swap_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    swap_free_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    memory_pressure_some_avg10: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )
+    memory_pressure_some_avg60: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )
+    memory_pressure_full_avg10: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )
+    memory_pressure_full_avg60: Mapped[float | None] = mapped_column(
+        Float, nullable=True
+    )
+    zswap: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     # A counter since the host started: what share of its cores it kept busy
     # is the difference between two readings.
     cpu_usage_usec: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
@@ -431,6 +543,15 @@ class SandboxUsage(Base):
     memory_read_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Of that memory: what is anonymous (a process's own) and what is page
+    # cache; how much of the host's swap it uses and may use; and how many times the kernel killed one of its
+    # processes for running out of memory since it started.
+    anon_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    file_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    swap_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # The swap it may use (`memory.swap.max`); None where unlimited.
+    swap_max_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    oom_kills: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     disk_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     disk_inodes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     disk_read_at: Mapped[datetime | None] = mapped_column(
@@ -455,11 +576,51 @@ def capacity(host: CloudHost) -> int:
     with no data disk recorded, which cannot hold a sandbox to a disk limit."""
     if host.whole_machine or host.sandbox_disk_gb is None:
         return 0
-    by_cores = max(1, int(host.cores)) * settings.cloud_host_slots_per_core
     by_memory = (
         sandboxes_memory_mb(int(host.memory_mb)) // settings.cloud_sandbox_memory_mb
     )
+    return max(0, min(hard_capacity(host), by_memory))
+
+
+def sandbox_image_ready(host: CloudHost | WarmMachine) -> bool:
+    return bool(host.sandbox_image) or (
+        isinstance(host, CloudHost) and bool(host.whole_machine)
+    )
+
+
+def hard_capacity(host: CloudHost) -> int:
+    """The sandboxes a host runs at once at most, whatever their memory: per
+    core, by the deployment's setting, and no more than fit on its data disk.
+    Past ``capacity`` a host takes one only when its reading says the memory
+    is there (``reaper.memory_admits``)."""
+    if host.whole_machine or host.sandbox_disk_gb is None:
+        return 0
+    by_cores = max(1, int(host.cores)) * settings.cloud_host_slots_per_core
+    # The swap file lives on the same data disk (`enrollment.DATA_DISK`), so the
+    # room its sandboxes have is that disk less the reserve and the file.
+    # Counted here rather than as an extra reserve so a deployment that turns
+    # swap off goes back to taking the whole disk, and so the disk guard's own
+    # floors keep their meaning: the file is already spent before any sandbox
+    # is placed.
+    swap_gb = -(-settings.cloud_host_swap_mb // 1024)
     by_disk = (
-        int(host.sandbox_disk_gb) - settings.cloud_host_disk_reserve_gb
-    ) // settings.cloud_sandbox_disk_gb
-    return max(0, min(by_cores, by_memory, by_disk))
+        int(host.sandbox_disk_gb)
+        - settings.cloud_host_disk_reserve_gb
+        - swap_gb
+        - sandbox_image.cache_reservation_gb()
+    ) // (settings.cloud_sandbox_disk_gb + sandbox_image.home_image_reservation_gb())
+    return max(0, min(by_cores, by_disk))
+
+
+def warm_pool_target() -> int:
+    """How many unused machines the warm pool keeps ready.
+
+    Zero with a fixed pool size: the pool already holds every host it wants,
+    and a host that is released is replaced directly, so a warm machine would
+    be one more machine running and billed for nothing — which is what the
+    fixed pool exists to stop. The warm sweep reads 0 as it always has read
+    "no machine wanted": the unused ones already there are deleted.
+    """
+    if settings.cloud_pool_fixed_hosts > 0:
+        return 0
+    return settings.microcloud_warm_pool_size

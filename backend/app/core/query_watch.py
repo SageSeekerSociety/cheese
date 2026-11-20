@@ -56,6 +56,7 @@ import logging
 import re
 import sys
 import sysconfig
+import time
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
@@ -80,6 +81,9 @@ IGNORED_STACKS: tuple[str, ...] = (
 #: Legitimate repeats, by statement. Case-insensitive substring of the
 #: whitespace-normalized SQL (``select ... from audit_log``).
 IGNORED_SQL: tuple[str, ...] = ()
+
+#: How many of a request's slowest statements its Server-Timing names.
+SLOWEST_KEPT = 3
 
 #: How much of the statement the group keeps for the log line.
 SQL_PREVIEW_CHARS = 400
@@ -199,21 +203,34 @@ class RequestWatch:
     the groups mean is decided by ``repeats`` at the end of the request.
     """
 
-    __slots__ = ("closed", "groups")
+    __slots__ = ("closed", "db_s", "groups", "last_site", "slowest", "statements")
 
     def __init__(self) -> None:
         self.groups: dict[tuple[tuple[str, ...], str], _Group] = {}
+        #: How many statements ran and how long they held the database, for
+        #: the response's Server-Timing (``db``): what a slow request spent
+        #: waiting on the database rather than in Python.
+        self.statements = 0
+        self.db_s = 0.0
+        #: The slowest few statements as (seconds, innermost call site), longest
+        #: first: which line a slow request waited on, without a profiler.
+        self.slowest: list[tuple[float, str]] = []
+        self.last_site: tuple[str, ...] = ()
         #: Set when the request is over. A background task that inherited this
         #: watch must not keep appending to a count nobody will report.
         self.closed = False
 
     def note(self, statement: str, *, stack: Sequence[str] | None = None) -> None:
-        """Record one execution of ``statement`` from ``stack`` (or here)."""
+        """Record one execution of ``statement`` from ``stack`` (or here).
+
+        The call site it was recorded under is left in ``last_site`` for the
+        statement's timing (``took``)."""
         if self.closed:
             return
         try:
             shape = fingerprint_sql(statement)
             where = tuple(stack) if stack is not None else call_site()
+            self.last_site = where
             key = group_key(where, shape)
             group = self.groups.get(key)
             if group is None:
@@ -229,6 +246,31 @@ class RequestWatch:
             # A detector that breaks a request is worse than the query it
             # failed to count. Keep the request, leave a trail for a human.
             logger.debug("query watch could not record a statement", exc_info=True)
+
+    def took(self, seconds: float, where: tuple[str, ...]) -> None:
+        """Count one finished statement's time; keep it if among the slowest."""
+        self.statements += 1
+        self.db_s += seconds
+        if len(self.slowest) < SLOWEST_KEPT or seconds > self.slowest[-1][0]:
+            # file:line of the sender and of its caller: the innermost frame is
+            # often a shared helper, and its caller is the one to change.
+            site = " < ".join(f.split(" ", 1)[0] for f in where[:2]) or "unknown"
+            self.slowest.append((seconds, site))
+            self.slowest.sort(key=lambda item: -item[0])
+            del self.slowest[SLOWEST_KEPT:]
+
+    def server_timing(self) -> list[bytes]:
+        """``db`` (total and count) and ``sql`` per slowest statement.
+
+        The call sites are file:line in this public repository; no SQL text or
+        bound value goes out.
+        """
+        parts = [f'db;dur={self.db_s * 1000:.1f};desc="{self.statements} sql"']
+        parts += [
+            f'sql;dur={seconds * 1000:.1f};desc="{site.replace(chr(34), "")}"'
+            for seconds, site in self.slowest
+        ]
+        return [part.encode() for part in parts]
 
     def repeats(
         self,
@@ -321,11 +363,24 @@ def request_scope() -> Iterator[RequestWatch]:
 
 
 def _on_before_cursor_execute(
-    _conn, _cursor, statement, _parameters, _context, _executemany
+    _conn, _cursor, statement, _parameters, context, _executemany
 ) -> None:
     watch = _current.get()
     if watch is not None:
+        watch.last_site = ()
         watch.note(statement)
+        if context is not None:
+            context._cheese_where = watch.last_site
+            context._cheese_started = time.perf_counter()
+
+
+def _on_after_cursor_execute(
+    _conn, _cursor, _statement, _parameters, context, _executemany
+) -> None:
+    watch = _current.get()
+    started = getattr(context, "_cheese_started", None)
+    if watch is not None and started is not None and not watch.closed:
+        watch.took(time.perf_counter() - started, getattr(context, "_cheese_where", ()))
 
 
 def watch_engine(engine) -> None:
@@ -341,6 +396,7 @@ def watch_engine(engine) -> None:
     if getattr(sync_engine, _INSTALLED, False):
         return
     event.listen(sync_engine, "before_cursor_execute", _on_before_cursor_execute)
+    event.listen(sync_engine, "after_cursor_execute", _on_after_cursor_execute)
     setattr(sync_engine, _INSTALLED, True)
 
 
@@ -371,8 +427,25 @@ class QueryWatchMiddleware:
             return
         watch = RequestWatch()
         token = _current.set(watch)
+
+        async def timed_send(message) -> None:
+            # What the request spent on the database, beside the app's own
+            # total (``app;dur``, set where the request is logged): the two
+            # tell a slow query from slow Python. A streamed body's later
+            # queries come after this header and are not in it.
+            if message["type"] == "http.response.start":
+                timing = [(b"server-timing", entry) for entry in watch.server_timing()]
+                message = {
+                    **message,
+                    "headers": [
+                        *message.get("headers", ()),
+                        *timing,
+                    ],
+                }
+            await send(message)
+
         try:
-            await self.app(scope, receive, send)
+            await self.app(scope, receive, timed_send)
         finally:
             _current.reset(token)
             watch.closed = True

@@ -9,32 +9,40 @@ The body, with its reasoning, moved here verbatim from `preparation`.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
+from app.domain.agent import gateway_catalog
 from app.domain.agent.harness import SessionRef
-from app.domain.agent.harness.notices import blocked_report_reminder
-from app.domain.agent.harness.prompt import (
-    UNTITLED_TASK,
-    build_session_opening,
-    platform_prompt,
-    publication_prompt,
-)
 from app.domain.agent.mcp_notice import unconnected_mcp
-from app.domain.agent.prompt import (
-    _resume_notice,
-    _sandbox_limits,
-    _session_opening_lines,
-)
-from app.domain.agent.room.system_prompt import session_system_prompt
+from app.domain.agent.personal.prompt import now_line
+from app.domain.agent.prompt import _sandbox_limits, _session_opening_lines
+from app.domain.agent.room.system_prompt import session_env, session_system_prompt
+from app.domain.agent.session_host.contract import ColdCompaction, PrivateText
 from app.domain.agent.session_host.host import keeps_memory
 from app.domain.agent.turn.intake.context import TurnBail
 from app.domain.agent.turn.steps.prepared import PreparedSend
 from app.domain.agent.turn.steps.send import send_prepared
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.prompts import (
+    PROFILES,
+    TALK_TOLD,
+    NoticeType,
+    blocked_report_reminder,
+    platform_prompt,
+    render_notice,
+    render_opening,
+    resume_notice,
+    talk_notes,
+    untitled_task,
+)
+from app.domain.prompts.profile import Kind, holds
+from app.domain.room_task.title_width import TITLE_CHARS
 from app.domain.user.services import language_of
 
 if TYPE_CHECKING:
@@ -66,7 +74,7 @@ async def converse(
         turn_id=turn_id,
         user_block_id=user_block_id,
         platform_turn=platform_turn,
-        # 周期任务那一轮从这一笔投递上认主人（`turn_speakers`）。
+        # 周期任务那一轮从这一笔投递上认出来（`turn_speakers.is_routine_run`）。
         delivery_id=delivery_id,
         recipient_instance_id=recipient_instance_id,
     )
@@ -110,24 +118,20 @@ async def converse(
     # on what is producing the output, not on the machine underneath it.
     runtime = provider
     yield {"type": "turn_ceiling", "seconds": runtime.hard_ceiling_s}
-    # 队友自己带的技能正文接在平台那份指引后面（`context.carried_skills`）：
-    # 空串时 system prompt 与只有平台指引时逐字节相同。
-    skills = (
-        f"{prep.skills}\n\n---\n\n{prepared.skill_bodies}"
-        if prepared.skill_bodies
-        else prep.skills
-    )
     system_prompt = session_system_prompt(
         prep.base_prompt,
-        skills,
-        needs_place=needs_place,
+        kind=prepared.kind,
         has_doc=doc_text is not None,
         role=role,
         harness=runtime.harness,
         name=prepared.agent.display_name,
+        # 队友自己带的技能正文接在平台那份指引后面（`context.carried_skills`）。
+        carried=prepared.skill_bodies,
     )
-    opening = build_session_opening(
+    opening = render_opening(
+        prepared.kind,
         thread=prepared.thread_context,
+        channel=prepared.channel_context,
         tasks=prepared.thread_tasks,
         task=prepared.task_rules,
         doc=doc_text,
@@ -142,6 +146,8 @@ async def converse(
         overview_doc=overview_doc_text,
         overview_doc_id=prepared.overview_doc_id,
         teaching=teaching,
+        stages=prepared.stages,
+        package=prepared.task_package,
         environment=_session_opening_lines(
             unconnected_mcp=(
                 await unconnected_mcp(
@@ -154,7 +160,10 @@ async def converse(
                 if needs_place
                 else ()
             ),
-            progress=prior_progress,
+            # Only a session that keeps a checklist is shown the last one.
+            progress=prior_progress
+            if holds(PROFILES[prepared.kind].tools, "todo_write")
+            else None,
             sandbox=_sandbox_limits(provider),
             # A resumed conversation already holds what was said in it.
             earlier_messages=(
@@ -164,7 +173,19 @@ async def converse(
         keeps_memory=keeps_memory(runtime.harness),
     )
     async with prep.sessions() as session:
-        told = await AgentSessionService(session).told(
+        sessions = AgentSessionService(session)
+        # A conversation started under rules this kind has replaced is given
+        # up on as an un-compactable one is, once: what it was told goes with
+        # it, so the new conversation is told the whole state even if its
+        # token is recorded before this opening reaches it.
+        if await sessions.retire_older(
+            topic_id,
+            prepared.agent.handle,
+            harness=prepared.harness,
+            generation=PROFILES[prepared.kind].generation,
+        ):
+            await session.commit()
+        told = await sessions.told(
             topic_id, prepared.agent.handle, harness=prepared.harness
         )
         # 平台自己说给模型的那几句按提问的人的语言走（`user.language`）：一次
@@ -173,19 +194,23 @@ async def converse(
         language = await language_of(session, author)
     if untitled:
         # 每一轮都提醒，直到起了名：哪一轮才弄清要做什么，事先不知道。
-        prompt_text = f"{platform_prompt(UNTITLED_TASK)}\n\n{prompt_text}"
+        prompt_text = f"{platform_prompt(untitled_task(TITLE_CHARS), NoticeType.turn)}\n\n{prompt_text}"
+    private, talk_told = _talk_notes(prepared.talk_for, told, runtime.harness)
+    # 这一轮按那位成员的钟点说现在几号（`clock_zone`）：会话机的钟在别的时区，
+    # 记忆里写下的日期跟着这一句走（`pieces/memory/types_*.md`）。
+    prompt_text = f"{platform_prompt(now_line(prepared.clock_zone), NoticeType.turn)}\n\n{prompt_text}"
     if is_resume:
-        prompt_text = f"{platform_prompt(_resume_notice())}\n\n{prompt_text}"
+        prompt_text = (
+            f"{platform_prompt(resume_notice(), NoticeType.turn)}\n\n{prompt_text}"
+        )
     # 人说的话叫起来的那一轮（和 `send.py` 里 `summoned` 同一个判据）：重发、平台
     # 自己叫的都不算，那时没有人回过它，问它「还卡不卡」问的不是这回事。
     summoned = user_block_id is not None and not is_resume and not platform_turn
     if prepared.blocked_report and summoned:
         # 「卡住了」通常是它在轮次末尾报的；有人回话开的那一轮正是它该重新报一次
         # 的时候。只问，不替它改：人回话不等于解除了卡住。
-        prompt_text = (
-            f"{platform_prompt(blocked_report_reminder(language))}\n\n{prompt_text}"
-        )
-    prompt_text = publication_prompt(prompt_text, language)
+        prompt_text = f"{platform_prompt(blocked_report_reminder(language), NoticeType.reminder)}\n\n{prompt_text}"
+    prompt_text = render_notice(prepared.kind, prompt_text, language)
     logger.info(
         "chat_preparation_timing topic=%s turn=%s phase=prompt_built "
         "elapsed_ms=%.3f unix_ms=%.3f",
@@ -205,7 +230,12 @@ async def converse(
         prepared.room_id,
         agent=prepared.agent,
         acting_agent=prepared.acting_agent,
+        task_id=prepared.task_id,
+        default_effort=PROFILES[prepared.kind].effort,
     )
+    # What the kind of session differs by in its launch (`session_env`): the
+    # same for the prewarm (`launch.py`), so a prewarmed session is kept.
+    model_kwargs["env"] = {**model_kwargs.get("env", {}), **session_env(prepared.kind)}
     logger.info(
         "chat_preparation_timing topic=%s turn=%s phase=model_ready "
         "elapsed_ms=%.3f unix_ms=%.3f",
@@ -232,15 +262,21 @@ async def converse(
             roster=prepared.roster,
             topic_refs=prepared.topic_refs,
             consumed_ids=prepared.pending_ids + prepared.notice_ids,
+            read_ids=prepared.read_ids,
             read_through=prepared.read_through,
             turn_images=prepared.turn_images,
             replay_notice=prepared.replay_notice,
             resume_session_id=prepared.resume_session_id,
+            retired_session_id=prepared.retired_session_id,
             harness=prepared.harness,
             needs_place=prepared.needs_place,
+            answers_the_platform=PROFILES[prepared.kind].answers_the_platform,
             keeps_nothing=prepared.keeps_nothing,
             sender=runtime,
             activate=activate,
+            cold=_when_cold(prepared.kind, model_kwargs.get("model")),
+            private=private,
+            talk_told=talk_told,
         ),
         topic_id=topic_id,
         turn_id=turn_id,
@@ -259,3 +295,50 @@ async def converse(
         told=told,
     ):
         yield frame
+
+
+def _talk_notes(
+    people: list[dict], told: dict | None, harness: str
+) -> tuple[tuple[PrivateText, ...], tuple[tuple[str, str], ...]]:
+    """The `communication` notes this turn hands the conversation, and what it
+    holds of them once they are given (``talk/<handle>`` -> digest).
+
+    A note is given the first time this conversation answers its person, and
+    again only when it changed since: given, it stays in the conversation's
+    history, and a compaction or a new conversation clears what it was told
+    (`AgentSession.told`), so it is given once more after either. One the
+    conversation holds goes along marked ``held``, said only if the session
+    turns out to be a new conversation (`room.sessions.speaking.send`). Only a
+    harness whose records the platform stamps for privacy carries them: the
+    same one that keeps memory as files."""
+    if not people or not keeps_memory(harness):
+        return (), ()
+    private: list[PrivateText] = []
+    digests: list[tuple[str, str]] = []
+    for person in people:
+        key = f"{TALK_TOLD}{person['handle']}"
+        digest = hashlib.sha256(
+            json.dumps(person["notes"], sort_keys=True, ensure_ascii=False).encode()
+        ).hexdigest()
+        given = (told or {}).get(key)
+        held = given == digest
+        text = talk_notes(person, replaces=given is not None and not held)
+        private.append(
+            PrivateText(
+                person["handle"], platform_prompt(text, NoticeType.state), held=held
+            )
+        )
+        digests.append((key, digest))
+    return tuple(private), tuple(digests)
+
+
+def _when_cold(kind: Kind, model: str | None) -> ColdCompaction | None:
+    """Whether this kind of session is compacted when its conversation has gone
+    cold (`Profile.compacts_when_cold`), and after how long: its model's cache
+    lifetime in the gateway model table. A model with none set never is."""
+    if not PROFILES[kind].compacts_when_cold or not model:
+        return None
+    known = next((m for m in gateway_catalog.snapshot() if m.id == model), None)
+    if known is None or known.cache_lifetime_s is None:
+        return None
+    return ColdCompaction(idle_s=float(known.cache_lifetime_s))

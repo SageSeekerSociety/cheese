@@ -18,16 +18,16 @@ from app.domain.agent import execution
 from app.domain.agent.device_contract import DeviceCallError
 from app.domain.agent.harness import harness_for
 from app.domain.agent.harness.claude_code.remote_execution.runtime import Executor
-from app.domain.agent_session.models import LOST_KEY
+from app.domain.agent_session.models import LOST_KEY, PARKED_KEY
 from app.domain.agent_session.repositories import AgentSessionRepository
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic
 from tests.delivery import delivery_task
 from tests.integration.test_file_panel_safety import _mkproject, _owner
-from tests.machine_work import machine_commits
+from tests.machine_work import machine_commits, machine_keeps
 
-GONE = "lstat /home/cheese/.cheese/home/p/r/.cheese/executor: no such file"
+GONE = "dial unix /tmp/cheese-execution-3f2a.sock: connect: no such file or directory"
 
 
 @pytest.fixture
@@ -60,10 +60,21 @@ def _room(client, pid) -> uuid.UUID:
     return uuid.UUID(response.json()["data"]["id"])
 
 
-def _seat(client, task, *, device: str | None, lost=False, generation=None, lease=None):
+def _seat(
+    client,
+    task,
+    *,
+    device: str | None,
+    lost=False,
+    parked=False,
+    generation=None,
+    lease=None,
+):
     """The task's own session takes a machine (`device`), or is placed with
     none yet (None), as a cloud session is before its first tool call.
-    ``lease`` records that lease as it is instead."""
+    ``lease`` records that lease as it is instead. ``lost``: that sandbox was
+    destroyed since; ``parked``: its processes were stopped since, its home
+    left where it was."""
 
     async def place():
         async with client.test_factory() as session:
@@ -85,11 +96,13 @@ def _seat(client, task, *, device: str | None, lost=False, generation=None, leas
                 },
                 harness=harness_for(None),
             )
-            if lost:
+            if lost or parked:
                 row = await AgentSessionRepository(session).get(
                     task.id, "cheese", harness_for(None)
                 )
-                row.execution_request = {LOST_KEY: True}
+                row.execution_request = (
+                    {LOST_KEY: True} if lost else {PARKED_KEY: ["npm run dev"]}
+                )
             await session.commit()
 
     asyncio.run(place())
@@ -407,28 +420,138 @@ def test_a_task_reads_its_own_machine_not_the_newest_in_the_channel(client, mach
     assert asked == ["working"]
 
 
-def test_a_failing_machine_is_not_reported_as_released(client, machines):
+@pytest.mark.parametrize("device", ["failing", "gone"])
+def test_a_failing_machine_is_not_reported_as_released(client, machines, device):
+    # The machine's own words name its sockets and paths; the person is told
+    # it did not answer, and where they can still look.
     pid, room, task = _channel_with_released_older_task(client)
-    _seat(client, task, device="failing")
+    _seat(client, task, device=device)
 
     response = _live(client, pid, room, task, "diff")
 
     assert response.status_code == 503, response.text
     message = response.json()["error"]["message"]
     assert "已释放" not in message
-    assert "git: index.lock exists" in message and "已提交版本" in message
+    assert "已提交版本" in message
+    assert "index.lock" not in message and "sock" not in message
 
 
-def test_a_task_whose_own_sandbox_was_released_says_so(client, machines):
+def _save(client, pid, room, task, path, content, version):
+    return client.put(
+        f"/projects/{pid}/file",
+        params={"topic": str(room), "task": str(task.id)},
+        json={"path": path, "content": content, "version": version},
+        headers=_owner(client),
+    )
+
+
+@pytest.mark.parametrize("gone", ["lost", "parked"])
+def test_a_task_whose_machine_is_gone_reads_its_kept_work_from_the_forge(
+    client, machines, gone
+):
+    # Its sandbox was destroyed, or parked with its processes stopped, after a
+    # person's edit was kept off it. Opening the task's files answers what
+    # that edit left — the file it changed and the one it added — without
+    # asking any machine, and not the socket the machine no longer listens on.
     _, asked = machines
     pid, room, task = _channel_with_released_older_task(client)
+    machine_commits(pid, task.id, {"backend/usage/models.py": "POOL = 1\n"})
+    _published(client, task)
+    machine_keeps(
+        pid,
+        task.id,
+        {"backend/usage/models.py": "POOL = 2\n", "notes/draft.md": "draft\n"},
+    )
+    _seat(client, task, device="gone", **{gone: True})
+
+    read = _read(client, pid, room, task, "backend/usage/models.py")
+    added = _read(client, pid, room, task, "notes/draft.md")
+    raw = client.get(
+        f"/projects/{pid}/file/raw",
+        params={
+            "source": "live",
+            "path": "notes/draft.md",
+            "topic": str(room),
+            "task": str(task.id),
+        },
+        headers=_owner(client),
+    )
+    listing = _live(client, pid, room, task, "files")
+    diff = _live(client, pid, room, task, "diff")
+
+    assert read.status_code == 200, read.text
+    assert read.json()["data"]["content"] == "POOL = 2\n"
+    assert read.json()["data"]["editable"] is False
+    assert added.status_code == 200, added.text
+    assert added.json()["data"]["content"] == "draft\n"
+    assert raw.status_code == 200, raw.text
+    assert raw.content == b"draft\n"
+    assert listing.status_code == 200, listing.text
+    assert {"backend/usage/models.py", "notes/draft.md"} <= {
+        f["path"] for f in listing.json()["data"]["data"]
+    }
+    assert diff.status_code == 200, diff.text
+    assert "backend/usage/models.py" in _diffed(diff.json()["data"]["diff"])
+    assert asked == []
+
+
+def test_kept_work_the_branch_moved_past_is_not_shown_as_the_tasks_files(
+    client, machines
+):
+    # A new checkout lays kept work back only over the head it was cut from;
+    # once the branch moved on, the task's files are the branch's.
+    _, asked = machines
+    pid, room, task = _channel_with_released_older_task(client)
+    machine_commits(pid, task.id, {"backend/usage/models.py": "POOL = 1\n"})
+    _published(client, task)
+    machine_keeps(pid, task.id, {"backend/usage/models.py": "POOL = 2\n"})
+    machine_commits(pid, task.id, {"backend/usage/models.py": "POOL = 3\n"})
     _seat(client, task, device="gone", lost=True)
 
-    response = _live(client, pid, room, task, "files")
+    read = _read(client, pid, room, task, "backend/usage/models.py")
 
-    assert response.status_code == 503, response.text
-    assert "已释放" in response.json()["error"]["message"]
-    assert GONE not in response.json()["error"]["message"]
+    assert read.status_code == 200, read.text
+    assert read.json()["data"]["content"] == "POOL = 3\n"
+    assert read.json()["data"]["source"] == "committed"
+    assert asked == []
+
+
+@pytest.mark.parametrize("gone", ["lost", "parked"])
+def test_a_save_to_a_task_whose_machine_is_gone_says_what_became_of_it(
+    client, machines, gone
+):
+    _, asked = machines
+    pid, room, task = _channel_with_released_older_task(client)
+    machine_commits(pid, task.id, {"backend/usage/models.py": "POOL = 1\n"})
+    _published(client, task)
+    _seat(client, task, device="gone", **{gone: True})
+    version = _read(client, pid, room, task, "backend/usage/models.py").json()["data"][
+        "version"
+    ]
+
+    saved = _save(client, pid, room, task, "backend/usage/models.py", "X\n", version)
+
+    assert saved.status_code == 503, saved.text
+    assert "已释放" in saved.json()["error"]["message"]
+    assert "sock" not in saved.json()["error"]["message"]
+    assert asked == []
+
+
+def test_the_hand_in_panel_opens_while_the_tasks_machine_is_parked(client, machines):
+    # Parked with its processes stopped, the sandbox's executor socket is gone;
+    # the panel lists what the branch would hand in rather than failing on it.
+    _, asked = machines
+    pid, room, task = _channel_with_released_older_task(client)
+    machine_commits(pid, task.id, {"backend/usage/models.py": "POOL = 1\n"})
+    _published(client, task)
+    _seat(client, task, device="gone", parked=True)
+
+    panel = client.get(f"/topics/{task.id}/hand-in/panel", headers=_owner(client))
+
+    assert panel.status_code == 200, panel.text
+    assert "backend/usage/models.py" in {
+        f["path"] for f in panel.json()["data"]["files"]
+    }
     assert asked == []
 
 

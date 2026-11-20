@@ -3,7 +3,12 @@
   "limit": "Up to {size} per file",
   "remove": "Remove {name}",
   "removeFailed": "Could not remove “{name}”: {error}",
+  "replace": "Replace {name}",
+  "replaceFailed": "Couldn't replace \"{name}\": {error}",
+  "replaceWith": "Choose the new version",
   "title": "Attachments",
   "uploadFailed": "Couldn't upload \"{name}\": {error}",
-  "uploading": "Uploading…"
+  "uploading": "Uploading…",
+  "uploadingPercent": "Uploading {percent}%",
+  "processing": "Processing…"
 }

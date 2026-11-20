@@ -11,6 +11,7 @@ from app.core.errors import ForbiddenError, ValidationError
 from app.core.sentences import say
 from app.domain.review import (
     credit,
+    forge_words,
     merge_state,
     notes,
     pr_text,
@@ -80,6 +81,7 @@ async def arm_auto_merge(
         await self._seen_head_or_refresh(card, topic, head_sha, say("verbArmAutoMerge"))
         card.auto_merge_armed_by = decided_by
         card.auto_merge_armed_at = datetime.now(UTC)
+        card.auto_merge_adopts = False
     else:
         card.auto_merge_armed_by = None
         card.auto_merge_armed_at = None
@@ -88,7 +90,45 @@ async def arm_auto_merge(
     return card
 
 
-def _write_merge_mirror(
+async def adopt_when_ready(
+    self: pkg.AcceptService,
+    *,
+    card_id: uuid.UUID,
+    decided_by: str,
+    head_sha: str,
+) -> AcceptCard:
+    """The reviewer adopts the version they have just handed in themselves
+    (「提交并采纳」, `machine.hand_in`).
+
+    That head was pushed a moment ago, and no forge has said yet whether it
+    merges: GitHub computes it after a push, Forgejo takes the push in after
+    it returns (`forgejo_pr.ForgejoClient.pull_request_status`). An accept
+    now could only be refused. So the adoption is armed on that head, as
+    `arm_auto_merge` arms one, and the poller merges it under their name
+    once the forge's verdict and the project's rules let it
+    (`_merge_armed_card`), or not at all if the head moves first
+    (dismiss-stale). The project's `auto_merge_allowed` governs a reviewer
+    arming a version that is not ready yet; here the reviewer decided to
+    adopt this head, and only the forge's answer is outstanding."""
+    card = await self._card_or_404(card_id)
+    if card.status != AcceptStatus.pending or card.pr_number is None:
+        raise ValidationError(say("autoMergeNeedsOpenPr"))
+    topic = await self._topic_or_404(card.topic_id)
+    project = await self._projects.get(topic.project_id)
+    self._forbid_ai(project, decided_by, say("reviewActionAccept"))
+    if decided_by not in await self._repo.reviewer_handles(card.id):
+        raise ForbiddenError(say("acceptReviewerOnly"))
+    if card.pr_head_sha != head_sha:
+        raise ValidationError(say("prNewCommitsAfterView", number=card.pr_number))
+    card.auto_merge_armed_by = decided_by
+    card.auto_merge_armed_at = datetime.now(UTC)
+    card.auto_merge_adopts = True
+    await self._session.flush()
+    await self._session.refresh(card)
+    return card
+
+
+async def _write_merge_mirror(
     self: pkg.AcceptService,
     card: AcceptCard,
     verdict: MergeVerdict,
@@ -99,7 +139,16 @@ def _write_merge_mirror(
 
     `since` is when this (state, head) pair started holding, carried over
     from the previous mirror when unchanged: the required-check grace
-    clock reads it."""
+    clock reads it.
+
+    The mirror is read again under the card's row lock before anything is
+    carried over from it. A reading takes seconds of forge calls, and another
+    one (the poller, a click, a snapshot refresh) can write the mirror in
+    between; carrying `since` over from the copy loaded before that would put
+    back a clock the newer write had already ended."""
+    await self._session.refresh(
+        card, attribute_names=["merge_state"], with_for_update=True
+    )
     now_iso = datetime.now(UTC).isoformat()
     prev = card.merge_state if isinstance(card.merge_state, dict) else {}
     since = (
@@ -182,6 +231,7 @@ async def _merge_pr_for_accept(
     if status.merged:
         # 有人已经在 GitHub 上合了这个 PR —— 同一件事，照单收下。
         card.pr_merged_at = status.merged_at or datetime.now(UTC)
+        card.decided_by = decided_by
         await self._mark_task_merged(card, delivered_head=status.head_sha)
         if status.merge_commit_sha:
             card.pr_head_sha = status.merge_commit_sha
@@ -233,14 +283,14 @@ async def _merge_pr_for_accept(
             topic,
             _capped("acceptStoppedMergeStateUnread", pr=number, error=str(exc)),
         )
-    self._write_merge_mirror(card, verdict, who, seen)
+    await self._write_merge_mirror(card, verdict, who, seen)
     # 冲突先停下，两种项目都一样。这里的 `dirty` 是 GitHub 的话：强制项目那份是
     # 它的 `mergeStateStatus` 原样透传，非强制项目那份也抄自它的 `dirty` /
     # `mergeable=False` —— 冲突不会自己消失，让下面的合并调用去撞它，强制项目
     # 那条路上会被笼统的 `except Exception` 说成「合并结果暂时无法确认」
     # （2026-10-16 采纳 PR #3927 时的样子），把「先解冲突」读成了「重试一次」。
     if verdict.state == "dirty":
-        await self._stop_accept_conflict(card, topic)
+        await self._stop_accept_conflict(card, topic, status)
     # GitHub enforcing → its merge API is the gate (405 = blocked, 如实转
     # 译). Platform enforcing → only clean, or unstable whose reds are not
     # on the required roster, may merge; everything else is refused with
@@ -308,21 +358,27 @@ async def _merge_pr_for_accept(
     if result.sha is None:
         # A faithful 405: GitHub (or its enforced protection) said no.
         reason = result.blocked_reason or say("reasonUnstated")
+        kind = (await self._resolve_forge(topic.project_id, card=card)).kind
         self._notify_merge_result(
             topic,
-            say("mergeRefusedOnAccept", pr=number),
+            forge_words.said(kind, "mergeRefusedOnAcceptPlatform", pr=number),
             task_id=card.task_id,
             meta=notice(
                 EVENT_MERGE_REFUSED,
                 severity=SEVERITY_ERROR,
                 who=WHO_HUMAN,
                 detail=say("mergeRefusedDetail", reason=reason, url=card.pr_url or ""),
-                detail_label=say("labelGithubReply"),
+                detail_label=forge_words.said(kind, "labelRefusalReply"),
             ),
         )
-        raise ValidationError(say("githubMergeRefused", pr=number, reason=reason))
+        raise ValidationError(
+            forge_words.said(kind, "prMergeRefused", pr=number, reason=reason)
+        )
 
     card.pr_merged_at = datetime.now(UTC)
+    # Who adopted it is on the card before the task hears it landed: the line
+    # its discussion hears names them (`task_landing._step_landed`).
+    card.decided_by = decided_by
     await self._mark_task_merged(card, delivered_head=seen)
     card.pr_head_sha = result.sha  # the merge commit, for the record
     return await self._conclude_pr_accept(card, topic, decided_by)
@@ -336,7 +392,7 @@ async def _record_queue_entry(
     card.auto_merge_armed_by = None
     card.auto_merge_armed_at = None
     await self._repo.add_approval(card.id, decided_by)
-    self._write_merge_mirror(
+    await self._write_merge_mirror(
         card,
         MergeVerdict(
             state="blocked",
@@ -399,6 +455,16 @@ async def _merge_armed_card(
     number = card.pr_number
     assert number is not None  # caller checked; keeps the type checker honest
     armer = card.auto_merge_armed_by or ""
+    if await self._holds_uncommitted(card):
+        # The armer adopted this version; a change saved since is not in it.
+        await self._note_needs_human(
+            card=card,
+            topic=topic,
+            reason=say("mergeWithheldUncommitted"),
+            explain=say("mergeWithheldUncommittedWhy"),
+        )
+        await self._session.flush()
+        return
     approvers = await self._repo.list_approver_handles(card.id)
     votes = len(set(approvers) | {armer})
     if votes < protection.approvals_required:
@@ -443,6 +509,7 @@ async def _merge_armed_card(
         return
     if result.queued:
         card.decided_by_assistant = False
+        card.decided_by_seat = None
         await self._record_queue_entry(card, armer)
         return
     if result.sha is None:
@@ -456,12 +523,16 @@ async def _merge_armed_card(
         await self._session.flush()
         return
     card.pr_merged_at = datetime.now(UTC)
+    # Who adopted it is on the card before the task hears it landed: the line
+    # its discussion hears, and what the main line is told, name them
+    # (`task_landing.delivery_landed`).
+    card.decided_by = armer
+    card.decided_by_assistant = False
+    card.decided_by_seat = None
+    card.decided_at = datetime.now(UTC)
     await self._mark_task_merged(card, delivered_head=card.pr_head_sha)
     card.pr_head_sha = result.sha
     await self._repo.add_approval(card.id, armer)
-    card.decided_by = armer
-    card.decided_by_assistant = False
-    card.decided_at = datetime.now(UTC)
     await self._finish_pr_accept(card=card, topic=topic)
 
 

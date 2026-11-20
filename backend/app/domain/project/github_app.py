@@ -349,6 +349,20 @@ def _tokens_for_installation(
     return minter
 
 
+def github_app_tokens_for_repo(
+    installation_id: int, *, repository_id: int | None, repository: str
+) -> GitHubAppTokens | None:
+    """The minter for one repository of an installation, before any project is
+    bound to it: moving a hosted project's branches to GitHub pushes them with
+    this, then binds. ``repository`` is ``owner/name``. None when the App is
+    not configured."""
+    if repository_id is not None:
+        return _tokens_for_installation(installation_id, repository_id=repository_id)
+    return _tokens_for_installation(
+        installation_id, repository=repository.split("/", 1)[1]
+    )
+
+
 async def github_app_tokens_for_project(
     project_id: uuid.UUID, session: AsyncSession
 ) -> GitHubAppTokens | None:

@@ -28,7 +28,7 @@ from pathlib import Path
 import pytest
 
 from app.core.config import settings
-from app.domain.agent import environment_runner
+from app.domain.agent import environment_runner, sandbox_image
 from app.domain.agent import resource_cleanup as cleanup
 from app.domain.agent.harness.claude_code.remote_execution import (
     bootstrap,
@@ -40,6 +40,11 @@ from tests.support import bubblewrap, sandbox_disk
 
 HELPER = Path(sandbox_host.__file__)
 RUNNER = Path(environment_runner.__file__)
+
+
+@pytest.fixture(autouse=True)
+def image_lower(monkeypatch, tmp_path):
+    bubblewrap.image(monkeypatch, tmp_path)
 
 
 def _sandbox_host_runs() -> bool:
@@ -96,7 +101,12 @@ class Room:
         self.project, self.resource = uuid.uuid4(), uuid.uuid4()
         self.home = owner / ".cheese/home" / str(self.project) / str(self.resource)
         self.state = self.home / ".cheese/executor"
-        self.env = {"CHEESE_API": api, "CHEESE_TOKEN": "test", **(env or {})}
+        self.env = {
+            "CHEESE_API": api,
+            "CHEESE_TOKEN": "test",
+            "CHEESE_SANDBOX_IMAGE": sandbox_image.default_image()["reference"],
+            **(env or {}),
+        }
         self.capsys = capsys
         payload = self.payload()
         try:
@@ -305,6 +315,9 @@ def test_a_sandbox_over_its_memory_is_killed_and_the_machine_is_not(
     rooms, machine_service, monkeypatch
 ):
     monkeypatch.setattr(settings, "cloud_sandbox_memory_mb", 256)
+    # No swap: with some, what does not fit is swapped out instead of killed,
+    # which is what the swap is for, and not what this asks.
+    monkeypatch.setattr(settings, "cloud_sandbox_swap_mb", 0)
     room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
 
     result = room.bash(
@@ -414,10 +427,9 @@ def test_a_sandbox_that_filled_its_disk_still_answers_and_says_so(
     rooms, machine_service, small_disk
 ):
     room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
-    # Its limit is 953 MiB: most of it at once, the rest written to the end.
-    room.bash("fallocate -l 900M most; head -c 100M /dev/zero > big")
+    fill(room)
 
-    result = room.bash("echo more >> big; echo exit=$?")
+    result = room.bash("head -c 1G /dev/zero >> big; echo exit=$?")
 
     assert "No space left on device" in result["stdout"] + result["stderr"]
     assert "exit=1" in result["stdout"]
@@ -425,8 +437,9 @@ def test_a_sandbox_that_filled_its_disk_still_answers_and_says_so(
 
 
 def fill(room: "Room") -> None:
-    """The room's disk, 953 MiB here, filled to the last block."""
-    room.bash("fallocate -l 900M most; head -c 100M /dev/zero > big")
+    """Write past the room's 953 MiB disk limit."""
+    result = room.bash("head -c 1G /dev/zero > big")
+    assert "No space left on device" in result["stdout"] + result["stderr"], result
 
 
 @with_sandbox_host
@@ -435,11 +448,13 @@ def test_a_room_whose_disk_is_full_is_prepared_again_and_told_so(
 ):
     room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
     fill(room)
-    # The next lease's token, which the preview token in the home is
-    # rewritten with and the disk has no room for.
-    room.env["CHEESE_TOKEN"] = "test-2"
+    # A skill the next install writes into the home, which the disk has no
+    # room for (the preview token it once rewrote there is now empty: a room
+    # with its platform socket holds no credential).
+    payload = room.payload()
+    payload["skills"] = {"skills/notes/SKILL.md": "x" * 65536}
 
-    installed = room.install_again()
+    installed = room.install_again(payload)
 
     assert installed["disk_full_mb"] < 64
     assert room.bash("echo ok")["stdout"].strip() == "ok"
@@ -452,7 +467,8 @@ def test_a_command_that_fails_on_a_full_disk_says_the_disk_is_full(
     room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
     fill(room)
 
-    result = room.bash("echo more >> big")
+    # A small append can reuse blocks already charged to the quota.
+    result = room.bash("head -c 1G /dev/zero >> big")
     # The same command through the shell a session's own build runs it in
     # (`shell_prefix`), which reads the command's end from the executor.
     shell = {"subtype": "shell", "command_id": "full-disk"}
@@ -463,7 +479,7 @@ def test_a_command_that_fails_on_a_full_disk_says_the_disk_is_full(
             **shell,
             "operation": "start",
             "kind": "sh",
-            "body": "echo more >> big",
+            "body": "head -c 1G /dev/zero >> big",
             "cwd": str(room.home / "room"),
             "env": {},
             "merge": True,
@@ -588,7 +604,12 @@ def test_no_sandbox_runs_where_its_home_has_no_disk_limit(
 @with_sandbox_host
 def test_an_idle_sandbox_gives_back_its_page_cache(rooms, machine_service):
     room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
-    room.bash("head -c 300M /dev/urandom > blob && cat blob > /dev/null")
+    # Sync before measuring reclaim; reading alone does not flush dirty pages.
+    written = room.bash(
+        "head -c 300M /dev/urandom > blob && sync blob"
+        " && cat blob > /dev/null && wc -c < blob"
+    )
+    assert written["stdout"].strip() == "314572800", written
     group = sandbox_host.CGROUP / str(room.resource)
     held = int((group / "memory.current").read_text())
 
@@ -599,8 +620,117 @@ def test_an_idle_sandbox_gives_back_its_page_cache(rooms, machine_service):
     )
 
     assert answer.returncode == 0, answer.stderr
+    assert str(room.resource) in json.loads(answer.stdout)["reclaimed"]
     assert int((group / "memory.current").read_text()) < held - (200 << 20)
     assert room.bash("echo ok")["stdout"].strip() == "ok"
+
+
+@with_sandbox_host
+def test_swap_and_freezing_are_refused_for_another_users_sandbox(
+    rooms, machine_service
+):
+    """One session may change the swap and the frozen state of its own sandbox
+    and no other's: both are asked for by name, and a name that is not the
+    caller's cgroup is refused."""
+    rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    # A sandbox `up` never made for this caller: the installed helper, run the
+    # way a session runs it, refuses the name before touching any cgroup.
+    other = str(uuid.uuid4())
+    for argv in (["swap", other, "0"], ["freeze", other], ["thaw", other]):
+        answer = subprocess.run(
+            ["sudo", "-n", bootstrap.SANDBOX_HOST, *argv],
+            capture_output=True,
+            text=True,
+        )
+        assert answer.returncode == 2, answer.stdout + answer.stderr
+        assert "not the caller's sandbox" in answer.stderr
+
+
+@with_sandbox_host
+def test_a_frozen_sandbox_runs_nothing_until_it_is_thawed(rooms, machine_service):
+    room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    name = str(room.resource)
+    # What freezing must keep: the sandbox's processes, all of them. Its
+    # memory is no measure — the kernel may reclaim a little cache meanwhile.
+    before = set((sandbox_host.CGROUP / name / "cgroup.procs").read_text().split())
+    assert before
+
+    for command, state in (("freeze", "1"), ("thaw", "0")):
+        answer = subprocess.run(
+            ["sudo", "-n", bootstrap.SANDBOX_HOST, command, name],
+            capture_output=True,
+            text=True,
+        )
+        assert answer.returncode == 0, answer.stderr
+        events = (sandbox_host.CGROUP / name / "cgroup.events").read_text()
+        assert f"frozen {state}" in events
+
+    after = set((sandbox_host.CGROUP / name / "cgroup.procs").read_text().split())
+    assert before <= after
+    assert room.bash("echo ok")["stdout"].strip() == "ok"
+
+
+@with_sandbox_host
+def test_a_sandbox_uses_the_swap_it_is_given_and_a_later_step_changes_it(
+    rooms, machine_service
+):
+    """A running sandbox starts with `cloud_sandbox_swap_mb` of the host's
+    swap; `swap` is how a later step (freezing, thawing) changes it, and the
+    kernel then reports it against that sandbox."""
+    room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    group = sandbox_host.CGROUP / str(room.resource)
+    assert int((group / "memory.swap.max").read_text()) == (
+        settings.cloud_sandbox_swap_mb << 20
+    )
+
+    answer = subprocess.run(
+        ["sudo", "-n", bootstrap.SANDBOX_HOST, "swap", str(room.resource), "64"],
+        capture_output=True,
+        text=True,
+    )
+
+    assert answer.returncode == 0, answer.stderr
+    assert json.loads(answer.stdout)["swap_max"] == 64 << 20
+    assert int((group / "memory.swap.max").read_text()) == 64 << 20
+
+
+@with_sandbox_host
+def test_a_sandbox_has_no_softer_limit_below_its_memory_limit(rooms, machine_service):
+    """Its memory limit is the one limit: no `memory.high` to throttle it
+    below, and the kernel kills one process at a time, not the group the
+    sandbox's executor is in."""
+    room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    group = sandbox_host.CGROUP / str(room.resource)
+
+    assert int((group / "memory.max").read_text()) == (
+        settings.cloud_sandbox_memory_mb << 20
+    )
+    assert (group / "memory.high").read_text().strip() == "max"
+    assert (group / "memory.oom.group").read_text().strip() == "0"
+
+
+@with_sandbox_host
+def test_reclaiming_a_running_sandbox_drops_cache_and_leaves_its_swap_as_it_was(
+    rooms, machine_service
+):
+    """The idle reclaim shuts a running sandbox's swap only while it runs:
+    what its processes hold stays in memory, and the swap it had is back
+    after."""
+    room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
+    name = str(room.resource)
+    group = sandbox_host.CGROUP / name
+    before = (group / "memory.swap.max").read_text()
+
+    answer = subprocess.run(
+        ["sudo", "-n", bootstrap.SANDBOX_HOST, "reclaim", name],
+        capture_output=True,
+        text=True,
+    )
+
+    assert answer.returncode == 0, answer.stderr
+    assert name in json.loads(answer.stdout)["reclaimed"]
+    assert (group / "memory.swap.max").read_text() == before
+    assert int((group / "memory.swap.current").read_text()) == 0
 
 
 @pytest.mark.parametrize(("total_gib", "kept_gib"), [(4, 1), (8, 2), (16, 4), (2, 1)])
@@ -613,7 +743,7 @@ def test_a_machine_keeps_a_quarter_of_its_memory_and_at_least_a_gib(
 
 
 @with_sandbox_host
-def test_a_sandbox_may_not_trace_nest_namespaces_or_use_io_uring(
+def test_a_sandbox_may_trace_but_not_nest_namespaces_or_use_io_uring(
     rooms, machine_service
 ):
     room = rooms(f"http://127.0.0.1:{machine_service(b'backend')}")
@@ -629,7 +759,7 @@ def test_a_sandbox_may_not_trace_nest_namespaces_or_use_io_uring(
         " errno(lambda: libc.syscall(nr, 8, 0)))"
     ).split()
 
-    assert errors == ["1", "1", "38"]
+    assert errors == ["0", "1", "38"]
     assert room.bash("echo ok")["stdout"].strip() == "ok"
 
 
@@ -775,7 +905,9 @@ def test_the_install_writes_the_preview_token_into_the_room_not_through_a_link(
     state = Path(json.loads(capsys.readouterr().out)["state"])
     try:
         assert not (outside / "authorized_keys").exists()
-        assert not token.is_symlink() and token.read_text() == "test"
+        # Removed without following the link: a room with its platform socket
+        # holds no preview token file at all.
+        assert not token.is_symlink() and not token.exists()
     finally:
         stopped = subprocess.run(
             [sys.executable, str(runtime.__file__), "stop", "--state", str(state)],
@@ -907,6 +1039,12 @@ def test_a_sandboxed_rooms_terminal_marker_ends_no_terminal(tmp_path, monkeypatc
         ["down", "*"],
         ["exec", str(uuid.uuid4())],
         ["up", str(uuid.uuid4()), "100", "--site", "70000"],
+        ["swap", str(uuid.uuid4()), str((1 << 20) + 1)],
+        ["swap", str(uuid.uuid4()), "-1"],
+        ["swap", str(uuid.uuid4()), "1G"],
+        ["swap", "../etc", "0"],
+        ["freeze", "*"],
+        ["thaw", str(uuid.uuid4()) + ";id"],
     ],
 )
 def test_the_sandbox_helper_refuses_what_it_does_not_take(argv):
@@ -914,6 +1052,33 @@ def test_the_sandbox_helper_refuses_what_it_does_not_take(argv):
         [sys.executable, str(HELPER), *argv], capture_output=True, text=True
     )
     assert result.returncode == 2, result.stderr
+
+
+def test_the_sandbox_helper_parses_swap_and_freezing_before_it_runs_anything():
+    """The three commands the freezing step will use are read the same way as
+    the ones the lifecycle runs today: by name and number, refusing anything
+    else, before root touches a cgroup."""
+    name, other = str(uuid.uuid4()), str(uuid.uuid4())
+
+    assert sandbox_host.parse(["swap", name, "0"]) == ("swap", {"name": name, "mib": 0})
+    assert sandbox_host.parse(["swap", name, str(1 << 20)]) == (
+        "swap",
+        {"name": name, "mib": 1 << 20},
+    )
+    assert sandbox_host.parse(["freeze", name, other]) == (
+        "freeze",
+        {"names": [name, other]},
+    )
+    assert sandbox_host.parse(["thaw", name]) == ("thaw", {"names": [name]})
+    for argv in (
+        ["swap", name],
+        ["swap", name, "-1"],
+        ["swap", name, str((1 << 20) + 1)],
+        ["freeze"],
+        ["thaw", ""],
+    ):
+        with pytest.raises(sandbox_host.Refused):
+            sandbox_host.parse(argv)
 
 
 def test_the_sandbox_helper_takes_only_the_home_of_the_sandbox_it_starts():

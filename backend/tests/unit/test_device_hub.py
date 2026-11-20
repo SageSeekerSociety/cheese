@@ -157,7 +157,9 @@ def test_reconnect_reads_inventory_replies_while_recovery_is_running(monkeypatch
     )
     with (
         TestClient(app) as client,
-        client.websocket_connect("/connector/agent?token=fixture") as ws,
+        client.websocket_connect(
+            "/connector/agent", headers={"Authorization": "Bearer fixture"}
+        ) as ws,
     ):
         assert ws.receive_json()["t"] == "welcome"
         request = ws.receive_json()
@@ -197,7 +199,9 @@ def test_connection_owner_attaches_without_running_business_recovery(monkeypatch
 
     with (
         TestClient(app) as client,
-        client.websocket_connect("/connector/agent?token=fixture") as ws,
+        client.websocket_connect(
+            "/connector/agent", headers={"Authorization": "Bearer fixture"}
+        ) as ws,
     ):
         assert ws.receive_json()["t"] == "welcome"
         assert hub.is_online("dev")
@@ -293,8 +297,6 @@ async def test_open_screen_sends_session_create_and_registers_token():
     assert create["t"] == "session.create"
     assert create["command"] == ["claude"]
     assert create["env"] == {"K": "V"} and create["screen"] == screen.token
-    # The screen is discoverable by its token (attribution) and by sid.
-    assert hub.screen_by_token(screen.token) is screen
     assert hub.screen(screen.sid) is screen
 
 
@@ -416,9 +418,7 @@ async def test_adopt_screen_reregisters_running_screen_after_restart():
         project_id=project,
         topic_id=topic,
     )
-    # Discoverable by sid and by its token (attribution) again.
     assert hub.screen("s-kept") is screen
-    assert hub.screen_by_token("kept-tok") is screen
     assert screen.agent_user_id == agent and screen.topic_id == topic
     # Idempotent: adopting the same sid returns the already-registered screen.
     again = hub.adopt_screen(
@@ -491,9 +491,8 @@ async def test_reassert_screen_resends_adopt_create_under_same_identity():
     assert create["sid"] == screen.sid and create["screen"] == screen.token
     assert create["command"] == ["claude", "--new"]
     assert create["env"] == {"K": "V"}
-    # The registry still resolves the screen by the same sid and token.
+    # The registry still resolves the screen by the same sid.
     assert hub.screen(screen.sid) is screen
-    assert hub.screen_by_token(screen.token) is screen
     assert screen.command == ["claude", "--new"]
 
 
@@ -940,7 +939,9 @@ def test_a_connector_that_falls_silent_is_taken_offline(monkeypatch):
     hub = DeviceHub()
     with (
         TestClient(_socket_app(monkeypatch, hub)) as client,
-        client.websocket_connect("/connector/agent?token=fixture") as ws,
+        client.websocket_connect(
+            "/connector/agent", headers={"Authorization": "Bearer fixture"}
+        ) as ws,
     ):
         assert ws.receive_json()["t"] == "welcome"
         ws.send_json({"t": "heartbeat"})
@@ -959,7 +960,9 @@ def test_a_connector_that_keeps_beating_stays_online(monkeypatch):
     hub = DeviceHub()
     with (
         TestClient(_socket_app(monkeypatch, hub)) as client,
-        client.websocket_connect("/connector/agent?token=fixture") as ws,
+        client.websocket_connect(
+            "/connector/agent", headers={"Authorization": "Bearer fixture"}
+        ) as ws,
     ):
         assert ws.receive_json()["t"] == "welcome"
         for _ in range(10):
@@ -979,7 +982,9 @@ def test_a_connector_that_never_heartbeats_is_not_judged_by_silence(monkeypatch)
     hub = DeviceHub()
     with (
         TestClient(_socket_app(monkeypatch, hub)) as client,
-        client.websocket_connect("/connector/agent?token=fixture") as ws,
+        client.websocket_connect(
+            "/connector/agent", headers={"Authorization": "Bearer fixture"}
+        ) as ws,
     ):
         assert ws.receive_json()["t"] == "welcome"
         ws.send_json({"t": "hello", "v": 1})

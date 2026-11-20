@@ -184,6 +184,13 @@ class AgentTurnRepository:
     async def get(self, turn_id: uuid.UUID) -> AgentTurn | None:
         return await self._session.get(AgentTurn, turn_id)
 
+    async def get_locked(self, turn_id: uuid.UUID) -> AgentTurn | None:
+        """``get``, row-locked until the caller's transaction ends (see
+        ``lock_open``)."""
+        return await self._session.get(
+            AgentTurn, turn_id, with_for_update=True, populate_existing=True
+        )
+
     async def mark_credits_refused(self, turn_id: uuid.UUID, at: datetime) -> bool:
         """Stamp that admission refused this turn for spent credits (#715).
 
@@ -252,9 +259,9 @@ class AgentTurnRepository:
         )
         return (await self._session.execute(stmt)).scalar_one_or_none()
 
-    async def open_turn_author_for_topic(
+    async def open_turn_for_topic(
         self, topic_id: uuid.UUID, *, agent_handle: str | None = None
-    ) -> str | None:
+    ) -> AgentTurn | None:
         """这一轮由谁的消息发起 —— 也就是「这一轮的结果由谁在等」。
 
         芝士在轮次中途提出待确认问题，本轮就停在那里等回答。等的不是房间里任意一个
@@ -262,13 +269,14 @@ class AgentTurnRepository:
 
         平台发起的轮次（resume、各类提醒）作者是 `system`，那种轮次里的提问指不到
         具体的人 —— 这里照样把 `system` 返回，由调用点决定它意味着什么，和
-        `open_turn_id_for_topic` 一样只回答被问到的那件事。
+        `open_turn_id_for_topic` 一样只回答被问到的那件事。返回那一轮整行：发起人
+        是 ``author``，什么时候开始的是 ``started_at``。
 
         ``agent_handle``：只看这位队友的那一轮。一个房间可以坐几位队友，各自
         在跑的轮次由不同的人发起。
         """
         stmt = (
-            select(AgentTurn.author)
+            select(AgentTurn)
             .where(
                 AgentTurn.conversation_id == topic_id, AgentTurn.stopped_at.is_(None)
             )
@@ -298,6 +306,21 @@ class AgentTurnRepository:
             return set()
         stmt = select(AgentTurn.id).where(
             AgentTurn.id.in_(ids), AgentTurn.stopped_at.is_(None)
+        )
+        return set((await self._session.execute(stmt)).scalars())
+
+    async def lock_open(self, turn_ids: Iterable[uuid.UUID]) -> set[uuid.UUID]:
+        """Of these turns, the ones still open, row-locked until the caller's
+        transaction ends. Whoever decides a turn's fate — the sweep closing it,
+        recovery taking it up again — holds its row while deciding, so the two
+        are serialized and the second sees what the first did."""
+        ids = list(turn_ids)
+        if not ids:
+            return set()
+        stmt = (
+            select(AgentTurn.id)
+            .where(AgentTurn.id.in_(ids), AgentTurn.stopped_at.is_(None))
+            .with_for_update()
         )
         return set((await self._session.execute(stmt)).scalars())
 

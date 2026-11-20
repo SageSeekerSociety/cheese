@@ -16,6 +16,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.conversation.numbering import lock_conversations
 from app.domain.library import listing as library_listing
 from app.domain.library.shelf import Shelf
 from app.domain.review.models import AcceptCard, AcceptStatus
@@ -65,6 +66,9 @@ async def _fire_schedules(session: AsyncSession) -> int:
         )
     )
     busy = await _still_running(session, [routine.id for routine in rows])
+    # Every room told in this pass, at once, before the first line
+    # (`conversation.numbering`); a run's own 支线 is new and needs none.
+    await lock_conversations(session, [routine.topic_id for routine in rows])
     fired = 0
     for routine in rows:
         planned = routine.next_run_at
@@ -124,7 +128,10 @@ async def _events_for(
     found: list[tuple[str, str, datetime]] = []
     if trigger is RoutineTrigger.library_file_added:
         for name, when in await library_listing.added_since(
-            session, Shelf.of_project(routine.project_id), since
+            # 「资料库新增」说的是项目自己放进来的；题目的材料不算。
+            session,
+            Shelf.of_project(routine.project_id, with_task=False),
+            since,
         ):
             found.append(
                 (
@@ -151,7 +158,7 @@ async def _events_for(
             found.append(
                 (
                     f"task:{task.id}",
-                    f"任务《{task.title}》（{task.id}）已关闭。",
+                    f"任务《{task.title}》（{task.id}）已结束。",
                     task.closed_at,
                 )
             )
@@ -177,7 +184,87 @@ async def _events_for(
                     card.decided_at,
                 )
             )
+    elif trigger in (RoutineTrigger.task_filed, RoutineTrigger.task_decided):
+        found.extend(
+            await _review_events(
+                session, routine, trigger, in_room=in_room, since=since
+            )
+        )
     found.sort(key=lambda item: item[2])
+    return found
+
+
+async def _review_events(
+    session: AsyncSession,
+    routine: Routine,
+    trigger: RoutineTrigger,
+    *,
+    in_room: bool,
+    since: datetime,
+) -> list[tuple[str, str, datetime]]:
+    """A task's review, read off the cards that recorded it.
+
+    A filing is a card that appeared, a decision is one that was decided — the
+    same rows ``card_accepted`` already reads, so a rule waiting on a review and
+    a rule waiting on an acceptance cannot disagree about what happened. (The
+    personal side reads the same moments from ``happenings``, which that side
+    consumes; a channel rule must not, or the two would take each other's.)
+    """
+    if trigger is RoutineTrigger.task_filed:
+        query = (
+            select(AcceptCard, Task)
+            .join(Task, Task.id == AcceptCard.task_id)
+            .where(
+                Task.project_id == routine.project_id,
+                AcceptCard.created_at >= since,
+            )
+        )
+        if in_room:
+            query = query.where(AcceptCard.topic_id == routine.topic_id)
+        key = "filed"
+        filed_said = "提交审阅了"
+    else:
+        query = (
+            select(AcceptCard, Task)
+            .join(Task, Task.id == AcceptCard.task_id)
+            .where(
+                Task.project_id == routine.project_id,
+                AcceptCard.status.in_([AcceptStatus.accepted, AcceptStatus.rejected]),
+                AcceptCard.decided_at.is_not(None),
+                AcceptCard.decided_at >= since,
+            )
+        )
+        if routine.spec.get("outcome") == "accepted":
+            query = query.where(AcceptCard.status == AcceptStatus.accepted)
+        elif routine.spec.get("outcome") == "rejected":
+            query = query.where(AcceptCard.status == AcceptStatus.rejected)
+        if in_room:
+            query = query.where(AcceptCard.topic_id == routine.topic_id)
+        key = "decided"
+    found: list[tuple[str, str, datetime]] = []
+    for card, task in (await session.execute(query.order_by(AcceptCard.id))).all():
+        at = (
+            card.decided_at
+            if trigger is RoutineTrigger.task_decided
+            else card.created_at
+        )
+        if at is None:  # pragma: no cover - filtered above, kept for the type
+            continue
+        if trigger is RoutineTrigger.task_decided:
+            word = "采纳" if card.status == AcceptStatus.accepted else "退回"
+            said_here = f"的审阅被{word}了"
+        else:
+            said_here = filed_said
+        # A task takes its number when it is first addressed; one filed before
+        # that has none, and «#None» is not a thing to tell a teammate.
+        ref = f"（#{task.number}）" if task.number is not None else ""
+        found.append(
+            (
+                f"card:{card.id}:{key}",
+                f"任务《{task.title}》{ref}{said_here}。",
+                at,
+            )
+        )
     return found
 
 
@@ -206,6 +293,8 @@ async def _fire_events(session: AsyncSession) -> int:
         due.append((routine, events))
     if not due:
         return 0
+    # As `_fire_schedules`: every room told in this pass, at once, first.
+    await lock_conversations(session, [routine.topic_id for routine, _events in due])
     ids = [routine.id for routine, _events in due]
     # One query for the hour behind every due rule: how many runs it started,
     # and whether its owner has been told of the limit already.

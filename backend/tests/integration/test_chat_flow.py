@@ -4,8 +4,9 @@ import asyncio
 import uuid
 
 from app.core.config import settings
-from app.domain.memory.files import INDEX_NAME, MemoryFileScope
+from app.domain.memory.files import INDEX_NAME, MemoryFileScope, prompt_path
 from app.domain.memory.files_store import MemoryFileStore
+from app.domain.memory.writers import MemoryWriter
 from tests.integration.conftest import (
     in_thread,
     join_project_team,
@@ -97,22 +98,18 @@ def test_blocks_empty_then_populated_after_chat(client):
     # session has claimed the lifecycle (`session_lifecycle` → `session_owned`),
     # and here the session claims it first.
     #
-    # `reaction` (芝士's 👀) is filtered out rather than placed: it rides the
-    # harness's prompt receipt, which is reported on its own task, so it has no
-    # fixed position among these. test_reactions.py is where it is asserted.
-    # `activity` (the agent working, then done) is the same: it follows the
-    # turn's lifecycle frames, and test_member_activity.py asserts it.
-    types = [f["type"] for f in frames if f["type"] not in ("reaction", "activity")]
+    # `activity` (the agent working, then done) follows the turn's lifecycle
+    # frames, and test_member_activity.py asserts it.
+    # So is `reads` (the teammate has read what its turn was given), a
+    # standalone fact asserted in test_message_reads.py.
+    types = [f["type"] for f in frames if f["type"] not in ("activity", "reads")]
     assert types == [
         "user_block",
         "turn_started",
         "done",
     ]
 
-    ack = next(f for f in frames if f["type"] == "reaction")
     agent = room_agent_seat(client, topic_id)
-    assert ack["reactions"] == [{"emoji": "👀", "count": 1, "authors": [agent]}]
-
     output = records(client, topic_id, owner="user-1")
     assert assistant_texts(output) == ["Hello world"]
     assert {item["agent_handle"] for item in output} == {"cheese"}
@@ -190,8 +187,9 @@ def test_the_index_is_carried_and_the_bodies_are_not(client, stub_hooks):
     from — which is why the index carries hooks rather than bodies, and why the
     agent has to open them itself with the tools it already has.
 
-    The private index is the speaker's only: an index is paid for every turn,
-    and a project is wider than the people in this room."""
+    Nobody's private index is in a shared room's turn, the speaker's
+    included: the room's session goes on to answer the next person who speaks,
+    and what it read for one would still be in reach (`turn_speakers`)."""
     project_id, topic_id = _create_project_and_thread(client)
 
     async def _seed() -> None:
@@ -207,6 +205,7 @@ def test_the_index_is_carried_and_the_bodies_are_not(client, stub_hooks):
                     content=content,
                     updated_by="cheese",
                     expected_version=None,
+                    writer=MemoryWriter.panel,
                 )
 
             await put(
@@ -246,8 +245,10 @@ def test_the_index_is_carried_and_the_bodies_are_not(client, stub_hooks):
     prompt = stub_hooks.told
     assert "索引里那句钩子" in prompt
     assert "正文里才有的那句话" not in prompt
-    assert "说话这个人的索引钩子" in prompt
+    assert prompt_path(f"private/user-1/{INDEX_NAME}") not in prompt
+    assert "说话这个人的索引钩子" not in prompt
     assert "没说话那个人的索引钩子" not in prompt
+    assert prompt_path(f"private/bob/{INDEX_NAME}") not in prompt
 
 
 def test_empty_content_rejected(client):
@@ -262,8 +263,10 @@ def test_empty_content_rejected(client):
 
 
 def test_message_without_summon_does_not_invoke_cheese(client):
-    """Default human-to-human: posting without @芝士 stays quiet (spec C3)."""
-    _, topic_id = _create_project_and_topic(client)
+    """Default human-to-human: with someone else in the project, posting
+    without @芝士 stays quiet (spec C3)."""
+    project_id, topic_id = _create_project_and_topic(client)
+    join_project_team(client, project_id, "bob")
     with room_socket(client, topic_id, "user-1") as ws:
         post_message(client, topic_id, "user-1", {"content": "队友我们今晚开会"})
         frames = _drain_until_done(ws)

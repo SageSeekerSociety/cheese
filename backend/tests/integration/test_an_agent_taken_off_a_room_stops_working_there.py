@@ -40,15 +40,6 @@ def _working_in(client, conversation: str) -> list[str]:
     return [entry["member"] for entry in members if entry["kind"] == "working"]
 
 
-def _thread_of(client, block_id: str) -> str:
-    """The 支线 a call to 芝士 in the main line is answered in."""
-    opened = client.post(
-        f"/blocks/{block_id}/thread", headers=session_auth_headers("alice")
-    )
-    assert opened.status_code == 200, opened.text
-    return opened.json()["data"]["id"]
-
-
 def _until(check, timeout: float = 10.0) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -68,14 +59,13 @@ def test_taking_an_agent_off_a_room_stops_its_running_turn(client, stub_hooks):
 
     stub_hooks.emit_turn = turn
     seat = room_agent_seat(client, room)
-    asked = post_message(client, room, "alice", {"content": "@芝士 跑一下测试"})
-    # It works in the message's 支线.
-    thread = _thread_of(client, asked["id"])
-    assert _until(lambda: _working_in(client, thread) == [seat])
+    post_message(client, room, "alice", {"content": "@芝士 跑一下测试"})
+    # It works in the channel's main line.
+    assert _until(lambda: _working_in(client, room) == [seat])
 
     removed = client.delete(
         f"/topics/{room}/members/{seat}", headers=session_auth_headers("alice")
     )
     assert removed.status_code == 200, removed.text
 
-    assert _until(lambda: _working_in(client, thread) == [])
+    assert _until(lambda: _working_in(client, room) == [])

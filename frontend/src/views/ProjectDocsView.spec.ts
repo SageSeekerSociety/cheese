@@ -34,7 +34,12 @@ vi.mock('../api', async () => {
     ...actual,
     getDocNodes: async () => ({ data: [] }),
     deleteMemory: vi.fn(),
+    restoreMemoryChange: vi.fn(),
+    // 删除、恢复之后面板重读记忆和改动记录；这几个用例看的是点下去之后发了什么。
+    listMemory: vi.fn(async () => ({ data: [] })),
+    listMemoryChanges: vi.fn(async () => ({ data: [], next: null })),
     getProject: vi.fn(),
+    getTopic: vi.fn(),
   }
 })
 // 项目目标开的是那一份文档，面板会读它叫什么。
@@ -53,7 +58,9 @@ vi.mock('../composables/useDocCollab', async () => ({
   useDocCollab: (await import('../test/fakeDocCollab')).useFakeDocCollab,
 }))
 
-import { deleteMemory, getProject } from '../api'
+import type { MemoryChangeOut } from '../api'
+
+import { deleteMemory, getProject, getTopic, listMemoryChanges, restoreMemoryChange } from '../api'
 import { getProjectOverview } from '../api/projectDocuments'
 import { remoteEdit, seedRoom } from '../test/fakeDocCollab'
 
@@ -84,6 +91,8 @@ function show(kind: 'charter' | 'weeklies' | 'memory', payload: Record<string, u
 beforeEach(() => {
   setLocale('zh-CN')
   vi.mocked(deleteMemory).mockReset()
+  vi.mocked(restoreMemoryChange).mockReset()
+  vi.mocked(listMemoryChanges).mockImplementation(async () => ({ data: [], next: null }))
   dialogMock.confirm.mockReset()
   // 默认「点了确定」：取消那一格在下面的用例里单独摆。
   dialogMock.confirm.mockImplementation(() => ({ wait: async () => true }))
@@ -141,6 +150,57 @@ describe('in English', () => {
   })
 })
 
+describe('周报里写到的人按查看者的叫法', () => {
+  it('查看者给他设过备注时，正文里画的是备注', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    seedProjects([])
+    seedProject('p', {
+      topics: [],
+      members: [
+        {
+          user_handle: 'qingmo',
+          name: '秦老师公开昵称',
+          name_source: 'human',
+          remark: '我们叫他老王',
+          agent: false,
+          project_default: false,
+        },
+      ],
+      unread: {},
+      privateUnread: {},
+      notifyLevels: {},
+    })
+    const store = useWorkspaceStore()
+    store.openProject('p')
+    queryClient.setQueryData(keys.projectDocs('p', 'weeklies'), {
+      rootTopicId: 'root',
+      rootTopic: null,
+      overviewId: null,
+      weeklies: [
+        {
+          id: 'w1',
+          conversation_id: 'room-1',
+          kind: 'weekly',
+          content: '<@qingmo> 把提交口打开了。',
+          created_at: '2026-09-07T02:00:00Z',
+          meta: { since: '2026-08-31T00:00:00+00:00', until: '2026-09-06T23:59:59+00:00' },
+        },
+      ],
+      memoryEntries: [],
+    })
+
+    const view = render(ProjectDocsView, {
+      props: { projectId: 'p', kind: 'weeklies' },
+      global: { plugins: [createVuetify(), pinia] },
+    })
+    // 正文是异步组件画的，等它出来再断言。
+    await waitFor(() => expect(view.container.textContent).toContain('我们叫他老王'))
+    expect(view.container.textContent).not.toContain('秦老师公开昵称')
+    view.unmount()
+  })
+})
+
 describe('项目目标', () => {
   it('打开的是项目目标那一篇协同文档，谁在别处改的都在这儿', async () => {
     seedRoom('overview', '我们给高中生做算法课。')
@@ -165,6 +225,30 @@ describe('项目目标', () => {
       global: { plugins: [createVuetify()] },
     })
     await waitFor(() => expect(getProjectOverview).toHaveBeenCalledWith('cold'))
+  })
+
+  it('项目话题清单里已经有根房间时直接复用，不再单独请求一次根房间', async () => {
+    seedRoom('overview-cached', '复用已缓存的根房间。')
+    vi.mocked(getTopic).mockReset()
+    vi.mocked(getProject).mockResolvedValue({
+      id: 'p-cached',
+      name: '项目',
+      root_topic_id: 'root-cached',
+    } as never)
+    vi.mocked(getProjectOverview).mockResolvedValue({ id: 'overview-cached' })
+    queryClient.setQueryData(keys.projectTopics('p-cached'), {
+      data: [{ id: 'root-cached', kind: 'root', title: '综合', project_id: 'p-cached' }],
+      total: 1,
+    })
+
+    const view = render(ProjectDocsView, {
+      props: { projectId: 'p-cached', kind: 'charter' },
+      global: { plugins: [createVuetify()] },
+    })
+
+    await waitFor(() => expect(view.container.querySelector('.doc-prose')?.textContent).toContain('复用已缓存的根房间'))
+    expect(getTopic).not.toHaveBeenCalled()
+    view.unmount()
   })
 })
 
@@ -239,8 +323,8 @@ describe('记忆', () => {
 
     await fireEvent.click(view.container.querySelector('.memory-card__del') as Element)
 
-    // 删掉找不回来：行里的入口是灰的，这一下确认才是红的。
-    expect(dialogMock.confirm).toHaveBeenCalledWith('删除后找不回来，芝士也不再记得它。', {
+    // 行里的入口是灰的，这一下确认才是红的；它说得出删掉之后去哪里找回来。
+    expect(dialogMock.confirm).toHaveBeenCalledWith('删除后芝士不再记得它，30 天内可在「最近改动」里恢复。', {
       title: '删除这条记忆？',
       confirmLabel: '删除这条记忆',
       danger: true,
@@ -273,6 +357,73 @@ describe('记忆', () => {
     expect(dialogMock.confirm).toHaveBeenCalledTimes(1)
     expect(deleteMemory).not.toHaveBeenCalled()
     expect(view.getByText('喜欢用 pnpm')).toBeTruthy()
+    view.unmount()
+  })
+
+  const deletion: MemoryChangeOut = {
+    id: 'c-deleted',
+    scope: 'team',
+    owner_handle: '',
+    path: 'deploy-script.md',
+    writer: 'dream_team',
+    changed_by: 'cheese',
+    created_at: '2026-09-26T00:00:00Z',
+    created: false,
+    deleted: true,
+    diff: '--- deploy-script.md\n+++ deploy-script.md\n@@ -1 +0,0 @@\n-部署脚本在 deploy/deploy.sh\n',
+  }
+  const creation: MemoryChangeOut = {
+    ...deletion,
+    id: 'c-created',
+    path: 'prefers-pnpm.md',
+    scope: 'private',
+    owner_handle: 'writer',
+    writer: 'turn',
+    created: true,
+    deleted: false,
+  }
+
+  it('最近改动里一条被删掉的记忆能恢复，恢复的是那一条', async () => {
+    const view = show('memory', { memoryChanges: [deletion, creation], changesSharedMemory: true })
+    await waitFor(() => expect(view.getByText('deploy-script.md')).toBeTruthy())
+
+    // 一次新建没有「改之前」，只有那条删除带恢复按钮。
+    const buttons = view.getAllByRole('button', { name: /恢复到改动前/ })
+    expect(buttons).toHaveLength(1)
+    await fireEvent.click(buttons[0] as Element)
+
+    await waitFor(() => expect(restoreMemoryChange).toHaveBeenCalledWith('p', 'c-deleted'))
+    view.unmount()
+  })
+
+  it('第一页之外更早的改动也翻得到、恢复得了', async () => {
+    // 第一页只有一条新建；项目那一份后面还有，删除在下一页。
+    vi.mocked(listMemoryChanges).mockImplementation(async (_project, scope, _owner, before) =>
+      scope === 'team' && before === 'team-page-2' ? { data: [deletion], next: null } : { data: [], next: null }
+    )
+    const view = show('memory', {
+      memoryChanges: [creation],
+      memoryChangesNext: { team: 'team-page-2', private: null },
+      changesSharedMemory: true,
+    })
+    await waitFor(() => expect(view.getByText('prefers-pnpm.md')).toBeTruthy())
+    expect(view.queryByText('deploy-script.md')).toBeNull()
+
+    await fireEvent.click(view.getByRole('button', { name: /更早的改动/ }))
+    await waitFor(() => expect(view.getByText('deploy-script.md')).toBeTruthy())
+    // 读到头了，就不再给翻页的按钮。
+    expect(view.queryByRole('button', { name: /更早的改动/ })).toBeNull()
+
+    await fireEvent.click(view.getByRole('button', { name: /恢复到改动前/ }))
+    await waitFor(() => expect(restoreMemoryChange).toHaveBeenCalledWith('p', 'c-deleted'))
+    view.unmount()
+  })
+
+  it('改不动项目记忆的人也恢复不了项目记忆的改动', async () => {
+    const view = show('memory', { memoryChanges: [deletion], changesSharedMemory: false })
+    await waitFor(() => expect(view.getByText('deploy-script.md')).toBeTruthy())
+
+    expect(view.queryByRole('button', { name: /恢复到改动前/ })).toBeNull()
     view.unmount()
   })
 })

@@ -22,13 +22,13 @@ import type { BrowserSignInEntry } from '@/lib/desktopApp'
 
 import { computed, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 
 import { ENTRY_PAGE } from './appSignIn'
 import DesktopSignInView from './DesktopSignInView.vue'
 
 import { t } from '@/i18n'
 import { openInBrowser, signInInBrowser } from '@/lib/desktopApp'
+import { toast } from '@/lib/toast'
 import { postLoginTarget } from '@/router/loginRedirect'
 
 const route = useRoute()

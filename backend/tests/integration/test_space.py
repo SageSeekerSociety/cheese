@@ -601,8 +601,8 @@ class TestSpacePermissions:
             json={"name": "Hacked Name"},
             headers={"Authorization": f"Bearer {other.token}"},
         )
-        assert resp.status_code == 403, (
-            f"Expected 403 Forbidden, got {resp.status_code}"
+        assert resp.status_code == 404, (
+            f"Expected 404 (not in the space), got {resp.status_code}"
         )
 
     def test_delete_space_fails_for_non_admin(
@@ -614,8 +614,8 @@ class TestSpacePermissions:
             f"/spaces/{space_id}",
             headers={"Authorization": f"Bearer {other.token}"},
         )
-        assert resp.status_code == 403, (
-            f"Expected 403 Forbidden, got {resp.status_code}"
+        assert resp.status_code == 404, (
+            f"Expected 404 (not in the space), got {resp.status_code}"
         )
 
 
@@ -893,7 +893,7 @@ class TestSpaceDomainGroups:
             json={"name": "Hacker", "domains": ["evil.com"]},
             headers={"Authorization": f"Bearer {other.token}"},
         )
-        assert resp.status_code == 403, f"Expected 403, got {resp.status_code}"
+        assert resp.status_code == 404, f"Expected 404, got {resp.status_code}"
 
     # -- update ---------------------------------------------------------------------
 
@@ -927,7 +927,7 @@ class TestSpaceDomainGroups:
             json={"name": "Hacked"},
             headers={"Authorization": f"Bearer {other.token}"},
         )
-        assert resp.status_code == 403, f"Expected 403, got {resp.status_code}"
+        assert resp.status_code == 404, f"Expected 404, got {resp.status_code}"
 
     # -- delete ---------------------------------------------------------------------
 
@@ -965,7 +965,7 @@ class TestSpaceDomainGroups:
             f"/spaces/{space_id}/domain-groups/{gid}",
             headers={"Authorization": f"Bearer {other.token}"},
         )
-        assert resp.status_code == 403, f"Expected 403, got {resp.status_code}"
+        assert resp.status_code == 404, f"Expected 404, got {resp.status_code}"
 
     # -- validation ----------------------------------------------------------------
 
@@ -1051,13 +1051,17 @@ def test_a_spaces_admins_are_read_in_one_batch(client) -> None:
     def request():
         return client.get("/spaces", params={"pageSize": 100}, headers=owner)
 
+    # `allow_growth=1` is the viewer's remark query, not slack: it is one
+    # statement per page (this branch added it), and the assertion still fails
+    # the moment anything is read per admin — the probe reads 7 statements at
+    # one admin and 7 at eight.
     assert_does_not_scale(
         client,
         seed=seed,
         request=request,
         small=1,
         large=8,
-        allow_growth=0,
+        allow_growth=1,
         what="GET /spaces admins",
     )
     ours = next(s for s in request().json()["data"]["spaces"] if s["id"] == space_id)

@@ -39,6 +39,7 @@
     "invalidPassword": "Wrong password",
     "inviteCodeRequired": "Invitation code is required",
     "retry": "Try {provider} again",
+    "reviewUnavailable": "Content review is unavailable right now. Try again shortly",
     "sessionExpired": "The sign-in session expired. Please start again.",
     "startFailed": "Could not start GitHub authorization. Please try again.",
     "title": "Couldn't sign in",

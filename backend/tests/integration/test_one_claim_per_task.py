@@ -2,7 +2,8 @@
 
 - 团队题：队里只要有人已经通过别的团队领了这道题（等批也算），这个团队就领不了；
   那份领取被拒绝之后可以。
-- 用题目建项目：个人题要本人领了，团队题要项目挂的那个团队领了。
+- 用题目建项目就是开始做这道题：个人题要本人的申请批了，团队题的项目建在领题的
+  那个团队下。
 - 出题人的领取名单里能看到每人的截止时间和申请理由。
 - 团队题要用团队领：自己名下（只有自己的那个团队）不算团队，既不在可选之列，硬领也被拒。
 """
@@ -71,6 +72,7 @@ def _task(api_client: TestClient, board: dict, submitter_type: str) -> int:
             "space": board["space_id"],
             "categoryId": board["category_id"],
             "submitterType": submitter_type,
+            "startMode": "APPLY",
             "resubmittable": True,
             "editable": True,
             "defaultDeadline": 30,
@@ -182,40 +184,56 @@ def test_a_rejected_claim_frees_its_members_to_claim_with_another_team(
     assert _claim_as_team(api_client, task_id, second, token).status_code in (200, 201)
 
 
-def _create_project(api_client: TestClient, token: str, task_id: int, team_id=None):
-    body = {"name": "从题目来的项目", "external_task_id": task_id}
-    if team_id is not None:
-        body["team_id"] = team_id
-    return api_client.post("/projects", json=body, headers=_auth(token))
+def _approve_all(api_client: TestClient, board: dict, task_id: int) -> None:
+    for claim in _participants(api_client, task_id, board["token"]):
+        resp = api_client.patch(
+            f"/tasks/{task_id}/participants/{claim['id']}",
+            json={"approved": "APPROVED"},
+            headers=_auth(board["token"]),
+        )
+        assert resp.status_code == 200, resp.text
 
 
-def test_only_someone_who_claimed_an_individual_task_can_build_a_project_from_it(
+def _start_as_user(api_client: TestClient, task_id: int, token: str):
+    return api_client.post(
+        f"/tasks/{task_id}/participations/user", json={}, headers=_auth(token)
+    )
+
+
+def test_only_someone_whose_claim_is_approved_gets_a_project_from_an_individual_task(
     api_client: TestClient, user_client: UserCreator, board: dict
 ):
     _, claimer = _member(user_client, api_client, board)
     _, bystander = _member(user_client, api_client, board)
     task_id = _task(api_client, board, "USER")
-    resp = api_client.post(
-        f"/tasks/{task_id}/participations/user", json={}, headers=_auth(claimer)
-    )
+    resp = _start_as_user(api_client, task_id, claimer)
     assert resp.status_code in (200, 201), resp.text
+    _approve_all(api_client, board, task_id)
 
-    assert _create_project(api_client, claimer, task_id).status_code == 200
-    assert _create_project(api_client, bystander, task_id).status_code == 403
+    resp = _start_as_user(api_client, task_id, claimer)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["project"] is not None
+    # 没被批过的人点开始只是递了申请，拿不到项目。
+    resp = _start_as_user(api_client, task_id, bystander)
+    assert resp.status_code in (200, 201), resp.text
+    assert resp.json()["data"]["project"] is None
 
 
-def test_a_team_task_project_must_belong_to_the_team_that_claimed_it(
+def test_a_team_task_project_belongs_to_the_team_that_claimed_it(
     api_client: TestClient, user_client: UserCreator, board: dict
 ):
     _, token = _member(user_client, api_client, board)
     claimed, other = _team(api_client, token), _team(api_client, token)
     task_id = _task(api_client, board, "TEAM")
     assert _claim_as_team(api_client, task_id, claimed, token).status_code in (200, 201)
+    _approve_all(api_client, board, task_id)
 
-    assert _create_project(api_client, token, task_id, claimed).status_code == 200
-    assert _create_project(api_client, token, task_id, other).status_code == 403
-    # 挂在个人名下也不行：领题的是那支队伍，不是这个人。
-    assert _create_project(api_client, token, task_id).status_code == 403
+    resp = _claim_as_team(api_client, task_id, claimed, token)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["project"]["team_id"] == claimed
+    # 换一支队伍、或者以个人名义开始，都拿不到这道题的项目：领题的是那支队伍。
+    assert _claim_as_team(api_client, task_id, other, token).status_code == 400
+    assert _start_as_user(api_client, task_id, token).status_code == 400
 
 
 def test_the_roster_shows_each_claims_deadline_and_reason(

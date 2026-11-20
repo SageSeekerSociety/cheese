@@ -140,25 +140,25 @@ def test_a_friend_who_registers_with_my_code_is_mine(client, _portal, inviter):
     ]
 
 
-def test_open_registration_lets_a_used_up_code_through_uncredited(
+def test_open_registration_refuses_an_exhausted_code_when_supplied(
     client, _portal, inviter
 ):
     _, mine = inviter
     code = _invites(client, mine)["code"]
     _register(client, _portal, code)
 
-    late, _ = _register(client, _portal, code)
+    suffix = uuid.uuid4().hex[:8]
+    body = _portal.call(_registration, f"late_{suffix}", f"late-{suffix}@example.com")
+    body["inviteCode"] = code
+    assert client.post("/users", json=body).status_code == 422
+    assert _invites(client, mine)["use_count"] == 1
 
-    seen = _invites(client, mine)
-    assert seen["use_count"] == 1
-    assert late not in [p["handle"] for p in seen["invitees"]]
 
-
-def test_open_registration_mails_a_code_to_someone_on_a_used_up_link(
+def test_open_registration_refuses_to_mail_a_code_on_a_used_up_link(
     client, _portal, inviter
 ):
-    """The signup page sends the code when it asks for the email code, which is
-    the first thing a friend on an old link does."""
+    """A friend who explicitly submitted an exhausted code learns right away
+    rather than after verifying their email."""
     _, mine = inviter
     code = _invites(client, mine)["code"]
     _register(client, _portal, code)
@@ -167,7 +167,7 @@ def test_open_registration_mails_a_code_to_someone_on_a_used_up_link(
         "/users/verify/email",
         json={"email": f"late-{uuid.uuid4().hex[:8]}@example.com", "inviteCode": code},
     )
-    assert response.status_code == 200, response.text
+    assert response.status_code == 422
 
 
 def test_invite_only_registration_refuses_a_used_up_code(
@@ -208,6 +208,64 @@ def test_the_friends_first_project_pays_them_fifty_once(client, _portal, inviter
     assert _sources(client, theirs) == {"reward"}
     assert _credits(client, mine) == 0
     assert _invites(client, mine)["invitees"][0]["stage"] == "onboarded"
+
+
+def test_creating_a_project_directly_without_the_guide_still_pays_fifty(
+    client, _portal, inviter
+):
+    _, mine = inviter
+    friend, theirs = _register(client, _portal, _invites(client, mine)["code"])
+
+    res = post_project(client, json={"name": "直接建项"}, owner=friend)
+    assert res.status_code == 200, res.text
+
+    assert _credits(client, theirs) == 50
+    assert _invites(client, mine)["invitees"][0]["stage"] == "onboarded"
+
+
+def test_an_external_github_merge_still_unlocks_seats_and_pays_referral(
+    client, _portal, inviter
+):
+    from app.domain.delivery.ledger import settle_card
+    from app.domain.review.models import AcceptCard
+    from app.domain.review.queries import has_accepted
+    from app.domain.review.services import AcceptService
+    from app.domain.topic.models import Topic
+
+    _, mine = inviter
+    friend, theirs = _register(client, _portal, _invites(client, mine)["code"])
+    res = post_project(client, json={"name": "GitHub合并"}, owner=friend)
+    project_id = res.json()["data"]["id"]
+    join_project_team(client, project_id, friend)
+    room = client.post(
+        "/topics",
+        json={"project_id": project_id, "title": "外部PR"},
+        headers=session_auth_headers(friend),
+    ).json()["data"]["id"]
+    card_id = uuid.UUID(_card(client, room, reviewer=friend).json()["data"]["id"])
+
+    async def _external_merge() -> bool:
+        async with client.test_factory() as session:
+            card = await session.get(AcceptCard, card_id)
+            topic = await session.get(Topic, uuid.UUID(room))
+            assert card is not None and topic is not None
+            card.pr_number = 42
+            card.pr_url = "https://github.com/example/repo/pull/42"
+            card.pr_merged_at = datetime.now(UTC)
+            card.decided_by = None
+
+            async def _noop(*_a, **_kw) -> None:
+                return None
+
+            svc = AcceptService(session, announce=_noop, settle_card=settle_card)
+            await svc._finish_pr_accept(card=card, topic=topic, merged_externally=True)
+            await session.commit()
+            return await has_accepted(session, friend)
+
+    assert _portal.call(_external_merge) is True
+    assert _credits(client, theirs) == 150
+    assert _credits(client, mine) == 150
+    assert _invites(client, theirs)["max_uses"] == 4
 
 
 def test_someone_who_came_in_without_a_code_is_paid_nothing_for_onboarding(
@@ -255,7 +313,8 @@ def test_an_acceptance_after_seven_days_pays_nobody(client, _portal, inviter):
 
     _accept_a_delivery(client, friend)
 
-    assert _credits(client, theirs) == 0
+    # First-project 50 has no 7-day limit; the 100/150 acceptance reward does.
+    assert _credits(client, theirs) == 50
     assert _credits(client, mine) == 0
     assert _invites(client, mine)["invitees"][0]["stage"] == "lapsed"
 

@@ -27,6 +27,7 @@ import pytest
 from sqlalchemy import event
 
 from app.api.auth.resolver import ActorResolver
+from app.domain.room_task.place import PlaceResolver
 from app.domain.topic.models import Topic
 from tests.conftest import seed_user
 from tests.integration.conftest import (
@@ -40,7 +41,14 @@ from tests.integration.conftest import (
 #: ``room_of``: the union over a room's tasks and 支线, aliased ``inside``. The
 #: two arms are adjacent in it, so the pattern is the seam between them — a
 #: notification read that correlates on both tables is not this lookup.
-_ROOM_LOOKUP = re.compile(r"FROM tasks\s+UNION ALL SELECT threads\.id", re.I)
+# Which room a conversation is in: asked on its own (`conversations.room_of`)
+# or inside the statement that reads that room's row
+# (`TopicRepository.room_of_conversation`).
+_ROOM_LOOKUP = re.compile(
+    r"FROM tasks\s+UNION ALL SELECT threads\.id"
+    r"|WHERE topics\.id = coalesce\(\(SELECT tasks\.room_id",
+    re.I,
+)
 
 
 def _room(client) -> str:
@@ -75,13 +83,21 @@ def _statements_while(client, request):
 
 
 def _room_lookups(statements) -> int:
-    return sum(1 for statement in statements if _ROOM_LOOKUP.search(statement))
+    # The route's own read of its place (`PlaceResolver._read_conversation`)
+    # finds the room the same way, with the project and the task beside it:
+    # that is the read the door is handed, not a lookup the door makes.
+    return sum(
+        1
+        for statement in statements
+        if _ROOM_LOOKUP.search(statement) and "JOIN projects" not in statement
+    )
 
 
 @contextmanager
 def _door_handed_only_the_id():
     """The door as it was before the change: the id alone, no room row, so it
-    resolves the conversation's room itself."""
+    resolves the conversation's room itself — and resolving the place does not
+    leave the room behind for it either (`PlaceResolver.conversation`)."""
     original = ActorResolver.authorize_topic
 
     async def without_the_room(
@@ -93,7 +109,10 @@ def _door_handed_only_the_id():
             self, actor, project_id=project_id, topic_id=topic_id, enforce=enforce
         )
 
-    with patch.object(ActorResolver, "authorize_topic", without_the_room):
+    with (
+        patch.object(ActorResolver, "authorize_topic", without_the_room),
+        patch.object(PlaceResolver, "conversation", PlaceResolver._conversation),
+    ):
         yield
 
 

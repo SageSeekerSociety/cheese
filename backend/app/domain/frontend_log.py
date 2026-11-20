@@ -32,7 +32,18 @@ from app.domain.run_record.service import keep as keep_record
 
 DEDUP_WINDOW_S = 600.0
 MAX_BLOCKS_PER_WINDOW = 30  # per project
+# Alerts per window across every project. Reports come in unauthenticated (a
+# page that is going away can only send a beacon, which carries no token), so
+# the per-project cap alone lets anyone who knows a few project ids send the
+# admins thirty alerts of their own wording each, every ten minutes. Past this
+# the reports are still kept; only the alerts stop.
+MAX_ALERTS_PER_WINDOW = 20
 _SEEN_PRUNE_AT = 512
+
+#: The intake's key for a batch that belongs to no project. One bucket, not one
+#: per page: a project-less report is a report about the platform's shell, and
+#: the rate limits are there to bound a render loop, not to sort claims.
+NO_PROJECT = "-"
 
 
 # A tab still running the previous build asks for a chunk the deploy removed.
@@ -87,7 +98,10 @@ class FrontendErrorIn(BaseModel):
 
 
 class FrontendErrorBatchIn(BaseModel):
-    project_id: uuid.UUID
+    # 可以空：首页、/teams、登录页都不在项目里，而正是那些页面上的失败（新建空间、
+    # 新建团队）最难查——从前它们因为归不进任何项目而根本发不出来。空的批次照样
+    # 收下，只是没有归属可写。
+    project_id: uuid.UUID | None = None
     topic_id: uuid.UUID | None = None
     errors: list[FrontendErrorIn] = Field(min_length=1, max_length=10)
 
@@ -107,6 +121,7 @@ class FrontendErrorIntake:
     def __init__(self) -> None:
         self._seen: dict[tuple[str, str], float] = {}
         self._window: dict[str, list[float]] = {}
+        self._alerts: list[float] = []
 
     def admit(self, project_id: str, fp: str, now: float | None = None) -> bool:
         now = time.time() if now is None else now
@@ -123,6 +138,16 @@ class FrontendErrorIntake:
         if len(self._seen) >= _SEEN_PRUNE_AT:
             self._seen = {k: t for k, t in self._seen.items() if t > cutoff}
         self._seen[(project_id, fp)] = now
+        return True
+
+    def may_alert(self, now: float | None = None) -> bool:
+        """Spend one of the window's alerts, across all projects."""
+        now = time.time() if now is None else now
+        cutoff = now - DEDUP_WINDOW_S
+        self._alerts = [t for t in self._alerts if t > cutoff]
+        if len(self._alerts) >= MAX_ALERTS_PER_WINDOW:
+            return False
+        self._alerts.append(now)
         return True
 
 
@@ -161,14 +186,16 @@ async def record(
     as received: the reporting client never retries.
 
     The caller has already answered whether the project exists — a batch for a
-    project that does not exist is refused with a 404 before it reaches here.
+    project that does not exist is refused with a 404 before it reaches here. A
+    batch with no project (a page outside every project) skips that check.
     """
     conversation = await db.get(Conversation, body.topic_id) if body.topic_id else None
     if conversation is not None and conversation.project_id != body.project_id:
         conversation = None
+    bucket = str(body.project_id) if body.project_id else NO_PROJECT
     accepted = 0
     for err in body.errors:
-        if not intake.admit(str(body.project_id), fingerprint(err)):
+        if not intake.admit(bucket, fingerprint(err)):
             continue
         meta = event_meta(err)
         if conversation is not None:
@@ -184,14 +211,14 @@ async def record(
         # Only here: `admit` returned True, so this fingerprint is one nobody has
         # seen in the dedup window. Every repeat of it is already excluded above,
         # which is what keeps a render loop from becoming a thousand alerts.
-        if not worth_alerting(err, origin):
+        if not worth_alerting(err, origin) or not intake.may_alert():
             continue
         alerting.send(
             f"前端报错：{err.message}",
             [
                 f"页面：{err.page or '未知'}",
                 f"位置：{err.source or '未知'}",
-                f"项目：{body.project_id}",
+                f"项目：{body.project_id or '不在项目里'}",
             ],
         )
     return {"accepted": accepted, "dropped": len(body.errors) - accepted}

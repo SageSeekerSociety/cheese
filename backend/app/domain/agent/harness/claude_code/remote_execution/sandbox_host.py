@@ -1,10 +1,10 @@
 #!/usr/bin/python3 -I
-"""Give one session's sandbox its own network and resource limits, as root.
+"""Give a cloud sandbox its ID mapping, network and resource limits, as root.
 
-Installed on a Cloud machine as `bootstrap.SANDBOX_HOST` and run by the
-machine's connector user through `sudo -n`, once when a sandbox starts and
-once when it goes. Everything else about a sandbox is unprivileged
-bubblewrap; these things are not: a network namespace that reaches the
+Installed on a cloud machine as `bootstrap.SANDBOX_HOST` and called by the
+connector through `sudo -n`. Its `up` and `down` commands configure and remove
+a sandbox's network and resource limits. It also reserves subordinate IDs
+and creates the user namespace bubblewrap joins. A network namespace that reaches the
 internet needs a veth pair, NAT and filter rules in the machine's own tables,
 a memory or CPU limit needs a cgroup only root can create, and a disk limit
 needs a project quota only root can set.
@@ -13,6 +13,12 @@ needs a project quota only root can set.
              --disk-mib N --inodes N [--forward PORT]... [--site PORT]
     down NAME
     reclaim NAME...
+    swap NAME MIB
+    freeze NAME...
+    thaw NAME...
+    userns
+    index-home NAME PATH
+    remove-home NAME PATH
 
 `PID` is the sandbox's first process, created by bubblewrap with a network
 namespace of its own and still waiting to start the session's program. `up`
@@ -33,7 +39,14 @@ allows that only from the machine's own user namespace. `down` lifts the
 home's and the state's limits; the store keeps its own. `reclaim` asks the
 kernel to give back the page cache of sandboxes the platform found idle
 (`disk_guard`), which on a VM host is memory the hypervisor can then take
-back from the machine. The sandbox may reach the machine's DNS
+back from the machine. `swap` sets how much of the host's swap file one
+sandbox may use (`memory.swap.max`, 0 by default: a sandbox at its memory
+limit is killed, not pushed into swap). `freeze` and `thaw` stop and resume
+every process in a sandbox with `cgroup.freeze`, waiting until the kernel
+reports the change in `cgroup.events`: a frozen sandbox keeps its memory
+reserved but spends no CPU, and its pages can then be swapped out. None of
+these three is called by the lifecycle yet; they are the host side the
+freezing step needs. The sandbox may reach the machine's DNS
 resolvers on port 53 and the public internet; nothing in a private range, not
 the machine itself, and not another sandbox. `--forward` lets it reach one TCP
 port of the machine's own loopback as the same port on its own: a machine
@@ -44,8 +57,8 @@ over TLS, which the sandbox's /etc/hosts gives the site's name
 (`bootstrap.start_sandbox`, `confinement.site_hosts`).
 
 The caller is trusted with nothing but its own processes. Arguments are
-checked to the character, the process must be the caller's, and the only
-programs run are root's copies of the platform's own static `ip`, iptables
+checked to the character, and the process must be the caller's. Network and
+quota commands use root's copies of the platform's own static `ip`, iptables
 (its nf_tables build, as every current distribution's is) and `xfs_quota`, in
 `TOOLS` (`bootstrap.sandbox_tools`), never whatever the system has. A sandbox whose processes are gone is cleaned up by
 the next `up`, so one that died without its `down` leaves nothing for long.
@@ -59,15 +72,20 @@ dummy link), so a sandbox start does only what it must.
 Standard library only: this runs as root, from a copy outside every release.
 """
 
+import array
 import ctypes
 import errno
 import fcntl
+import grp
 import hashlib
 import ipaddress
 import json
 import os
+import pwd
 import re
+import shutil
 import signal
+import socket
 import struct
 import subprocess
 import sys
@@ -317,6 +335,190 @@ def caller():
     return int(uid)
 
 
+def subordinate_ids(uid, gid):
+    """Reserve one stable range shared by every cloud sandbox on this host."""
+    directory = PROJECTS.parent
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with (directory / "subids.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        account = pwd.getpwuid(uid).pw_name
+        tables = []
+        for path in (Path("/etc/subuid"), Path("/etc/subgid")):
+            rows = []
+            for line in path.read_text().splitlines() if path.exists() else []:
+                name, start, count = line.split(":")
+                rows.append((name, int(start), int(count)))
+            tables.append(rows)
+        host_ids = {entry.pw_uid for entry in pwd.getpwall()} | {
+            entry.gr_gid for entry in grp.getgrall()
+        }
+
+        def available(base):
+            return not any(
+                base <= value < base + 65536 for value in host_ids
+            ) and not any(
+                name != account and start < base + 65536 and base < start + count
+                for table in tables
+                for name, start, count in table
+            )
+
+        def reserved(base):
+            return all(
+                any(
+                    name == account and start <= base and base + 65536 <= start + count
+                    for name, start, count in table
+                )
+                for table in tables
+            )
+
+        record = directory / "subids.json"
+        if record.exists():
+            mapping = json.loads(record.read_text())
+            if (mapping["uid"], mapping["gid"]) != (uid, gid) or not (
+                available(mapping["base"]) and reserved(mapping["base"])
+            ):
+                # i18n-exempt: root helper diagnostic emitted on stderr during namespace setup
+                raise Refused("the host's recorded subordinate IDs have changed")
+            return mapping
+        candidates = sorted(
+            {
+                start
+                for name, start, count in tables[0]
+                if name == account and start >= 100000 and count >= 65536
+            }
+        )
+        base = next(
+            (value for value in candidates if available(value) and reserved(value)),
+            None,
+        )
+        if base is None:
+            occupied = [
+                (start, start + count) for table in tables for _, start, count in table
+            ]
+            base = 131072
+            while not available(base) or any(
+                start < base + 65536 and base < end for start, end in occupied
+            ):
+                base += 65536
+            run(
+                [
+                    "/usr/sbin/usermod",
+                    "--add-subuids",
+                    f"{base}-{base + 65535}",
+                    "--add-subgids",
+                    f"{base}-{base + 65535}",
+                    account,
+                ]
+            )
+        mapping = {"uid": uid, "gid": gid, "base": base}
+        temporary = record.with_suffix(".next")
+        temporary.write_text(json.dumps(mapping))
+        temporary.replace(record)
+        return mapping
+
+
+def userns():
+    """Send a connector-owned user namespace over the caller's stdin socket."""
+    uid = caller()
+    gid = int(os.environ["SUDO_GID"])
+    mapping = subordinate_ids(uid, gid)
+    ready, announced = os.pipe()
+    proceed, release = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        os.close(ready)
+        os.close(release)
+        try:
+            os.setgroups([])
+            os.setgid(gid)
+            os.setuid(uid)
+            libc = ctypes.CDLL(None, use_errno=True)
+            if libc.unshare(0x10000000) != 0:
+                # i18n-exempt: root helper diagnostic emitted on stderr during namespace setup
+                raise OSError(ctypes.get_errno(), "unshare user namespace")
+            os.write(announced, b"1")
+            os.read(proceed, 1)
+        except OSError as error:
+            print(str(error), file=sys.stderr, flush=True)
+            os._exit(1)
+        os._exit(0)
+    os.close(announced)
+    os.close(proceed)
+    descriptor = None
+    try:
+        if os.read(ready, 1) != b"1":
+            # i18n-exempt: root helper diagnostic emitted on stderr during namespace setup
+            raise Refused("could not create the sandbox user namespace")
+        base = mapping["base"]
+        Path(f"/proc/{pid}/uid_map").write_text(f"0 {uid} 1\n1 {base + 1} 65535\n")
+        Path(f"/proc/{pid}/gid_map").write_text(f"0 {gid} 1\n1 {base + 1} 65535\n")
+        descriptor = os.open(f"/proc/{pid}/ns/user", os.O_RDONLY)
+        with socket.socket(fileno=0) as channel:
+            channel.sendmsg(
+                [b"1"],
+                [
+                    (
+                        socket.SOL_SOCKET,
+                        socket.SCM_RIGHTS,
+                        array.array("i", [descriptor]),
+                    )
+                ],
+            )
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        os.close(ready)
+        os.close(release)
+        os.waitpid(pid, 0)
+    return mapping
+
+
+def index_home(name, home):
+    """Index a home's files even when a sandbox user made them private."""
+    descriptor = open_directory(home, caller())
+    try:
+        quota_mount(descriptor)
+        found = []
+
+        def failed(error):
+            raise error
+
+        for _, directories, files, current in os.fwalk(
+            ".", dir_fd=descriptor, onerror=failed, follow_symlinks=False
+        ):
+            info = os.fstat(current)
+            found.append((info.st_dev, info.st_ino))
+            for entry in (*directories, *files):
+                try:
+                    info = os.stat(entry, dir_fd=current, follow_symlinks=False)
+                except FileNotFoundError:
+                    continue
+                found.append((info.st_dev, info.st_ino))
+        return {"inodes": found}
+    finally:
+        os.close(descriptor)
+
+
+def remove_home(name, home):
+    """Remove a stopped home, including files owned by subordinate users."""
+    uid = caller()
+    parent = open_directory(str(Path(home).parent), uid)
+    descriptor = open_directory(home, uid)
+    try:
+        quota_mount(descriptor)
+        down(name)
+        shutil.rmtree(name, dir_fd=parent)
+        with (STATE / "lock").open("w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            table = projects()
+            forget_gone(table)
+            keep_projects(table)
+    finally:
+        os.close(descriptor)
+        os.close(parent)
+    return {}
+
+
 def owner_of(pid):
     for line in Path(f"/proc/{pid}/status").read_text().splitlines():
         if line.startswith("Uid:"):
@@ -429,6 +631,13 @@ def limit(name, pid, limits):
     group = CGROUP / name
     group.mkdir()
     (group / "memory.max").write_text(str(limits["memory_mb"] * 1024 * 1024))
+    # At the limit the kernel first pushes what it can into the sandbox's swap
+    # below, and only what still does not fit is killed, one process at a
+    # time. Not `memory.oom.group`: the sandbox's executor is in the group,
+    # and killing the group took it with the build (CI, 2026-11-02). Nor
+    # `memory.high`: with nothing left to swap, a process over it is
+    # throttled instead of killed, and a sandbox at 256 MiB asking for 512
+    # hung for two minutes where it had been killed at once (CI, 2026-11-02).
     swap = group / "memory.swap.max"
     if swap.exists():
         swap.write_text(str(limits["swap_mb"] * 1024 * 1024))
@@ -704,6 +913,16 @@ def free_disk(name, uid):
         limit_project(entry["mount"], entry["id"], 0, 0)
 
 
+def prepare_disk(name, home, limits):
+    """Set quota before a saved upper is restored or any executor is started."""
+    uid = caller()
+    STATE.mkdir(mode=0o700, exist_ok=True)
+    with open(STATE / "lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        disk(name, uid, home, limits)
+    return {}
+
+
 def up(name, pid, home, limits, forward, site=None):
     uid = caller()
     if owner_of(pid) != uid:
@@ -763,8 +982,11 @@ def down(name):
 
 def reclaim(names):
     """Have each named sandbox of the caller's give back what of its memory
-    the kernel can take without killing anything: its page cache, since a
-    sandbox has no swap. Answers how much each gave back."""
+    the kernel can take without killing anything. A running sandbox gives
+    back only its page cache: its swap is shut for the reclaim and put back
+    after, so what its processes hold stays in memory for their next step. A
+    frozen one gives back what its swap takes too. Answers how much each gave
+    back."""
     uid = caller()
     given = {}
     if not STATE.is_dir():
@@ -775,6 +997,11 @@ def reclaim(names):
         group = CGROUP / name
         if record is None or record["uid"] != uid or not group.is_dir():
             continue
+        swap = group / "memory.swap.max"
+        kept = None
+        if swap.exists() and (group / "cgroup.freeze").read_text().strip() != "1":
+            kept = swap.read_text().strip()
+            swap.write_text("0")
         before = int((group / "memory.current").read_text())
         try:
             (group / "memory.reclaim").write_text(str(before))
@@ -783,8 +1010,90 @@ def reclaim(names):
             # anonymous memory in it is always so; what it did give is kept.
             if error.errno != errno.EAGAIN:
                 raise
+        finally:
+            if kept is not None:
+                swap.write_text(kept)
         given[name] = max(0, before - int((group / "memory.current").read_text()))
     return {"reclaimed": given}
+
+
+#: How long `freeze` and `thaw` wait for the kernel to report the change in
+#: `cgroup.events`. It applies the change before its processes have stopped.
+FREEZE_TIMEOUT_S = 5.0
+
+
+def _own_groups(names):
+    """The cgroups of the named sandboxes, which must be the caller's own and
+    have been made by ``up``: one check for every name before any is touched,
+    so a group of names either all moves or none does."""
+    uid = caller()
+    records = load() if STATE.is_dir() else {}
+    groups = []
+    for name in names:
+        record = records.get(name)
+        group = CGROUP / name
+        if record is None or record["uid"] != uid or not group.is_dir():
+            # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
+            raise Refused(f"{name} is not the caller's sandbox")
+        groups.append(group)
+    return groups
+
+
+def swap(name, mib):
+    """How much of the host's swap file one sandbox may use, in MiB, written
+    to its `memory.swap.max`. 0 keeps it out of swap; `up` writes this at
+    start, and this is how a later step changes it."""
+    (group,) = _own_groups([name])
+    try:
+        (group / "memory.swap.max").write_text(str(mib * 1024 * 1024))
+    except OSError as error:
+        # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
+        raise Refused(f"could not set {name}'s swap: {error.strerror}") from error
+    return {"swap_max": mib * 1024 * 1024}
+
+
+def _frozen(group):
+    """Whether the kernel says every process in `group` is frozen."""
+    for line in (group / "cgroup.events").read_text().splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0] == "frozen":
+            return parts[1] == "1"
+    return None
+
+
+def _set_frozen(names, frozen):
+    """Freeze or thaw every process in the named sandboxes and wait until the
+    kernel reports it in each one's `cgroup.events`; a change it does not
+    report within ``FREEZE_TIMEOUT_S`` is refused."""
+    groups = _own_groups(names)
+    for group in groups:
+        try:
+            (group / "cgroup.freeze").write_text("1" if frozen else "0")
+        except OSError as error:
+            # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
+            raise Refused(f"could not freeze {group.name}: {error.strerror}") from error
+    deadline = time.monotonic() + FREEZE_TIMEOUT_S
+    for group in groups:
+        try:
+            while _frozen(group) != frozen:
+                if time.monotonic() >= deadline:
+                    # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
+                    raise Refused(f"{group.name} did not change state in time")
+                time.sleep(0.01)
+        except OSError as error:
+            # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
+            raise Refused(
+                f"could not read {group.name}'s state: {error.strerror}"
+            ) from error
+    return {"frozen" if frozen else "thawed": [group.name for group in groups]}
+
+
+def freeze(names):
+    return _set_frozen(names, True)
+
+
+def thaw(names):
+    return _set_frozen(names, False)
 
 
 def number(text, low, high):
@@ -823,22 +1132,34 @@ def home_path(text, name):
 
 def parse(argv):
     """The command line, checked to the character: (command, arguments)."""
+    if argv == ["userns"]:
+        return "userns", {}
+    if (
+        len(argv) == 3
+        and argv[0] in {"index-home", "remove-home"}
+        and NAME.fullmatch(argv[1])
+    ):
+        return argv[0], {"name": argv[1], "home": home_path(argv[2], argv[1])}
     if len(argv) == 2 and argv[0] == "down" and NAME.fullmatch(argv[1]):
         return "down", {"name": argv[1]}
     if (
         2 <= len(argv) <= 65
-        and argv[0] == "reclaim"
+        and argv[0] in ("reclaim", "freeze", "thaw")
         and all(NAME.fullmatch(name) for name in argv[1:])
     ):
-        return "reclaim", {"names": argv[1:]}
-    if len(argv) < 3 or argv[0] != "up" or not NAME.fullmatch(argv[1]):
+        return argv[0], {"names": argv[1:]}
+    if len(argv) == 3 and argv[0] == "swap" and NAME.fullmatch(argv[1]):
+        return "swap", {"name": argv[1], "mib": number(argv[2], 0, 1 << 20)}
+    if len(argv) < 3 or argv[0] not in {"up", "disk"} or not NAME.fullmatch(argv[1]):
         # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
         raise Refused(
             "usage: up NAME PID --home PATH ... | down NAME | reclaim NAME..."
+            " | swap NAME MIB | freeze NAME... | thaw NAME..."
         )
-    pid = number(argv[2], 2, 1 << 22)
+    disk_only = argv[0] == "disk"
+    pid = None if disk_only else number(argv[2], 2, 1 << 22)
     limits, forward, site, home = {}, [], None, None
-    options = argv[3:]
+    options = argv[2:] if disk_only else argv[3:]
     if len(options) % 2:
         raise Refused("every option takes a value")
     for option, value in zip(options[::2], options[1::2], strict=True):
@@ -858,6 +1179,11 @@ def parse(argv):
     if len(limits) != len(LIMITS) or home is None:
         # i18n-exempt: root helper on the machine, stdlib only; its words go to the install's log
         raise Refused("the home and every limit are required")
+    if disk_only:
+        if forward or site is not None:
+            # i18n-exempt: root helper CLI protocol validation
+            raise Refused("disk preparation takes no network options")
+        return "disk", {"name": argv[1], "home": home, "limits": limits}
     return "up", {
         "name": argv[1],
         "pid": pid,
@@ -872,9 +1198,18 @@ def main(argv):
     started = time.monotonic()
     try:
         command, arguments = parse(argv)
-        answer: dict = {"up": up, "down": down, "reclaim": reclaim}[command](
-            **arguments
-        )
+        answer: dict = {
+            "userns": userns,
+            "index-home": index_home,
+            "remove-home": remove_home,
+            "up": up,
+            "disk": prepare_disk,
+            "down": down,
+            "reclaim": reclaim,
+            "swap": swap,
+            "freeze": freeze,
+            "thaw": thaw,
+        }[command](**arguments)
     except Refused as refusal:
         print(f"cheese-sandbox: {refusal}", file=sys.stderr)
         return 2

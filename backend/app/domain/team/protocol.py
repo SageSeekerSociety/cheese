@@ -60,6 +60,7 @@ class TeamView(Protocol):
     visibility: Mapped[str]
     join_approval: Mapped[bool]
     join_token: Mapped[str | None]
+    plan_key: Mapped[str]
     created_at: Mapped[datetime]
     updated_at: Mapped[datetime]
 

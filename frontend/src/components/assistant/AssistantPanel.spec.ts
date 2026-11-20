@@ -1,17 +1,19 @@
 /** 个人芝士的面板：头上写着是谁在回答、属于谁；说出去的话交给外面去问；芝士还在答的
  * 时候不能再问，也不能开新话题，但能停下；停下的回答留着写出的部分；话题空着时，起步问题
  * 点一下就是一个问题；之前的话题摆在上面，用「新话题」隔开，「更早的话题」再往上读。 */
+import type { AssistantEdit, AssistantMessage } from '@/stores/agentThread'
 import type { PanelMessage } from './AssistantPanel.vue'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import AssistantPanel from './AssistantPanel.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { panelMessages } from '@/lib/draftChangeView'
 import { composerText, pressInComposer, typeInComposer } from '@/test/composerInput'
 
 const SAID: PanelMessage[] = [
@@ -269,6 +271,35 @@ describe('AssistantPanel', () => {
     expect(view.emitted('dock')).toEqual([[true]])
   })
 
+  it('a floating panel is dragged by its header, and a press on a header button is not a drag', async () => {
+    const view = mount({ dockable: true, docked: false, draggable: true })
+    const header = view.container.querySelector('header') as HTMLElement
+    expect(header.getAttribute('title')).toBe('拖动可以换个位置，双击回到右下角')
+
+    // 按在「固定到右侧」上：那是点按钮，不是拖面板。
+    await fireEvent.pointerDown(view.getByRole('button', { name: '固定到右侧' }), { button: 0, pointerId: 1 })
+    expect(view.emitted('dragStart')).toBeUndefined()
+
+    await fireEvent.pointerDown(header, { button: 0, pointerId: 1, clientX: 10, clientY: 10 })
+    expect(view.emitted('dragStart')).toHaveLength(1)
+
+    await fireEvent.dblClick(header)
+    expect(view.emitted('recenter')).toHaveLength(1)
+
+    // 连点两下「新话题」不是「回角落」：双击从按钮冒上来时不算。
+    await fireEvent.dblClick(view.getByRole('button', { name: '固定到右侧' }))
+    expect(view.emitted('recenter')).toHaveLength(1)
+  })
+
+  it('a panel pinned to the side is not a drag handle', async () => {
+    const view = mount({ dockable: true, docked: true })
+    const header = view.container.querySelector('header') as HTMLElement
+    expect(header.getAttribute('title')).toBeNull()
+
+    await fireEvent.pointerDown(header, { button: 0, pointerId: 1 })
+    expect(view.emitted('dragStart')).toBeUndefined()
+  })
+
   it('a run the platform started reads as what started it, not as what the platform told 芝士', () => {
     const view = mount({
       messages: [
@@ -339,5 +370,59 @@ describe('AssistantPanel: what a question carries', () => {
     await waitFor(() => expect(composerText(view.container)).toBe('比较 <#a1> '))
     expect(view.emitted('cite')).toEqual([[CITABLE[0]]])
     expect(view.emitted('send')).toBeUndefined()
+  })
+})
+
+describe('AssistantPanel: what saving the stages of a draft would do', () => {
+  const WARNING = '1 位参与者有已过截止、还没提交的阶段，保存后将判为未通过'
+  const write = (
+    id: number,
+    stageEffect: AssistantEdit['stageEffect'],
+    changed: AssistantEdit['changed'] = { stages: { before: [], after: [] } }
+  ): AssistantEdit => ({
+    id,
+    kind: 'draft',
+    title: '',
+    undoable: false,
+    draft: 41,
+    taskId: 9,
+    created: false,
+    version: id,
+    name: '实验一',
+    changed,
+    kept: [],
+    notes: [],
+    stageEffect,
+    undone: [],
+  })
+  const answer = (at: string, edits: AssistantEdit[], asked = '改一下阶段截止'): AssistantMessage[] => [
+    { role: 'user', text: asked, at },
+    { role: 'assistant', text: '改好了', at, edits },
+  ]
+  const terms = { categories: [], topics: [] }
+
+  it('a warning a later answer took back is no longer waiting on the person, in any answer', () => {
+    const moved = answer('2026-10-01T08:00:00Z', [write(1, [{ key: 'stageEffectFailing', params: { n: 1 } }])])
+    expect(mount({ messages: panelMessages(moved, terms) }).container.textContent).toContain(WARNING)
+    cleanup()
+
+    const restored = answer('2026-10-01T08:05:00Z', [write(2, [])])
+    const view = mount({ messages: panelMessages([...moved, ...restored], terms) })
+
+    expect(view.container.textContent).not.toContain(WARNING)
+  })
+
+  it('a warning that still holds goes with the latest answer that touched the draft, whatever it changed', () => {
+    const failing: AssistantEdit['stageEffect'] = [{ key: 'stageEffectFailing', params: { n: 1 } }]
+    const moved = answer('2026-10-01T08:00:00Z', [write(1, failing)])
+    const renamed = answer(
+      '2026-10-01T08:05:00Z',
+      [write(2, failing, { name: { before: '实验一', after: '实验一（修订）' } })],
+      '把题目改个名'
+    )
+    const text = mount({ messages: panelMessages([...moved, ...renamed], terms) }).container.textContent ?? ''
+
+    expect(text.split(WARNING).length - 1).toBe(1)
+    expect(text.indexOf(WARNING)).toBeGreaterThan(text.indexOf('把题目改个名'))
   })
 })

@@ -340,9 +340,6 @@ class DeviceHub:
     async def list_screens(self, device_id: str) -> list[dict[str, Any]]:
         return await sessions.list_screens(self, device_id)
 
-    def screen_by_token(self, token: str) -> HubScreen | None:
-        return sessions.screen_by_token(self, token)
-
     def screen(self, sid: str) -> HubScreen | None:
         return sessions.screen(self, sid)
 

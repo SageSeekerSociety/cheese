@@ -47,10 +47,12 @@ class FakeDevices:
         self.owners.append(owner_user_id)
         return SimpleNamespace(
             device_id="dev123",
-            token="SECRET-TOKEN",
             owner_user_id=owner_user_id,
             supply=supply,
         )
+
+    async def bootstrap_token(self, device_id):
+        return "SECRET-TOKEN"
 
     async def delete_platform_provisioned(self, device_id, *, actor_user_id):
         pass
@@ -416,6 +418,71 @@ def test_enrollment_installs_no_system_package(sandbox_disk):
         assert manager not in code, manager
 
 
+def test_the_image_version_names_what_a_host_is_made_of():
+    """The digest covers the offering, the template, the spec and the enrollment
+    script, not one machine's credentials: two hosts of the same settings carry
+    the same version, and changing any of them leaves an older host out of date."""
+    offering = {
+        "id": 1,
+        "machineTypeName": "standard",
+        "zoneName": "cn-east",
+        "templateName": "debian13",
+        "dataDiskGb": 64,
+    }
+
+    def version(template="debian13", cores=4):
+        return enrollment.host_image_version(
+            {**offering, "templateName": template},
+            cores=cores,
+            memory_mb=8192,
+            disk_gb=64,
+        )
+
+    current = version()
+    assert len(current) == 2 * enrollment.IMAGE_VERSION_CHARS
+    assert version() == current
+    assert version(template="debian14") != current
+    assert version(cores=8) != current
+    # A new template or size is a new machine; the script alone is not.
+    assert not enrollment.same_machine(version(template="debian14"), current)
+    assert not enrollment.same_machine(version(cores=8), current)
+    assert enrollment.same_machine(current, current)
+
+
+def test_a_host_whose_script_alone_changed_is_the_same_machine(monkeypatch):
+    """Only the script half moves when the enrollment script does, so such a
+    host can be brought up to date where it is; a version from before the two
+    halves, or none, says nothing either way."""
+    offering = {"id": 1, "templateName": "debian13", "dataDiskGb": 64}
+    before = enrollment.host_image_version(
+        offering, cores=4, memory_mb=8192, disk_gb=64
+    )
+    monkeypatch.setattr(enrollment.settings, "cloud_host_swappiness", 33)
+    after = enrollment.host_image_version(offering, cores=4, memory_mb=8192, disk_gb=64)
+    assert before != after
+    assert enrollment.same_machine(before, after)
+    assert not enrollment.same_machine(before[:16], after)
+    assert not enrollment.same_machine(None, after)
+
+
+def test_a_script_run_in_place_keeps_the_machines_identity():
+    """Run again where it is, the script leaves the config — the machine's
+    token and device — as it was."""
+    fresh = enrollment.bootstrap_script(
+        origin="https://example.test", token="t0k", device_id="d1", sandbox_disk=True
+    )
+    again = enrollment.bootstrap_script(
+        origin="https://example.test",
+        token="t0k",
+        device_id="d1",
+        sandbox_disk=True,
+        identity=False,
+    )
+    assert "config.json" in fresh and "t0k" in fresh
+    assert "config.json" not in again and "t0k" not in again
+    assert "systemctl --user restart cheese" in again
+
+
 def test_the_tools_are_checked_after_cheesehost_placed_them():
     """`link connect` places tmux, git and python3 where the system lacks
     them; a check before it would refuse a machine it was about to fix."""
@@ -587,6 +654,186 @@ LTS = [
     "lts_6.1.conf",
     "lts_6.12.conf",
 ]
+
+
+def _swap_block(*, swap_mb=8192, swappiness=10, zswap_percent=20, zswap=None) -> str:
+    """The data disk step's mounts and swap file, as the host runs it, from
+    the fstab helper through the swap file and zswap (the disk discovery and
+    mkfs are `_format_block`'s to test). ``zswap``: where the kernel's zswap
+    parameters are, a directory of the test's own."""
+    script = enrollment.DATA_DISK.format(
+        swap_mb=swap_mb, swappiness=swappiness, zswap_percent=zswap_percent
+    )
+    if zswap is not None:
+        script = script.replace("/sys/module/zswap/parameters", str(zswap))
+    start = script.index("mount_line() {")
+    return script[start : script.index("set -- $(stat -f", start)]
+
+
+def _run_swap(home, block, *, fail_fallocate=False):
+    """Run the mounts-and-swap step with a fake sudo that keeps its results in
+    ``home``: what it was asked to run, the fstab it wrote, the sysctl file,
+    the size of the swap file and whether it is swapped on. Run twice, the
+    second run sees the first's state."""
+    import subprocess
+
+    calls = home / "calls"
+    fstab = home / "fstab"
+    size = home / "swap-size"
+    swapped = home / "swapped"
+    sysctl = home / "90-cheese-swap.conf"
+    harness = f"""set -eu
+HOME={home}
+root="$HOME/.cheese"
+uuid=fake-uuid
+FSTAB={fstab}
+SIZE={size}
+SWAPPED={swapped}
+SYSCTL={sysctl}
+CALLS={calls}
+FAIL_FALLOCATE={1 if fail_fallocate else 0}
+[ -f "$FSTAB" ] || : > "$FSTAB"
+stat() {{
+  if [ "$1 $2 $3" = "-c %s /data/swapfile" ]; then
+    [ -f "$SIZE" ] || return 1
+    cat "$SIZE"
+    return 0
+  fi
+  command stat "$@"
+}}
+grep() {{
+  args=()
+  for arg in "$@"; do
+    [ "$arg" = /etc/fstab ] && arg="$FSTAB"
+    args+=("$arg")
+  done
+  command grep "${{args[@]}}"
+}}
+mountpoint() {{ return 1; }}
+sudo() {{
+  [ "$1" = "-n" ] && shift
+  printf '%s\\n' "$*" >> "$CALLS"
+  case "$*" in
+    "swapon --show=NAME --noheadings")
+      [ -f "$SWAPPED" ] && cat "$SWAPPED"
+      return 0 ;;
+    "swapon /data/swapfile") echo /data/swapfile > "$SWAPPED"; return 0 ;;
+    "fallocate -l "*)
+      [ "$FAIL_FALLOCATE" = 1 ] && return 1
+      printf '%s\\n' "$3" > "$SIZE"
+      : > {home}/swapfile
+      return 0 ;;
+    "rm -f /data/swapfile") rm -f "$SIZE" {home}/swapfile; return 0 ;;
+    "tee -a /etc/fstab") cat >> "$FSTAB"; return 0 ;;
+    "tee /etc/sysctl.d/90-cheese-swap.conf") cat > "$SYSCTL"; return 0 ;;
+    "tee /etc/tmpfiles.d/90-cheese-zswap.conf") cat > {home}/zswap.conf; return 0 ;;
+    *) return 0 ;;
+  esac
+}}
+{block}
+"""
+    done = subprocess.run(
+        ["/bin/bash", "-c", harness], capture_output=True, text=True, timeout=10
+    )
+    return (
+        done,
+        calls.read_text() if calls.exists() else "",
+        fstab.read_text() if fstab.exists() else "",
+        sysctl.read_text() if sysctl.exists() else "",
+    )
+
+
+def _swap_lines(fstab: str) -> list[str]:
+    return [line for line in fstab.splitlines() if "swapfile" in line]
+
+
+def test_a_pool_host_makes_a_swap_file_on_its_data_disk(tmp_path):
+    """A host driven past its memory pages out instead of the kernel killing
+    the connector and every sandbox with it; the file is fallocated, never
+    dd'd onto the thin pool."""
+    done, calls, fstab, sysctl = _run_swap(tmp_path, _swap_block())
+
+    assert done.returncode == 0, done.stderr
+    assert "fallocate -l 8589934592 /data/swapfile" in calls
+    assert "chmod 600 /data/swapfile" in calls
+    assert "mkswap /data/swapfile" in calls
+    assert "swapon /data/swapfile" in calls
+    assert "dd " not in calls
+    assert _swap_lines(fstab) == ["/data/swapfile none swap sw,nofail 0 0"]
+    assert sysctl.strip() == "vm.swappiness=10"
+
+
+def test_running_the_swap_step_again_keeps_the_file_and_one_fstab_line(tmp_path):
+    """Enrollment is retried as a whole, so this step runs again: a file
+    already swapped on is not made or formatted again, and fstab keeps one
+    line for it."""
+    _run_swap(tmp_path, _swap_block())
+    done, calls, fstab, _ = _run_swap(tmp_path, _swap_block())
+
+    assert done.returncode == 0, done.stderr
+    assert calls.count("fallocate -l 8589934592 /data/swapfile") == 1
+    assert calls.count("mkswap /data/swapfile") == 1
+    assert calls.count("swapon /data/swapfile") == 1
+    assert _swap_lines(fstab) == ["/data/swapfile none swap sw,nofail 0 0"]
+
+
+def test_a_swap_file_of_another_size_is_made_again(tmp_path):
+    """The deployment asking for another size is the one reason to rebuild:
+    the file that is there is the wrong size and is not swapped on."""
+    (tmp_path / "swap-size").write_text("1048576\n")
+    done, calls, _, _ = _run_swap(tmp_path, _swap_block())
+
+    assert done.returncode == 0, done.stderr
+    assert "rm -f /data/swapfile" in calls
+    assert "fallocate -l 8589934592 /data/swapfile" in calls
+
+
+def test_a_swap_file_that_cannot_be_made_fails_the_enrollment(tmp_path):
+    """There is no dd fallback: a host whose disk cannot hold the file is not
+    enrolled rather than enrolled without the swap it was promised."""
+    done, calls, fstab, sysctl = _run_swap(tmp_path, _swap_block(), fail_fallocate=True)
+
+    assert done.returncode == 1
+    assert "could not make the swap file /data/swapfile" in done.stderr
+    assert "mkswap /data/swapfile" not in calls
+    assert _swap_lines(fstab) == []
+    assert sysctl == ""
+
+
+def test_swap_off_creates_no_file_and_writes_no_sysctl(tmp_path):
+    done, calls, fstab, sysctl = _run_swap(tmp_path, _swap_block(swap_mb=0))
+
+    assert done.returncode == 0, done.stderr
+    assert "fallocate" not in calls
+    assert "mkswap" not in calls
+    assert "swapon /data/swapfile" not in calls
+    assert _swap_lines(fstab) == []
+    assert sysctl == ""
+
+
+def test_the_image_version_changes_when_the_swap_file_does(monkeypatch):
+    """A host's version is its enrollment script's digest, so turning swap on
+    (or changing its size) leaves every existing host out of date: the pool
+    rolls them onto the script that makes the file."""
+    offering = {
+        "id": 1,
+        "machineTypeName": "standard",
+        "zoneName": "cn-east",
+        "templateName": "debian13",
+        "dataDiskGb": 64,
+    }
+
+    def version():
+        return enrollment.host_image_version(
+            offering, cores=4, memory_mb=8192, disk_gb=64
+        )
+
+    before = version()
+    monkeypatch.setattr(enrollment.settings, "cloud_host_swap_mb", 4096)
+    assert version() != before
+    monkeypatch.setattr(enrollment.settings, "cloud_host_swap_mb", 8192)
+    monkeypatch.setattr(enrollment.settings, "cloud_host_swappiness", 20)
+    assert version() != before
 
 
 @pytest.mark.parametrize(
@@ -799,3 +1046,71 @@ def test_enrollment_config_routes_cloud_control_without_changing_api_identity(
 
     # The HTTP identity is unchanged either way — only the control channel moved.
     assert config["base"] == "https://cheese.test/api/connector"
+
+
+def _zswap_parameters(tmp_path):
+    parameters = tmp_path / "zswap-parameters"
+    parameters.mkdir()
+    (parameters / "enabled").write_text("N\n")
+    (parameters / "zpool").write_text("zbud\n")
+    (parameters / "shrinker_enabled").write_text("N\n")
+    return parameters
+
+
+def test_a_kernel_with_zswap_has_it_turned_on_now_and_at_boot(tmp_path):
+    """A host whose kernel has zswap gets it on, with a compressor the kernel
+    has and the pool share asked for, written where systemd-tmpfiles applies
+    it at every boot. Nothing is installed for it."""
+    parameters = _zswap_parameters(tmp_path)
+    done, calls, _, _ = _run_swap(tmp_path, _swap_block(zswap=parameters))
+
+    assert done.returncode == 0, done.stderr
+    conf = (tmp_path / "zswap.conf").read_text().splitlines()
+    assert f"w {parameters}/compressor - - - - zstd" in conf
+    assert f"w {parameters}/zpool - - - - zsmalloc" in conf
+    assert f"w {parameters}/shrinker_enabled - - - - Y" in conf
+    assert f"w {parameters}/max_pool_percent - - - - 20" in conf
+    assert f"w {parameters}/enabled - - - - Y" in conf
+    assert "systemd-tmpfiles --create /etc/tmpfiles.d/90-cheese-zswap.conf" in calls
+    assert "apt" not in calls
+
+
+def test_a_kernel_without_zswap_is_left_as_it_is(tmp_path):
+    """Debian's cloud kernel has no zswap: the swap file is used as it is."""
+    done, calls, _, _ = _run_swap(
+        tmp_path, _swap_block(zswap=tmp_path / "no-such-parameters")
+    )
+
+    assert done.returncode == 0, done.stderr
+    assert not (tmp_path / "zswap.conf").exists()
+    assert "systemd-tmpfiles" not in calls
+
+
+def test_zswap_stays_off_when_the_pool_share_is_zero(tmp_path):
+    parameters = _zswap_parameters(tmp_path)
+    done, calls, _, _ = _run_swap(
+        tmp_path, _swap_block(zswap=parameters, zswap_percent=0)
+    )
+
+    assert done.returncode == 0, done.stderr
+    assert not (tmp_path / "zswap.conf").exists()
+
+
+def test_a_rebaked_template_rolls_the_hosts_when_its_epoch_is_bumped(monkeypatch):
+    """The provider re-bakes a template under the same name: nothing the
+    offering says changes, so the epoch is what moves the hosts onto it."""
+    offering = {
+        "id": 1,
+        "machineTypeName": "standard",
+        "zoneName": "cn-east",
+        "templateName": "debian13",
+        "dataDiskGb": 64,
+    }
+    before = enrollment.host_image_version(
+        offering, cores=4, memory_mb=16384, disk_gb=40
+    )
+    monkeypatch.setattr(enrollment.settings, "cloud_host_template_epoch", 2)
+    after = enrollment.host_image_version(
+        offering, cores=4, memory_mb=16384, disk_gb=40
+    )
+    assert before != after

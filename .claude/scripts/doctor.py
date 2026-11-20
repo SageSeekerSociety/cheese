@@ -251,7 +251,7 @@ def get_installation() -> tuple[str, str, str, str]:
         )
     response = request(
         f"{cheese_api.rstrip('/')}/sandbox/forge-token",
-        extra_headers={"X-Cheese-Token": cheese_token},
+        extra_headers={"Authorization": f"Bearer {cheese_token}"},
     )
     if response.status != 200:
         raise ValueError(

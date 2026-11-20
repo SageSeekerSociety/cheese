@@ -405,13 +405,14 @@ def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
     """What 芝士 did while answering, from what its viewers were told: each
     time it reasoned and for how long, each tool call with its arguments and
     whether it failed, each draft write, each publish, each file it handed the
-    person. Kept with the answer, so the conversation shows them again."""
+    person, each rule it made. Kept with the answer, so the conversation shows them again."""
     steps: list[dict] = []
     by_call: dict[str, dict] = {}
     edits: list[dict] = []
     published: list[dict] = []
     proposed: list[dict] = []
     handed: list[dict] = []
+    rules: list[dict] = []
     branches: list[dict] = []
     reasoning: dict | None = None
 
@@ -450,8 +451,10 @@ def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
             step["args"] = step["args"][: int(data.get("at") or 0)] + str(
                 data.get("text") or ""
             )
-        elif event == "tool_done" and data.get("call") in by_call and data.get("shown"):
-            by_call[data["call"]]["shown"] = str(data["shown"])
+        elif event == "tool_done" and data.get("call") in by_call:
+            for named in ("shown", "effect"):
+                if data.get(named):
+                    by_call[data["call"]][named] = str(data[named])
         elif event == "tool_failed" and data.get("call") in by_call:
             by_call[data["call"]]["failed"] = str(data.get("text") or "")
         elif event == "change":
@@ -462,11 +465,13 @@ def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
             proposed.append(data)
         elif event == "handed":
             handed.append(data)
+        elif event == "rule":
+            rules.append(data)
         elif event == "subagents":
             branches = list(data.get("branches") or [])
     if reasoning is not None:
         reasoning.pop("from")
-    if not (steps or edits or published or proposed or handed):
+    if not (steps or edits or published or proposed or handed or rules):
         return None
     return {
         "steps": steps,
@@ -474,6 +479,7 @@ def parts_of(told: list[tuple[str, str, dict]]) -> dict | None:
         "published": published,
         **({"proposals": proposed} if proposed else {}),
         **({"handed": handed} if handed else {}),
+        **({"rules": rules} if rules else {}),
         **({"subagents": branches} if branches else {}),
     }
 
@@ -588,7 +594,11 @@ class Answers:
             await self._consumptions.publish(
                 consumption,
                 "tool_done",
-                {"call": item.call, **({"shown": item.shown} if item.shown else {})},
+                {
+                    "call": item.call,
+                    **({"shown": item.shown} if item.shown else {}),
+                    **({"effect": item.effect} if item.effect else {}),
+                },
             )
         elif isinstance(item, Thinking):
             # That it reasons, never what: the page shows 思考中.

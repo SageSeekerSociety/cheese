@@ -129,3 +129,41 @@ it('keeps the selected team balance when a previous team response arrives late',
   await waitFor(() => expect(view.queryByRole('button', { name: /^Free/ })).toBeNull())
   expect(view.getByRole('button', { name: /Shared plan/ })).toBeTruthy()
 })
+
+it('warns at the top when the month is 80% spent', async () => {
+  api.usage.mockResolvedValue({
+    ...usage,
+    period: { ...usage.period, credits_used: 400, used_ratio: 0.8, remaining_ratio: 0.2 },
+  })
+  const { view } = await show()
+  expect(await view.findByText('团队额度快用完了')).toBeTruthy()
+  expect(view.getByText(/方案额度还剩 100 点/)).toBeTruthy()
+})
+
+it('names the window in the warning instead of 「这个窗口」', async () => {
+  api.usage.mockResolvedValue({
+    ...usage,
+    period: {
+      ...usage.period,
+      unlimited: true,
+      credits_total: null,
+      credits_used: null,
+      used_ratio: null,
+      remaining_ratio: null,
+    },
+    windows: [
+      {
+        hours: null,
+        calendar: 'week',
+        credits_total: 1000,
+        credits_used: 900,
+        used_ratio: 0.9,
+        resets_at: '2026-11-02T00:00:00+08:00',
+      },
+    ],
+  })
+  const { view } = await show()
+  expect(await view.findByText('团队额度快用完了')).toBeTruthy()
+  expect(view.getByText(/本周的方案额度还剩/)).toBeTruthy()
+  expect(view.queryByText(/这个窗口/)).toBeNull()
+})

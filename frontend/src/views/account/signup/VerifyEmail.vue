@@ -25,7 +25,6 @@
 <script lang="ts" setup>
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 
 import { useConsentDocuments } from '@/composables/useConsentDocuments'
 
@@ -35,6 +34,7 @@ import VerifyEmailView from './VerifyEmailView.vue'
 
 import { axiosErrorMessage } from '@/api/axiosHttp'
 import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 import AccountService from '@/services/account'
 import { useSignupStore } from '@/stores/signup'
 

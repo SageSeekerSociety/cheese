@@ -44,7 +44,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "backend"))
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # noqa: E402
 
 import app.models  # noqa: E402,F401
-from app.api.routes.awaiting import waiting_items  # noqa: E402
+from app.api.awaiting_deps import waiting_items  # noqa: E402
 
 DB_URL = os.environ.get(
     "PERF_DB_URL", "postgresql+asyncpg://cheesex:cheesex@127.0.0.1:5433/cheese_perf"
@@ -99,9 +99,9 @@ class Collector:
         gc.callbacks.remove(self._callback)
 
 
-async def one(session_factory, chat) -> int:
+async def one(session_factory) -> int:
     async with session_factory() as db:
-        items = await waiting_items(db, chat, handle=VIEWER, user_id=None)
+        items = await waiting_items(db, handle=VIEWER, user_id=None)
         rows = [item.as_dict() for item in items]
     return len(rows)
 
@@ -109,12 +109,9 @@ async def one(session_factory, chat) -> int:
 async def main() -> None:
     engine = create_async_engine(DB_URL, **engine_kwargs())
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
-    from types import SimpleNamespace
-
-    chat = SimpleNamespace(live=SimpleNamespace(active_turn_ids={}))
 
     frozen = freeze_startup_heap()
-    await one(session_factory, chat)  # warm pool + statement cache
+    await one(session_factory)  # warm pool + statement cache
 
     shape = "SQLAlchemy default" if not engine_kwargs() else "production 20+15"
     print(f"concurrency={N}  batches={BATCHES}  pool={shape}"
@@ -128,7 +125,7 @@ async def main() -> None:
             cpu_start = time.process_time()
             wall_start = time.perf_counter()
             results = await asyncio.gather(
-                *(one(session_factory, chat) for _ in range(N))
+                *(one(session_factory) for _ in range(N))
             )
             wall = (time.perf_counter() - wall_start) * 1000
             cpu = (time.process_time() - cpu_start) * 1000

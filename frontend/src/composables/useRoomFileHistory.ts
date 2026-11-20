@@ -74,11 +74,8 @@ export function useRoomFileHistory(scope: RoomFileHistoryScope, hooks: RoomFileH
   async function download(row: RoomFileRevision) {
     const tid = scope.topicId()
     if (!tid) return
-    try {
-      await downloadRoomFileRevision(tid, row)
-    } catch (e) {
-      error.value = e instanceof Error ? e.message : t('work.room.fileHistory.downloadFailed')
-    }
+    // 成功和失败各弹一句，都在这一步自己那层说（`api/roomFileRevisions` → `lib/download`）。
+    await downloadRoomFileRevision(tid, row)
   }
 
   watch(

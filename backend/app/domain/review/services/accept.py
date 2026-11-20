@@ -76,8 +76,11 @@ async def accept(
     head_sha: str | None = None,
     deliverable_revision: str | None = None,
     by_assistant: bool = False,
+    by_seat: str | None = None,
 ) -> AcceptCard:
-    """``by_assistant``: the reviewer's own 芝士 accepts for them; the card
+    """``by_seat``: the project AI teammate's seat that accepts for the
+    reviewer (a channel's main line on their word), kept on the card so the
+    line recording it names that teammate. ``by_assistant``: the reviewer's own 芝士 accepts for them; the card
     and the lines announcing it say so (``AcceptCard.decided_by_assistant``)."""
     card = await self._card_or_404(card_id)
     # 机器闸门 (eval C2): the card isn't in the reviewer's hands yet / died.
@@ -94,6 +97,8 @@ async def accept(
     # decided_by is the caller's verified actor handle, never body-trusted.
     if decided_by not in await self._repo.reviewer_handles(card.id):
         raise ForbiddenError(say("acceptReviewerOnly"))
+    if await self._holds_uncommitted(card):
+        raise ValidationError(say("acceptUncommitted"))
     topic = await self._topic_or_404(card.topic_id)
     # 合的是人看到的那个 commit：屏幕上那一版还在，才谈得上采纳它。
     seen_head = await self._seen_head_or_refresh(
@@ -142,8 +147,35 @@ async def accept(
     # Everything below that records the decision records ``decided_by``'s: this
     # is whose hand it was.
     card.decided_by_assistant = by_assistant
+    card.decided_by_seat = by_seat if by_assistant else None
+    if (
+        card.pr_number is None
+        and not card.delivered_task_ids
+        and card.deliverable_kind in (DeliverableKind.file, DeliverableKind.link)
+    ):
+        # A file or an address handed over with no change to land: nothing
+        # goes through a forge, and a project with no repository has none.
+        return await self._accept_discussion(card, topic, decided_by)
     forge = await self._resolve_forge(topic.project_id, card=card)
     return await forge.accept(self, card, topic, decided_by, seen_head=seen_head)
+
+
+async def _holds_uncommitted(self: pkg.AcceptService, card: AcceptCard) -> bool:
+    """Whether the task's working copy holds saved changes this version does
+    not: merging it would leave them out, so nothing merges it — not a
+    person's accept, not their merge-anyway, not the poller merging the
+    version they armed. Every road that merges a card asks here, so they
+    cannot disagree; a service built for one without the port says so
+    rather than merging unasked."""
+    if card.task_id is None or card.deliverable_kind != DeliverableKind.merge:
+        return False
+    work = await TaskService(self._session).get(card.task_id)
+    if work is None or not work.branch_name:
+        return False
+    if self._uncommitted is None:
+        # i18n-exempt: a wiring fault in the platform's own code, never a refusal a reader sees
+        raise RuntimeError("AcceptService merges a card without `uncommitted`")
+    return await self._uncommitted(self._session, work)
 
 
 async def _accept_github(
@@ -155,16 +187,6 @@ async def _accept_github(
     seen_head: str | None,
 ) -> AcceptCard:
     """GitHub proposals never fall back to a local merge after a failure."""
-    if (
-        card.pr_number is None
-        and not card.delivered_task_ids
-        and card.deliverable_kind
-        in (
-            DeliverableKind.file,
-            DeliverableKind.link,
-        )
-    ):
-        return await self._accept_discussion(card, topic, decided_by)
     if card.pr_number is None:
         await self._publish_pr_for_accept(card, topic)
         if card.pr_number is not None:
@@ -429,7 +451,7 @@ async def _mirror_pr_verdict(
         status=status,
         ref=ref,
     )
-    self._write_merge_mirror(card, verdict, who, ref)
+    await self._write_merge_mirror(card, verdict, who, ref)
     return verdict, who, protection, enforces, runs
 
 
@@ -511,7 +533,7 @@ async def _void_closed_pr_card(
     with a new card.
     """
     headline = (
-        f"{VOIDED_PREFIX}：PR #{card.pr_number} 已在 GitHub 关闭且没有合并，"
+        f"{VOIDED_PREFIX}：PR #{card.pr_number} 已被关闭且没有合并，"
         "平台自动作废了这次审阅。要继续交付，重新提交审阅。"
     )
     card.status = AcceptStatus.revoked
@@ -571,7 +593,12 @@ async def _finish_pr_accept(
     notes.record(card, None, f"{headline}；{settled}" if headline else settled)
     # 交付完成 ≠ 话题结束 (#442 decision 1)：话题保持 active，归档由人来做。
     await self._stamp_delivery(card, topic, by=by, at=now)
-    await referrals.on_accepted(self._session, by)
+    if by:
+        await referrals.on_accepted(self._session, by)
+    else:
+        reviewers = await self._repo.reviewer_handles(card.id)
+        if len(reviewers) == 1:
+            await referrals.on_accepted(self._session, reviewers[0])
     await self._session.flush()
     await self._session.refresh(card)
     accepted_line = (
@@ -638,7 +665,7 @@ async def _stop_accept_pr_unavailable(
     why = reason or say("acceptStoppedPrStalled", pr=card.pr_number)
     card_id = card.id
     note = (
-        f"{_ACCEPT_PR_STALLED_PREFIX}（{why}）。绑定 GitHub 的项目采纳只通过"
+        f"{_ACCEPT_PR_STALLED_PREFIX}（{why}）。有 PR 的改动采纳只通过"
         "合并 PR 完成，平台不会绕过 PR 直推上游；处理后重试采纳。"
     )
     self._notify_merge_result(
@@ -659,7 +686,7 @@ async def _stop_accept_pr_unavailable(
 
 
 async def _stop_accept_conflict(
-    self: pkg.AcceptService, card: AcceptCard, topic: Topic
+    self: pkg.AcceptService, card: AcceptCard, topic: Topic, status: PullRequestStatus
 ) -> NoReturn:
     """PR 和目标分支冲突：采纳停下，说清是冲突，把解冲突交给芝士。
 
@@ -675,10 +702,13 @@ async def _stop_accept_conflict(
     `dirty`，它**不是**平台重算的结论：强制项目那份是 GitHub 的
     `mergeStateStatus` 原样透传，非强制项目那份也是 GitHub 的 `dirty` /
     `mergeable=False` 抄下来的（`compute_merge_state`）—— 两个方向都说的是
-    GitHub 的话。
+    托管服务的话。Forgejo 的 `False` 来自 git 的试合并（`forgejo_pr`、
+    `merge_check`），同样是确定了的冲突。
 
     叫醒的是芝士，和轮询那条路同一个判据：`whose_move(dirty)` 是 `agent`，
-    `_conflict_nudge` 也是这么派的（合入目标分支、解完重新推送）。房间提示的
+    `_conflict_nudge` 也是这么派的（合入目标分支、解完重新推送）：同一条提醒
+    在这里也发给芝士（`_hand_conflict_to_agent`），并记进同一本账，轮询不会再
+    发一遍。房间提示的
     `accept_conflict` 是为此登记的码（`notice_meta`），在此之前后端没有一处发过
     它 —— 卡的 `note_code` 同样落 `merge_conflict`，卡面因此显示「和主线有冲突，
     芝士正在处理」（`room_task.presentation`）。
@@ -689,6 +719,7 @@ async def _stop_accept_conflict(
     `topic` is still live."""
     number = card.pr_number
     card_id = card.id
+    nudge = self._conflict_nudge(card=card, status=status)
     self._notify_merge_result(
         topic,
         say("acceptConflict", pr=number),
@@ -703,12 +734,42 @@ async def _stop_accept_conflict(
     )
     note = (
         f"采纳未完成：PR #{number} 和目标分支冲突了（合并态：dirty），"
-        "GitHub 现在合不了它。冲突要在任务目录里合入目标分支、解决并重新推送，"
+        "代码托管服务现在合不了它。冲突要在任务目录里合入目标分支、解决并重新推送，"
         "所以这次采纳停下：解完冲突、检查绿了之后再重新采纳。"
     )
     await self._session.rollback()
+    if nudge is not None:
+        await _hand_conflict_to_agent(self, card_id, nudge)
     await self._note_outside_accept_txn(card_id, notes.NoteCode.merge_conflict, note)
     raise UnprocessableEntityError(say("acceptConflicted", pr=number))
+
+
+async def _hand_conflict_to_agent(
+    self: pkg.AcceptService, card_id: uuid.UUID, nudge: pr_signals.PendingNudge
+) -> None:
+    """Tell the task's agent about the conflict that stopped this accept.
+
+    The accept's own transaction is rolled back by then, so this commits on a
+    session of its own, through the poller's door (`_dispatch_nudges`): the
+    same delivery, and the same ledger, so the next poll does not send it
+    again. It runs before the stop note is written, so the card keeps that
+    note rather than the nudge's."""
+    async with pkg.async_session_factory() as session:
+        other = pkg.AcceptService(
+            session,
+            announce=self._announce,
+            settle_card=self._settle_card,
+            record_instruction=self._record_instruction,
+            task_teammate=self._task_teammate,
+            roster_team=self._roster_team,
+            executor=self._executor,
+        )
+        card = await other._card_or_404(card_id)
+        topic = await other._topic_or_404(card.topic_id)
+        await other._dispatch_nudges(
+            card=card, topic=topic, pending=[nudge], chat_service=None, runner=None
+        )
+        await session.commit()
 
 
 async def _stop_accept_title_disagrees(
@@ -760,7 +821,7 @@ async def _stop_accept_title_disagrees(
         ),
     )
     note = (
-        f"采纳未完成：PR #{number} 在 GitHub 上的标题（{shown}）和提交审阅时的标题"
+        f"采纳未完成：PR #{number} 的标题（{shown}）和提交审阅时的标题"
         f"（{subject}）不一致。现在合并会把一行仓库检查没看过的标题写进历史，所以"
         "停下了；两个标题改成同一行、检查通过后再采纳。"
     )

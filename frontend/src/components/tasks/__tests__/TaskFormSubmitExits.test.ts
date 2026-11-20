@@ -75,6 +75,7 @@ interface MountOptions {
   initialData?: Record<string, unknown>
   isEditing?: boolean
   parametersOnly?: boolean
+  startModeLocked?: boolean
 }
 
 function mountForm(options: MountOptions = {}) {
@@ -83,6 +84,7 @@ function mountForm(options: MountOptions = {}) {
       initialData: options.initialData ?? {},
       isEditing: options.isEditing ?? false,
       parametersOnly: options.parametersOnly ?? false,
+      startModeLocked: options.startModeLocked ?? false,
       classificationTopics: [],
       categories: [{ id: 3, name: '课程作业', displayOrder: 0 }],
     },
@@ -244,17 +246,25 @@ describe('发题表单：队伍那几栏只在团队时算数', () => {
     expect(payload.teamLockingPolicy).toBe('NO_LOCK')
   })
 
-  it('个人：那三栏根本不画，交出去的也不带它们', async () => {
+  it('个人：那三栏根本不画', async () => {
     const view = mountForm({ initialData: FILLED })
 
     expect(view.queryByLabelText('tasks.form.minTeamSize')).toBeNull()
     expect(view.queryByLabelText('tasks.form.maxTeamSize')).toBeNull()
+  })
 
+  it('团队改成个人再改回团队：填过的人数还在，交出去的也是它', async () => {
+    const view = mountForm({ initialData: { ...FILLED, submitterType: 'TEAM', minTeamSize: 3, maxTeamSize: 5 } })
+
+    await fireEvent.click(view.getByRole('radio', { name: 'tasks.form.individual' }))
+    await waitFor(() => expect(view.queryByLabelText('tasks.form.minTeamSize')).toBeNull())
+    await fireEvent.click(view.getByRole('radio', { name: 'tasks.form.team' }))
+
+    await waitFor(() => expect((view.getByLabelText('tasks.form.minTeamSize') as HTMLInputElement).value).toBe('3'))
+    expect((view.getByLabelText('tasks.form.maxTeamSize') as HTMLInputElement).value).toBe('5')
     const payload = await submitted(view)
-
-    expect(payload.minTeamSize).toBeUndefined()
-    expect(payload.maxTeamSize).toBeUndefined()
-    expect(payload.teamLockingPolicy).toBeUndefined()
+    expect(payload.submitterType).toBe('TEAM')
+    expect([payload.minTeamSize, payload.maxTeamSize]).toEqual([3, 5])
   })
 
   it('最大比最小还小：表单拦着，一个 submit 都不发', async () => {
@@ -286,5 +296,117 @@ describe('发题表单：改题时那条截止时间', () => {
 
     expect(payload.deadline).toBeTypeOf('number')
     expect(payload.hasDeadline).toBeUndefined()
+  })
+})
+
+describe('发题表单：分了阶段时没指阶段的提交项和评分要点', () => {
+  it('归第一个阶段：在那一组里看得到，交出去也写着那个阶段', async () => {
+    const view = mountForm({
+      isEditing: true,
+      initialData: {
+        ...FILLED,
+        stages: [
+          { id: 'need', name: '需求分析', description: '', dueAt: null },
+          { id: 'impl', name: '实现', description: '', dueAt: null },
+        ],
+        submissionSchema: [
+          { prompt: '需求文档', type: 'TEXT', stage: null },
+          { prompt: '代码', type: 'FILE', stage: 'impl' },
+        ],
+        rubric: [{ item: '完整', points: 10, criteria: '', stage: null }],
+      },
+    })
+
+    const groups = view.getByTestId('task-form-submission-items').children
+    expect((groups[0].querySelector('input') as HTMLInputElement).value).toBe('需求文档')
+    expect(view.getByTestId('task-form-rubric').children[0].querySelector('input')).not.toBeNull()
+
+    const sent = await submitted(view)
+    expect(sent.submissionSchema).toEqual([
+      { prompt: '需求文档', type: 'TEXT', stage: 'need' },
+      { prompt: '代码', type: 'FILE', stage: 'impl' },
+    ])
+    expect(sent.rubric).toEqual([{ item: '完整', points: 10, criteria: '', stage: 'need' }])
+  })
+})
+
+describe('发题表单：两个阶段一个一个删掉', () => {
+  it('先删的阶段带走它的提交项和评分要点，最后一个阶段的留下，交出去时不分阶段', async () => {
+    const view = mountForm({
+      isEditing: true,
+      initialData: {
+        ...FILLED,
+        stages: [
+          { id: 'need', name: '需求分析', description: '', dueAt: null },
+          { id: 'impl', name: '实现', description: '', dueAt: null },
+        ],
+        submissionSchema: [
+          { prompt: '需求文档', type: 'TEXT', stage: 'need' },
+          { prompt: '代码', type: 'FILE', stage: 'impl' },
+        ],
+        rubric: [
+          { item: '完整', points: 10, criteria: '', stage: 'need' },
+          { item: '正确', points: 20, criteria: '', stage: 'impl' },
+        ],
+      },
+    })
+
+    const removes = () => view.getAllByRole('button', { name: 'tasks.form.stages.remove' })
+    // 删一个阶段先问一句，答「删除」才删。
+    const confirm = async () =>
+      fireEvent.click(await waitFor(() => view.getByRole('button', { name: 'tasks.form.stages.removeConfirm' })))
+    await fireEvent.click(removes()[1])
+    await confirm()
+    await waitFor(() => expect(removes()).toHaveLength(1))
+    await fireEvent.click(removes()[0])
+    await confirm()
+    const sent = await submitted(view)
+    expect(sent.stages).toEqual([])
+    expect(sent.submissionSchema).toEqual([{ prompt: '需求文档', type: 'TEXT', stage: null }])
+    expect(sent.rubric).toEqual([{ item: '完整', points: 10, criteria: '', stage: null }])
+  })
+})
+
+describe('发题表单：直接开始的题', () => {
+  it('截止日期写成提交截止、可以不填：空着也发得出去，就是没有截止', async () => {
+    const view = mountForm({ isEditing: true, initialData: { ...FILLED, startMode: 'DIRECT', deadline: null } })
+
+    expect(view.container.textContent).toContain('tasks.form.dueOn')
+    expect(view.container.textContent).not.toContain('tasks.form.registration')
+    const sent = await submitted(view)
+
+    expect(sent.startMode).toBe('DIRECT')
+    expect(sent.deadline ?? null).toBeNull()
+  })
+
+  it('新发一道题：不选就是直接开始', async () => {
+    const view = mountForm({ initialData: FILLED })
+
+    const sent = await submitted(view)
+
+    expect(sent.startMode).toBe('DIRECT')
+  })
+
+  it('已经有人申请或开始做了：开始方式灰着改不了，写明为什么', async () => {
+    const view = mountForm({ isEditing: true, startModeLocked: true, initialData: { ...FILLED, startMode: 'APPLY' } })
+
+    const radios = Array.from(
+      view.container.querySelectorAll<HTMLInputElement>('[data-agent-field="start_mode"] input[type="radio"]')
+    )
+    expect(radios.length).toBe(2)
+    expect(radios.every((r) => r.disabled)).toBe(true)
+    expect(view.container.textContent).toContain('tasks.form.start.locked')
+  })
+
+  it.each([
+    ['直接开始', 'DIRECT', ['free', 'freeHintStart', 'lockedStart', 'lockedHintStart']],
+    ['申请制', 'APPLY', ['free', 'freeHint', 'locked', 'lockedHint']],
+  ])('%s的团队题：队伍成员变更说的是从哪一刻起', async (_, startMode, said) => {
+    const view = mountForm({ initialData: { ...FILLED, submitterType: 'TEAM', startMode } })
+
+    const choices = Array.from(view.container.querySelectorAll('.tf-choices .v-radio'))
+      .map((r) => r.textContent ?? '')
+      .join(' ')
+    expect(choices.match(/tasks\.form\.teamLocking\.\w+/g)).toEqual(said.map((k) => `tasks.form.teamLocking.${k}`))
   })
 })

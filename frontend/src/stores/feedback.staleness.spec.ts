@@ -67,14 +67,14 @@ beforeEach(() => {
   markFeedbackRead.mockReset()
   listAdminFeedback.mockReset()
   setAdminFeedbackStatus.mockReset()
-  getFeedbackCounts.mockResolvedValue({ all: 0, hot: 0, active: 0, resolved: 0, unread: 0 })
+  getFeedbackCounts.mockResolvedValue({ all: 0, hot: 0, resolved: 0, unread: 0 })
   markFeedbackRead.mockResolvedValue({ last_read_at: '2026-09-21T00:00:00Z' })
   // 管理端每一次写都会顺带回一次列表（`_adminWrite`）。这条用例关心的是详情那一份，
   // 列表给一个空页就够，免得它去够真网络、把 `store.error` 点着。
   listAdminFeedback.mockResolvedValue({
     data: [],
     total: 0,
-    counts: { all: 0, hot: 0, active: 0, resolved: 0, unread: 0 },
+    counts: { all: 0, hot: 0, resolved: 0, unread: 0 },
   })
 })
 

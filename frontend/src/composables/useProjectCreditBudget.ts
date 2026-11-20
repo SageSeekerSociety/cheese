@@ -4,7 +4,8 @@ import { ref, watch } from 'vue'
 
 import { getProjectCreditBudget, saveProjectCreditBudget } from '@/api'
 
-export function useProjectCreditBudget(projectId: () => string) {
+export function useProjectCreditBudget(projectId: () => string, options: { enabled?: () => boolean } = {}) {
+  const enabled = options.enabled ?? (() => true)
   const budget = ref<ProjectCreditBudget | null>(null)
   const loading = ref(false)
   const saving = ref(false)
@@ -41,6 +42,12 @@ export function useProjectCreditBudget(projectId: () => string) {
     }
   }
 
-  watch(projectId, () => void load(), { immediate: true })
+  watch(
+    () => [projectId(), enabled()] as const,
+    ([, on]) => {
+      if (on) void load()
+    },
+    { immediate: true }
+  )
   return { budget, loading, saving, error, load, save }
 }

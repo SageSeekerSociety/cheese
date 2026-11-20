@@ -16,11 +16,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.user.models import User
 
 # The guide's choices, in its order.
-WorkRole = Literal["student", "teacher", "office", "research", "maker", "other"]
+WorkRole = Literal[
+    "student", "highschool", "teacher", "office", "research", "maker", "other"
+]
 
 # How the roster names each choice to an AI teammate; "other" says nothing.
 WORK_ROLES: dict[str, str] = {
     "student": "学生",
+    "highschool": "高中生",
     "teacher": "老师或助教",
     "office": "上班族",
     "research": "研究者",

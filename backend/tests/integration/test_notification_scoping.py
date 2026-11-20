@@ -536,12 +536,14 @@ def test_creating_a_notification_requires_a_credential(client):
     url = f"/projects/{pid}/alerts"
 
     # Bare call — no cheese token, no bearer → 401, nothing created.
-    r = client.post(url, json=_create_body(), headers={"X-Cheese-Token": ""})
+    r = client.post(url, json=_create_body(), headers={"Authorization": ""})
     assert r.status_code == 401, r.text
 
     # A wrong cheese token is not "no token" — still 401.
     r = client.post(
-        url, json=_create_body(), headers={"X-Cheese-Token": "not-the-secret"}
+        url,
+        json=_create_body(),
+        headers={"Authorization": f"Bearer {'not-the-secret'}"},
     )
     assert r.status_code == 401, r.text
 
@@ -550,7 +552,7 @@ def test_creating_a_notification_requires_a_credential(client):
         r = client.post(
             url,
             json=_create_body(),
-            headers={"X-Cheese-Token": "", "Authorization": f"Bearer {bad}"},
+            headers={"Authorization": f"Bearer {bad}"},
         )
         assert r.status_code == 401, r.text
 
@@ -567,7 +569,7 @@ def test_creating_with_a_bearer_alone_works(client):
         # 点名给一个人 —— 这条验的是凭据，不是广播展开给谁，而一份空名册上的广播
         # 一个人也到不了。
         json={**_create_body("人发的"), "target_handle": "alice"},
-        headers={"X-Cheese-Token": "", **session_auth_headers("alice")},
+        headers={"Authorization": "", **session_auth_headers("alice")},
     )
     assert r.status_code == 200, r.text
     assert [row["title"] for row in r.json()["data"]["data"]] == ["人发的"]
@@ -599,7 +601,7 @@ def test_creating_with_a_scoped_token_works(client):
         r = client.post(
             f"/projects/{pid}/alerts",
             json=body,
-            headers={"X-Cheese-Token": token},
+            headers={"Authorization": f"Bearer {token}"},
         )
         assert r.status_code == 200, r.text
 
@@ -618,7 +620,9 @@ def test_creating_alerts_requires_a_named_agent_and_matching_room(client):
         ),
     ):
         response = client.post(
-            f"/projects/{pid}/alerts", json=body, headers={"X-Cheese-Token": token}
+            f"/projects/{pid}/alerts",
+            json=body,
+            headers={"Authorization": f"Bearer {token}"},
         )
         assert response.status_code == expected, response.text
 
@@ -629,7 +633,7 @@ def test_a_scoped_token_for_another_project_cannot_notify_here(client):
     r = client.post(
         f"/projects/{pid}/alerts",
         json=_create_body(),
-        headers={"X-Cheese-Token": mint_scoped_token(project_id=other)},
+        headers={"Authorization": f"Bearer {mint_scoped_token(project_id=other)}"},
     )
     assert r.status_code == 403, r.text
 

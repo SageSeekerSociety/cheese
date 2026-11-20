@@ -30,6 +30,11 @@ from tests.integration.conftest import project_service, registered
 from tests.support.threads import thread_in
 
 
+def _line(line: str) -> str:
+    """A prompt line without the message id it leads with."""
+    return re.sub(r"^\[id=[^\]]+\] ", "", line)
+
+
 class WorkingScreen(StubChannel):
     """一个接了活就一直在干、直到被放行才收工的会话。
 
@@ -136,7 +141,7 @@ async def test_an_unsummoned_message_reaches_the_turn_already_running(
     )
 
     await _until(lambda: len(screen.delivered) == 1)
-    assert [p.split("\n\n", 1)[0] for p in screen.delivered] == [
+    assert [_line(p.split("\n\n", 1)[0]) for p in screen.delivered] == [
         "[wangchangxin]: 直接说你准备怎么改"
     ]
 
@@ -172,7 +177,7 @@ async def test_a_bare_mention_after_a_message_carries_both_in_order(
     await runner.receive_message(svc, topic_id, author="wangchangxin", content="@芝士")
 
     await _until(lambda: len(screen.delivered) == 2)
-    heads = [p.split("\n\n", 1)[0] for p in screen.delivered]
+    heads = [_line(p.split("\n\n", 1)[0]) for p in screen.delivered]
     assert heads[0] == "[wangchangxin]: 直接说你准备怎么改"
     # 一条光秃秃的 @：落库前它已经被规范成这个房间的席位 token。
     assert re.fullmatch(r"\[wangchangxin\]: <@cheese-[0-9a-f]+>", heads[1]), heads

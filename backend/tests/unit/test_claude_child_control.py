@@ -274,6 +274,9 @@ def test_native_send_message_retasks_and_task_stop_only_stops_target(tmp_path):
                 "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{server.server_port}",
                 "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
                 "CLAUDE_CODE_GATEWAY_HINT_HEADERS": "1",
+                # As a room's session runs (`remote_execution/client.py`):
+                # behind a custom base URL tool search is on from 2.1.304.
+                "ENABLE_TOOL_SEARCH": "false",
             },
             capture_output=True,
             timeout=75,

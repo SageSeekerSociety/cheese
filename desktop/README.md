@@ -95,7 +95,10 @@ pnpm tauri build
 ```
 
 `CHEESE_ORIGIN` is read when the app is compiled: the app talks to one server,
-and only that origin's pages can call it.
+and only that origin's pages can call it. `CHEESE_CONTENT_DOMAIN` (default
+`cheeseusercontent.com`) is that server's content domain, the backend's
+`sites_domain`: its subdomains are what the server's pages show in frames
+(mini-apps, previews), so they load in the window rather than in the browser.
 
 `.github/workflows/desktop.yml` builds the two macOS dmgs and the Windows
 installer on every change here and, on main, replaces the assets of the

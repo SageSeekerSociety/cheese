@@ -9,7 +9,7 @@ that already named ``preparation`` for one of them still resolves.
 """
 
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol
@@ -17,15 +17,16 @@ from typing import Any, Protocol
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.harness import SessionRef
-from app.domain.agent.harness.prompt import TOPIC_DOC_CHAR_BUDGET, fit_doc_to_budget
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.session_host.contract import Image
 from app.domain.agent.turn.intake.rooms import _is_dm
 from app.domain.agent_instance.services import ResolvedAgent
 from app.domain.memory.files_store import MemoryIndex
 from app.domain.memory.scopes import MemoryScope
+from app.domain.prompts import TOPIC_DOC_CHAR_BUDGET, Kind, fit_doc_to_budget
 from app.domain.room_task.canvas_text import living_doc_canvases
 from app.domain.room_task.place import Place, doc_text_of
+from app.domain.task.claims import StageProgress
 from app.domain.task.teaching import TeachingContext
 from app.domain.topic.models import Topic
 from app.domain.topic.reads import open_rooms
@@ -62,9 +63,11 @@ async def living_doc_text(
     )
 
 
-def carried_skills(agent: ResolvedAgent, topic: Topic) -> list[str]:
+def carried_skills(
+    agent: ResolvedAgent, topic: Topic, course: Sequence[str] = ()
+) -> list[str]:
     """这一轮谁带哪些技能进提示词：队友自己带的（userskill），没带就回落到这间房
-    点亮的。
+    点亮的；再加上项目所出自的题目给的（``course``，`Teaching.skills`）。
 
     userskill 存在 `agent_instances.configuration.skills`，出厂时从 preset 抄进来
     （`agent_instance/services.initial_configuration`），改它要 manager
@@ -72,7 +75,11 @@ def carried_skills(agent: ResolvedAgent, topic: Topic) -> list[str]:
     队友不该继承全栈工程队友的构建约定，所以**带了自己的就不再叠加房间的**——两份
     都进提示词，只会让模型在互相冲突的规矩里挑一份。
 
-    两边都空时返回 `[]`，而 `carried_bodies(session, topic, [])` 是空串，于是正文与
+    题目给的那几个（``course``）是出题人对项目里**每一个**队友说的，叠在上面这份之上，
+    不顶替它：后来加进项目的队友、自己带了技能的队友、回落到房间的队友都一样带上，
+    每一轮现读、叠在最后、去重。
+
+    都空时返回 `[]`，而 `carried_bodies(session, topic, [])` 是空串，于是正文与
     这层不存在时逐字节相同（和 `_TurnContext.teaching` 为 None 是同一个理由）。
     """
     carried = [
@@ -80,7 +87,7 @@ def carried_skills(agent: ResolvedAgent, topic: Topic) -> list[str]:
         for name in (agent.configuration or {}).get("skills") or []
         if isinstance(name, str)
     ]
-    return carried or list(topic.skills or [])
+    return list(dict.fromkeys([*(carried or topic.skills or []), *course]))
 
 
 def _proposal_frames(landed: dict | None) -> list[dict]:
@@ -106,6 +113,8 @@ class Launch:
     runtime: RoomSessions
     system_prompt: str
     resume_token: str | None
+    #: The conversation it must not take up again (`Continuation.retired`).
+    retired_token: str | None
     model: str | None
     env: dict[str, str] | None
     needs_place: bool
@@ -128,6 +137,9 @@ class TurnContext:
     # theirs.
     room_id: uuid.UUID
     inner_id: uuid.UUID | None
+    # The task, when the conversation is a task's own: its turns run in the
+    # task scene (`model_catalog.pick`).
+    task_id: uuid.UUID | None
     acting_agent: str
     agent: ResolvedAgent
     agent_pool: tuple[MemoryScope, str] | None
@@ -138,6 +150,12 @@ class TurnContext:
     # and None is what keeps the prompt byte-identical to what it was before
     # this key existed, which is the property the non-course tests pin.
     teaching: TeachingContext | None
+    # 项目所出自的题目的阶段，和这个项目在每个阶段上的状态
+    # (`task.claims.stages_for_project`)。题目不分阶段、或项目不出自题目时是空的。
+    stages: list[StageProgress]
+    # 从题目来的项目里「题目」那一段（`task.package.section_for_project`）：第几版、
+    # 材料在哪、这一版改了什么。别的项目是 None，开场里没有这一段。
+    task_package: str | None
     # 这一轮带的技能正文：队友自己的 userskill，没带就回落到这间房点亮的
     # （`carried_skills` 定名单，`carried_bodies` 取正文 —— 平台发货的那几个平台
     # 手里就有，机器上的那几条按索引现读回来）。空 = 只用平台自己的那份指引。
@@ -151,6 +169,10 @@ class TurnContext:
     # not be read again — but kept separate up to that point, because every
     # other question asked of `pending_ids` is about who spoke.
     notice_ids: list[uuid.UUID]
+    # Every block the prompt carries — whoever said it and whoever it was for —
+    # which is what the seat has read once the prompt reaches its session
+    # (`block.message_reads`). What the window left out is not among them.
+    read_ids: list[uuid.UUID]
     # Where this seat's reading stands once this turn finishes cleanly: the
     # timeline position of the newest block the prompt carried. None when it
     # carried none. A turn that fails leaves it alone, exactly as it leaves
@@ -159,6 +181,9 @@ class TurnContext:
     turn_images: list[Image]
     replay_notice: str | None
     resume_session_id: str | None
+    # The conversation this seat's session must not take up again
+    # (`Continuation.retired`).
+    retired_session_id: str | None
 
     # What it should know: the doc, the memories, the checklist it left behind,
     # the cards waiting on it, and which段 of the flow this topic is in.
@@ -168,8 +193,16 @@ class TurnContext:
     overview_doc_id: uuid.UUID | None
     # 这一轮注入的 L1 记忆索引（team 一份 + 本轮发言人各一份）。正文不在里面：
     # 每条记忆的正文在会话目录 `.cheese/memory/` 下，agent 自己去读（见
-    # `memory/instructions.py`）。None = 「这一轮没走注入那条路」。
+    # `prompts/pieces/memory/`）。None = 「这一轮没走注入那条路」。
     memory: MemoryIndex | None
+    # 多人的地方里，这一轮答的人中有 communication 记录的那几位（handle、名字、
+    # 文件名 → 正文）：这段对话还没拿到、或拿到之后改过的，随这一轮的输入给它
+    # （`prompts.talk_notes`）。私聊里是空的——那里的整棵 private 在 `memory`
+    # 里指着。
+    talk_for: list[dict]
+    # 这一轮说日期用的时区（`notification.preferences.local_time`）：叫起这一轮
+    # 的那位成员报上来的；None 是没报过，按默认的北京时间说。
+    clock_zone: str | None
     prior_progress: list[dict]
     #: 这件任务上一次的进度上报是「卡住了」（`Task.progress_state`）。有人说话、
     #: 这一轮开了，平台就在输入前面问它一句还卡不卡（`blocked_report_reminder`）：
@@ -179,8 +212,11 @@ class TurnContext:
     # Chat messages already in the room, apart from the ones this turn delivers.
     earlier_messages: int
     # For a 支线: the message it hangs under and what the main line said just
-    # before it; and the channel's tasks still open. None elsewhere.
+    # before it. For a channel's main line: the channel and what it said before
+    # the messages this turn is handed. And, for either, the channel's tasks
+    # still open. None elsewhere.
     thread_context: str | None
+    channel_context: str | None
     thread_tasks: str | None
     topic_refs: list[dict]
     topic_refs_for_prompt: list[dict]
@@ -197,9 +233,12 @@ class TurnContext:
     # 这一轮要不要一双手 (结论 19，不变量 I2)。解析的产物，不是房间的属性：同一
     # 条会话可以这一轮只聊天、下一轮动文件，而租手发生在解析之后。
     needs_place: bool
-    # A 支线's work is not kept: it may read, run and try things on its own
-    # machine, and nothing it does there reaches the project. What changes the
-    # project is done in a task.
+    # Which kind of session this is (`room.system_prompt.session_kind`): what
+    # it reads and which tools it holds follow from it (`prompts.PROFILES`).
+    kind: Kind
+    # A channel's main line and its 支线 keep no work: the session may read,
+    # run and try things on its own machine, and nothing it does there reaches
+    # the project. What changes the project is done in a task.
     keeps_nothing: bool
     # Whose word a task's session acts on and where it changes the project
     # (`task_section`); None outside a task. It changes when a 支线 becomes
@@ -238,6 +277,7 @@ class _MemoryBooks(Protocol):
         *,
         acting: str,
         speakers: tuple[str, ...],
+        pointed: bool = False,
     ) -> None: ...
 
 
@@ -250,6 +290,8 @@ class ModelOptions(Protocol):
         *,
         agent: ResolvedAgent | None = None,
         acting_agent: str | None = None,
+        task_id: uuid.UUID | None = None,
+        default_effort: str | None = None,
     ) -> tuple[dict, str]: ...
 
 

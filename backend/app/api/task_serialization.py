@@ -15,34 +15,40 @@ from collections.abc import Sequence
 from datetime import datetime
 
 from app.api.task_teaching import read_task_default_role, read_task_teaching
-from app.domain.attachment.models import Attachment
 from app.domain.space.repositories import (
     SpaceAdminRelationRepository,
     SpaceCategoryRepository,
     SpaceDomainGroupDomainRepository,
     SpaceRepository,
+    TaskKnowledgePointRepository,
 )
-from app.domain.task.attachment_service import TaskAttachmentRepository
+from app.domain.task import package
 from app.domain.task.claims import own_claim
 from app.domain.task.models import (
     Task,
-    TaskAttachment,
     TaskMembership,
     TaskSubmissionSchemaEntry,
 )
 from app.domain.task.repositories import (
     TaskMembershipRepository,
     TaskMentorRepository,
-    TaskSubmissionRepository,
     TaskSubmissionSchemaRepository,
     TopicRepository,
 )
+from app.domain.task.rubric import rubric_to_api
 from app.domain.task.services import TaskMembershipService
-from app.domain.task.submission_state import claim_state
+from app.domain.task.stages import (
+    list_stages_for_tasks,
+    stage_count,
+    stage_ref,
+    stages_to_api,
+)
+from app.domain.task.submission_state import claim_state, handed_in_for, stage_states
 from app.domain.team.models import Team
 from app.domain.team.repositories import TeamRepository as _TeamRepo
 from app.domain.team.summary import team_summary
 from app.domain.user.repositories import UserProfileRepository, UserRepository
+from app.domain.user.services import remarks_by_handles
 
 
 def _ms(moment: datetime | None) -> int | None:
@@ -71,6 +77,8 @@ def _task_to_api_model(task: Task, *, include_private_teaching: bool = False) ->
         "deadline": deadline_ms,
         "registrationStartAt": registration_start_ms,
         "defaultDeadline": task.default_deadline,
+        # How a claim starts: ``DIRECT`` or ``APPLY`` (``inputs.START_*``).
+        "startMode": task.start_mode,
         "resubmittable": task.resubmittable,
         "editable": task.editable,
         "approved": approved_map.get(task.approved, "NONE"),
@@ -80,6 +88,8 @@ def _task_to_api_model(task: Task, *, include_private_teaching: bool = False) ->
         # 评分要点只在详情与改题的响应里填（见 lifecycle）；列表不带。
         "rubric": [],
         "rubricPublic": task.rubric_public,
+        # 阶段同样只在详情与改题的响应里填（见 app.domain.task.stages）。
+        "stages": [],
         "space": {"id": task.space_id},
         "category": {"id": task.category_id, "name": ""},
         "categoryId": task.category_id,
@@ -112,16 +122,41 @@ _SUBMISSION_SCHEMA_TYPES = {0: "TEXT", 1: "FILE"}
 
 
 def _submission_schema_to_api(
-    entries: Sequence[TaskSubmissionSchemaEntry],
+    entries: Sequence[TaskSubmissionSchemaEntry], keys: Sequence[str]
 ) -> list[dict]:
-    """表单行的库形状 → 接口形状。详情与列表两处都报同一份，在这里收口。"""
+    """表单行的库形状 → 接口形状。详情与列表两处都报同一份，在这里收口。每一项用
+    阶段的 id 指它属于哪个阶段（``keys`` 是这道题的阶段 id，按顺序；不分阶段时是空的，
+    这一格是 None）。"""
     return [
         {
             "prompt": entry.description,
             "type": _SUBMISSION_SCHEMA_TYPES.get(entry.type, "TEXT"),
+            "stage": stage_ref(entry.stage, keys),
         }
         for entry in entries
     ]
+
+
+async def _task_requirements(service, task_id: int, *, teacher: bool) -> dict:
+    """What a 题目 asks of whoever takes it, as the detail, the edit form and
+    the change draft read it: its stages, its submission items, its rubric and
+    its 测试点, the items and lines naming their stage by the stage's id.
+
+    ``teacher``: whether the reader may grade the 题目. Suites come back through
+    ``test_suite.suites_to_api``, which shows a hidden case's input and expected
+    output only to whoever may grade it; a reader who may not gets the name, the
+    points and whether it passed. The edit form and the change draft always read
+    as a teacher (only whoever teaches the 题目 gets there)."""
+    stage_rows = await service.list_stages(task_id)
+    keys = [stage.key for stage in stage_rows]
+    return {
+        "stages": stages_to_api(stage_rows),
+        "submissionSchema": _submission_schema_to_api(
+            await service.list_submission_schema(task_id), keys
+        ),
+        "rubric": rubric_to_api(await service.list_rubric(task_id), keys),
+        "testSuite": await service.suites_to_api(task_id, keys, teacher=teacher),
+    }
 
 
 async def _enrich_task_submission_schema(db, task_models: list[dict]) -> None:
@@ -142,12 +177,13 @@ async def _enrich_task_submission_schema(db, task_models: list[dict]) -> None:
     grouped = await TaskSubmissionSchemaRepository(session=db).list_by_task_ids(
         task_ids
     )
+    stages = await list_stages_for_tasks(db, task_ids)
     for task_model in task_models:
         model_id = task_model.get("id")
         if not isinstance(model_id, int):
             continue
         task_model["submissionSchema"] = _submission_schema_to_api(
-            grouped.get(model_id, [])
+            grouped.get(model_id, []), [s.key for s in stages.get(model_id, [])]
         )
 
 
@@ -156,7 +192,19 @@ async def _enrich_task_models(
     task_models: list[dict],
     *,
     space_id: int,
+    viewer_id: int | None = None,
+    viewer_handle: str | None = None,
 ) -> list[dict]:
+    """Fill in the names, avatars and counts a task's response carries.
+
+    ``viewer_id`` (or ``viewer_handle``, for a caller that already has it) is
+    the account this response is for, when there is one: a personal remark
+    (``UserTeammateRemark``) is private to whoever set it, so each name here
+    also carries that person's remark beside it (``remark``), and the page
+    shows the remark instead of the public nickname. Without either — an
+    agent's read, a batch nobody browsed — the names stay public, which is what
+    anything shared or exported has to show.
+    """
     if not task_models:
         return task_models
 
@@ -177,20 +225,62 @@ async def _enrich_task_models(
 
     admin_relations = await admin_repo.list_admins(space_id)
     admin_user_ids = [rel.user_id for rel in admin_relations]
-    all_user_ids = list({*creator_ids, *admin_user_ids})
+    # 读的人也并进这一批：他的 handle 要从 id 认出来，而这一批本来就要查，
+    # 单为他再发一条就是这一页多出来的一次查询（`test_problem_pages_read_once`
+    # 数着这条线）。
+    all_user_ids: list[int] = [*creator_ids, *admin_user_ids]
+    if viewer_id is not None:
+        all_user_ids.append(viewer_id)
+    all_user_ids = list(set(all_user_ids))
 
     users = await user_repo.get_by_ids(all_user_ids)
-    profiles = await profile_repo.get_profiles_by_user_ids(all_user_ids)
     # 头像走「挑过的」判据，别回档案上的 avatar_id：每个注册路径都往那一列写死了全局
     # 默认（见 UserProfileRepository.chosen_avatar_ids），直接回它会让所有没挑过头像
-    # 的人共用同一张脸。没挑过的人不在映射里，下面回 None，前端画彩色首字母。
-    chosen_avatars = await profile_repo.chosen_avatar_ids(all_user_ids)
+    # 的人共用同一张脸。没挑过的人不在映射里，下面回 None，前端画彩色首字母。档案和
+    # 头像出自同一次读取。
+    profiles, chosen_avatars = await profile_repo.profiles_and_chosen_avatars(
+        all_user_ids
+    )
     memberships = await membership_repo.list_memberships_for_space(space_id)
     categories = await category_repo.list_categories_for_space(
         space_id, include_archived=True
     )
     space = await space_repo.get_by_id(space_id)
     space_name = space.name if space is not None else "Unknown Space"
+
+    # The mentors who join every claimer's project (#3830), with the name the
+    # claim notice says them by.
+    mentors_of = await TaskMentorRepository(db).for_tasks(task_ids)
+    mentor_users = (
+        await user_repo.get_by_handles(
+            [h for handles in mentors_of.values() for h in handles]
+        )
+        if mentors_of
+        else {}
+    )
+    mentor_profiles = (
+        await profile_repo.get_profiles_by_user_ids(
+            [u.id for u in mentor_users.values()]
+        )
+        if mentor_users
+        else {}
+    )
+
+    # Who is reading, as a handle: a remark is stored against it. Empty when
+    # nobody is browsing (an agent's read), and then every name stays public.
+    reader = viewer_handle
+    if reader is None and viewer_id is not None:
+        # Already in this batch (``all_user_ids``): no query of its own.
+        viewer = users.get(viewer_id)
+        reader = viewer.username if viewer is not None else ""
+    # The page's own remarks for everyone it names — creators, the space's
+    # admins, the mentors and the reader — in one query. Handles, not ids: a
+    # remark is stored against the account's handle. Asking a second time for
+    # the mentors alone would cost a page with mentors one more statement, and
+    # `test_problem_pages_read_once` counts exactly that.
+    named_handles = [user.username for user in users.values()]
+    named_handles += list(mentor_users.keys())
+    remarks = await remarks_by_handles(db, reader, named_handles) if reader else {}
 
     role_name_map = {0: "OWNER", 1: "ADMIN"}
     admins_payload: list[dict] = []
@@ -207,6 +297,7 @@ async def _enrich_task_models(
                 "id": user.id,
                 "username": user.username,
                 "nickname": nickname,
+                "remark": remarks.get(user.username),
                 "avatarId": avatar_id,
                 "intro": intro,
                 "question_count": 0,
@@ -236,10 +327,20 @@ async def _enrich_task_models(
         if getattr(category, "name", None)
     }
 
+    # ``total`` 数每一份没删的申请（等批准的、被拒的都算）；``approved`` 只数申请
+    # 通过的 —— 页面上的「参与人数」和名额满没满都按它：还在等批准的人不是参与者，
+    # 也不占名额（通过时才数，``TaskMembershipService.update_membership``）。
+    # ``live`` 数还算数的领取（通过的、等批准的）：有一份，开始方式就不能再改。
     participant_counts: dict[int, int] = {task_id: 0 for task_id in task_ids}
+    approved_counts: dict[int, int] = {task_id: 0 for task_id in task_ids}
+    live_counts: dict[int, int] = {task_id: 0 for task_id in task_ids}
     for membership in memberships:
         if membership.task_id in participant_counts:
             participant_counts[membership.task_id] += 1
+            if membership.approved == 0:
+                approved_counts[membership.task_id] += 1
+            if membership.approved != 1:
+                live_counts[membership.task_id] += 1
 
     for task_model in task_models:
         creator_id = task_model.get("creator", {}).get("id")
@@ -259,6 +360,7 @@ async def _enrich_task_models(
                 "id": user.id,
                 "username": user.username,
                 "nickname": nickname,
+                "remark": remarks.get(user.username),
                 "avatarId": avatar_id,
                 "intro": intro,
             }
@@ -273,6 +375,8 @@ async def _enrich_task_models(
 
         task_model["participants"] = {
             "total": participant_counts.get(task_model["id"], 0),
+            "approved": approved_counts.get(task_model["id"], 0),
+            "live": live_counts.get(task_model["id"], 0),
             "examples": [],
         }
 
@@ -294,23 +398,6 @@ async def _enrich_task_models(
         }
         task_model["categoryId"] = category_id
 
-    # The mentors who join every claimer's project (#3830), with the name the
-    # claim notice says them by.
-    mentors_of = await TaskMentorRepository(db).for_tasks(task_ids)
-    mentor_users = (
-        await user_repo.get_by_handles(
-            [h for handles in mentors_of.values() for h in handles]
-        )
-        if mentors_of
-        else {}
-    )
-    mentor_profiles = (
-        await profile_repo.get_profiles_by_user_ids(
-            [u.id for u in mentor_users.values()]
-        )
-        if mentor_users
-        else {}
-    )
     for task_model in task_models:
         task_model["mentors"] = [
             {
@@ -322,6 +409,7 @@ async def _enrich_task_models(
                     and mentor_profiles[mentor_users[handle].id].nickname
                     else handle
                 ),
+                "remark": remarks.get(handle),
             }
             for handle in mentors_of.get(task_model["id"], [])
         ]
@@ -352,10 +440,11 @@ async def _enrich_task_models(
 
 
 async def _enrich_task_attachment_counts(db, task_models: list[dict]) -> None:
-    """把每道题挂着几个材料填进列表响应（就地改）。
+    """把每道题有几份材料填进列表响应（就地改）。
 
     只是**一个数**：不带文件本体、不带文件名，也不问谁能下载 —— 卡片上那格「附件
-    N」就靠它，而清单与下载各有自己的门（`GET /tasks/{id}/attachments`）。一个材料
+    N」就靠它，而清单与下载各有自己的门（`GET /tasks/{id}/files`）。「有几份材料」
+    不比「这道题在不在」多泄露什么。一个材料
     都没有的题给 0，不是缺字段：卡片按「有就列、没有就不显示」写，而 0 与「不知道」
     是两件事。
 
@@ -368,9 +457,7 @@ async def _enrich_task_attachment_counts(db, task_models: list[dict]) -> None:
     ]
     if not task_ids:
         return
-    counts = await TaskAttachmentRepository(session=db).count_live_by_task_ids(
-        task_ids=task_ids
-    )
+    counts = await package.file_counts(db, task_ids)
     for task_model in task_models:
         model_id = task_model.get("id")
         if not isinstance(model_id, int):
@@ -402,6 +489,43 @@ async def _enrich_task_topics(db, task_models: list[dict]) -> None:
             continue
         task_model["topics"] = [
             {"id": t.id, "name": t.name} for t in grouped.get(model_id, [])
+        ]
+
+
+async def _enrich_task_knowledge_points(
+    db, task_models: list[dict], *, shown_in_space: int | None = None
+) -> None:
+    """把这一页每道题涉及的知识点填进列表响应（就地改）。§ learning analysis, step 1.
+
+    和 ``_enrich_task_topics`` 同一形状、同一理由：前端读 ``task.knowledgePoints``，
+    总是给一个数组（不是 undefined）；整页一次查询，不按题各发一条。设置页与发题页
+    的「涉及的知识点」也在单题上读它（那时列表只有一道题）。
+
+    ``shown_in_space``：只读的页面（题目详情）传它所在的板。那块板没开学情分析时
+    没有哪一格读这些知识点，于是不查，给空数组；板那一行取自这次请求已读过的那份
+    （``SpaceRepository.get_by_id``），不多问一次。编辑表单**不**传：它把这份编号
+    原样存回去，开关关着时给空数组会把题目上的知识点抹掉。
+    """
+    if not task_models:
+        return
+    if shown_in_space is not None:
+        space = await SpaceRepository(session=db).get_by_id(shown_in_space)
+        if space is None or not space.learning_analysis_enabled:
+            for task_model in task_models:
+                task_model["knowledgePoints"] = []
+            return
+    task_ids = [
+        task_model["id"]
+        for task_model in task_models
+        if isinstance(task_model.get("id"), int)
+    ]
+    grouped = await TaskKnowledgePointRepository(session=db).list_by_task_ids(task_ids)
+    for task_model in task_models:
+        model_id = task_model.get("id")
+        if not isinstance(model_id, int):
+            continue
+        task_model["knowledgePoints"] = [
+            {"id": p.id, "name": p.name} for p in grouped.get(model_id, [])
         ]
 
 
@@ -467,21 +591,19 @@ async def _enrich_task_user_state(
         return team_summary(teams_map.get(team_id), fallback_id=team_id)
 
     # 我在每道题上走到哪一步（卡片上那格「我的领取档位」）。只问我**本人**那条
-    # 领取：队友那条说的是小队走到哪了，不是这张卡要说的事。判决照
+    # 领取：队友那条说的是小队走到哪了，不是这张卡要说的事。按各阶段的状态照
     # `app.domain.task.submission_state` 的 `claim_state` 算 —— 它和
-    # `completion_status` 同一份优先级，但这一格不看截止时间，所以按判决直接翻，
+    # `completion_status` 同一份优先级，但这一格不看截止时间，所以按提交直接翻，
     # 而不是读那一列。整页一次查询，不按题各发一条。
     my_membership_by_task_id = {
         task_id: state["user_membership"].id
         for task_id, state in pending.items()
-        if state["user_membership"] is not None
-        and state["user_membership"].approved != 1
+        if state["user_membership"] is not None and state["user_membership"].live_claim
     }
-    verdicts_by_membership_id = await TaskSubmissionRepository(
-        session=db
-    ).list_review_verdicts_for_memberships(
-        membership_ids=list(my_membership_by_task_id.values())
+    handed_in_by_membership_id = await handed_in_for(
+        db, list(my_membership_by_task_id.values())
     )
+    stages_by_task_id = await list_stages_for_tasks(db, list(my_membership_by_task_id))
 
     for task_model in task_models:
         task_id = task_model["id"]
@@ -493,8 +615,8 @@ async def _enrich_task_user_state(
         # DISAPPROVED memberships should NOT show as "joined" — otherwise the
         # frontend renders "退出赛题" button for rejected applications.
         joined = bool(
-            (user_membership and user_membership.approved != 1)
-            or any(m.approved != 1 for m in team_memberships)
+            (user_membership is not None and user_membership.live_claim)
+            or any(m.live_claim for m in team_memberships)
         )
         joined_teams = [_team_summary(m.member_id) for m in team_memberships]
         is_user_approved = bool(user_membership and user_membership.approved == 0)
@@ -534,7 +656,10 @@ async def _enrich_task_user_state(
         my_claim_status: str | None = None
         if my_membership_id is not None:
             my_claim_status = claim_state(
-                verdicts_by_membership_id.get(my_membership_id, [])
+                stage_states(
+                    handed_in_by_membership_id.get(my_membership_id, []),
+                    stage_count(stages_by_task_id.get(task_id, [])),
+                )
             )
 
         task_model.update(
@@ -557,6 +682,7 @@ def _build_participant_user_info(
     profile_map: dict | None = None,
     team_map: dict | None = None,
     avatar_map: dict | None = None,
+    remarks: dict[str, str] | None = None,
 ) -> dict:
     """Build the user or team identity displayed on a registration.
 
@@ -565,11 +691,16 @@ def _build_participant_user_info(
     ``profile.avatar_id``：每个注册路径都往那一列写死了全局默认（默认头像是哪一行因
     环境而异），直接回它等于给所有没挑过头像的人同一张脸。没挑过的人不在映射里，这里
     回 None，前端 ``RosterView`` 据此画彩色首字母。
+
+    ``remarks`` 是**这个查看者**给报名的人设的私人备注（handle → 备注），由调用方按
+    读的人批量查一次。附在 ``remark`` 上，页面照名册的规矩先看它；不给（名单是被
+    程序读的、或者没人登录）就只有公开昵称。
     """
     user_map = user_map or {}
     profile_map = profile_map or {}
     team_map = team_map or {}
     avatar_map = avatar_map or {}
+    remarks = remarks or {}
     if membership.is_team and membership.member_id in team_map:
         return team_summary(
             team_map[membership.member_id], fallback_id=membership.member_id
@@ -587,6 +718,7 @@ def _build_participant_user_info(
             "username": user.username,
             "nickname": nickname,
             "name": nickname,
+            "remark": remarks.get(user.username),
             "avatarId": avatar_map.get(membership.member_id),
             "intro": profile.intro if profile else "",
         }
@@ -638,35 +770,3 @@ def _membership_to_api_model(
         # 这个字段；团队领取但队已不在（查不到行）也没有 —— 前端据此退回「小队」。
         model["team"] = {"id": team.id, "name": team.name}
     return model
-
-
-def _uploaded_attachment_to_api(attachment: Attachment) -> dict:
-    """一个**还没挂到任何题上**的文件在预览响应里的样子。
-
-    与 ``_task_attachment_to_api`` 是同一套字段来源（名字、大小、类型都取自
-    ``meta``），只是没有那两样要有关联行才成立的东西：下载计数、挂上来的时间。同样
-    **不带 url** —— 存储给的是直链，发出去就等于绕开下载那道门。
-    """
-    return {
-        "id": attachment.id,
-        "name": attachment.meta.get("filename") or f"attachment_{attachment.id}",
-        "size": attachment.meta.get("size", 0),
-        "contentType": attachment.meta.get("contentType", "application/octet-stream"),
-    }
-
-
-def _task_attachment_to_api(*, attachment: Attachment, link: TaskAttachment) -> dict:
-    """一个附件在接口上的样子。
-
-    **不带 url**：存储给的是直链（本地 ``/uploads/...``、S3 公开地址），把它发出去
-    就等于把「下载限人」这道门绕过去了。要文件就走下面那个下载端点，门在那里。
-    """
-    return {
-        "id": attachment.id,
-        "name": attachment.meta.get("filename") or f"attachment_{attachment.id}",
-        "size": attachment.meta.get("size", 0),
-        "contentType": attachment.meta.get("contentType", "application/octet-stream"),
-        "uploaderId": attachment.meta.get("uploaderId"),
-        "downloadCount": link.download_count,
-        "createdAt": int(link.created_at.timestamp() * 1000),
-    }

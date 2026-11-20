@@ -12,11 +12,10 @@
 // 应用之间会重新挂载，芝士答到一半不该跟着丢。换页时芝士照样答完。
 import type { AgentFormField } from '@/composables/useAgentPointer'
 import type { PanelChange, PanelProposal, PanelResult, PanelStep } from '@/lib/assistantView'
-import type { AssistantCited, AssistantPage, AssistantProposal } from '@/stores/agentThread'
+import type { AssistantCited, AssistantMessage, AssistantPage, AssistantProposal } from '@/stores/agentThread'
 import type { Citable } from '@/types/citable'
 
 import { computed, onActivated, onDeactivated, onScopeDispose, ref, shallowRef, watch } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { AgentProposalsApi, ApiError, createRoomTask } from '@/api'
 import { AttachmentsApi } from '@/api/attachments'
@@ -26,7 +25,9 @@ import { t } from '@/i18n'
 import { proposalView, stepView, withSubagents } from '@/lib/assistantView'
 import { storageGet, storageSet } from '@/lib/browserStorage'
 import { panelMessages, resultView, writesView } from '@/lib/draftChangeView'
+import { identityChanges } from '@/lib/identity'
 import { uploadLibraryFile } from '@/lib/libraryApi'
+import { toast } from '@/lib/toast'
 import { myHandle } from '@/me'
 import { type AssistantHooks, createAssistant } from '@/stores/agentThread'
 
@@ -78,8 +79,9 @@ export interface AgentForm {
 /** 一页登记的可写面：芝士写进这一页时页面怎么动。都可以不给。 */
 export interface AgentSurface {
   form?: AgentForm
-  /** 问之前：先把这一页存好，芝士读到的是存下的样子。 */
-  prepare?: () => Promise<void>
+  /** 问之前：先把这一页存好，芝士读到的是存下的样子。交回这一问要挂的那一份（这一页的
+   *  草稿）；不交回就挂这一页声明的那一页。 */
+  prepare?: () => Promise<AssistantPage | null | void>
   on?: AssistantHooks
   /** 面板上每一轮怎么画（改动卡能不能撤销、写着第几道）；不给就照没有表单的页面画。 */
   view?: () => AgentPanelView
@@ -169,13 +171,20 @@ function citedIn(question: string): AssistantCited[] {
 
 /** 全站那一条对话。事件交给此刻登记的可写面。 */
 export const agentThread = createAssistant({
-  page: () => (agentPageOn.value ? agentContext.value?.page ?? null : null),
+  // 按下问的那一刻：人关没关「当前页面」、是哪一页（抄下它的值）、那一页问之前要做什么。
+  target: () => {
+    const page = agentContext.value?.page
+    return {
+      on: !agentPageOff.value,
+      page: page ? { ...page } : null,
+      prepare: agentSurface.value?.prepare,
+    }
+  },
   asking: (question) => {
     const selection = agentSelection.value
     const cited = citedIn(question)
     return {
       body: {
-        ...(agentPageOn.value ? {} : { no_page: true }),
         ...(selection ? { selection } : {}),
       },
       shown: {
@@ -184,9 +193,6 @@ export const agentThread = createAssistant({
         ...(cited.length ? { cited } : {}),
       },
     }
-  },
-  prepare: async () => {
-    await agentSurface.value?.prepare?.()
   },
   on: {
     toolArgs: (call, name, raw) => surfaceHooks().toolArgs?.(call, name, raw),
@@ -241,32 +247,52 @@ export interface AgentFile {
 /** 先传上去，下一个问题带上它们。浅的：传完按那一行本身找回它，行不能被换成代理。 */
 export const agentFiles = shallowRef<AgentFile[]>([])
 
-/** 这个人自己的资料库（他名下那个团队的）；问一次就记住。 */
-let ownLibrary: Promise<number> | null = null
+/** 这个人自己的资料库（他名下那个团队的）；问一次就记住，按人分开记——登录换人不会刷新
+ *  页面，记成一份就会把下一个人交的文件送进上一个人的资料库。 */
+const ownLibraries = new Map<string, Promise<number>>()
 function myLibrary(): Promise<number> {
-  ownLibrary ??= TeamsApi.detailByHandle(myHandle()).then(({ team }) => team.id)
-  ownLibrary.catch(() => (ownLibrary = null))
-  return ownLibrary
+  const handle = myHandle()
+  let cached = ownLibraries.get(handle)
+  if (!cached) {
+    cached = TeamsApi.detailByHandle(handle).then(({ team }) => team.id)
+    cached.catch(() => ownLibraries.delete(handle))
+    ownLibraries.set(handle, cached)
+  }
+  return cached
 }
 
-async function keep(file: File): Promise<Pick<AgentFile, 'id' | 'path'>> {
+/** 交文件的那个人还登录着吗：`identityChanges` 在换人（含退出）时加一，开始交时记下它，
+ *  中途变了就是交它的人已经不在了，不能拿下一个人的凭据替他接着传。 */
+const stillSignedIn = (mine: number) => mine === identityChanges.value
+
+async function keep(file: File, mine: number): Promise<Pick<AgentFile, 'id' | 'path'> | null> {
   if (agentContext.value?.attachAsMaterials) {
     const done = await AttachmentsApi.upload({ type: 'file', file })
     return { id: done.id, path: null }
   }
-  const placed = await uploadLibraryFile({ team: await myLibrary() }, file)
+  const team = await myLibrary()
+  if (!stillSignedIn(mine)) return null
+  const placed = await uploadLibraryFile({ team }, file)
   return { id: null, path: placed.path }
 }
 
 export async function attachToAgent(picked: File[]) {
+  const mine = identityChanges.value
   for (const file of picked) {
+    if (!stillSignedIn(mine)) return
     const row: AgentFile = { id: null, path: null, name: file.name, mime: file.type, uploading: true }
     agentFiles.value = [...agentFiles.value, row]
     try {
-      const done = await keep(file)
+      const done = await keep(file, mine)
+      if (!done) {
+        agentFiles.value = agentFiles.value.filter((f) => f !== row)
+        return
+      }
       agentFiles.value = agentFiles.value.map((f) => (f === row ? { ...f, ...done, uploading: false } : f))
     } catch (error) {
       agentFiles.value = agentFiles.value.filter((f) => f !== row)
+      // 人已经走了，这句报错没人要看。
+      if (!stillSignedIn(mine)) return
       // 服务端说了为什么（资料库满了、文件太大）就照它说。
       toast.error(error instanceof ApiError && error.message ? error.message : t('tasks.assistant.files.failed'))
     }
@@ -283,6 +309,7 @@ export function resetAgent() {
   agentFiles.value = []
   agentSelection.value = null
   agentPicked.value = {}
+  ownLibraries.clear()
   agentThread.reset()
 }
 
@@ -319,7 +346,7 @@ const NO_TERMS = { categories: [], topics: [] }
 export function plainView(): AgentPanelView {
   const thread = agentThread
   return {
-    messages: panelMessages(thread.messages.value, NO_TERMS),
+    messages: panelMessages(thread.messages.value, NO_TERMS, undefined, null, undefined, thread.edits.value),
     steps: withSubagents(thread.steps.value.map(stepView), thread.subagents.value),
     ...writesView(thread.edits.value, NO_TERMS, null, () => false),
     results: thread.published.value.map(resultView),
@@ -329,11 +356,18 @@ export function plainView(): AgentPanelView {
 
 /** 更早的话题怎么画：读回来的，只给看，不给撤销。 */
 export function earlierView() {
-  return agentThread.earlier.value.map((topic) => ({
+  const topics = agentThread.earlier.value
+  const editsOf = (messages: AssistantMessage[]) => messages.flatMap((m) => m.edits ?? [])
+  // 更早的话题从旧到新排；每一个之后写的（后面的话题、眼下这段、还在写的回答）都比它新。
+  const now = [...editsOf(agentThread.messages.value), ...agentThread.edits.value]
+  return topics.map((topic, index) => ({
     id: topic.id,
     title: topic.title,
     at: topic.lastActiveAt,
-    messages: panelMessages(topic.messages, NO_TERMS),
+    messages: panelMessages(topic.messages, NO_TERMS, undefined, null, undefined, [
+      ...topics.slice(index + 1).flatMap((later) => editsOf(later.messages)),
+      ...now,
+    ]),
     earlier: topic.earlier === true,
   }))
 }

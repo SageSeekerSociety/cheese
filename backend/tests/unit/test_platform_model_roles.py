@@ -11,7 +11,7 @@ The rules a person can state without reading the code:
 * A role can only point at a model that can serve it, and a model a role runs
   on cannot be paused or deleted until the role is repointed; the page lists
   the roles on each model.
-* A project's own settings still win.
+* A teammate's or a project's own choice still wins (`test_model_pick.py`).
 """
 
 import pytest
@@ -20,9 +20,7 @@ from app.core import model_roles
 from app.core.config import settings
 from app.core.errors import BadRequestError, NotFoundError
 from app.domain.agent.gateway_models import roles
-from app.domain.agent.model_catalog import subagent_default
 from app.domain.agent.schemas import ModelCreate, ModelUpdate
-from app.domain.policy import gate
 from tests.unit.test_gateway_model_sources import (
     _KIMI_CONFIG,
     _clean_module_state,  # noqa: F401 - autouse: a fresh gateway cache per test
@@ -74,6 +72,26 @@ async def test_a_role_reads_the_setting_until_pointed_and_again_once_cleared():
     assert model_roles.get("voice_asr_model") == settings.voice_asr_model
     listed = {r["role"]: r for r in (await service.roles())["roles"]}
     assert listed["voice_asr_model"]["chosen"] is False
+
+
+@pytest.mark.anyio
+async def test_the_task_role_follows_the_conversation_role_until_pointed():
+    """「自动」 runs a task on the task role; nobody pointing it runs tasks on
+    what conversation runs on, and pointing it moves tasks alone."""
+    gw = _Gateway([_KIMI_CONFIG])
+    service = _service(gw, _StubDb())
+    await _models(service)
+
+    listed = {r["role"]: r for r in (await service.roles())["roles"]}
+    assert listed["task_model"]["model"] == settings.agent_model
+    assert listed["task_model"]["inherits"] == "agent_model"
+
+    await service.set_role(handle="admin", role="task_model", model="glm")
+    assert model_roles.get("task_model") == "glm"
+    assert model_roles.get("agent_model") == settings.agent_model
+
+    await service.set_role(handle="admin", role="task_model", model=None)
+    assert model_roles.get("task_model") == settings.agent_model
 
 
 @pytest.fixture
@@ -176,52 +194,6 @@ async def test_a_model_a_role_runs_on_says_so_and_cannot_be_paused_or_deleted():
     await service.set_role(handle="admin", role="voice_asr_model", model=None)
     reset_cache()
     await service.set_blocked(handle="admin", name="asr", blocked=True)
-
-
-_CHOICES = {
-    "glm": {"label": "GLM", "tier": "included", "overseas": False},
-    "gemini": {"label": "Gemini", "tier": "premium", "overseas": True},
-    "kimi": {"label": "Kimi", "tier": "premium", "overseas": False},
-}
-
-
-def test_a_projects_own_subagent_default_still_wins():
-    model_roles.install({"subagent_model": "gemini"})
-    policy = gate.policy_of({}, None, overseas_approved=True)
-
-    assert (
-        subagent_default(
-            {"default_subagent_model": "glm", "default_model": "glm"},
-            _CHOICES,
-            policy,
-        )
-        == "glm"
-    )
-
-
-def test_an_approved_team_gets_an_overseas_platform_subagent_default():
-    model_roles.install({"subagent_model": "gemini"})
-    policy = gate.policy_of({}, None, overseas_approved=True)
-
-    assert subagent_default({"default_model": "glm"}, _CHOICES, policy) == "gemini"
-
-
-def test_a_team_not_approved_for_overseas_models_keeps_its_main_default():
-    """The same gate its own turns pass: it could not run the model."""
-    model_roles.install({"subagent_model": "gemini"})
-    policy = gate.policy_of({}, None, overseas_approved=False)
-
-    assert subagent_default({"default_model": "glm"}, _CHOICES, policy) == "glm"
-
-
-def test_a_plan_without_the_models_tier_keeps_its_main_default():
-    model_roles.install({"subagent_model": "kimi"})
-    policy = gate.policy_of({}, frozenset({"included"}), overseas_approved=False)
-
-    assert subagent_default({"default_model": "glm"}, _CHOICES, policy) == "glm"
-    # With no platform choice at all, as before: the project's main default.
-    model_roles.reset()
-    assert subagent_default({"default_model": "glm"}, _CHOICES, policy) == "glm"
 
 
 @pytest.mark.anyio

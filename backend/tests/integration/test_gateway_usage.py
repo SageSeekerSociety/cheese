@@ -38,6 +38,11 @@ from tests.integration.conftest import (
 )
 from tests.support.hang import HANG_S
 
+# The days the fakes answer for are read from `utc_now()`, the moment the drain
+# reads too, held still for each test (`pinned_clock`): a run across UTC
+# midnight cannot split them.
+pytestmark = pytest.mark.usefixtures("pinned_clock")
+
 
 def _replace_chat_sleep(monkeypatch, sleep):
     from app.domain.agent import chat, gateway_spend, gateway_usage

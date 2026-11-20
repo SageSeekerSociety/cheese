@@ -45,3 +45,16 @@ def test_nothing_anywhere_is_an_empty_list():
 
 def test_names_that_are_not_strings_are_dropped_rather_than_passed_on():
     assert carried_skills(_agent(["wolfram", 3]), _room()) == ["wolfram"]
+
+
+def test_the_tasks_skills_are_added_on_top_of_what_the_teammate_carried():
+    """The 题目's skills come on top: a teammate falling back to the room keeps
+    the room's, one carrying its own keeps its own."""
+    assert carried_skills(_agent(), _room(["documents"]), ["wolfram"]) == [
+        "documents",
+        "wolfram",
+    ]
+    assert carried_skills(_agent(["showcase"]), _room(["documents"]), ["wolfram"]) == [
+        "showcase",
+        "wolfram",
+    ]

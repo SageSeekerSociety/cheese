@@ -7,20 +7,16 @@ import type { CardPhase } from '@/lib/topicState'
 import type { ChapterRow } from '@/types/chapters'
 import type { SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
-import { computed, onMounted, ref, toRef, watch } from 'vue'
-import { useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
+import { computed, ref } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 
 import { getAvatarUrl } from '@/utils/materials'
-
-import { useSkillProposals } from './useSkillProposals'
 
 import { attachmentRawUrl, downloadFile } from '@/api/roomFiles'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChatPanel from '@/components/ChatPanel.vue'
 import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
-import SkillProposalCard from '@/components/room/SkillProposalCard.vue'
+import AgentNowStrip from '@/components/room/AgentNowStrip.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
 import ThreadRoot from '@/components/room/ThreadRoot.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
@@ -38,7 +34,7 @@ import { useWorkspaceStore } from '@/stores/workspace'
 //
 // 它是一个组件而不是 TopicView 模板里的一段，因为同一段对话要挂在好几个地方：频道
 // 主线和任务页左边那一栏、手机上工作面板「对话」那一格，以及频道页右半边打开的支线
-// 和任务（`beside`，外面套 ThreadPane 的页头）。同一份接线写两遍是这几处早晚长歪的
+// （`beside`，外面套 ThreadPane 的页头）。同一份接线写两遍是这几处早晚长歪的
 // 原因：谁说话叫醒 AI 队友、输入框写什么、任务等审阅时那一条，都只在这里定。
 defineOptions({ name: 'TopicChatColumn' })
 
@@ -74,10 +70,12 @@ const props = defineProps<{
   composerClosed?: string | null
   /** 这里的提问已经不再等回答，见 ChatPanel。 */
   askClosed?: boolean
-  /** 采纳那一条此刻挂在别处（专注模式里它在面板底部），这里不再放一份。 */
+  /** 采纳那一条此刻挂在别处（对话看不见时它贴在工作面板底部），这里不再放一份。 */
   acceptElsewhere?: boolean
   /** 手机上：采纳那一条只放「审阅」，决定在「改动」页底部。 */
   acceptReviewButton?: boolean
+  /** 正在就地采纳的那件任务（主线上交付那几颗按钮）。 */
+  adoptingTask?: string | null
   // 换过 AI 队友之后 +1，对话栏据此重拉名册（它显示的 AI 名字来自那份名册）。
   // 同样必须一路透传：漏掉它不报错，只是换完队友对话里还写着上一个的名字。
 }>()
@@ -100,6 +98,8 @@ const emit = defineEmits<{
   // 芝士摆出来一份东西：面板立刻看一眼当前预览。必须一路透传，漏掉的话「预览」
   // 那一格又回到等轮询。
   (e: 'preview-shown'): void
+  // 页面开着时主线上实时来了一行交付（打开时已经在的不算）：页面决定要不要打开它。
+  (e: 'delivery-arrived', taskId: string): void
   // 消息的 ⋯ 里钉成章节/取消章节，或书签条里取消：这一页拿着这段对话的地址，由它去改。
   (e: 'chapter', block: Block): void
   (e: 'unchapter', target: Block | string): void
@@ -114,6 +114,8 @@ const emit = defineEmits<{
   (e: 'open-thread', block: Block): void
   (e: 'open-topic', topicId: string): void
   (e: 'open-card', taskId: string): void
+  /** 主线上交付那几颗按钮：去看这件任务的改动或预览，或者就地采纳这一版。 */
+  (e: 'delivery', act: { taskId: string; view: 'changes' | 'preview' | 'adopt' | 'return' }): void
   // AI 队友一条回复上的「查看过程」：右半边换成那一轮的现场。
   (e: 'open-process', turnId: string): void
   // 话题此刻处在哪一段，由采纳框说了算——头部的状态词和面板开在哪一格都读它。
@@ -131,28 +133,12 @@ const feedbackRef = ref<{ reload: () => Promise<void> } | null>(null)
 // 正在写退回理由：输入框让给退回那一块（AcceptRejectForm），写到一半的消息留在原处。
 const rejecting = ref(false)
 
-const router = useRouter()
 // 卡片属于提出它的那段对话：在任务里就是这个任务，否则是房间本身。三种卡都按它
 // 取、按它决定 —— 任务里提的卡落在任务里，按房间去取就一张也看不到。
 const conversationId = computed(() => props.taskId ?? props.threadId ?? props.topic.id)
-// 技能的提议卡：取数在这里（组件下不许取数），卡片只画。换对话就重读。
-const skills = useSkillProposals(
-  toRef(() => props.topic.project_id),
-  conversationId
-)
-onMounted(skills.load)
-watch(conversationId, skills.load)
-function openSkill(skill: { id: string }) {
-  void router.push({
-    name: 'project-skills',
-    params: { projectId: props.topic.project_id },
-    query: { skill: skill.id },
-  })
-}
-
 const store = useWorkspaceStore()
 
-// 这一栏是任务时，那件任务（任务页、右半边页头读的是同一份）。
+// 这一栏是任务时，那件任务（任务页页头读的是同一份）。
 const taskRead = useQuery(
   computed(() => ({ ...roomTaskQuery(props.taskId ?? ''), enabled: !!props.taskId })),
   queryClient
@@ -161,19 +147,16 @@ const task = computed<RoomTask | null>(() => (props.taskId ? taskRead.data.value
 const viewer = computed(() => currentUserName.value ?? myHandle())
 const closed = computed(() => task.value?.status === 'closed')
 // 负责人和协作者在开着的任务里说的话就是说给 AI 队友的，不用 @；别人说的话它当参考，
-// 要它回答就 @ 它。任务关了，和支线一样，@ 了才答。
+// 要它回答就 @ 它。任务关了，和频道主线一样，@ 了才答。
 const alwaysSummon = computed(
   () =>
     !!task.value &&
     !closed.value &&
     (task.value.owner_handle === viewer.value || (task.value.contributor_handles ?? []).includes(viewer.value))
 )
-const hint = computed(() => {
-  if (closed.value) return t('work.task.closedHint')
-  return props.beside && task.value ? t('work.room.thread.taskPlaceholder') : null
-})
+const hint = computed(() => (closed.value ? t('work.task.closedHint') : null))
 
-// 它挂着的那条主线消息：右半边打开的支线和任务都有；任务页上只有支线原地转成的那件
+// 它挂着的那条主线消息：右半边打开的支线有；任务页上只有支线原地转成的那件
 // 有，前面写它来自哪个频道（另开的任务，来源在「概览」顶上那一行）。
 const fromThread = computed(() => !!task.value?.from_thread)
 const threadRead = useQuery(
@@ -186,7 +169,7 @@ const threadRead = useQuery(
 const thread = computed(() => threadRead.data.value ?? null)
 const root = computed<Block | null>(() => (props.beside || fromThread.value ? thread.value?.root ?? null : null))
 // 从那条消息本身另开的任务，列在它下面；从支线里某句回复拆出去的，挂在那句下面
-// （ChatPanel）；这段对话自己转成的那件写在页头，不再列一遍。
+// （ChatPanel）。
 const madeRead = useQuery(
   computed(() => {
     const rootId = props.beside ? root.value?.id : undefined
@@ -224,13 +207,11 @@ function avatarOf(handle: string): string {
   return getAvatarUrl(props.members.find((m) => m.user_handle === handle)?.avatar_id)
 }
 
-/** 支线顶部那条原消息带的文件：下载在这里做，画消息的那一层只发一个意图。 */
+/** 支线顶部那条原消息带的文件：下载在这里做，画消息的那一层只发一个意图。
+ *
+ *  成功和失败的话都在 `downloadFile` 那一层说（`lib/download`），这里不再补一句。 */
 async function downloadRootFile(block: Block) {
-  try {
-    await downloadFile(attachmentRawUrl(props.topic.id, block.content), artifactName(block))
-  } catch {
-    toast.error(t('work.room.chat.downloadFailed'))
-  }
+  await downloadFile(attachmentRawUrl(props.topic.id, block.content), artifactName(block))
 }
 
 // 没加入的频道：输入框的位置是一句话加「加入频道」，加入之后输入框回来。
@@ -247,10 +228,15 @@ async function join() {
 const linkDown = computed(() => !!chatRef.value?.linkDown)
 const submitQuestion: SubmitPreviewQuestion = (request) => chatRef.value?.submitQuestion(request) ?? false
 
+const agentLines = ref<MemberActivityLine[]>([])
+function onActivity(lines: MemberActivityLine[]) {
+  agentLines.value = lines
+  emit('activity', lines)
+}
+
 defineExpose({
   linkDown,
   reloadFeedback: () => feedbackRef.value?.reload(),
-  reloadSkills: () => skills.load(),
   // 普通定位沿用聊天提交；图上画过东西时随行带那张合成图。明确的整页 AI 提问由
   // submitQuestion 在正文点名。
   say: (content: string, attachments?: ChatAttachment[]) => chatRef.value?.send(content, true, attachments) ?? false,
@@ -260,6 +246,8 @@ defineExpose({
 
 <template>
   <div class="chat-col">
+    <!-- 进频道或支线页就能看到：每位 AI 此刻在干什么（和输入框上方那一行同一份数据）。 -->
+    <AgentNowStrip :lines="agentLines" />
     <ChatPanel
       ref="chatRef"
       :topic="topic"
@@ -269,6 +257,8 @@ defineExpose({
       :hint="hint"
       :ask-closed="askClosed"
       :always-summon="alwaysSummon"
+      :place-state="task?.status ?? null"
+      :adopting-task="adoptingTask ?? null"
       :in-thread="beside"
       hide-header
       :show-composer="!rejecting"
@@ -287,9 +277,10 @@ defineExpose({
       @agent-control="emit('agent-control', $event)"
       @site-block="emit('site-block', $event)"
       @site-turns="emit('site-turns', $event)"
-      @activity="emit('activity', $event)"
+      @activity="onActivity"
       @state-changed="(resource: string, id?: string) => emit('state-changed', resource, id)"
       @preview-shown="emit('preview-shown')"
+      @delivery-arrived="emit('delivery-arrived', $event)"
       @mention-click="emit('mention-click', $event)"
       @open-file="(path) => emit('open-file', path)"
       @open-resource="
@@ -300,6 +291,7 @@ defineExpose({
       @open-thread="emit('open-thread', $event)"
       @open-topic="emit('open-topic', $event)"
       @open-card="emit('open-card', $event)"
+      @delivery="emit('delivery', $event)"
       @open-process="emit('open-process', $event)"
     >
       <!-- 验收卡贴在输入框上方，不在时间线末尾：它是一个等人做的决定，要一直看得
@@ -341,6 +333,7 @@ defineExpose({
               :key="made.id"
               :task="made"
               :owner-name="made.owner ? nameOf(made.owner) : null"
+              :owner-avatar="made.owner ? avatarOf(made.owner) : undefined"
               in-list
               @open="emit('open-card', $event)"
             />
@@ -374,17 +367,6 @@ defineExpose({
              「不用」记在服务端（按指纹），所以拒绝过一次的问题不会因为刷新又回来；
              换个说法重提的会回来 —— 那是另一次提问，值得再问一遍。 -->
         <AgentFeedbackCard ref="feedbackRef" :topic-id="conversationId" />
-        <!-- 技能提议卡：芝士把一套做法整理好了，请人就地决定存不存。同样由服务端
-             说了算：列的是这个房间里还在等人的提议，没有就什么都不画。 -->
-        <SkillProposalCard
-          :proposals="skills.proposals.value"
-          :saved="skills.saved.value"
-          :busy="skills.busy.value"
-          :error="skills.error.value"
-          @save="skills.save"
-          @decline="skills.decline"
-          @open="openSkill"
-        />
       </template>
       <!-- 输入区那一行只放**这条消息**的动作，所以这里只剩话题的状态。谁在跑
          （AI 队友）和在哪跑（工作电脑）都不是某条消息的动作，摆在输入区上纯是占

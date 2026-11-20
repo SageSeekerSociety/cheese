@@ -28,6 +28,7 @@ from app.api.users_deps import (
 from app.api.write_access import ROUTE_DECIDES
 from app.core.client_address import resolved_client_address
 from app.core.config import settings
+from app.core.content_review import TextKind, review_text
 from app.core.email import EMAIL_FORMAT
 from app.core.errors import (
     BadRequestError,
@@ -77,8 +78,7 @@ async def send_register_email_code(
         payload.invite_code, required=settings.require_invite_code
     )
 
-    # Open registration lets a stale code through: it is only an invitation.
-    if invite_code and settings.require_invite_code:
+    if invite_code:
         try:
             await InviteCodeService(db).validate_code(invite_code)
         except ValueError as exc:
@@ -156,7 +156,7 @@ async def register_user(
         raise UnprocessableEntityError(consent_problem)
     assert payload.consent is not None
 
-    if invite_code and settings.require_invite_code:
+    if invite_code:
         invite_service = InviteCodeService(session)
         try:
             await invite_service.validate_code(invite_code)
@@ -200,6 +200,10 @@ async def register_user(
         await client_budget.refund(client)
     finally:
         await redis.aclose()
+    # After the email code, not before: each review is a billed call, and only
+    # someone holding a code mailed to them gets this far. A nickname refused
+    # here costs its author a new code.
+    await review_text(TextKind.NAME, [nickname])
 
     try:
         user, profile = await auth_service.register_with_password(
@@ -237,11 +241,8 @@ async def register_user(
         try:
             consumed = await invite_service.consume_code(invite_code)
         except ValueError as exc:
-            if settings.require_invite_code:
-                raise _invite_code_error(exc) from exc
-            consumed = None
-        if consumed is not None:
-            await referrals.record_referral(session, consumed, user.id)
+            raise _invite_code_error(exc) from exc
+        await referrals.record_referral(session, consumed, user.id)
 
     access_token = await issue_session(
         response,

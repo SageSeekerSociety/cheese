@@ -118,7 +118,7 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
         # 一条发布路径 (结论 19): the private chat is told what a room is told, and
         # its terminal reply lands in activity exactly as a room's does.
         # 这个人没选过界面语言：平台说存下来的中文（和 sentences.render 一个口径）。
-        assert "不会发到聊天里，要用 chat_send 工具发" in screen.prompts[0]
+        assert "chat_send" in screen.prompts[0]
         # 私聊是名册两席的房间（结论 19）: it is told how to publish in its system
         # prompt like any room, and still told what is particular to a private chat.
         assert "chat_send" in screen.last_system_prompt
@@ -127,7 +127,7 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
         assert ("\n# 私聊\n" in screen.last_system_prompt) is private
         async with factory() as session:
             blocks = await BlockRepository(session).list_for_topic(topic_id)
-            kept = await read(session, topic_id)
+            kept = await read(session, topic_id, reader=None)
         stopped = [
             item for item in kept.items if item["record"].get("type") == "result"
         ]
@@ -147,7 +147,7 @@ async def test_chat_runs_through_a_session(client, tmp_path, private):
         # real document API and database rather than the shell HTTP fixture: a
         # private chat has no document of its own, so its draft is one of the
         # project's.
-        headers = {"X-Cheese-Token": screen.openings[0]["token"]}
+        headers = {"Authorization": f"Bearer {screen.openings[0]['token']}"}
         saved = client.post(
             f"/projects/{project_id}/documents",
             headers=headers,

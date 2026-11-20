@@ -1,7 +1,8 @@
 """Interpret human messages in the writer's transaction, then publish effects."""
 
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import partial
 
@@ -19,24 +20,39 @@ from app.domain.agent.mentions import (
     person_mentions,
 )
 from app.domain.agent.queries import _agent_at
-from app.domain.agent.turn.intake.rooms import _is_dm
+from app.domain.agent.turn.intake.rooms import _is_dm, only_person_in_project
 from app.domain.agent.turn.store.human import (
     CallAdmission,
     HumanHandoff,
     HumanPreparation,
     persist_human_message,
+    reply_parent,
 )
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block
 from app.domain.delivery.mention import mentioned_handles, record_mentions
-from app.domain.identity.handles import looks_like_agent_handle, names_a_person
+from app.domain.identity.handles import (
+    looks_like_agent_handle,
+    names_a_person,
+    recipient_seat,
+)
 from app.domain.project.reads import load_project
 from app.domain.room_task import naming
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.place import Place
 from app.domain.room_task.services import TaskService
-from app.domain.thread.services import answered_in, thread_teammate
+from app.domain.thread.services import thread_teammate
 from app.domain.topic_membership.services import TopicMemberService
+
+
+async def _owner_chats_named(session: AsyncSession, place: Place, content: str):
+    """The private chats a message seating the personal agents it names asks
+    their owners in (`own_calls.seat_if_named`)."""
+    return await own_calls.owner_chats_to_ask(
+        session,
+        place.room,
+        await own_calls.named_own_seats(session, place.room, content),
+    )
 
 
 async def prepare_human(
@@ -61,9 +77,30 @@ async def prepare_human(
     if project is None:
         raise NotFoundError(say("projectNotFound"))
     await own_calls.seat_if_named(session, project, topic, content, author)
+    return await _read_human(session, place, project, content, author, handoff.roster)
+
+
+async def _read_human(
+    session: AsyncSession,
+    place: Place,
+    project,
+    content: str,
+    author: str,
+    roster,
+    seating: Sequence[str] = (),
+) -> HumanPreparation:
+    """`prepare_human` after it seated whoever the message names: reads only, so
+    the composer's preview (`preview_addressing`) reads a draft through it."""
+    topic = place.room
     agent = await _agent_at(session, place)
     mentions = await person_mentions(
-        session, topic, content, agent, dm=_is_dm(topic), members=handoff.roster
+        session,
+        topic,
+        content,
+        agent,
+        dm=_is_dm(topic),
+        members=roster,
+        seating=seating,
     )
     # A two-seat private room addresses its peer only if that peer is an agent.
     seats = (
@@ -71,8 +108,24 @@ async def prepare_human(
         if _is_dm(topic)
         else None
     )
-    if place.thread is not None:
-        agent = await _thread_agent(session, place, project) or agent
+    thread_agent = (
+        await _thread_agent(session, place, project)
+        if place.thread is not None
+        else None
+    )
+    agent = thread_agent or agent
+    # A person alone in the project talks in its channels to its AI teammate:
+    # every message there is for it, as in a private chat. With anyone else in
+    # the project, a channel's main line is people talking to each other, and
+    # only a message that calls the teammate reaches it.
+    alone = (
+        place.task is None
+        and place.thread is None
+        and seats is None
+        and names_a_person(author)
+        and not _names_only_people(mentions.content)
+        and await only_person_in_project(session, topic.project_id, author, roster)
+    )
     recipient = {
         "instance_id": str(agent.instance_id),
         "handle": agent.handle,
@@ -82,6 +135,13 @@ async def prepare_human(
             and TaskService.takes_part(place.task, author)
             and not _names_only_people(mentions.content)
         )
+        or (
+            place.task is None
+            and thread_agent is not None
+            and names_a_person(author)
+            and not _names_only_people(mentions.content)
+        )
+        or alone
         or (seats is not None and looks_like_agent_handle(seats[1])),
     }
     return HumanPreparation(
@@ -96,16 +156,129 @@ async def prepare_human(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class Addressing:
+    """Who a person's message would be for, read the way sending reads it.
+
+    ``agent`` is the AI teammate it starts a turn for (its seat and name), or
+    None when it starts none. ``reason`` says which rule called it:
+    ``mention`` (it @-s the teammate), ``reply`` (it replies to the teammate's
+    message), ``task`` (its owner or a collaborator speaks in an open task),
+    ``thread`` (a person speaks in a 支线 a teammate was handed),
+    ``private`` (a private chat with the teammate), ``alone`` (the only person
+    in the project speaks in a channel's main line). ``people`` are the persons it
+    @-s. ``place`` is ``channel``, ``task`` or ``private``; ``task_status`` the
+    task's status when it is said in one."""
+
+    agent: dict | None
+    reason: str | None
+    people: list[str]
+    place: str
+    task_status: str | None
+
+    def as_json(self) -> dict:
+        return {
+            "agent": self.agent,
+            "reason": self.reason,
+            "people": self.people,
+            "place": self.place,
+            "task_status": self.task_status,
+        }
+
+
+async def preview_addressing(
+    session: AsyncSession,
+    place: Place,
+    content: str,
+    author: str,
+    *,
+    reply_to: uuid.UUID | None,
+    with_text: bool,
+    may_summon: bool,
+) -> Addressing:
+    """Who ``author``'s message would be for if sent now, without sending it.
+
+    The same reads sending makes (`prepare_human`, `refuse_call`), on the
+    same rules, minus every write: a personal agent the draft names is read as
+    seated rather than seated, and nothing is stored, delivered or woken.
+    ``with_text`` is False for a send of attachments alone, which no @ or reply
+    calls anyone by (`persist_human_message` reads ``refuse`` only for text).
+    ``may_summon`` is the sender's right to use the project's AI teammates
+    (#3830): without it the message wakes nobody, whoever it names."""
+    project = await load_project(session, place.project_id)
+    if project is None:
+        raise NotFoundError(say("projectNotFound"))
+    seating = await own_calls.named_own_seats(session, place.room, content)
+    prepared = await _read_human(
+        session, place, project, content, author, None, seating
+    )
+    recipient = prepared.recipient
+    reason = None
+    if recipient["mentioned"]:
+        reason = (
+            "task"
+            if place.task is not None
+            else "thread"
+            if place.thread is not None
+            else "private"
+            if _is_dm(place.room)
+            else "alone"
+        )
+    if with_text:
+        parent = await reply_parent(session, place, reply_to)
+        admission = await refuse_call(
+            session,
+            place,
+            prepared,
+            recipient,
+            author,
+            parent.author if parent is not None else None,
+        )
+        if admission.addressed is not None:
+            reason = (
+                "mention"
+                if f"<@{admission.addressed}>" in prepared.content
+                else "reply"
+            )
+    agent = None
+    if recipient["mentioned"] and may_summon:
+        instance = await AgentInstanceService(session).get_in_project(
+            project_id=project.id, instance_id=uuid.UUID(recipient["instance_id"])
+        )
+        agent = {
+            "handle": recipient_seat(recipient),
+            "name": instance.display_name,
+        }
+    people = [
+        h
+        for h in dict.fromkeys(mentioned_handles(prepared.content))
+        if h != author and (h in (MENTION_ALL, MENTION_HERE) or names_a_person(h))
+    ]
+    return Addressing(
+        agent=agent,
+        reason=reason if agent is not None else None,
+        people=people,
+        place=(
+            "task"
+            if place.task is not None
+            else "private"
+            if _is_dm(place.room)
+            else "channel"
+        ),
+        task_status=place.task.status.value if place.task is not None else None,
+    )
+
+
 def _names_only_people(content: str) -> bool:
     """Whether ``content`` @-s someone and every one it @-s is a person.
 
     A task calls its teammate with every message its owner or a collaborator
-    says, except one that says whom it is for and names no AI teammate there:
-    an @ of a person is said to that person, and the task's teammate does not
-    pick it up. Anyone else in the project may speak in a task as in a 支线:
-    their message calls the teammate only when it @-s it, and otherwise rides
-    into its next turn as something said there. ``@all``/``@here``
-    name the whole channel, the teammate included."""
+    says, and a 支线 with every message a person says there, except one that
+    says whom it is for and names no AI teammate: an @ of a person is said to
+    that person, and the teammate does not pick it up. Anyone else in the
+    project may speak in a task: their message calls the teammate only when it
+    @-s it, and otherwise rides into its next turn as something said there.
+    ``@all``/``@here`` name the whole channel, the teammate included."""
     handles = mentioned_handles(content)
     return bool(handles) and all(
         h not in (MENTION_ALL, MENTION_HERE) and names_a_person(h) for h in handles
@@ -113,11 +286,13 @@ def _names_only_people(content: str) -> bool:
 
 
 async def _thread_agent(session: AsyncSession, place: Place, project):
-    """Who a 支线's message is for when it calls nobody: the teammate the 支线
-    is talking with (`thread_teammate`). Handed to the channel's default
-    instead, it reached no one: the default has no turn there to hear it, and
-    the next turn of the teammate that does leaves out a message addressed to
-    somebody else."""
+    """Who a 支线's message is for when it @-s no AI teammate: the teammate the
+    支线 is talking with (`thread_teammate`), which a person's message there
+    calls unless it @-s only people. None when no teammate has been handed the
+    支线: a 支线 among people stays among people, and its messages call nobody.
+    Handed to the channel's default instead, a message there reached no one:
+    the default has no turn there to hear it, and the next turn of the teammate
+    that does leaves out a message addressed to somebody else."""
     assert place.thread is not None
     seat = await thread_teammate(session, place.thread)
     if seat is None:
@@ -149,9 +324,14 @@ async def refuse_call(
     的：那位的投递不重复记。无名可指的消息（只有附件、没有正文）到不了这里。
     """
     topic = place.room
-    seat = next(
-        (h for h in prepared.agent_handles if f"<@{h}>" in prepared.content), None
-    )
+    # The first teammate the message names, by where it stands in the text: a
+    # message that names several wakes them in that order (`record_mentions`).
+    named = [
+        h
+        for h in mentioned_handles(prepared.content)
+        if h in set(prepared.agent_handles)
+    ]
+    seat = named[0] if named else None
     if seat is None and reply_author is not None:
         # 名册是现问的：`person_mentions` 只在正文里有 `@` 时才填这两个名单，
         # 而这条路一句 `@` 都没有。
@@ -193,7 +373,7 @@ async def record_human_effects(
             session,
             project_id=place.project_id,
             room_id=place.room_id,
-            conversation_id=await answered_in(session, user_block),
+            conversation_id=user_block.conversation_id,
             block_id=user_block.id,
             author=author,
             content=user_block.content,
@@ -201,6 +381,9 @@ async def record_human_effects(
             by_agent=False,
             occurred_at=datetime.now(UTC),
             skip=frozenset({addressed} if addressed else ()),
+            # In a channel's main line the others take their turn one after
+            # another, each seeing what the one before said.
+            after=addressed if place.inner_id is None else None,
         )
     return answered
 
@@ -227,10 +410,12 @@ class HumanMessages:
         quoted_context: dict | None = None,
         handoff: HumanHandoff | None = None,
         by_assistant: bool = False,
+        expects_agent: bool = False,
     ) -> tuple[list[dict], uuid.UUID, list[uuid.UUID], bool]:
         stored = await persist_human_message(
             self.sessions,
             prepare=partial(prepare_human, handoff=handoff),
+            said_in=_owner_chats_named,
             refuse=refuse_call,
             record_effects=record_human_effects,
             topic_id=topic_id,
@@ -243,6 +428,7 @@ class HumanMessages:
             quoted_context=quoted_context,
             by_assistant=by_assistant,
             handoff=handoff,
+            expects_agent=expects_agent,
         )
         if not stored.duplicate:
             await publish_answered(stored.place.conversation_id, stored.answered)

@@ -180,7 +180,6 @@ export const FEEDBACK_ENTRIES: CatalogEntry[] = [
       tabs: [
         { value: 'all', label: '全部', count: 4 },
         { value: 'hot', label: '热门', count: 2 },
-        { value: 'active', label: '处理中', count: 1 },
         { value: 'resolved', label: '已完成', count: 1 },
       ],
       meta: FEEDBACK_META,

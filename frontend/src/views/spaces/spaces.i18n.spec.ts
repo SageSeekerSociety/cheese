@@ -44,6 +44,13 @@ vi.mock('@/api/spaces', () => ({
     listCategories: (...a: unknown[]) => listCategories(...a),
     listDomainGroups: (...a: unknown[]) => listDomainGroups(...a),
     listMaterials: vi.fn().mockResolvedValue({ materials: [], canManage: false }),
+    // 学情分析：进这块板时读一次开关与知识点清单（默认关着）。
+    readLearningAnalysis: vi.fn().mockResolvedValue({
+      learningAnalysis: { enabled: false },
+      knowledgePoints: [],
+      canManage: false,
+    }),
+    readLearningNotice: vi.fn().mockResolvedValue({ enabled: false, needsAcknowledge: false, acknowledged: false }),
   },
 }))
 
@@ -64,6 +71,13 @@ vi.mock('@/api', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/api')>()
   return { ...actual, listAgentTypes: (...a: unknown[]) => listAgentTypes(...a) }
 })
+
+// 「技能」那一格的候选，同一个理由（`useSkillCatalog` → `@/api/projectSkills`）。
+const listPlatformSkills = vi.fn()
+vi.mock('@/api/projectSkills', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  listPlatformSkills: (...a: unknown[]) => listPlatformSkills(...a),
+}))
 
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
@@ -129,6 +143,7 @@ afterAll(() => {
 
 beforeEach(() => {
   listAgentTypes.mockResolvedValue({ data: [], total: 0 })
+  listPlatformSkills.mockResolvedValue({ data: [], total: 0 })
   spaceDetail.mockResolvedValue({ space: { id: SPACE_ID, name: 'Systems', admins: [] } })
   listCategories.mockResolvedValue({ categories: [{ id: 3, name: 'Basics', displayOrder: 1, archivedAt: null }] })
   listDomainGroups.mockResolvedValue({ groups: [] })
@@ -171,7 +186,7 @@ describe('spaces in English', () => {
     const excerpt = {
       blockId: 'b1',
       quote: 'why does it loop',
-      studentName: 'Ann',
+      memberCode: 'A7F3',
       knowledgePoint: null,
       topicTitle: 'Loops',
       createdAt: null,

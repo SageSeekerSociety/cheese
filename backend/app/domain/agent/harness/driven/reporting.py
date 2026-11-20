@@ -130,7 +130,9 @@ def result_of(
             AgentResult(text=message, is_error=True, failure_code=code, **common),
             kind,
         )
-    if kind == lifecycle.EXITED_MIDWAY:
+    if kind in (lifecycle.EXITED_MIDWAY, lifecycle.READER_FAILED):
+        # A session its runner could no longer read was ended by it: to the
+        # room, its process exited in the middle of the work, as it did.
         said = str(failure.get("said") or "")
         if said:
             # Its process ended before it ever came up: a session that did

@@ -17,9 +17,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.api.response import ok
 from app.api.teams_deps import get_team_service
 from app.api.write_access import ROUTE_DECIDES
-from app.auth.checker import require_auth_user
+from app.auth.checker import get_auth_user, require_auth_user
 from app.auth.core import AuthUserInfo
-from app.common.auth import get_optional_user_id
 from app.core.errors import BadRequestError
 from app.db.session import get_db
 from app.domain.team.protocol import RecruitmentStatus
@@ -181,7 +180,7 @@ async def list_recruitment_posts(
     keyword: str | None = Query(default=None),
     page_start: int | None = Query(default=None, ge=0, alias="pageStart"),
     page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
-    viewer_id: int | None = Depends(get_optional_user_id),
+    viewer: AuthUserInfo = Depends(get_auth_user),
     service: RecruitmentService = Depends(_get_recruitment_service),
     db=Depends(get_db),
 ) -> dict:
@@ -193,6 +192,7 @@ async def list_recruitment_posts(
     teams_map, users_map, profiles_map, chosen_map = await _load_maps_for_posts(
         db, posts
     )
+    viewer_id = viewer.user_id or None
     viewer_team_ids = await _viewer_team_ids(db, viewer_id)
     items = [
         _post_to_api_seen_by(

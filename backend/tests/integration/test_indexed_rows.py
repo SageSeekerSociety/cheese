@@ -18,6 +18,7 @@ the first test fails when that copy and the code's drift apart.
 """
 
 import re
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
@@ -49,6 +50,8 @@ INDEXES = {
     "ix_blocks_unanswered",
     "ix_blocks_agent_checks",
     "ix_blocks_shown",
+    "ix_blocks_prompted_turn",
+    "ix_blocks_consumed_turn",
 }
 
 
@@ -674,3 +677,96 @@ async def test_a_hook_event_id_is_looked_up_by_index(db_factory):
         # statistics (on dev, the partial one); either way not the whole table.
         plan = await _generic_plan(conn, "probe_coalesced", *coalesced[0])
         assert "Seq Scan" not in plan, plan
+
+
+@pytest.mark.anyio
+async def test_whose_turn_failed_is_read_by_turn_id_not_from_every_message(
+    db_factory,
+):
+    """A failed turn is owned by the agent its message was handed to, or the one
+    whose turn read it; the lookup finds those messages through an index on each
+    key rather than reading every message of the rooms since the failure."""
+    async with db_factory() as session:
+        seeded = await _seed(session)
+        rooms = seeded["rooms"]
+        handed, read = uuid.uuid4(), uuid.uuid4()
+        for turn, key, seat in (
+            (handed, "prompted_turn", "cheese-a"),
+            (read, "consumed_turn", "cheese-b"),
+        ):
+            session.add(
+                Block(
+                    project_id=rooms["failed"].project_id,
+                    conversation_id=rooms["failed"].id,
+                    kind=BlockKind.message,
+                    author_type=AuthorType.participant,
+                    author="u1",
+                    content="x",
+                    meta={key: str(turn), "agent_recipient": {"handle": seat}},
+                    created_at=seeded["now"] - timedelta(hours=1),
+                )
+            )
+        await session.flush()
+        await session.execute(text("ANALYZE blocks"))
+        # No `enable_seqscan = off` here, and hundreds of turns asked about, as
+        # a room list asks: the indexes are partial, PostgreSQL keeps no
+        # statistics on a partial index's expression, and without the extended
+        # statistics (`st_blocks_*_turn`) the planner prices each turn at its
+        # default 0.5% of the table and reads the whole of it instead.
+        asked = {handed, read, *(uuid.uuid4() for _ in range(300))}
+        with statements(session) as seen:
+            owners = await MemberWaits(session)._turn_owners(
+                [room.id for room in rooms.values()],
+                seeded["now"] - timedelta(days=7),
+                asked,
+            )
+        assert owners == {handed: "cheese-a", read: "cheese-b"}
+
+        conn = await session.connection()
+        found = [(sql, p) for sql, p in seen if "prompted_turn" in sql]
+        assert len(found) == 1, seen
+        sql, params = found[0]
+        # Both plans a cached statement runs on: the custom ones of its first
+        # executions, priced with the hundreds of turns in hand, and the
+        # generic one it may switch to.
+        for mode in ("force_custom_plan", "force_generic_plan"):
+            await conn.exec_driver_sql("PREPARE probe_turn_owners AS " + sql)
+            await conn.exec_driver_sql(f"SET LOCAL plan_cache_mode = {mode}")
+            args = ", ".join(_literal(value) for value in params)
+            rows = await conn.exec_driver_sql(
+                f"EXPLAIN EXECUTE probe_turn_owners({args})"
+            )
+            plan = "\n".join(row[0] for row in rows.all())
+            await conn.exec_driver_sql("DEALLOCATE probe_turn_owners")
+            assert "ix_blocks_prompted_turn" in plan, f"{mode}:\n{plan}"
+            assert "ix_blocks_consumed_turn" in plan, f"{mode}:\n{plan}"
+        await session.rollback()
+
+
+@pytest.mark.anyio
+async def test_a_rooms_last_activity_reads_each_task_from_the_end_of_its_index(
+    db_factory,
+):
+    """A room's 最后活动时间 counts its tasks' blocks. Each task's newest block
+    is read from the end of its run in the index; joining the tasks' blocks and
+    aggregating instead let the planner hash the whole table once per room."""
+    from app.domain.topic.repositories import TopicRepository
+
+    async with db_factory() as session:
+        seeded = await _seed(session)
+        rooms = seeded["rooms"]
+        await session.execute(text("ANALYZE"))
+        with statements(session) as seen:
+            listed = await TopicRepository(session).list_for_project_with_activity(
+                rooms["quiet"].project_id, viewer=None, sort="last_activity_at"
+            )
+        last = {topic.id: at for topic, at in listed}
+        assert last[rooms["quiet"].id] == seeded["now"] - timedelta(hours=1)
+
+        conn = await session.connection()
+        [(sql, params)] = [(s, p) for s, p in seen if "max(blocks.created_at)" in s]
+        plan = await _generic_plan(conn, "probe_last_activity", sql, params)
+        assert "Hash Join" not in plan, plan
+        assert "Seq Scan on blocks" not in plan, plan
+        assert "Backward using ix_blocks_conversation_created_at" in plan, plan
+        await session.rollback()

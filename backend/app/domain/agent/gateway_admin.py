@@ -71,6 +71,7 @@ from app.domain.agent.gateway_admin_types import (
     _PRICE_FIELDS,  # noqa: F401
     _SOURCE_INFO_KEYS,  # noqa: F401
     _UPSTREAM_INFO_KEYS,  # noqa: F401
+    CACHE_LIFETIME,
     EXTRA_HEADERS,
     FREE,  # noqa: F401
     NO_EXPLICIT_CACHE,  # noqa: F401
@@ -247,18 +248,24 @@ class GatewayAdmin:
             page += 1
         return out
 
-    async def usage(self, start_date: str, end_date: str) -> UsageWindow:
+    async def usage(
+        self, start_date: str, end_date: str, *, upstream: str | None = None
+    ) -> UsageWindow:
         """窗口内的用量。按模型归因取 ``breakdown.model_groups``——它的键正好是
         ``/model/info`` 的 ``model_name``;``breakdown.models`` 用的是另一个名字,用错
         整张表就对不上号。按项目取 ``breakdown.api_keys``(键是 key 的 sha256,与
         ``/key/list`` 的 ``token`` 一致)。``breakdown.models`` 另记一份进
         ``by_upstream``,只给消费上限用:上限按上游模型名计账。窗口是闭区间,
         ``end_date`` 当天含在内。
+
+        给了 ``upstream`` 就只读这个上游模型名下的账:网关按 ``model`` 参数筛
+        ``LiteLLM_DailyUserSpend.model``,正是 spend_cap.py 拦截时求和的那一列。
         """
+        params = {"start_date": start_date, "end_date": end_date}
+        if upstream is not None:
+            params["model"] = upstream
         response = await self._request(
-            "GET",
-            "/user/daily/activity/aggregated",
-            params={"start_date": start_date, "end_date": end_date},
+            "GET", "/user/daily/activity/aggregated", params=params
         )
         payload = await self._json(response)
         results = payload.get("results") if isinstance(payload, dict) else None
@@ -280,8 +287,8 @@ class GatewayAdmin:
                 _accumulate(by_model, model_name, usage)
             for key_hash, entry in _entries(breakdown, "api_keys").items():
                 _accumulate(by_key, key_hash, _usage(_metrics_of(entry)))
-            for upstream, entry in _entries(breakdown, "models").items():
-                _accumulate(by_upstream, upstream, _usage(_metrics_of(entry)))
+            for upstream_name, entry in _entries(breakdown, "models").items():
+                _accumulate(by_upstream, upstream_name, _usage(_metrics_of(entry)))
             daily.append(
                 {
                     "date": str(row.get("date") or ""),
@@ -312,6 +319,7 @@ class GatewayAdmin:
         capabilities: Mapping[str, bool] | None = None,
         tier: str | None = None,
         overseas: bool | None = None,
+        cache_lifetime_s: int | None = None,
         order: int | None = None,
         free: bool | None = None,
         upstream_headers: Mapping[str, str] | None = None,
@@ -330,6 +338,8 @@ class GatewayAdmin:
             info["cheese_tier"] = tier
         if overseas is not None:
             info["cheese_overseas"] = bool(overseas)
+        if cache_lifetime_s:
+            info[CACHE_LIFETIME] = cache_lifetime_s
         return await self._new(
             name,
             upstream_model=upstream_model,
@@ -428,6 +438,7 @@ class GatewayAdmin:
         capabilities: Mapping[str, bool] | None = None,
         tier: str | None = None,
         overseas: bool | None = None,
+        cache_lifetime_s: int | None = None,
         order: int | None = None,
         free: bool | None = None,
         upstream_headers: Mapping[str, str] | None = None,
@@ -463,6 +474,10 @@ class GatewayAdmin:
             info["cheese_tier"] = tier
         if overseas is not None:
             info["cheese_overseas"] = bool(overseas)
+        if cache_lifetime_s is not None:
+            # 0 clears it the way ``spend_cap_usd`` does: the merge keeps a key it
+            # is not given, and ``_seconds`` reads 0 as none.
+            info[CACHE_LIFETIME] = cache_lifetime_s
         info.update(_capability_params(capabilities))
         info.update(_source_info(free, session_header))
         if spend_cap_usd is not None:

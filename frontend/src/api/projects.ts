@@ -1,4 +1,5 @@
 import type { ListPayload, Project, ProjectSite, ProjectSiteInfo, WaitingItem } from '../cx_types'
+import type { ProjectAvatarSpec } from '../utils/projectAvatar'
 
 import { ApiError, request } from './http'
 
@@ -17,19 +18,24 @@ export function listAwaitingMe(): Promise<ListPayload<WaitingItem>> {
 }
 
 /** 新手引导最后一步「建好项目」：回答存到账号上，按回答建项目
- *  （`POST /users/me/onboarding`）。`project_id` 每走一遍引导选一次，重试补完同一个项目。 */
+ *  （`POST /users/me/onboarding`）。`project_id` 每走一遍引导选一次，重试补完同一个项目。
+ *  带 `starter` 是领一道平台的新手题：项目由题目建，再领同一道打开的是同一个项目。
+ *  `teammate` 是建好的项目里默认队友的名字，第一句点名用它。 */
 export interface OnboardingAnswers {
   project_id: string
   project_name: string
   intent: string
   work_role?: WorkRole | null
   organization?: string
+  starter?: StarterKey
 }
-export type WorkRole = 'student' | 'teacher' | 'office' | 'research' | 'maker' | 'other'
+/** 三道新手题，和后端 `app/domain/onboarding/starters.py` 的 `StarterKey` 一致。 */
+export type StarterKey = 'web' | 'slides' | 'lesson'
+export type WorkRole = 'student' | 'highschool' | 'teacher' | 'office' | 'research' | 'maker' | 'other'
 
 export function finishOnboarding(
   answers: OnboardingAnswers
-): Promise<{ project_id: string; root_topic_id: string | null }> {
+): Promise<{ project_id: string; root_topic_id: string | null; teammate: string }> {
   return request('/users/me/onboarding', { method: 'POST', body: JSON.stringify(answers) })
 }
 
@@ -44,7 +50,6 @@ export function getStartSteps(
 export function createProject(
   name: string,
   teamId?: number,
-  externalTaskId?: number,
   forgeKind?: 'forgejo' | 'github_app',
   intent?: string,
   agentName?: string,
@@ -56,9 +61,6 @@ export function createProject(
       id,
       name,
       team_id: teamId,
-      // Set when the project is created FROM a 赛题, so the 赛题 can find it
-      // again. Absent for a project made from the rail.
-      external_task_id: externalTaskId,
       forge_kind: forgeKind,
       // 建项目时问的那一句「你打算做什么」。空串就是没答，服务端不写任何东西。
       intent,
@@ -76,6 +78,22 @@ export function listProjectsForTask(taskId: number): Promise<ListPayload<Project
 // Single project card.
 export function getProject(projectId: string): Promise<Project> {
   return request<Project>(`/projects/${encodeURIComponent(projectId)}`)
+}
+
+/** 给项目改名（能改设置的人才行）。地址里的短名不跟着变。 */
+export function renameProject(projectId: string, name: string): Promise<{ id: string; name: string }> {
+  return request<{ id: string; name: string }>(`/projects/${encodeURIComponent(projectId)}/name`, {
+    method: 'PUT',
+    body: JSON.stringify({ name }),
+  })
+}
+
+/** 换项目格子画的东西（项目设置里能改设置的人才行）。kind 为 null 回到从项目名取字的默认格子。 */
+export function setProjectAvatar(projectId: string, avatar: ProjectAvatarSpec): Promise<ProjectAvatarSpec> {
+  return request<ProjectAvatarSpec>(`/projects/${encodeURIComponent(projectId)}/avatar`, {
+    method: 'PUT',
+    body: JSON.stringify(avatar),
+  })
 }
 
 /** 归档项目：只有所有者能做。项目从所有人的列表里消失、不能再修改，里面的内容都保留。 */

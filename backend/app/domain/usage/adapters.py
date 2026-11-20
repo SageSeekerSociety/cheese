@@ -9,6 +9,7 @@
 """
 
 import uuid
+from collections.abc import Sequence
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -43,3 +44,8 @@ class ComputeCredits:
             source_task_id=source_task_id,
             credits_total=credits_total,
         )
+
+    async def team_has_earmark(
+        self, team_id: int, source_task_ids: Sequence[int]
+    ) -> bool:
+        return await self._ledger.team_has_earmark(team_id, source_task_ids)

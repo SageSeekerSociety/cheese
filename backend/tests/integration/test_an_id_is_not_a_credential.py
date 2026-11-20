@@ -1,7 +1,7 @@
 """知道一个 id 不等于持有凭据：这三条路由过去只要 id 就办事。
 
 一次在飞分支之外的审计扫出这一族。调用者是 ``off_the_street`` 造出来的 ——
-同一套 integration fixture 的 ``client``，把 ``X-Cheese-Token`` 摘掉，于是真的是
+同一套 integration fixture 的 ``client``，把默认带上的平台密钥摘掉，于是真的是
 「什么凭据都没有」。改动前，这些请求各自拿到了 200：
 
     POST  /blocks/{id}/reactions   以任意 handle 给任意一条消息加/删表情
@@ -32,10 +32,10 @@ import uuid
 from app.domain.block.models import Block, BlockKind
 from app.domain.event_author import AuthorType
 from tests.conftest import (
-    seed_claim,
     seed_space,
     seed_task_with_protocol,
     seed_user,
+    start_task_project,
     wait_work_idle,
 )
 from tests.integration.conftest import (
@@ -79,17 +79,12 @@ def _insert_block(client, project_id: str, topic_id: str) -> str:
     return holder["id"]
 
 
-def _board(client, owner: str = "alice") -> tuple[int, dict]:
-    """A Space with one 赛题 and one project opened from it — the board's one row."""
+def _board(client, owner: str = "alice") -> tuple[int, str]:
+    """A Space with one 赛题 and one project started from it — the board's one
+    row. Returns the Space's id and the project's."""
     space_id = seed_space(client, "明理书院")
     task_id = seed_task_with_protocol(client, space_id=space_id)
-    seed_claim(client, task_id, handle=owner)
-    project = post_project(
-        client,
-        json={"name": "队伍A", "external_task_id": task_id},
-        owner=owner,
-    ).json()["data"]
-    return space_id, project
+    return space_id, start_task_project(client, task_id, handle=owner)
 
 
 def test_a_block_id_alone_does_not_add_a_reaction(client):
@@ -130,25 +125,25 @@ def test_a_block_id_alone_does_not_dispatch_a_card(client):
 
 
 def test_a_space_id_alone_does_not_list_the_board(client):
-    space_id, project = _board(client)
+    space_id, project_id = _board(client)
 
     with off_the_street(client) as anon:
         # 对照组：隔壁那条项目读接口在同一张请求下回 401，证明摘法造出的是真
         # 匿名调用者，而不是「摘错了头所以整条请求坏了」。
-        assert anon.get(f"/projects/{project['id']}/usage").status_code == 401
+        assert anon.get(f"/projects/{project_id}/usage").status_code == 401
         assert anon.get(f"/spaces/{space_id}/dashboard").status_code == 401
 
 
 def test_the_board_opens_for_the_projects_it_lists_and_nobody_else(client):
     """加门不等于关掉这项能力：列在这块板上的项目里的人照旧读得到，
     只是「知道 space id」不再是那张票。"""
-    space_id, _ = _board(client)
+    space_id, project_id = _board(client)
 
     r = client.get(
         f"/spaces/{space_id}/dashboard", headers=session_auth_headers("alice")
     )
     assert r.status_code == 200, r.text
-    assert [t["name"] for t in r.json()["data"]["teams"]] == ["队伍A"]
+    assert [t["project_id"] for t in r.json()["data"]["teams"]] == [project_id]
 
     seed_user(client, "mallory")
     r = client.get(

@@ -1,84 +1,55 @@
-/* 话题页和私聊页的左右两栏：专注模式里对话栏的进出、对话收起后的窄边、两栏之间的分隔
- * 线、工作面板的外壳和它的浮层。TopicView 和 DmView 都用 `scoped src` 引这一份（和
- * accept-card.css 同一个办法）。 */
+/* 话题页和私聊页的几块：对话那一块、工作面板的外壳和它的浮层。桌面上对话和工作面板的每一格
+ * 都是外壳布局区里的一块，页签、分隔线和宽度归布局区（roomLayout.ts）。TopicView 和 DmView
+ * 都用 `scoped src` 引这一份（和 accept-card.css 同一个办法）。 */
 
-/* 专注模式：对话栏是一只侧抽屉（§9：整块进出 --dur-slow，走掉快一档）。动的是
-   flex-basis；`!important` 是为了压过模板上那条内联的 `flex: 0 0 N%`。 */
-.focus-chat-enter-active,
-.focus-chat-leave-active {
-  overflow: hidden;
-}
-.focus-chat-enter-active {
-  transition:
-    flex-basis var(--dur-slow) var(--ease-out),
-    opacity var(--dur-slow) var(--ease-out);
-}
-.focus-chat-leave-active {
-  transition:
-    flex-basis var(--dur-base) var(--ease-in),
-    opacity var(--dur-base) var(--ease-in);
-}
-.focus-chat-enter-from,
-.focus-chat-leave-to {
-  flex-basis: 0% !important;
-  opacity: 0;
-}
-.focus-chat-enter-active > :deep(*),
-.focus-chat-leave-active > :deep(*) {
-  width: var(--chat-frozen-w);
-  min-width: var(--chat-frozen-w);
-}
-/* 对话和面板之间那条可拖的线。2px，用专给分隔线的那一档色（--line-2，比发丝线
-   --line 深一档），静止时就分得出来。它原来是一条 5px 的灰带，比屏幕上任何一条线
-   都粗，悬停还变琥珀——琥珀留给主操作。能抓的范围左右各多 4px（::before），不然
-   一条细线很难按准。 */
-.chat-rail {
+/* 对话那一格里的那一块：对话本身，和窄档里压在它上面的面板浮层、遮罩。浮层整块被推到
+   右边外面时不让这一块横向滚（见下面 .panes 那条的理由）。 */
+.room-conversation {
   display: flex;
   position: relative;
-  flex: 0 0 44px;
+  flex: 1 1 0;
   flex-direction: column;
-  align-items: center;
-  padding-top: 8px;
-  border-right: 1px solid var(--line);
+  min-height: 0;
+  overflow-x: clip;
+  background: var(--surface);
 }
-/* 对话收着时来了新回复：未读点（琥珀只给未读，§1.6）。 */
-.chat-rail__news {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-pill);
-  background: var(--accent);
-  pointer-events: none;
+.room-conversation > .col-chat {
+  flex: 1 1 auto;
+  min-height: 0;
 }
-.pane-resizer {
-  position: relative;
-  z-index: var(--z-raised);
-  flex: 0 0 2px;
-  cursor: col-resize;
-  background: var(--line-2);
-  transition: background-color var(--dur-quick) var(--ease-standard);
-}
-.pane-resizer::before {
-  content: '';
-  position: absolute;
-  inset: 0 -4px;
-}
-.pane-resizer:hover {
-  background: var(--faint);
+.room-state {
+  background: var(--surface);
 }
 .col {
   min-width: 0;
 }
-/* 工作面板的外壳（里面就是 WorkPanel 本身）：并排时是普通的 flex 子项，窄档里被
-   下面的 --sheet 改成一只浮层。 */
+/* 这一排本身不横向滚。
+ *
+ * 收起的面板浮层（`.panel-host--sheet`）整块被 translateX(100%) 推到这一排右边外面，
+ * 于是这一排多出一段横向可滚区域；话题页再有 `overflow: hidden` 兜着，整页就能被滚
+ * 到一个偏左的位置：对话被推出左边、右边一片空白、任务页头只剩最后一截——而且它就
+ * 停在那儿，看上去像「页面歪了、卡住了」。触发它不需要人拖动：收起的面板里任何一次
+ * `scrollIntoView`（面板自己的滚动、聚焦、锚点）都会把最近的那个可滚祖先横向滚过去。
+ *
+ * `clip` 而不是 `hidden`：hidden 会让这一排变成滚动容器，横竖两个方向都得自己管；clip
+ * 两个方向都能看见，只是不产生可滚区域，纵向弹层照样溢出显示。只横着裁，纵向留给
+ * 输入框上方的 @ 候选这类贴边浮层。 */
+.panes {
+  overflow-x: clip;
+}
+/* 工作面板的外壳（里面就是 WorkPanel 本身）：没有外壳的布局区时是普通的 flex 子项，窄档里
+   被下面的 --sheet 改成一只浮层。 */
 .panel-host {
   display: flex;
   flex-direction: column;
   height: 100%;
   min-width: 0;
   min-height: 0;
+}
+/* 桌面上各格都传送进了布局区：外壳留在页头那一格里，不占地方。 */
+.panel-host--cells {
+  height: 0;
+  overflow: hidden;
 }
 
 /* 面板浮层：从对话右边拉进来的一张纸。收起时走进屏幕右侧并藏掉 visibility（不占

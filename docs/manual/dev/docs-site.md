@@ -116,7 +116,7 @@ fence 的正文是 YAML 的一个很小的子集：顶格的 `key: value`；`key
 
 `demo-arch` 还有一份 DOM 测试：`docs/site/test/demo-arch.test.mjs` 用 happy-dom（借 `frontend/node_modules` 里那一份，不引新依赖）挂载构建产物，真点「下一站」、真换场景，断言包停在哪一站、检视面板说哪一句、哪一站被画成拦下——构建时那份 HTML 和浏览器里那份是同一批字符串，哪边坏了它就红。跑法见文件头。 `demo-panel` 和 `:::walk` 的在 `docs/site/test/demo-panel.test.mjs`：不播放时停在结果、播放时从动作之前开始、停在结果上、点步骤切到那一帧，以及构建拒绝产品里没有的界面字样和超过四拍的演示。
 
-`data: <数据集名>` 的步骤不带数字，它按位置绑到构建时算出来的那份数据上：行数和步骤数必须一致，每一步还可以用 `check:` 断言落在的那一行包含某个词。加了、删了或调了顺序的行会让构建失败，而不是把数字悄悄安到别的步骤上。[上下文那页](/dev/context)的时间线就是这么来的：`docs/site/gen/prompt.py` 真跑一遍 `build_system_prompt`，把输出按行首的 `## ` 切成块，字符数按一个固定比例折成 token（页面上写明是估算）。
+`data: <数据集名>` 的步骤不带数字，它按位置绑到构建时算出来的那份数据上：行数和步骤数必须一致，每一步还可以用 `check:` 断言落在的那一行包含某个词。加了、删了或调了顺序的行会让构建失败，而不是把数字悄悄安到别的步骤上。[上下文那页](/dev/context)的时间线就是这么来的：`docs/site/gen/prompt.py` 对任务会话的清单真跑一遍渲染，把输出按行首的 `## ` 切成块，字符数按一个固定比例折成 token（页面上写明是估算）。
 
 几条必须守住的：
 
@@ -164,7 +164,7 @@ fence 的正文是 YAML 的一个很小的子集：顶格的 `key: value`；`key
 | [待办与通知](/inbox) | 「等你处理」里的几种事 | 一个 `demo-panel` | 同上 |
 | [账号与登录](/account) | 在桌面端经浏览器登录 | 一个 `:::walk` | 同上 |
 | [验收与采纳](/accept) | 分几次交付时的「采纳」 | 一个 `demo-panel` | 同上 |
-| [提示词注入与上下文管理](/dev/context) | 一轮里上下文窗口怎么被填满，各占多少、谁看得见 | `demo-context` | `gen/prompt.py` 真跑 `build_system_prompt`，按行首的 `## ` 切块，字符数 ÷ 1.6 折成 token |
+| [提示词注入与上下文管理](/dev/context) | 一轮里上下文窗口怎么被填满，各占多少、谁看得见 | `demo-context` | `gen/prompt.py` 真跑任务会话的清单，按行首的 `## ` 切块，字符数 ÷ 1.6 折成 token |
 | [一条消息怎么变成芝士的一轮](/dev/turn) | 一轮的七步 | `demo-steps` + `embed: turn` | 这一页自己那七节（每步链回本节）；画面是剧本 `scenes/turn.json` |
 | [一条消息怎么变成芝士的一轮](/dev/turn#seats) | 两个队友在同一个频道里并行 | `demo-steps` + `embed: seats` | 「同一频道里的几个 AI 队友」那六节；画面是剧本 `scenes/seats.json` |
 | [任务 → 分支 → PR → 验收合并](/dev/delivery) | 一条活从开卡到合进主干 | `demo-steps` | 这一页「从任务到验收卡」那六步，采纳那一步是闸门 |
@@ -217,7 +217,7 @@ cookie 名 `__Host-cheese-docs`：HttpOnly、Secure、`Path=/`、不带 `Domain`
 
 文档站和平台是**同站**（同一个可注册域 `okcheese.com`），不是同源。SameSite 管的是跨站，挡不住 `okcheese.com` 下别的子域名带着 cookie 发请求，所以靠 Origin：
 
-- 换 cookie 的那一下，`Origin` 必须是平台的源，别的页面没法替读者登录（也就没法把人登到别人的账号上）。
+- 换 cookie 的那一下，`Origin` 必须是平台的源（`FRONTEND_URL` 或 `FRONTEND_ALIASES` 里的任一个），别的页面没法替读者登录（也就没法把人登到别人的账号上）。
 - 文档站上会改东西的请求（问芝士要花读者的额度），`Origin` 必须是文档站自己。
 - cookie 用 `SameSite=Lax`，不用 `Strict`：从别处的链接打开一页开发文档是跨站的顶层跳转，`Strict` 时这一下不带 cookie，管理员会先看到门。
 
@@ -251,7 +251,7 @@ cookie 名 `__Host-cheese-docs`：HttpOnly、Secure、`Path=/`、不带 `Domain`
 
 ## AI 队友查文档 {#agent-docs}
 
-AI 队友在平台里回答「怎么用」的问题时，用两个平台工具查文档：`cheese_docs_search`（关键词检索，和问芝士同一份索引、同一套排序）和 `cheese_docs_read`（读一页的 `.md` 原文）。后端接口是 `POST /docs/agent/search` 和 `POST /docs/agent/read`（`backend/app/domain/docs_site/library.py`）。
+AI 队友在平台里回答「怎么用」的问题时，用两个平台工具查文档：`cheese_help`（关键词检索，和问芝士同一份索引、同一套排序）和 `cheese_help`（读一页的 `.md` 原文）。后端接口是 `POST /docs/agent/search` 和 `POST /docs/agent/read`（`backend/app/domain/docs_site/library.py`）。
 
 - 使用文档对所有项目开放。
 - 开发文档只对「在做知是本身」的项目开放：项目绑定的仓库在 `DOCS_DEV_REPOSITORIES` 里（默认 `SageSeekerSociety/cheese`）。别的项目检索不到开发文档，点名读 `dev/…` 返回 403。

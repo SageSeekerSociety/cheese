@@ -1,5 +1,6 @@
 """Forgejo's REST implementation of the proposal operations used by Cheese."""
 
+from dataclasses import replace
 from datetime import datetime
 from typing import Any
 from urllib.parse import quote
@@ -9,6 +10,7 @@ import httpx
 from app.core.config import settings
 from app.core.forge_http import forge_client
 from app.core.sentences import exception_text, say
+from app.domain.review import merge_check
 from app.domain.review.github_pr import (
     GitHubPRError,
     GitHubPrError,
@@ -80,7 +82,33 @@ class ForgejoClient:
                 return result
             page += 1
 
+    def git_url(self, owner: str, repo: str) -> str:
+        """Where git reaches the repository: the forge at the address its API
+        is called at, without `/api/v1`."""
+        forge = self.api_base.removesuffix("/api/v1")
+        return f"{forge}/{quote(owner, safe='')}/{quote(repo, safe='')}.git"
+
     async def pull_request_status(self, *, owner, repo, number, token):
+        """The PR as Forgejo reports it, with Forgejo's `false` settled by git
+        and its `true` held to the head it reports.
+
+        `false` on an open, ready PR is a merge check still running or a
+        conflict, and only the test merge tells which (`merge_check`). Its
+        answer for this head and base, once there is one, decides: a conflict
+        is `mergeable=False`, anything else stays unknown. Without an answer
+        yet, one is started in the background and the PR reads unknown; nothing
+        here waits for it.
+
+        `true` is the verdict of Forgejo's last merge check, and the head the
+        PR reports is the branch as git holds it now. Forgejo takes a push in
+        after the push returns (`services/pull.TestPullRequest`): it moves the
+        PR's `refs/pull/<n>/head` to the new head and, as its next step, marks
+        the PR as being checked. Until then the PR reads `true` from the check
+        of its previous head, and a merge of the new head is refused. So a
+        `true` counts only once that ref names the reported head, read before
+        the PR; before that the PR reads unknown, as GitHub's does while it
+        computes."""
+        taken_in = await self._pull_ref_head(owner, repo, number, token)
         data = self._data(
             await self.request(
                 "GET",
@@ -88,7 +116,47 @@ class ForgejoClient:
                 token=token,
             )
         )
-        return self.status(data)
+        status = self.status(data)
+        if status.mergeable and taken_in != status.head_sha:
+            return replace(status, mergeable=None, mergeable_state="unknown")
+        if (
+            data.get("mergeable") is not False
+            or status.state != "open"
+            or status.merged
+            or status.draft
+            or not status.base_sha
+        ):
+            return status
+        url = self.git_url(owner, repo)
+        found = merge_check.answer(url, status.base_sha, status.head_sha)
+        if found == "conflict":
+            return replace(status, mergeable=False, mergeable_state="dirty")
+        if found is None:
+            merge_check.start(url, token, status.base_sha, status.head_sha)
+        return status
+
+    async def _pull_ref_head(self, owner, repo, number, token) -> str | None:
+        """The commit Forgejo has taken into PR ``number``: its
+        `refs/pull/<n>/head`. None when Forgejo has no such ref."""
+        name = f"refs/pull/{number}/head"
+        response = await self.request(
+            "GET",
+            f"{self._repo(owner, repo)}/git/{name}",
+            token=token,
+        )
+        if response.status_code == 404:
+            return None
+        found = self._data(response)
+        # One ref named exactly is answered as an object, a prefix as a list.
+        rows = found if isinstance(found, list) else [found]
+        return next(
+            (
+                str((row.get("object") or {}).get("sha") or "") or None
+                for row in rows
+                if isinstance(row, dict) and row.get("ref") == name
+            ),
+            None,
+        )
 
     @staticmethod
     def status(data):
@@ -96,11 +164,21 @@ class ForgejoClient:
         raw_title = str(data.get("title") or "")
         title = raw_title.upper()
         draft = title.startswith(("WIP:", "[WIP]"))
-        mergeable = data.get("mergeable")
+        # Forgejo's `mergeable` is a plain bool, and `false` does not by
+        # itself mean a conflict: `PullRequest.Mergeable` (Forgejo's
+        # models/issues/pull.go) reads false while its merge check is still
+        # running, which it does again after every push to either branch, as
+        # well as on a conflict, a checker error and a WIP title. Nothing else
+        # in the API tells these apart (the merge endpoint refuses them all
+        # with the same 405). So one reading of `false` is GitHub's `null`, not
+        # yet known, never the `False` the platform reads as a conflict;
+        # `pull_request_status` settles it with git.
+        mergeable = True if data.get("mergeable") is True else None
         return PullRequestStatus(
             head_sha=data["head"]["sha"],
             head_ref=data["head"]["ref"],
             base_ref=str((data.get("base") or {}).get("ref") or ""),
+            base_sha=str((data.get("base") or {}).get("sha") or ""),
             state=data["state"],
             merged=merged,
             merge_commit_sha=data.get("merge_commit_sha") if merged else None,
@@ -110,13 +188,7 @@ class ForgejoClient:
                 else None
             ),
             mergeable=mergeable,
-            mergeable_state="draft"
-            if draft
-            else "dirty"
-            if mergeable is False
-            else "clean"
-            if mergeable is True
-            else "unknown",
+            mergeable_state="draft" if draft else "clean" if mergeable else "unknown",
             draft=draft,
             # 平台按卡片的 subject 写这个标题（`pr_publish.sync_pr_text`），仓库
             # 自己的检查评判它，平台 squash 时落的也是同一行；两条合并路径都会
@@ -173,6 +245,8 @@ class ForgejoClient:
                 if live.draft
                 else "改动与目标版本冲突"
                 if live.mergeable is False
+                else "代码托管服务尚未算出 PR 能否合并"
+                if live.mergeable is None
                 else "检查或评审条件尚未满足"
             )
             return MergeResult(blocked_reason=reason)

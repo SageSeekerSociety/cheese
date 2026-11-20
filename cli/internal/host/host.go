@@ -65,6 +65,8 @@ type Host struct {
 	localFSMu  sync.Mutex
 	localFSSet *localfs.GrantSet
 
+	machine machineRelay // streams a session's sandbox opened (machine.go)
+
 	updating    atomic.Bool // guards against concurrent / re-entrant self-updates
 	sleepMu     sync.Mutex
 	sleepCancel context.CancelFunc
@@ -324,6 +326,8 @@ func (h *Host) onMsg(m link.Msg) {
 		h.startExec(m)
 	case "execution.call":
 		go h.runExecutor(m)
+	case "machine.data", "machine.close":
+		h.machineFrame(m)
 	case "exec.cancel": // stop an in-flight exec (e.g. the caller's timeout fired)
 		h.cancelExec(m.ID)
 	case "localfs.grants": // the platform's copy of what this machine may touch
@@ -368,13 +372,7 @@ func (h *Host) createSession(m link.Msg) {
 		// way of reaching it is per-message, so there is nothing to re-establish.
 		return
 	}
-	// The server owns the screen's identity: it hands down an opaque token in
-	// m.Screen, which the host injects as CHEESE_SCREEN so any process the screen
-	// spawns can prove which screen it belongs to when it calls back.
-	env := make([]string, 0, len(m.Env)+2)
-	if m.Screen != "" {
-		env = append(env, "CHEESE_SCREEN="+m.Screen)
-	}
+	env := make([]string, 0, len(m.Env)+1)
 	// The connector's own PATH, which carries the runtime it placed
 	// (`devenv`): a terminal server already running from before would
 	// otherwise hand the session the PATH it started with.

@@ -51,6 +51,7 @@ class TestBug3TeamEligibilityByDesign:
         )
         assert team_resp.status_code == 201
         team_id = team_resp.json()["data"]["team"]["id"]
+        team_handle = team_resp.json()["data"]["team"]["handle"]
 
         # Add member as MEMBER role
         add_resp = api_client.post(
@@ -87,10 +88,18 @@ class TestBug3TeamEligibilityByDesign:
             headers={"Authorization": f"Bearer {owner.token}"},
         )
 
+        joined = api_client.post(
+            f"/spaces/{space['id']}/members",
+            json={"userId": member.user_id},
+            headers={"Authorization": f"Bearer {owner.token}"},
+        )
+        assert joined.status_code == 201, joined.text
+
         return {
             "owner": owner,
             "member": member,
             "team_id": team_id,
+            "team_handle": team_handle,
             "task_id": task_id,
         }
 
@@ -109,6 +118,21 @@ class TestBug3TeamEligibilityByDesign:
         assert isinstance(teams, list)
         team_ids = [t["team"]["id"] for t in teams]
         assert setup["team_id"] in team_ids
+
+    def test_each_team_is_named_by_its_handle(
+        self, api_client: TestClient, setup: dict
+    ) -> None:
+        """Each team the task page lists carries its handle: the page links to
+        that team's members from it, to fix what keeps the team out."""
+        resp = api_client.get(
+            f"/tasks/{setup['task_id']}",
+            params={"queryJoinability": "true"},
+            headers={"Authorization": f"Bearer {setup['owner'].token}"},
+        )
+        assert resp.status_code == 200
+        teams = resp.json()["data"]["task"]["participationEligibility"]["teams"]
+        entry = next(t for t in teams if t["team"]["id"] == setup["team_id"])
+        assert entry["team"]["handle"] == setup["team_handle"]
 
     def test_member_does_not_see_team_in_eligibility(
         self, api_client: TestClient, setup: dict

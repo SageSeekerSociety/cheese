@@ -5,5 +5,14 @@
   "resubmitted": "Resubmitted — waiting for an admin to review it",
   "saveAndResubmit": "Save and resubmit for review",
   "saveChanges": "Save changes",
-  "unsaved": "Unsaved changes"
+  "unsaved": "Unsaved changes",
+  "stageEffect": {
+    "title": "Save these stage changes?",
+    "failing": "{stages} past due: {who} handed nothing in and will be marked failed when you save",
+    "reopening": "{who} will go from failed back to in progress",
+    "stage": "“{name}”",
+    "whoMore": "{names} and others, {n} in all",
+    "joiner": ", ",
+    "failingNoStage": "{who} will have a stage past its due date with nothing handed in, and will be marked failed when you save"
+  }
 }

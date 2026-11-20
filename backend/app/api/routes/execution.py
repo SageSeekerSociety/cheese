@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.write_access import ROUTE_DECIDES
+from app.core import credentials
 from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -18,7 +19,11 @@ from app.core.errors import (
     GatewayTimeoutError,
     NotFoundError,
 )
-from app.core.sandbox_auth import personal_execution_claims, scoped_token_claims
+from app.core.sandbox_auth import (
+    held_by_a_machine,
+    personal_execution_claims,
+    scoped_token_claims,
+)
 from app.core.sentences import say
 from app.domain.agent import dispatch_log, execution
 from app.domain.agent.device_hub import (
@@ -27,9 +32,11 @@ from app.domain.agent.device_hub import (
     DeviceOffline,
     DeviceUnreachable,
 )
+from app.domain.agent.task_checkout import checkout_steps
 from app.domain.device import owner_reads
 from app.domain.machine import owner_reads as machine_owner_reads
 from app.domain.machine import session_work
+from app.domain.machine.infra_records import keep_checked_out
 from app.domain.room_task.place import session_keeps_work
 from app.domain.topic.reads import execution_room
 
@@ -95,6 +102,22 @@ def _checkpoints(method: str, params: dict) -> bool:
     return method == "control" and params.get("subtype") == "checkpoint"
 
 
+#: The calls that may start a command on the machine: a tool call, a project
+#: server's, and the session's own commands, checkpoints and hooks (``control``).
+_STARTS_WORK = frozenset({"invoke", "mcp", "control"})
+
+
+def _with_caller(method: str, params: dict, caller: dict | None) -> dict:
+    """``params`` as the machine is sent them: a call that may start work
+    names whose it is (``caller``), as the credential it came with says. Set
+    here, over whatever the request said, so the name a command runs under is
+    always the one this route verified."""
+    if method not in _STARTS_WORK:
+        return params
+    named = {key: value for key, value in params.items() if key != "caller"}
+    return named if caller is None else {**named, "caller": caller}
+
+
 class ExecutionRequest(BaseModel):
     method: str
     params: dict = {}
@@ -127,8 +150,10 @@ async def execute(
         payload.method,
         payload.params.get("id", ""),
     )
-    token = request.headers.get("x-cheese-token", "")
+    token = credentials.presented(request.headers)
     claims = scoped_token_claims(token)
+    if claims and held_by_a_machine(claims):
+        claims = None
     # A person's own 芝士 works its sandbox with a credential of its own kind
     # (``machine.holder.Personal``): the conversation is theirs, in no project
     # and no room.
@@ -232,6 +257,18 @@ async def execute(
     ):
         raise ForbiddenError("This credential only reads the machine's files")
     target = lease
+    # Who the call is from: the session attached to the machine (its
+    # attachment), the conversation it works and the seat it acts under. A
+    # credential no session holds names nobody: the call is the machine's own.
+    caller = (
+        {
+            "attachment": str(session_id),
+            "conversation": str(topic_id),
+            **({"author": claims["a"]} if claims.get("a") else {}),
+        }
+        if session_id is not None
+        else None
+    )
     if _checkpoints(payload.method, payload.params) and (
         await machine_owner_reads.sandbox_destroyed(
             db, target["device_id"], target.get("resource_id")
@@ -239,7 +276,7 @@ async def execute(
     ):
         # The turn ended after its sandbox was destroyed while idle: there is
         # nothing on a machine to push, and what the sandbox held was pushed
-        # and backed up by the checkpoint of the turn that last used it. The
+        # by the checkpoint of the turn that last used it, or is gone. The
         # host may be gone too, so asking it would only fail.
         return {}
     # A person's 芝士 works only on the platform's own machines: a person's
@@ -309,7 +346,7 @@ async def execute(
         answer = await execution.call(
             target,
             payload.method,
-            payload.params,
+            _with_caller(payload.method, payload.params, caller),
             trace_id=trace_id,
             timeout=max(0.001, deadline - time.monotonic()),
         )
@@ -358,6 +395,15 @@ async def execute(
         raise GatewayTimeoutError(say("executionTimedOut")) from exc
     else:
         await _settle(db, dispatch, dispatch_log.Outcome.done)
+        await _time_checkout(
+            db,
+            payload,
+            target,
+            answer,
+            topic_id=topic_id,
+            session_id=session_id,
+            took_s=time.monotonic() - (deadline - payload.timeout),
+        )
         return answer
     finally:
         await db.rollback()
@@ -366,6 +412,41 @@ async def execute(
             trace_id,
             time.monotonic_ns(),
         )
+
+
+async def _time_checkout(
+    db: AsyncSession,
+    payload: "ExecutionRequest",
+    lease: dict,
+    answer,
+    *,
+    topic_id: uuid.UUID,
+    session_id: uuid.UUID | None,
+    took_s: float,
+) -> None:
+    """Keep how long opening a task's checkout took on a platform sandbox
+    (``task_checkout`` names its call ``task-checkout-…``), for the admin
+    machines page. Never changes how the call ends."""
+    tool_id = str(payload.params.get("id") or "")
+    if (
+        payload.method != "invoke"
+        or not tool_id.startswith("task-checkout-")
+        or not lease.get("platform")
+    ):
+        return
+    try:
+        value = (answer.get("value") if isinstance(answer, dict) else None) or {}
+        await keep_checked_out(
+            db,
+            conversation_id=topic_id,
+            session_id=session_id,
+            total_s=took_s,
+            steps=checkout_steps(str(value.get("stdout") or "")),
+        )
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        logger.warning("could not keep how long a checkout took", exc_info=True)
 
 
 async def _distrust(

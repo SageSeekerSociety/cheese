@@ -18,6 +18,14 @@ describe('MarkdownRenderer', () => {
     expect(html).toContain('class="token')
     expect(html).toContain('language-js')
   })
+
+  it('keeps inline math inline after rendering a display math block', () => {
+    const renderer = new MarkdownRenderer()
+    const html = renderer.render('$$\nE = mc^2\n$$\n\n其中 $1 - p = q$，且坏公式 $\\frac{1{2}$ 不会打崩整条消息。')
+    expect(html).toContain('katex-display')
+    expect(html.match(/katex-display/g)).toHaveLength(1)
+    expect(html).toContain('不会打崩整条消息')
+  })
 })
 
 describe('renderMarkdownError', () => {

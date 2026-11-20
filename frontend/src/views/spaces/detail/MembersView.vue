@@ -1,17 +1,21 @@
 <script setup lang="ts">
-// 成员与角色这一屏的画面：页头、搜索框、那张表。读名单、改角色、确认框都归容器
-// `Members.vue`（场景规则见 docs/manual/dev/scenes.md）。
-import type { SpaceAdminRoleType } from '@/types'
+// 成员与角色这一屏的画面：页头、加入方式（加入链接与「加入需要批准」）、待批准的加入申请、
+// 搜索框、那张表。读名单、读写链接、批准申请、改角色、确认框都归容器 `Members.vue`
+// （场景规则见 docs/manual/dev/scenes.md）。
+import type { SpaceAdminRoleType, SpaceJoinLink, SpaceJoinRequest } from '@/types'
 
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import { getAvatarUrl } from '@/utils/materials'
 
+import SpaceJoinLinkCard from './SpaceJoinLinkCard.vue'
+
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import { secondaryIdentity, userName } from '@/lib/agentNames'
 import { myHandle } from '@/me'
 
 export type Role = SpaceAdminRoleType | 'MEMBER'
@@ -19,11 +23,12 @@ export type Role = SpaceAdminRoleType | 'MEMBER'
 export interface Row {
   userId: number
   handle: string
+  /** 原名（昵称，缺了退账号）；下面 `remark` 有值时它是副行上的原名。 */
   name: string
+  /** 当前查看者给这个人设的私人称呼；没设过是 null。 */
+  remark?: string | null
   avatarId?: number | null
   role: Role
-  /** 当初用的那张码；`null` = 没有记录。 */
-  viaCode: string | null
 }
 
 const props = defineProps<{
@@ -33,6 +38,20 @@ const props = defineProps<{
   busy: boolean
   failed: boolean
   errorDetail: string | null
+  /** 这个空间的加入链接；还没读回来时是 `null`。 */
+  joinLink: SpaceJoinLink | null
+  joinBusy: boolean
+  joinError: string
+  joinCopied: boolean
+  /** 待批准的加入申请，最早的在前。 */
+  requests: SpaceJoinRequest[]
+  requestsLoading: boolean
+  requestsFailed: boolean
+  requestsError: string | null
+  /** 正在批准或拒绝的那一份；`null` 是没有。 */
+  answering: number | null
+  /** 上一次批准或拒绝没成的那一句。 */
+  answerError: string
 }>()
 
 const emit = defineEmits<{
@@ -40,16 +59,39 @@ const emit = defineEmits<{
   makeAdmin: [row: Row]
   revokeAdmin: [row: Row]
   transferOwner: [row: Row]
+  resetLink: []
+  setApproval: [approval: boolean]
+  copyLink: [url: string]
+  approveRequest: [requestId: number]
+  rejectRequest: [requestId: number]
+  retryRequests: []
 }>()
 
-const { t } = useI18n()
+const { t, locale } = useI18n()
 
 const keyword = ref('')
 
+/** 一行显示的名字：有个人备注用备注，否则原名。 */
+function rowName(row: Row): string {
+  return row.remark || row.name
+}
+
+/** 一行的副行身份（原名与账号）；昵称等于账号时只写一次。 */
+function rowIdentity(row: Row): string {
+  // 这一行原来就总写账号；有备注时再补上原名。没备注、且名字已经是账号本身时不再重复。
+  const identity = secondaryIdentity({ nickname: row.name, username: row.handle, remark: row.remark })
+  if (identity) return identity
+  return row.name === row.handle ? '' : row.handle
+}
+
+// 搜备注、原名和账号都算：设了备注的人被原来的名字找到，仍是同一个人。
 const filtered = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
   if (!kw) return props.rows
-  return props.rows.filter((r) => r.name.toLowerCase().includes(kw) || r.handle.toLowerCase().includes(kw))
+  return props.rows.filter(
+    (r) =>
+      rowName(r).toLowerCase().includes(kw) || r.name.toLowerCase().includes(kw) || r.handle.toLowerCase().includes(kw)
+  )
 })
 
 function roleLabel(role: Role): string {
@@ -63,41 +105,111 @@ function roleHint(role: Role): string {
   return t('spaces.members.role.memberHint')
 }
 
-/** 邀请去哪：两处邀请入口都埋在设置里，页头这颗按钮把人送过去，不在这里重做一遍。 */
-const inviteTargets = {
-  codes: { name: 'SpacesDetailSettingsInviteCodes', params: { spaceId: props.spaceId } },
-  domains: { name: 'SpacesDetailSettingsDomainGroups', params: { spaceId: props.spaceId } },
+/** 邮箱域名组在设置里：页头这颗按钮把人送过去，不在这里重做一遍。 */
+const domainGroupsTarget = { name: 'SpacesDetailSettingsDomainGroups', params: { spaceId: props.spaceId } }
+
+// 申请那一块：开着「加入需要批准」时总在；关着时只在还有没处理的申请（或读失败）时出现。
+const showRequests = computed(() => !!props.joinLink?.approval || props.requests.length > 0 || props.requestsFailed)
+
+function requesterName(request: SpaceJoinRequest): string {
+  return userName(request.user) || String(request.userId)
+}
+
+/** 申请人的副行身份（原名与账号），设了备注时才画。 */
+function requesterIdentity(request: SpaceJoinRequest): string {
+  const identity = secondaryIdentity(request.user)
+  if (identity) return identity
+  const handle = request.user?.username || ''
+  return handle && handle !== requesterName(request) ? handle : ''
+}
+
+function formatTime(at: number): string {
+  return new Date(at).toLocaleString(locale.value, {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 }
 </script>
 
 <template>
   <PageHeader :title="t('spaces.members.title')" show-on-mobile>
-    <!-- Both ways to invite already live in the space settings. This entry points at
-         them instead of re-implementing the create/invalidate flows here. -->
+    <!-- Email domain groups live in the space settings; this entry points there. -->
     <template #actions>
-      <v-menu location="bottom end">
-        <template #activator="{ props: activator }">
-          <BaseButton v-bind="activator" kind="secondary" size="sm" prepend-icon="mdi-account-plus">
-            {{ t('spaces.members.invite') }}
-          </BaseButton>
-        </template>
-        <v-list density="compact">
-          <v-list-item
-            :to="inviteTargets.codes"
-            prepend-icon="mdi-ticket-outline"
-            :title="t('spaces.members.inviteCodes')"
-          />
-          <v-list-item
-            :to="inviteTargets.domains"
-            prepend-icon="mdi-email-outline"
-            :title="t('spaces.members.inviteDomainGroups')"
-          />
-        </v-list>
-      </v-menu>
+      <BaseButton kind="secondary" size="sm" prepend-icon="mdi-email-outline" :to="domainGroupsTarget">
+        {{ t('spaces.members.inviteDomainGroups') }}
+      </BaseButton>
     </template>
   </PageHeader>
 
   <div class="mem">
+    <SpaceJoinLinkCard
+      class="mem__card"
+      :link="joinLink"
+      :busy="joinBusy"
+      :error="joinError"
+      :copied="joinCopied"
+      @reset="emit('resetLink')"
+      @set-approval="(approval) => emit('setApproval', approval)"
+      @copy="(url) => emit('copyLink', url)"
+    />
+
+    <section v-if="showRequests" class="settings-card mem__card">
+      <h2 class="settings-card__title mem__card-title">{{ t('spaces.members.requests.title') }}</h2>
+      <p v-if="answerError" role="alert" class="t-body mem__error">{{ answerError }}</p>
+      <BaseLoadError
+        v-if="requestsFailed"
+        class="mem__requests-error"
+        :title="t('spaces.members.requests.loadFailed')"
+        :error="requestsError"
+        @retry="emit('retryRequests')"
+      />
+      <div v-else-if="requestsLoading && !requests.length" class="mem__requests-loading">
+        <v-progress-linear indeterminate :aria-label="t('spaces.members.joinLink.loading')" />
+      </div>
+      <ul v-else-if="requests.length" class="mem__requests">
+        <li v-for="request in requests" :key="request.id" class="mem__request">
+          <UserAvatar
+            :avatar="getAvatarUrl(request.user?.avatarId)"
+            :name="requesterName(request)"
+            :seed="request.user?.username ?? String(request.userId)"
+            size="28"
+          />
+          <div class="mem__request-main">
+            <div class="mem__name">{{ requesterName(request) }}</div>
+            <div v-if="requesterIdentity(request)" class="mem__muted">
+              {{ requesterIdentity(request) }}
+            </div>
+            <div class="mem__muted">
+              {{ t('spaces.members.requests.requestedAt', { time: formatTime(request.createdAt) }) }}
+            </div>
+          </div>
+          <div class="mem__request-actions">
+            <BaseButton
+              kind="ghost"
+              size="sm"
+              :disabled="answering !== null"
+              @click="emit('rejectRequest', request.id)"
+            >
+              {{ t('spaces.members.requests.reject') }}
+            </BaseButton>
+            <BaseButton
+              kind="secondary"
+              size="sm"
+              :loading="answering === request.id"
+              :disabled="answering !== null"
+              @click="emit('approveRequest', request.id)"
+            >
+              {{ t('spaces.members.requests.approve') }}
+            </BaseButton>
+          </div>
+        </li>
+      </ul>
+      <p v-else class="mem__muted mem__requests-empty">{{ t('spaces.members.requests.empty') }}</p>
+    </section>
+
     <BaseLoadError
       v-if="failed"
       :title="t('spaces.members.loadMembersFailed')"
@@ -123,7 +235,6 @@ const inviteTargets = {
         <tr>
           <th>{{ t('spaces.members.columns.member') }}</th>
           <th>{{ t('spaces.members.columns.role') }}</th>
-          <th>{{ t('spaces.members.columns.joinedVia') }}</th>
           <th class="mem__actions-head"></th>
         </tr>
       </thead>
@@ -134,24 +245,19 @@ const inviteTargets = {
               <!-- getAvatarUrl 对 null / undefined / 0 一律回空串（不再回 /avatars/default），
                    所以这里直接交给它就行，不用再套一层真值判断；没头像时 UserAvatar 自己
                    走彩色首字母。seed 传 handle，颜色跟着人走、不跟昵称走。 -->
-              <UserAvatar :avatar="getAvatarUrl(row.avatarId)" :name="row.name" :seed="row.handle" size="28" />
+              <UserAvatar :avatar="getAvatarUrl(row.avatarId)" :name="rowName(row)" :seed="row.handle" size="28" />
               <div>
                 <div class="mem__name">
-                  {{ row.name }}
+                  {{ rowName(row) }}
                   <span v-if="row.handle === myHandle()" class="mem__muted">{{ t('spaces.members.you') }}</span>
                 </div>
-                <div class="mem__muted">{{ row.handle }}</div>
+                <div class="mem__muted">{{ rowIdentity(row) }}</div>
               </div>
             </div>
           </td>
           <td>
             <div>{{ roleLabel(row.role) }}</div>
             <div class="mem__muted">{{ roleHint(row.role) }}</div>
-          </td>
-          <td>
-            <code v-if="row.viaCode" class="mem__code">{{ row.viaCode }}</code>
-            <span v-else-if="row.role === 'OWNER'" class="mem__muted">{{ t('spaces.members.createdSpace') }}</span>
-            <span v-else class="mem__muted">{{ t('spaces.members.unknown') }}</span>
           </td>
           <td class="mem__actions">
             <template v-if="isOwner && row.role !== 'OWNER'">
@@ -180,6 +286,8 @@ const inviteTargets = {
     <p v-else-if="!failed" class="mem__muted">{{ t('spaces.members.empty') }}</p>
   </div>
 </template>
+
+<style scoped src="@/styles/settings-card.css"></style>
 
 <style scoped>
 .mem {
@@ -231,12 +339,60 @@ const inviteTargets = {
   font-size: 13px;
 }
 
-.mem__code {
-  padding: 2px 8px;
-  font-family: var(--font-mono);
-  font-size: 13px;
-  background: var(--fill);
-  border-radius: var(--radius-sm);
+.mem__card {
+  margin-bottom: 16px;
+}
+
+.mem__card-title {
+  margin: 0;
+}
+
+.mem__error {
+  padding: 0 24px 8px;
+  margin: 0;
+  color: var(--danger-ink);
+}
+
+.mem__requests-error {
+  margin: 0 24px 16px;
+}
+
+.mem__requests-loading,
+.mem__requests-empty {
+  padding: 8px 24px 16px;
+  margin: 0;
+}
+
+.mem__requests {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mem__request {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 16px 10px 24px;
+  border-top: 1px solid var(--line);
+}
+
+.mem__request-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.mem__request-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 8px;
+}
+
+@media (max-width: 767.98px) {
+  .mem__request {
+    flex-wrap: wrap;
+    padding: 10px 16px;
+  }
 }
 
 .mem__actions,

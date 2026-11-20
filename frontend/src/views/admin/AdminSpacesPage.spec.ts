@@ -31,6 +31,7 @@ import AdminSpacesPage from './AdminSpacesPage.vue'
  */
 function application(over: Record<string, unknown> = {}) {
   return {
+    kind: 'create',
     id: 42,
     name: 'Programming course',
     intro: 'Exercises',
@@ -96,6 +97,14 @@ describe('space review queue', () => {
     await fireEvent.update(textarea, 'Please describe the course')
     await fireEvent.click(submit)
     await waitFor(() => expect(review).toHaveBeenCalledWith(42, false, 'Please describe the course'))
+  })
+
+  it('approving a request to open a space names the scope the row showed', async () => {
+    reviews.mockResolvedValue({ items: [application({ kind: 'open', requestId: 7, openScope: ['ruc.edu.cn'] })] })
+    const page = mountPage()
+    await page.findByText('Programming course')
+    await fireEvent.click(page.getByRole('button', { name: 'spaces.review.approve' }))
+    await waitFor(() => expect(review).toHaveBeenCalledWith(42, true, '', ['ruc.edu.cn']))
   })
 
   it('shows a failed queue request instead of an empty queue', async () => {

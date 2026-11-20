@@ -57,6 +57,7 @@ vi.mock('../../api', async () => {
           preview && { ...preview, url: preview.kind === 'app' ? preview.url : 'https://preview-topic-a.example/' }
       ),
     listRoomOutputs: vi.fn().mockResolvedValue({ data: [], total: 0 }),
+    roomFileRevisions: vi.fn().mockResolvedValue({ data: [], total: 0, path: '', version: null }),
     readPreviewFile: (...a: unknown[]) => readFile(...a),
     requestPreviewSession: (...a: unknown[]) => requestPreviewSession(...a),
     getDocNodes: vi.fn().mockResolvedValue({ data: [], total: 0 }),

@@ -1,10 +1,13 @@
-"""A task whose last delivery landed closes once its AI teammate has written it up.
+"""A task being written up closes once its AI teammate has written it up.
 
-Accepting the last step does not close the task on the spot. The task stays
-open, with `closing_since` set, while its AI teammate is told to bring the task
-document up to date, say what came of the task, and close it with the close a
-task's own session has (`cheese_task(action=close)`); to everyone looking it already
-reads 已采纳 (`presentation`). It closes when that close is called — the one
+A merge never closes a task: its AI teammate judges it done and closes it
+(`review.task_landing`, `review.close_grounds`), or, for a task the channel's
+main line opened, the main line does — and that one is never written up. In a project that waits for
+its deploy, that close leaves the task open until the merge is live, and then
+the task stays open, with `closing_since` set, while its AI teammate is told to
+bring the task document up to date, say what came of the task, and close it
+with the close a task's own session has (`cheese_task(action=close)`); to
+everyone looking it already reads 已采纳 (`presentation`). It closes when that close is called — the one
 fact here that says the write-up was done — or, without it, when the instruction
 for it was given up on (`delivery.timer.give_up_stale`), or, whatever
 happened to it, `CLOSE_AT_THE_LATEST` after it landed.
@@ -58,6 +61,10 @@ from app.domain.block.queries import queued_messages, read_failed_messages
 from app.domain.notice_meta import EVENT_TURN_TIMEOUT, SEVERITY_WARN, WHO_HUMAN, notice
 from app.domain.room_task import heard
 from app.domain.room_task.checkouts import after_close
+from app.domain.room_task.lock_order import (
+    lock_task_for_change,
+    lock_tasks_for_change,
+)
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.ports import SweepCheckouts
 from app.domain.room_task.services import said_title
@@ -342,8 +349,11 @@ async def close_task(
     down. Once ``session`` commits, whatever a teammate is still doing in it
     is stopped through ``work``: a closed task is work that is over, and a
     session left working in it goes on paying for the model while every write
-    it makes is refused. ``work`` is None only when the session that would be
-    stopped is the one closing the task.
+    it makes is refused. ``work`` is None when the session that would be
+    stopped is the one closing the task, or when the close is made where no
+    session is held (a deploy's report, `review.task_landing.deploy_landed`):
+    the session's holder stops it once the task has been closed a while
+    (`agent.turn_inputs.stop_work_in_closed_tasks`).
 
     ``machines`` goes to `after_close` unchanged: the call that reaches a
     machine to remove this room's closed checkouts (`ports.SweepCheckouts`).
@@ -358,6 +368,10 @@ async def close_task(
     # read there as 已采纳 while the task is open — the one state that is
     # listed in neither 「未完成」 nor 「已关闭」.
     task.closing_since = None
+    # Nor for its deploy: closed by hand while it waited, it is over.
+    task.deploying_since = None
+    task.deploy_blocked_url = None
+    task.held_conclusion = None
     if task.status is not TaskStatus.closed:
         task.status = TaskStatus.closed
         task.closed_at = datetime.now(UTC)
@@ -407,7 +421,10 @@ async def close_after_summary(
     or asked for in it (`unfinished`, module docstring). Returns the task it
     closed; the pages showing it hear from `room_task.live`. ``machines`` is
     `close_task`'s."""
-    task = await session.get(Task, task_id, with_for_update=True)
+    # Under the task lock order (`lock_order`): a message being sent in the
+    # task holds its conversation's numbering until it commits, so it is seen
+    # waiting below rather than stopped by the close.
+    task = await lock_task_for_change(session, task_id)
     if task is None or task.closing_since is None:
         return None
     if await unfinished(session, task.id):
@@ -435,18 +452,25 @@ async def close_overdue(
     something else is being done or asked for in it — and, past
     `STOP_WORK_AFTER`, that one too. ``machines`` is `close_task`'s."""
     now = datetime.now(UTC)
-    overdue = list(
-        await session.scalars(
-            select(Task.id).where(
+    overdue = (
+        await session.execute(
+            select(Task.id, Task.room_id).where(
                 Task.closing_since.is_not(None),
                 Task.closing_since < now - CLOSE_AT_THE_LATEST,
             )
         )
-    )
+    ).all()
     closed = []
-    for task_id in overdue:
-        task = await session.get(Task, task_id, with_for_update=True)
-        if task is None or task.closing_since is None:
+    # Every one of them at once, with the rooms told what a close left undone
+    # (`review.room_notices.tell_room_undelivered`), before any is looked at
+    # (`lock_order`); as in `close_after_summary`, a message being sent in one
+    # is seen, not stopped.
+    for task in await lock_tasks_for_change(
+        session,
+        [task_id for task_id, _room in overdue],
+        also=[room_id for _task, room_id in overdue],
+    ):
+        if task.closing_since is None:
             continue
         left = await unfinished_work(session, task.id)
         if left and task.closing_since >= now - STOP_WORK_AFTER:

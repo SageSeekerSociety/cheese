@@ -112,6 +112,7 @@ async def group_of(session, question: Block) -> list[Block]:
                 Block.meta["notice_id"].as_string() == str(notice),
             )
             .order_by(Block.created_at, Block.id)
+            .execution_options(populate_existing=True)
         )
     )
     return rows or [question]

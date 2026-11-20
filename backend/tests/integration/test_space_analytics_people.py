@@ -7,8 +7,8 @@
    任何请求路径会推进它）。所以「在做 → 已交 → 通过」这一条链要在接口上真的走得通。
 2. 逐人那一格只数**这块板**上**未删除**的题与未删除的领取 —— 别的板、已删的题、
    已撤的领取都不该混进来。
-3. 领了没动是**逐条领取**：领取超过 14 天**而且**一版提交都没有。交过一版的、
-   或者才领了三天的，都不算。
+3. 开始做了没动是**逐条领取**：开始做（项目建好）超过 14 天**而且**一版提交都
+   没有。交过一版的、才开始做三天的、还在等批准的，都不算；申请得早不算数。
 
 鉴权那一条与同一组分析接口同一个门，红了说明这一条路另开了一扇窗。
 """
@@ -19,12 +19,16 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.project.models import Project
 from app.domain.task.models import TaskMembership
+from app.domain.team.models import Team
 from tests.integration.conftest import (
     UserCreator,
     create_approved_space,
+    join_task_space,
     unique_int,
 )
 
@@ -95,6 +99,12 @@ def _publish_approved_task(api_client: TestClient, board: dict, *, name: str) ->
 def _join_and_approve(
     api_client: TestClient, board: dict, participant_token: str, *, task_id: int
 ) -> int:
+    join_task_space(
+        api_client,
+        task_id,
+        _auth(participant_token),
+        admin_headers=_auth(board["creator_token"]),
+    )
     joined = api_client.post(
         f"/tasks/{task_id}/participations/user",
         json={},
@@ -153,12 +163,34 @@ def _row_for(people: dict, user_id: int) -> dict:
 
 
 async def _backdate_claim(session: AsyncSession, membership_id: int, days: int) -> None:
-    """把一条领取的领取时间往前挪 —— 「领了没动」那条线没有别的造法。"""
+    """把一条领取的申请时间往前挪。"""
     membership = await session.get(TaskMembership, membership_id)
     assert membership is not None
     claimed_at = datetime.now(UTC) - timedelta(days=days)
     membership.created_at = claimed_at
     membership.updated_at = claimed_at
+    await session.flush()
+
+
+async def _backdate_start(session: AsyncSession, membership_id: int, days: int) -> None:
+    """把一条（个人）领取开始做的时刻 —— 它的项目建好的那一下 —— 往前挪，申请时间
+    也挪到不晚于它。「开始做了没动」那条线没有别的造法。"""
+    membership = await session.get(TaskMembership, membership_id)
+    assert membership is not None
+    started = datetime.now(UTC) - timedelta(days=days)
+    project = await session.scalar(
+        select(Project)
+        .join(Team, Team.id == Project.team_id)
+        .where(
+            Project.external_task_id == membership.task_id,
+            Team.personal_owner_user_id == membership.member_id,
+        )
+    )
+    assert project is not None, "an approved claim has its project"
+    project.created_at = started
+    if membership.created_at > started:
+        membership.created_at = started
+        membership.updated_at = started
     await session.flush()
 
 
@@ -287,7 +319,7 @@ def test_a_claim_on_another_board_does_not_show_up(
     away_task = _publish_approved_task(api_client, elsewhere, name="别块板的题")
     home_claim = _join_and_approve(api_client, here, token, task_id=home_task)
     _join_and_approve(api_client, elsewhere, token, task_id=away_task)
-    _portal.call(_backdate_claim, db_session, home_claim, 20)
+    _portal.call(_backdate_start, db_session, home_claim, 20)
 
     people = _people(api_client, here["creator_token"], here["space_id"])
     assert _row_for(people, someone.user_id)["claims"] == 1
@@ -387,39 +419,57 @@ def test_a_review_that_passes_moves_a_claim_from_in_progress_to_passed(
     assert counts() == {"claims": 1, "passed": 1, "submitted": 0, "inProgress": 0}
 
 
-def test_stalled_lists_only_claims_older_than_fourteen_days_without_a_submission(
+def test_stalled_lists_only_claims_started_over_fourteen_days_ago_without_a_submission(
     api_client: TestClient,
     user_client: UserCreator,
     db_session: AsyncSession,
     _portal,
 ):
-    """四条领取：只列那条「超过 14 天、且一版都没交」的。
+    """五条领取，都是一个月前申请的：只列那条「开始做超过 14 天、且一版都没交」的。
 
-    - 15 天前领的、没交 → 在名单里（题号、题名、人、领取时间都要对得上）；
-    - 15 天前领的、交过一版 → 不在（交过就是动过，判没判另说）；
-    - 3 天前领的、没交 → 不在（还没到 14 天）；
-    - 昨天领的、没交 → 不在。
+    - 15 天前开始做、没交 → 在名单里（题号、题名、人、开始做的时间都要对得上）；
+    - 15 天前开始做、交过一版 → 不在（交过就是动过，判没判另说）；
+    - 3 天前才开始做、没交 → 不在（从开始做算，还没到 14 天）；
+    - 还在等批准 → 不在（没开始做，谈不上没动）。
     """
     board = _new_board(user_client, api_client)
     space_id = board["space_id"]
     stale_task = _publish_approved_task(api_client, board, name="两周没人动的题")
     moved_task = _publish_approved_task(api_client, board, name="交过一版的题")
-    fresh_task = _publish_approved_task(api_client, board, name="刚领的题")
+    late_task = _publish_approved_task(api_client, board, name="刚开始做的题")
+    waiting_task = _publish_approved_task(api_client, board, name="还在等批准的题")
 
     idle = user_client.create_user()
     idle_token = _login(user_client, api_client, idle)
     mover = user_client.create_user()
     mover_token = _login(user_client, api_client, mover)
-    newcomer = user_client.create_user()
-    newcomer_token = _login(user_client, api_client, newcomer)
+    late = user_client.create_user()
+    late_token = _login(user_client, api_client, late)
+    waiter = user_client.create_user()
+    waiter_token = _login(user_client, api_client, waiter)
 
     stale = _join_and_approve(api_client, board, idle_token, task_id=stale_task)
     moved = _join_and_approve(api_client, board, mover_token, task_id=moved_task)
-    fresh = _join_and_approve(api_client, board, newcomer_token, task_id=fresh_task)
+    late_claim = _join_and_approve(api_client, board, late_token, task_id=late_task)
     _submit(api_client, mover_token, task_id=moved_task, membership_id=moved)
+    join_task_space(
+        api_client,
+        waiting_task,
+        _auth(waiter_token),
+        admin_headers=_auth(board["creator_token"]),
+    )
+    applied = api_client.post(
+        f"/tasks/{waiting_task}/participations/user",
+        json={},
+        headers=_auth(waiter_token),
+    )
+    assert applied.status_code == 200, applied.text
+    waiting = applied.json()["data"]["participant"]["id"]
 
-    for membership_id, days in ((stale, 15), (moved, 15), (fresh, 3)):
-        _portal.call(_backdate_claim, db_session, membership_id, days)
+    for membership_id in (stale, moved, late_claim, waiting):
+        _portal.call(_backdate_claim, db_session, membership_id, 30)
+    for membership_id, days in ((stale, 15), (moved, 15), (late_claim, 3)):
+        _portal.call(_backdate_start, db_session, membership_id, days)
 
     people = _people(api_client, board["creator_token"], space_id)
 
@@ -430,9 +480,53 @@ def test_stalled_lists_only_claims_older_than_fourteen_days_without_a_submission
     assert entry["taskTitle"] == "两周没人动的题"
     assert entry["userId"] == idle.user_id
     assert entry["isTeam"] is False
-    # 领取时间是接口回的毫秒时间戳，且确实是 15 天前那一下。
-    claim_ms = entry["claimedAt"]
+    # 开始做的时间是接口回的毫秒时间戳，且确实是 15 天前那一下，不是申请那一下。
     assert (
-        pytest.approx(claim_ms, abs=120_000)
+        pytest.approx(entry["startedAt"], abs=120_000)
         == (datetime.now(UTC) - timedelta(days=15)).timestamp() * 1000
     )
+
+
+def test_a_task_is_stalled_only_once_its_started_claims_go_quiet(
+    api_client: TestClient,
+    user_client: UserCreator,
+    db_session: AsyncSession,
+    _portal,
+):
+    """看板上的「停滞题目」：一道题有人开始做、而 14 天里没人开始也没人交，才算。
+
+    两道题都是一个月前就有人申请的：一道三天前才开始做，一道还在等批准 —— 都不
+    停滞；第三道 20 天前开始做、一版没交，停滞。
+    """
+    board = _new_board(user_client, api_client)
+    started_late = _publish_approved_task(api_client, board, name="刚开始做的题")
+    waiting_task = _publish_approved_task(api_client, board, name="还在等批准的题")
+    quiet_task = _publish_approved_task(api_client, board, name="没人动的题")
+
+    late = _login(user_client, api_client, user_client.create_user())
+    waiter = _login(user_client, api_client, user_client.create_user())
+    quiet = _login(user_client, api_client, user_client.create_user())
+
+    late_claim = _join_and_approve(api_client, board, late, task_id=started_late)
+    join_task_space(
+        api_client,
+        waiting_task,
+        _auth(waiter),
+        admin_headers=_auth(board["creator_token"]),
+    )
+    applied = api_client.post(
+        f"/tasks/{waiting_task}/participations/user", json={}, headers=_auth(waiter)
+    )
+    assert applied.status_code == 200, applied.text
+    quiet_claim = _join_and_approve(api_client, board, quiet, task_id=quiet_task)
+    for membership_id in (late_claim, applied.json()["data"]["participant"]["id"]):
+        _portal.call(_backdate_claim, db_session, membership_id, 30)
+    _portal.call(_backdate_start, db_session, late_claim, 3)
+    _portal.call(_backdate_start, db_session, quiet_claim, 20)
+
+    resp = api_client.get(
+        f"/spaces/{board['space_id']}/analytics/alerts",
+        headers=_auth(board["creator_token"]),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["data"]["stalledTaskCount"] == 1

@@ -29,6 +29,8 @@ const props = defineProps<{
   threadActions: DocThreadActions
   /** 现在指着的这一处（没有就是 null）：发新评论时连同它一起留下。 */
   pick: { quote: string; anchor: QuotedContext | null } | null
+  /** 要把它打开的那一条：读者从正文上的标记点进来的。 */
+  focusId?: string | null
   /** 能不能写（归档的房间不能）。 */
   writable: boolean
   /** 发出这一条；回执回来才算数，发不出去的那句话写在框下面。 */
@@ -41,11 +43,32 @@ const props = defineProps<{
    *  谁也没发现。名册上没他、或他没挑过，给空串（由 UserAvatar 画首字母）。 */
   avatarOf: (handle: string) => string
 }>()
-const emit = defineEmits<{ (e: 'clear-pick'): void; (e: 'close'): void }>()
+const emit = defineEmits<{
+  (e: 'clear-pick'): void
+  (e: 'close'): void
+  /** 现在看的是哪一条（读者点了另一张卡、或把这一张收起来）。正文上那颗标记要靠它
+   *  知道该把哪一处画重些——不然读者在栏里换了一条看，正文还亮着上一条。 */
+  (e: 'update:openId', id: string | null): void
+}>()
 
 /** 正在看的那一条：只有它在看时才给回复框和解决（和文档里那一栏同一条理由——
  *  一屏上几张卡都摊着输入框，读起来分不清在回哪一条）。 */
 const openId = ref<string | null>(null)
+// 读者点了正文上那一处的标记：把那一张卡打开（和文档那边点标记一样，点开的是那一条）。
+//
+// `immediate`：栏是关着的时候点标记才把它打开的，也就是**挂载时 `focusId` 就已经是
+// 那一条了**——只在它之后变化时才处理的话，这一条路一次都接不到，栏开了却没有任何一张
+// 卡是打开的。开了之后读者再去点别的标记，才是「变化」那一种。
+watch(
+  () => props.focusId,
+  (id) => {
+    if (id) openId.value = id
+  },
+  { immediate: true }
+)
+// 反过来也要说一声：读者在栏里点了别的卡、或把这张收起来，正文上那颗标记得跟着换。
+// 不回声的话，栏里看的是第 2 条、正文还亮着第 1 条。
+watch(openId, (id) => emit('update:openId', id))
 
 const text = ref('')
 /** 发不出去的那句话：写在这儿，别让读者点了「评论」却什么都没有发生。 */

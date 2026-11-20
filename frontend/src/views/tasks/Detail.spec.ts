@@ -3,7 +3,7 @@
 // - 领取那颗按钮点不点得动，由接口给的事实决定（审核、截止、开始、人数、我的申请）；
 // - 领了之后主操作变成交作业，多出「我的提交」；
 // - 领取者和数据两个页签只给出题人和管理员，别人连名单接口都不问；
-// - 领了才能用这道题新建项目；
+// - 用这道题新建项目只有一条路：开始做这道题；
 // - 我的进度按我最新那一版提交与它的评审算。
 //
 // 接口在 API 层换掉：真 axios 会被 `src/test/setup-network.ts` 逮住。
@@ -13,6 +13,7 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/vue'
+import dayjs from 'dayjs'
 import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -22,6 +23,7 @@ const getParticipants = vi.fn()
 const createSubmission = vi.fn()
 const updateParticipant = vi.fn()
 const postSubmissionReview = vi.fn()
+const join = vi.fn()
 const getSubmissionQueue = vi.fn()
 
 vi.mock('@/api/taskBoard', () => ({
@@ -32,6 +34,7 @@ vi.mock('@/api/taskBoard', () => ({
     createSubmission: (...a: unknown[]) => createSubmission(...a),
     updateParticipant: (...a: unknown[]) => updateParticipant(...a),
     postSubmissionReview: (...a: unknown[]) => postSubmissionReview(...a),
+    join: (...a: unknown[]) => join(...a),
   },
 }))
 vi.mock('@/api/spaces', () => ({
@@ -40,15 +43,11 @@ vi.mock('@/api/spaces', () => ({
 
 vi.mock('vuetify-sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
-// 「我的进度」里的项目：从这道题开出来的项目，以及「用这道题新建项目」。
+// 「我的进度」里的项目：从这道题开出来的项目。
 const listProjectsForTask = vi.fn()
 vi.mock('@/api', async (original) => ({
   ...(await original<object>()),
   listProjectsForTask: (...a: unknown[]) => listProjectsForTask(...a),
-}))
-const showNewProjectDialog = vi.fn()
-vi.mock('@/composables/useNewProjectDialog', () => ({
-  useNewProjectDialog: () => ({ show: (...a: unknown[]) => showNewProjectDialog(...a) }),
 }))
 
 vi.mock('@/composables/usePageTitle', () => ({
@@ -96,7 +95,7 @@ const BASE_TASK = {
   creator: { id: 1, username: 'cai', nickname: '蔡松洋' },
   topics: [],
   videoUrl: '',
-  participants: { total: 0, examples: [] },
+  participants: { total: 0, approved: 0, examples: [] },
   participantLimit: 0,
   deadline: null as number | null,
   registrationStartAt: null as number | null,
@@ -107,6 +106,9 @@ const BASE_TASK = {
   createdAt: Date.now() - 3 * DAY,
   space: { id: SPACE_ID, name: '数据结构空间', admins: [] },
 }
+
+/** 申请通过时建好的那个项目。 */
+const MY_PROJECT = { id: 'p-7', name: '红黑树' }
 
 const APPROVED_ME = { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved: 'APPROVED' }] }
 
@@ -135,6 +137,7 @@ function makeRouter() {
           // 领取者也是真页签：出题人在这里批了领取、判了一版，页头和我的进度跟不跟得上，要它来量。
           { path: 'participants', name: 'TasksParticipants', component: TaskRoster },
           { path: 'insights', name: 'TasksInsights', component: stub },
+          { path: 'versions', name: 'TasksVersions', component: stub },
         ],
       },
       { path: '/spaces/:spaceId/tasks/:taskId/edit', name: 'TasksEdit', component: stub },
@@ -191,6 +194,23 @@ function buttonWith(scope: Element, text: string): HTMLButtonElement | null {
   return Array.from(scope.querySelectorAll('button')).find((b) => b.textContent?.includes(text)) ?? null
 }
 
+/** 题目名旁边那一枚：题目自己的状态。 */
+function titleState(container: Element): string {
+  return container.querySelector('[data-testid="task-state"]')?.textContent?.trim() ?? ''
+}
+
+/** 右栏「我的进度」里我这一份的状态。 */
+function myStatus(container: Element): string {
+  return container.querySelector('[data-testid="my-status"]')?.textContent?.trim() ?? ''
+}
+
+/** 字样正好是这一句的元素（不含子元素里的字）。 */
+function textsExactly(container: Element, text: string): Element[] {
+  return Array.from(container.querySelectorAll('*')).filter(
+    (el) => el.children.length === 0 && el.textContent?.trim() === text
+  )
+}
+
 describe('题目详情', () => {
   beforeEach(() => {
     setLocale('zh-CN')
@@ -209,7 +229,8 @@ describe('题目详情', () => {
   })
 
   it('审过了、没截止、没满：领取按钮点得动，点了走领取那条路', async () => {
-    const { container } = await mount({ participants: { total: 1, examples: [] }, participantLimit: 5 })
+    // 申请比名额多，但通过的还没到上限：还能申请。
+    const { container } = await mount({ participants: { total: 7, approved: 1, examples: [] }, participantLimit: 5 })
     const events = useEvents()
     const joined = vi.fn()
     events.on('join-clicked', joined)
@@ -225,9 +246,7 @@ describe('题目详情', () => {
     ['题目被驳回', { approved: 'DISAPPROVED' }, {}],
     ['已截止', { deadline: Date.now() - DAY }, {}],
     ['还没开始', { registrationStartAt: Date.now() + DAY }, {}],
-    ['人数已满', { participants: { total: 3, examples: [] }, participantLimit: 3 }, {}],
-    ['我的申请还在等批', {}, { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved: 'NONE' }] }],
-    ['我的申请被拒了', {}, { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved: 'DISAPPROVED' }] }],
+    ['人数已满', { participants: { total: 3, approved: 3, examples: [] }, participantLimit: 3 }, {}],
   ])('%s：领取按钮点不动', async (_, task, participation) => {
     const { container } = await mount(task, participation)
 
@@ -235,9 +254,40 @@ describe('题目详情', () => {
   })
 
   it.each([
+    ['直接开始', 'DIRECT'],
+    ['申请制', 'APPLY'],
+  ])('%s的题人数已满：按钮写「人数已满」，点不动', async (_, startMode) => {
+    const { container } = await mount({
+      startMode,
+      participants: { total: 4, approved: 3, examples: [] },
+      participantLimit: 3,
+    })
+
+    expect(claimButton(container)?.textContent).toContain(t('tasks.page.state.full'))
+    expect(claimButton(container)?.disabled).toBe(true)
+  })
+
+  it.each([
+    ['还在等批', 'NONE', 'tasks.page.mine.pending'],
+    ['被拒了', 'DISAPPROVED', 'tasks.page.mine.rejected'],
+  ])('我的申请%s：按钮是灰的、写明这一份走到哪了，页头没有开始、继续或交作业', async (_, approved, said) => {
+    const { container } = await mount(
+      { startMode: 'APPLY', joined: approved === 'NONE', submittable: false },
+      { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved }] }
+    )
+
+    expect(claimButton(container)?.textContent).toContain(t(said))
+    expect(claimButton(container)?.disabled).toBe(true)
+    // 题目名旁边说的是题目，对谁都一样。
+    expect(titleState(container)).toBe(t('tasks.page.state.open'))
+    expect(container.querySelector('[data-testid="task-continue"]')).toBeNull()
+    expect(buttonWith(container, t('tasks.page.submit.first'))).toBeNull()
+  })
+
+  it.each([
     ['个人', { submitterType: 'USER' }, { id: 11, type: 'USER', approved: 'NONE' }],
     ['团队', { submitterType: 'TEAM' }, { id: 12, type: 'TEAM', approved: 'NONE', teamName: '红队' }],
-  ])('%s领取还在等批：没有「提交作业」，按钮灰着写明在等批，也没有「我的提交」', async (_, task, identity) => {
+  ])('%s领取还在等批：没有「提交作业」，按钮写明在等通过，也没有「我的提交」', async (_, task, identity) => {
     // 接口对等批的报名也回 `joined: true`，只有 `submittable` 是 false。
     const { container } = await mount(
       { ...task, joined: true, submittable: false },
@@ -246,27 +296,183 @@ describe('题目详情', () => {
 
     expect(buttonWith(container, t('tasks.page.submit.first'))).toBeNull()
     expect(hrefs(container)).not.toContain(`${BASE}/submit`)
-    const btn = claimButton(container)!
-    expect(btn.disabled).toBe(true)
-    expect(btn.textContent).toContain(t('tasks.page.claim.pending'))
+    expect(claimButton(container)?.textContent).toContain(t('tasks.page.mine.pending'))
     expect(hrefs(container)).not.toContain(`${BASE}/submissions`)
   })
 
-  it('批过之后：主操作是「提交作业」', async () => {
-    const { container } = await mount({ joined: true, submittable: true }, APPROVED_ME)
+  it.each([
+    ['直接开始', 'DIRECT', 'tasks.page.claim.start'],
+    ['申请制', 'APPLY', 'tasks.page.claim.claim'],
+  ])('%s的题：按钮说点了会怎样', async (_, startMode, label) => {
+    const { container } = await mount({ startMode })
+
+    expect(claimButton(container)?.textContent).toContain(t(label))
+    expect(claimButton(container)?.disabled).toBe(false)
+  })
+
+  // 题目名旁边说题目自己的状态，对谁都一样；我这一份的状态在右栏「我的进度」，按钮说我现在能做什么
+  // （Zhifei 2026-10-26）。手上有领取的人只看自己的提交截止：没到就能开始、接着做和交。
+  const approvedMe = (mine: number) => ({
+    hasParticipation: true,
+    identities: [{ id: 11, type: 'USER', approved: 'APPROVED', deadline: mine }],
+  })
+
+  it('申请制的题过了申请截止才通过：标题写「申请已截止」，我在自己的截止之前照样能开始做', async () => {
+    const mine = Date.now() + 5 * DAY
+    const { container } = await mount(
+      {
+        startMode: 'APPLY',
+        joined: true,
+        submittable: true,
+        myProject: null,
+        deadline: Date.now() - DAY,
+        userDeadline: mine,
+      },
+      approvedMe(mine)
+    )
+
+    expect(titleState(container)).toBe(t('tasks.page.state.applyClosed'))
+    expect(claimButton(container)?.textContent).toContain(t('tasks.page.claim.start'))
+    expect(claimButton(container)?.disabled).toBe(false)
+    expect(myStatus(container)).toBe(t('tasks.side.canStart'))
+    expect(textsExactly(container, t('tasks.side.deadlineApply'))).toHaveLength(1)
+  })
+
+  it('直接开始的题截止了、出题人把我的截止改到之后：标题写「已截止」，我照样能开始做', async () => {
+    const mine = Date.now() + 5 * DAY
+    const { container } = await mount(
+      {
+        startMode: 'DIRECT',
+        joined: true,
+        submittable: true,
+        myProject: null,
+        deadline: Date.now() - DAY,
+        userDeadline: mine,
+      },
+      approvedMe(mine)
+    )
+
+    expect(titleState(container)).toBe(t('tasks.page.state.closed'))
+    expect(claimButton(container)?.textContent).toContain(t('tasks.page.claim.start'))
+    expect(claimButton(container)?.disabled).toBe(false)
+    expect(myStatus(container)).toBe(t('tasks.side.canStart'))
+    expect(textsExactly(container, t('tasks.side.deadline'))).toHaveLength(1)
+    expect(textsExactly(container, t('tasks.side.deadlineApply'))).toHaveLength(0)
+  })
+
+  it.each([
+    ['题目还在收申请', Date.now() + 7 * DAY, 'tasks.page.state.open'],
+    ['申请截止也过了', Date.now() - 2 * DAY, 'tasks.page.state.applyClosed'],
+  ])(
+    '通过了还没开始、我自己的截止过了、%s：标题照旧说题目，按钮是灰的「已过期」，我的进度写「已过期」',
+    async (_, deadline, title) => {
+      const mine = Date.now() - DAY
+      const { container } = await mount(
+        { startMode: 'APPLY', joined: true, submittable: true, myProject: null, deadline, userDeadline: mine },
+        approvedMe(mine)
+      )
+
+      expect(titleState(container)).toBe(t(title))
+      expect(claimButton(container)?.textContent).toContain(t('tasks.page.claim.expired'))
+      expect(claimButton(container)?.disabled).toBe(true)
+      expect(myStatus(container)).toBe(t('tasks.side.expired'))
+      expect(textsExactly(container, t('tasks.page.mine.doing'))).toHaveLength(0)
+    }
+  )
+
+  it('开始做了、我自己的截止过了：照样能「继续做」进项目，我的进度写「已过期」，没有「提交作业」', async () => {
+    const mine = Date.now() - DAY
+    const { container } = await mount(
+      {
+        startMode: 'APPLY',
+        joined: true,
+        submittable: true,
+        myProject: MY_PROJECT,
+        deadline: Date.now() - 2 * DAY,
+        userDeadline: mine,
+      },
+      approvedMe(mine)
+    )
+
+    expect(titleState(container)).toBe(t('tasks.page.state.applyClosed'))
+    expect(container.querySelector('[data-testid="task-continue"]')).not.toBeNull()
+    expect(myStatus(container)).toBe(t('tasks.side.expired'))
+    expect(hrefs(container)).not.toContain(`${BASE}/submit`)
+  })
+
+  it('没有领取的人：申请截止过了的申请制题，标题和按钮都写「申请已截止」', async () => {
+    const { container } = await mount({ startMode: 'APPLY', deadline: Date.now() - DAY })
+
+    expect(titleState(container)).toBe(t('tasks.page.state.applyClosed'))
+    expect(claimButton(container)?.textContent).toContain(t('tasks.page.state.applyClosed'))
+    expect(claimButton(container)?.disabled).toBe(true)
+    expect(container.querySelector('[data-testid="my-status"]')).toBeNull()
+  })
+
+  it('没有领取的人：截止了的直接开始题，标题和按钮都写「已截止」', async () => {
+    const { container } = await mount({ startMode: 'DIRECT', deadline: Date.now() - DAY })
+
+    expect(titleState(container)).toBe(t('tasks.page.state.closed'))
+    expect(claimButton(container)?.textContent).toContain(t('tasks.page.state.closed'))
+    expect(claimButton(container)?.disabled).toBe(true)
+  })
+
+  it('我的申请通过了：主操作是「继续做」，打开从这道题来的那个项目', async () => {
+    const { container } = await mount(
+      { joined: true, submittable: true, myProject: { id: 'p-7', name: '红黑树' } },
+      APPROVED_ME
+    )
+
+    const go = container.querySelector('[data-testid="task-continue"]')
+    expect(go?.textContent).toContain(t('tasks.page.claim.continue'))
+    expect(go?.getAttribute('href')).toBe('/projects/p-7')
+    expect(claimButton(container)).toBeNull()
+    expect(myStatus(container)).toBe(t('tasks.page.mine.doing'))
+  })
+
+  it('申请通过了还没有项目：「开始做这道题」先问一遍（导师在这时同意），按了「开始做」才建项目并进去', async () => {
+    join.mockResolvedValue({ participant: { id: 11 }, project: { id: 'p-9', name: '红黑树' } })
+    const { container, router } = await mount(
+      {
+        startMode: 'APPLY',
+        joined: true,
+        submittable: true,
+        myProject: null,
+        mentors: [{ handle: 'cai', nickname: '蔡老师' }],
+      },
+      APPROVED_ME
+    )
+    const events = useEvents()
+    const asked = vi.fn()
+    events.on('start-dialog-open', asked)
+
+    const btn = claimButton(container)!
+    expect(btn.disabled).toBe(false)
+    expect(btn.textContent).toContain(t('tasks.page.claim.start'))
+    await fireEvent.click(btn)
+
+    expect(asked).toHaveBeenCalledWith(true)
+    expect(join).not.toHaveBeenCalled()
+    events.emit('start-confirmed', undefined)
+    await waitFor(() => expect(router.currentRoute.value.fullPath).toBe('/projects/p-9'))
+    expect(join).toHaveBeenCalledWith(TASK_ID, { agreeMentors: true }, undefined)
+  })
+
+  it('批过之后：有「提交作业」', async () => {
+    const { container } = await mount({ joined: true, submittable: true, myProject: MY_PROJECT }, APPROVED_ME)
 
     await waitFor(() => expect(hrefs(container)).toContain(`${BASE}/submit`))
     expect(claimButton(container)).toBeNull()
   })
 
   it('上限 0 是「不限」：人再多也领得动', async () => {
-    const { container } = await mount({ participants: { total: 30, examples: [] }, participantLimit: 0 })
+    const { container } = await mount({ participants: { total: 30, approved: 30, examples: [] }, participantLimit: 0 })
 
     expect(claimButton(container)?.disabled).toBe(false)
   })
 
   it('领了之后：没有领取按钮，主操作是去交作业，多出「我的提交」', async () => {
-    const { container } = await mount({}, APPROVED_ME)
+    const { container } = await mount({ myProject: MY_PROJECT }, APPROVED_ME)
 
     expect(claimButton(container)).toBeNull()
     await waitFor(() => expect(hrefs(container)).toContain(`${BASE}/submit`))
@@ -283,6 +489,21 @@ describe('题目详情', () => {
     await waitFor(() => expect(listSubmissions).toHaveBeenCalled())
     await new Promise((resolve) => setTimeout(resolve, 0))
     expect(hrefs(container)).not.toContain(`${BASE}/submit`)
+  })
+
+  // 交不了的领取不给「提交作业」：服务端过了自己的截止、或题目对他截止了都不收（canStillAct）。
+  it.each([
+    ['我自己的截止过了', { startMode: 'APPLY', userDeadline: Date.now() - DAY }, false],
+    [
+      '直接开始的题截止了、我的截止还没到',
+      { startMode: 'DIRECT', deadline: Date.now() - DAY, userDeadline: Date.now() + DAY },
+      true,
+    ],
+  ])('%s：交作业的入口在不在', async (_, task, offered) => {
+    const { container } = await mount({ joined: true, submittable: true, myProject: MY_PROJECT, ...task }, APPROVED_ME)
+
+    await waitFor(() => expect(hrefs(container)).toContain(`${BASE}/submissions`))
+    expect(hrefs(container).includes(`${BASE}/submit`)).toBe(offered)
   })
 
   it('题目已结束：不再给交作业的入口', async () => {
@@ -320,12 +541,12 @@ describe('题目详情', () => {
       { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved: 'APPROVED', canSubmit: true }] },
       `${BASE}/submit`
     )
-    await waitFor(() => expect(container.textContent).toContain(t('tasks.side.noSubmission')))
+    await waitFor(() => expect(myStatus(container)).toBe(t('tasks.side.canStart')))
 
     await fireEvent.update(getByRole('textbox', { name: '成果说明' }), '旋转了三次')
     await fireEvent.submit(container.querySelector('form')!)
 
-    await waitFor(() => expect(createSubmission).toHaveBeenCalledWith(TASK_ID, 11, [{ text: '旋转了三次' }]))
+    await waitFor(() => expect(createSubmission).toHaveBeenCalledWith(TASK_ID, 11, [{ text: '旋转了三次' }], null))
     await waitFor(() => expect(container.textContent).toContain(i18n.global.t('tasks.side.versionPending', { n: 1 })))
     const mineTab = Array.from(container.querySelectorAll('a')).find((a) =>
       a.getAttribute('href')?.endsWith('/submissions')
@@ -346,14 +567,20 @@ describe('题目详情', () => {
       return {}
     })
     const { container, router } = await mount(
-      { joined: true, submittable: false, participants: { total: 1, examples: [] } },
+      { joined: true, submittable: false, participants: { total: 1, approved: 1, examples: [] } },
       { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved: 'NONE' }] },
       `${BASE}/participants`
     )
     // 批准之后再问，接口说的就是批过的那一份。
     taskDetail.mockImplementation(async () =>
       payload(
-        { joined: true, submittable: approved === 'APPROVED', participants: { total: 1, examples: [] } },
+        {
+          joined: true,
+          submittable: approved === 'APPROVED',
+          // 批准时项目就建好了。
+          myProject: approved === 'APPROVED' ? MY_PROJECT : null,
+          participants: { total: 1, approved: 1, examples: [] },
+        },
         { hasParticipation: true, identities: [{ id: 11, type: 'USER', approved }] }
       )
     )
@@ -366,7 +593,7 @@ describe('题目详情', () => {
     await waitFor(() => expect(hrefs(container)).toContain(`${BASE}/submit`))
     expect(claimButton(container)).toBeNull()
     expect(container.textContent).not.toContain(t('tasks.page.claim.pending'))
-    expect(container.textContent).toContain(t('tasks.side.noSubmission'))
+    expect(myStatus(container)).toBe(t('tasks.page.mine.doing'))
   })
 
   it('出题人在「领取者」里判了自己那一版：回到「说明」，我的进度写的是判过的结果', async () => {
@@ -401,7 +628,7 @@ describe('题目详情', () => {
       return {}
     })
     const { container, router } = await mount(
-      { joined: true, submittable: true, participants: { total: 1, examples: [] } },
+      { joined: true, submittable: true, participants: { total: 1, approved: 1, examples: [] } },
       APPROVED_ME
     )
     await waitFor(() => expect(container.textContent).toContain(i18n.global.t('tasks.side.versionPending', { n: 1 })))
@@ -428,11 +655,18 @@ describe('题目详情', () => {
   })
 
   it('不是出题人：领取者和数据两个页签都没有，名单接口也不问', async () => {
-    const { container } = await mount({ participants: { total: 3, examples: [] } })
+    const { container } = await mount({ participants: { total: 3, approved: 3, examples: [] } })
 
     expect(getParticipants).not.toHaveBeenCalled()
     expect(hrefs(container)).not.toContain(`${BASE}/participants`)
     expect(hrefs(container)).not.toContain(`${BASE}/insights`)
+  })
+
+  it('看得见这道题的人都有「历史版本」页签，不必是出题人', async () => {
+    const { container } = await mount()
+
+    const tab = [...container.querySelectorAll('a')].find((a) => a.getAttribute('href') === `${BASE}/versions`)
+    expect(tab?.textContent?.trim()).toBe('历史版本')
   })
 
   it('出题人：领取者和数据两个页签都在', async () => {
@@ -443,34 +677,43 @@ describe('题目详情', () => {
     expect(hrefs(container)).toContain(`${BASE}/insights`)
   })
 
-  it('没领这道题：不能用它新建项目', async () => {
-    const { container } = await mount()
+  it('出题人：「参与者」页签上的数只算申请通过的，等批的不算', async () => {
+    AccountService.user = { id: 1, nickname: '蔡松洋' } as never
+    const { container } = await mount({ participants: { total: 4, approved: 1, examples: [] } })
 
-    expect(buttonWith(container, t('tasks.side.newProject'))).toBeNull()
+    const roster = [...container.querySelectorAll('a')].find((a) =>
+      a.getAttribute('href')?.endsWith(`${BASE}/participants`)
+    )
+    expect(roster?.textContent?.trim()).toBe(`${t('tasks.page.tabs.roster')}1`)
+  })
+
+  it('没领这道题：右栏不列从它来的项目', async () => {
+    await mount()
+
     expect(listProjectsForTask).not.toHaveBeenCalled()
   })
 
-  it('领了这道题：用它新建项目，带着这道题；已经开出来的项目点得进去', async () => {
+  it('领了这道题：已经开出来的项目点得进去，右栏没有第二条新建项目的路', async () => {
     listProjectsForTask.mockResolvedValue({ data: [{ id: 'p-1', name: '红黑树小组的项目' }] })
-    const { container } = await mount({}, APPROVED_ME)
+    const { container } = await mount({ myProject: { id: 'p-1', name: '红黑树小组的项目' } }, APPROVED_ME)
 
     await waitFor(() => expect(hrefs(container)).toContain('/projects/p-1'))
-    await fireEvent.click(buttonWith(container, t('tasks.side.newProject'))!)
-    expect(showNewProjectDialog).toHaveBeenCalledWith(null, { id: TASK_ID, name: '把红黑树插一遍' })
+    const side = container.querySelector('.ts')!
+    expect(side.textContent).not.toContain('新建项目')
   })
 
-  it('用团队领的：新项目挂在那个团队下', async () => {
-    const { container } = await mount(
-      { submitterType: 'TEAM' },
-      {
-        hasParticipation: true,
-        identities: [{ id: 11, type: 'TEAM', memberId: 55, teamName: '红黑树小组', approved: 'APPROVED' }],
-      }
-    )
+  it.each([
+    ['DIRECT', '这道题还没开放'],
+    ['APPLY', '还没到申请时间'],
+  ])('%s 的题还没开放：领不了的原因按开始方式说', async (startMode, said) => {
+    const { container } = await mount({
+      startMode,
+      participationEligibility: {
+        user: { eligible: false, reasons: [{ code: 'REGISTRATION_NOT_STARTED', message: 'not yet' }] },
+      },
+    })
 
-    await waitFor(() => expect(buttonWith(container, t('tasks.side.newProject'))).not.toBeNull())
-    await fireEvent.click(buttonWith(container, t('tasks.side.newProject'))!)
-    expect(showNewProjectDialog).toHaveBeenCalledWith(55, { id: TASK_ID, name: '把红黑树插一遍' })
+    expect(container.textContent).toContain(said)
   })
 
   it('领不了的原因说中文：认得出的按原因说，认不出的给一句通用的，不露后端的英文', async () => {
@@ -504,6 +747,9 @@ describe('题目详情', () => {
     const line = container.querySelector('[data-testid="my-deadline"]')
     expect(line?.textContent).toContain('10月24日 16:05')
     expect(line?.textContent).not.toContain('10月26日')
+    expect(line?.textContent).toContain(
+      i18n.global.t('tasks.side.daysLeft', { n: dayjs(mine).startOf('day').diff(dayjs().startOf('day'), 'day') })
+    )
   })
 
   it('还在等批准的报名没有自己的截止，不写那一行', async () => {
@@ -544,9 +790,9 @@ describe('题目详情', () => {
     )
 
     await waitFor(() => expect(container.querySelector('.expired-text')?.textContent).toBe(t('shell.countdown.closed')))
-    const head = container.querySelector('.ts__mine-head')?.textContent ?? ''
-    expect(head).not.toContain(t('tasks.side.dueToday'))
-    expect([t('tasks.side.closed'), i18n.global.t('tasks.side.overdue', { n: 1 })].some((s) => head.includes(s))).toBe(
+    const line = container.querySelector('[data-testid="my-deadline"]')?.textContent ?? ''
+    expect(line).not.toContain(t('tasks.side.dueToday'))
+    expect([t('tasks.side.closed'), i18n.global.t('tasks.side.overdue', { n: 1 })].some((s) => line.includes(s))).toBe(
       true
     )
   })

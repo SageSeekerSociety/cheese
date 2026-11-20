@@ -107,9 +107,9 @@ _TOOL_ARG = {
     "ls": "path",
     "find": "pattern",
     "grep": "pattern",
-    # 平台工具表里的工具，和 pi 房间里由 CLI 命令变成的工具。这张表是判断题不是
+    # 平台工具表里的工具，和旧记录里 pi 房间曾当工具调的 CLI 命令。这张表是判断题不是
     # 覆盖题 —— 收录的是「后面跟哪个参数才说得出这一步在动什么」有答案的那些。
-    # `cheese_status`、`cheese_room.members`、`cheese_doc.get` 这种只有动词就够了，硬找
+    # `cheese_session.status`、`cheese_room.members`、`cheese_doc.get` 这种只有动词就够了，硬找
     # 一个参数填进去反而不如留空。
     "chat_send": "content",
     "cheese_chat.edit": "content",
@@ -126,8 +126,8 @@ _TOOL_ARG = {
     "cheese_task.close": "conclusion",
     # 报任务状态时说的是那一句：状态本身是个码。
     "cheese_task.state": "note",
-    "cheese_fetch": "url",
-    "cheese_web_search": "query",
+    "cheese_web.fetch": "url",
+    "cheese_web.search": "query",
     "cheese_decision": "text",
     "cheese_room.rename": "text",
     "cheese_notify": "title",
@@ -519,7 +519,8 @@ def tool_preview(name: str, args: dict, *, work_dir: str = "") -> ToolPreview:
 # language, and never from the word appearing somewhere else in the command:
 # the dot and the text on that line have to be about the same thing.
 #: 平台动作在各个 harness 里叫什么。同一件事三种拼法，因为把工具交给模型的机制
-#: 各不相同：MCP 服务器自己加前缀，pi 那边的目录是从 CLI 的命令树生成的，而
+#: 各不相同：MCP 服务器自己加前缀，pi 那边是 extension 原名注册（旧记录里还有它
+#: 曾把 CLI 命令当工具时的 `cheese_<命令>`），而
 #: `chat_send` 是系统提示每一轮都在点名、于是 extension 额外注册的那个别名。
 #: MCP 那个前缀（`mcp__<服务器>__<工具>`）也要认。claude_code 的服务器注册名是
 #: `native`（见 `harness/claude_code/remote_execution/client.py` 写 mcp.json 时的

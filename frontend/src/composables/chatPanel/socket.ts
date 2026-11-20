@@ -17,13 +17,15 @@ import type { ChatPanelEmit } from '../chatPanelContract'
 import type { useMessageReactions } from '../useMessageReactions'
 import type { useRoomResync } from '../useRoomResync'
 import type { useTimelineTasks } from '../useTimelineTasks'
+import type { usePanelReceipts } from './receipts'
 
 import { onScopeDispose, watch } from 'vue'
 import { useEventListener } from '@vueuse/core'
 
 import { useErrorFade } from '../../components/room/composables/useErrorFade'
 import { useRoomSocket } from '../../components/room/composables/useRoomSocket'
-import { runRecordOf, threadStatusOf } from '../../components/room/composables/useRunRecords'
+import { runRecordOf, streamAt, threadStatusOf } from '../../components/room/composables/useRunRecords'
+import { deliveryOf } from '../../lib/deliveryLine'
 import { renderNoticeMessage } from '../../lib/noticeText'
 import { ANNOUNCED, SNAPSHOT_RESOURCES } from '../chatPanelContract'
 import { applyRoomState } from '../useRoomResync'
@@ -48,6 +50,8 @@ export function usePanelSocket(deps: {
   runRecords: ReturnType<typeof useRunRecords>
   turns: ReturnType<typeof useRoomTurns>
   reactions: ReturnType<typeof useMessageReactions>
+  /** 已读（chatPanel/receipts）：它要的滚动区比这条连接晚建，晚一步拿。 */
+  receipts: () => ReturnType<typeof usePanelReceipts>
   errorMsg: Ref<string | null>
   awaitingReply: Ref<boolean>
   atBottom: Ref<boolean>
@@ -100,6 +104,7 @@ export function usePanelSocket(deps: {
       // gone, so a re-connect (not the first open) treats each as changed once —
       // except what the snapshot just brought, which is as of now.
       if (reconnect) {
+        deps.receipts().refresh()
         const brought: ReadonlySet<string> = room ? SNAPSHOT_RESOURCES : new Set()
         for (const resource of ANNOUNCED) if (!brought.has(resource)) announce(resource)
         if (here) void checklistMissed(here.id)
@@ -168,6 +173,11 @@ export function usePanelSocket(deps: {
     const landing = deps.timeline.append(b)
     if (landing === 'known' || landing === 'above' || deps.history.reading() || b.author === deps.author) return
     if (b.kind === 'artifact') deps.emit('preview-shown') // 新摆出一份东西：面板立刻去问预览指针，不等轮询
+    // A version handed in reaches the main line as the platform's line, or — for a task the
+    // main line's teammate opened — as that teammate's own message tagged with the task. The
+    // page reads whether a version waits on me, and acts on each version once.
+    const about = deliveryOf(b)?.taskId ?? (b.kind === 'message' ? taskTagOf(b) : null)
+    if (about) deps.emit('delivery-arrived', about)
     if (landing === 'shown') deps.arrived().add(b.id)
     if ((landing === 'held' || !deps.atBottom.value) && b.kind !== 'event') deps.unseen.value.push(b.id)
   }
@@ -202,7 +212,7 @@ export function usePanelSocket(deps: {
     // 平台运行中记下的一件事：不进对话，现场和状态行读它。
     const recorded = runRecordOf(frame)
     if (recorded) {
-      deps.runRecords.receive(recorded)
+      deps.runRecords.receive(recorded, streamAt(frame))
       toSite(recorded)
     }
     const told = threadStatusOf(frame)
@@ -214,9 +224,13 @@ export function usePanelSocket(deps: {
         deps.autoScroll()
         break
       case 'reaction':
-        // Someone toggled an emoji / 芝士's 👀 receipt landed — update the chip
-        // row in place (the frame carries the block's full fresh aggregate).
+        // Someone toggled an emoji — update the chip row in place (the frame
+        // carries the block's full fresh aggregate).
         deps.reactions.applyReactions(frame.block_id, frame.reactions)
+        break
+      case 'reads':
+        // 有人（或哪位 AI 队友）又读到了几条：自己那几条消息旁的圈跟着变。
+        deps.receipts().applyFrame(frame)
         break
       case 'todo':
         if (deps.place()) checklistPushed(deps.place()!.id, frame.items)
@@ -250,6 +264,8 @@ export function usePanelSocket(deps: {
       case 'assistant_block':
         // One complete 芝士 message (Slack-style) — a turn may land several.
         pushBlock(frame.block)
+        // A message about a task: its tag needs that task.
+        deps.roomTasks().landed(frame.block)
         // Compatibility with an older backend that has no lifecycle markers.
         deps.turns.settleIfIdle()
         deps.autoScroll()
@@ -330,4 +346,10 @@ export function usePanelSocket(deps: {
     pushBlock,
     announce,
   }
+}
+
+/** The task a message is tagged with (`meta.task_tag`), if any. */
+function taskTagOf(b: Block): string | null {
+  const id = (b.meta as Record<string, unknown> | null | undefined)?.task_tag
+  return typeof id === 'string' ? id : null
 }

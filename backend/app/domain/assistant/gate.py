@@ -83,7 +83,7 @@ CATEGORIES = {
     "remove_member": "移除成员",
     "lower_role": "降低成员的角色",
     "delete": "删除内容",
-    "to_everyone": "在综合频道发消息",
+    "to_everyone": "发给所有人的消息",
 }
 #: What a person who has set nothing is asked about.
 DEFAULT_ASK = tuple(CATEGORIES)

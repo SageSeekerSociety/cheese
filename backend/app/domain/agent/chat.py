@@ -15,7 +15,6 @@ Turn intake, transport steps, durable writes and live state have separate owners
 import asyncio
 import logging
 import uuid
-from functools import partial
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -31,18 +30,6 @@ from app.domain.agent.chat_lifecycle import TurnLifecycle
 from app.domain.agent.chat_live_input import LiveInput
 from app.domain.agent.chat_places import ConversationPlaces
 from app.domain.agent.compute import ComputePool
-
-# 兼容门面：现场事件行的渲染搬去了 `event_lines.py`（那里有直接的单测）。
-# 这里重新导出，`app.domain.agent.chat` 仍是既有调用点与测试的导入路径；下面
-# 带 noqa 的几个本文件不用 —— 它们是被搬走的落库那几步的零件，测试仍然从
-# chat.py 导它们。
-from app.domain.agent.event_lines import (
-    _CHANGE_FILES_LISTED,  # noqa: F401 — 搬走的常量，这里仍然导得出来
-    _change_summary_meta,  # noqa: F401 — 测试仍从 chat.py 导它
-    _Changeset,  # noqa: F401 — 测试仍从 chat.py 导它
-    _diff_file_stats,  # noqa: F401 — 测试仍从 chat.py 导它
-    _format_change_summary,  # noqa: F401 — 测试仍从 chat.py 导它
-)
 from app.domain.agent.gateway import LlmGateway
 
 # 兼容门面：这一轮的模型与它的用量账（准入前解析模型/环境/网关 key，轮次结束后把
@@ -51,11 +38,14 @@ from app.domain.agent.gateway import LlmGateway
 # 同名委托，调用点一格没动。三个设置键的名字（`_GW_KEY` 等）只被这一段读，跟着
 # 搬走，不再是 `ChatService` 的属性。
 from app.domain.agent.gateway_usage import (
+    UNKNOWN_TARGET,
     _gateway_project_env,
     _model_kwargs,
     _schedule_deferred_drain,
     charge_turn_spend,
     project_gateway_key,
+    room_key_in_step,
+    task_key_in_step,
 )
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.input_registration import confirm_receipt
@@ -110,18 +100,10 @@ from app.domain.agent.reads import Report
 from app.domain.agent.recovery import SessionRecovery
 from app.domain.agent.room import reads as room_reads
 from app.domain.agent.room.sessions import RoomSessions
-
-# Compose the actual changeset/event owners with this root's session capability.
-from app.domain.agent.room_events import (
-    _known_commits,
-    _turn_changeset,
-)
 from app.domain.agent.service import AgentUsage
 from app.domain.agent.session_turn_events import SessionTurnEvents
-from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE
 from app.domain.agent.turn.intake.assistant import AssistantMessages
 from app.domain.agent.turn.intake.completion import TurnCompletion
-from app.domain.agent.turn.intake.events import _persist_change_summary
 from app.domain.agent.turn.intake.hooks import HookEvents
 from app.domain.agent.turn.intake.human import HumanMessages
 from app.domain.agent.turn.intake.native_turns import NativeTurns
@@ -208,9 +190,7 @@ class ChatService(
             sessions=session_factory,
             compute=compute,
             gateway=gateway,
-            base_prompt=base_system_prompt,
             host=self,
-            live=self.live,
         )
         #: Brings a seat that went quiet up to date (`agent.prewarm`).
         self.prewarm = SeatPrewarm(self)
@@ -220,8 +200,6 @@ class ChatService(
             memory=self._memory.sync,
             quiet=self.prewarm.nudge,
         )
-        # Keep the publication contract present before native skills are invoked.
-        self._skills = NATIVE_CHAT_GUIDANCE
         # Strong refs to in-flight background tasks (asyncio only keeps weak
         # refs; without this a pending commit could be GC'd).
         self._background_tasks: set[asyncio.Task] = set()
@@ -252,14 +230,12 @@ class ChatService(
                 compute=self._compute,
                 memory=self._memory,
                 base_prompt=self._base_prompt,
-                skills=self._skills,
                 model_options=self._model_kwargs,
                 refuse=self._refuse_turn,
                 live=self.live,
                 send_effects=SendEffects(
                     post_system_event=self.post_system_event,
                     consume_hook_event=self.hook_events.accept,
-                    known_commits=partial(_known_commits, self._sessions),
                     register_input=self._input_registrar,
                     open_interval=turn_inputs.open_interval_with_input,
                     retire_failed=turn_inputs.retire_failed,
@@ -294,9 +270,6 @@ class ChatService(
                 own_waiting=own_limit.after_turn,
             ),
             post_event=self.post_system_event,
-            room_of_conversation=self._room_of_conversation,
-            turn_changeset=partial(_turn_changeset, self._sessions),
-            persist_summary=partial(_persist_change_summary, self._sessions, self.live),
         )
 
     @property
@@ -387,7 +360,6 @@ class ChatService(
             self._sessions,
             self.live,
             self._open_session_turn,
-            partial(_known_commits, self._sessions),
         )
 
     async def _open_session_turn(
@@ -447,6 +419,8 @@ class ChatService(
         *,
         agent: ResolvedAgent | None = None,
         acting_agent: str | None = None,
+        task_id: uuid.UUID | None = None,
+        default_effort: str | None = None,
     ) -> tuple[dict, str]:
         """Resolve a turn's model, model environment and usage route
         (gateway_usage.py)."""
@@ -460,6 +434,8 @@ class ChatService(
             topic_id,
             agent=agent,
             acting_agent=acting_agent,
+            task_id=task_id,
+            default_effort=default_effort,
         )
 
     async def project_gateway_key(
@@ -469,9 +445,13 @@ class ChatService(
         dream: bool = False,
         task_id: uuid.UUID | None = None,
         credit_owner_handle: str | None = None,
+        machine_conversation_id: uuid.UUID | None = None,
+        budget_target: float | None | object = UNKNOWN_TARGET,
     ) -> str | None:
         """The project's virtual gateway key, minted on first use; with
-        ``dream``, the key its memory consolidation runs on (gateway_usage.py)."""
+        ``dream``, the key its memory consolidation runs on, and with
+        ``machine_conversation_id`` the one that conversation's sandboxes
+        call on (gateway_usage.py)."""
         return await project_gateway_key(
             self,
             self._sessions,
@@ -480,7 +460,31 @@ class ChatService(
             dream=dream,
             task_id=task_id,
             credit_owner_handle=credit_owner_handle,
+            machine_conversation_id=machine_conversation_id,
+            budget_target=budget_target,
         )
+
+    def room_key_in_step(
+        self, settings: dict | None, budget_target: float | None
+    ) -> str | None:
+        """The project key from settings already read, when it is in step
+        with ``budget_target``; None to ask `project_gateway_key`."""
+        if self._gateway is None:
+            return None
+        return room_key_in_step(settings, budget_target)
+
+    async def task_key_in_step(
+        self,
+        session: AsyncSession,
+        project_id: uuid.UUID,
+        task_id: uuid.UUID,
+        owner_handle: str,
+    ) -> str | None:
+        """The task key, read on ``session``, when it is in step with what
+        the task may spend; None to ask `project_gateway_key`."""
+        if self._gateway is None:
+            return None
+        return await task_key_in_step(session, project_id, task_id, owner_handle)
 
     async def _gateway_budget_target(
         self, session: AsyncSession, project_id: uuid.UUID

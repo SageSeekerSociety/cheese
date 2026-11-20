@@ -18,9 +18,11 @@ import KeepToLibraryConfirm from '@/components/room/KeepToLibraryConfirm.vue'
 import PanelToggle from '@/components/room/PanelToggle.vue'
 import PrivateChatFiles from '@/components/room/PrivateChatFiles.vue'
 import { t } from '@/i18n'
+import { usePagePanels } from '@/layouts/pagePanels'
 import { memberName, teammateName } from '@/lib/agentNames'
 import { agentHandleOf } from '@/lib/dm'
 import { openThreadDocument } from '@/lib/libraryDocumentNavigation'
+import { proposalPage } from '@/lib/proposalNavigation'
 import { refRoute } from '@/lib/refDirectory'
 import { userRefRoute } from '@/lib/userRef'
 import { myHandle } from '@/me'
@@ -29,7 +31,7 @@ import { agentsQuery } from '@/query/project'
 import { usePageTitleStore } from '@/stores/title'
 import { useWorkspaceStore } from '@/stores/workspace'
 import DmViewView from '@/views/workspace/DmViewView.vue'
-import { useTopicPanes } from '@/views/workspace/useTopicPanes'
+import { useRoomLayout } from '@/views/workspace/roomLayout'
 
 // 私聊 (飞书私聊): a normal 1:1 chat in the content area — no document, no PR
 // header, no accept box. `peer` is the URL's own word for who you are talking
@@ -54,10 +56,15 @@ const loading = ref(false)
 const error = ref<string | null>(null)
 // The teammate's own name, once the room is open — a project may have several
 // and 「芝士」 for all of them would make the header a lie.
-const agentRow = ref<{ display_name: string; name_source?: string } | null>(null)
-const agentName = computed(() =>
-  agentRow.value ? teammateName(agentRow.value.display_name, agentRow.value.name_source) || null : null
-)
+const agentRow = ref<{ display_name: string; name_source?: string; seat_handle?: string } | null>(null)
+const agentName = computed(() => {
+  if (!agentRow.value) return null
+  // 队友的个人备注按当前查看者回，挂在名册那一行上；公开名只作兜底。
+  const seat = store.members.find(
+    (m) => m.user_handle === agentRow.value?.seat_handle || m.instance_handle === agentHandle.value
+  )
+  return memberName(seat) || teammateName(agentRow.value.display_name, agentRow.value.name_source) || null
+})
 
 // Header label: the peer's name for a person DM, else this teammate's.
 const title = computed<string>(() => {
@@ -158,9 +165,19 @@ useEscapeLayer(
   computed(() => panelFloat.value && panelOpen.value),
   closePanel
 )
-const panes = useTopicPanes({ panelOpen, panelFloat, desktop: mdAndUp })
-const { focusMode, focusIcon, focusLabel, docked, chatNews, noteChatNews, toggleFocus, chatStyle } = panes
-const { freezeChatWidth, startPaneDrag } = panes
+// 桌面：对话和面板是外壳布局区里的两格，和频道页同一个摆法（同一个键：拖成的宽度两处共用）。
+const docked = computed(() => !panelFloat.value && panelOpen.value)
+// 对话和「文件」各是外壳布局区里的一块（见 roomLayout.ts），摆法按私聊这一种页面记。
+const room = useRoomLayout(usePagePanels, {
+  kind: () => (mdAndUp.value ? 'dm' : null),
+  tabs: () => [{ key: 'files', title: t('work.room.tabs.files'), icon: 'mdi-paperclip' }],
+  workHidden: () => !topic.value || !docked.value,
+  floating: () => panelFloat.value,
+  hide: { label: () => t('work.room.panel.closeFiles'), run: () => closePanel() },
+  onActivated: () => {},
+  onClose: () => {},
+  onKeep: () => {},
+})
 
 // 这段私聊里的文件：清单、正在看的那一份、保存到资料库（私聊里的东西只有这里的人看得到，
 // 保存之前先问）。
@@ -168,9 +185,18 @@ const topicId = computed(() => topic.value?.id ?? null)
 const files = useConversationFiles(topicId)
 const viewing = ref<string | null>(null)
 watch(topicId, () => (viewing.value = null))
-const fileNames = computed(() =>
-  Object.fromEntries(store.members.filter((m) => m.name).map((m) => [m.user_handle, m.name as string]))
-)
+// 署名和别处同一套：一个人的每个 handle（队友的座位和它自己的）都指到同一行，
+// 用同一条姓名解析——有个人备注用备注，否则原名。
+const fileNames = computed(() => {
+  const out: Record<string, string> = {}
+  for (const m of store.members) {
+    const name = memberName(m)
+    if (!name) continue
+    out[m.user_handle] = name
+    if (m.instance_handle) out[m.instance_handle] = name
+  }
+  return out
+})
 const keepFailed = ref<string | null>(null)
 const asking = ref<ConversationFile | null>(null)
 const { people, projectPeople } = useKeepAudience(
@@ -211,10 +237,13 @@ function openRow(row: ConversationFile) {
   else openFile(row.id)
 }
 function openResource(resource: string, _turnId?: string, review?: DocReviewRequest, document?: OpenedDocument) {
-  if (resource === 'doc' && document) void openThreadDocument(router, props.projectId, document, review)
+  if (resource === 'doc' && document) return void openThreadDocument(router, props.projectId, document, review)
+  // 私聊旁没有右侧面板：提议的技能、例行事务去它在项目里的那一页。
+  const page = document ? proposalPage(resource, props.projectId, document.id) : null
+  if (page) void router.push(page)
 }
 function onTurnDone() {
-  noteChatNews()
+  room.noteChatNews()
   handleTurnDone()
   void files.load()
 }
@@ -231,16 +260,9 @@ function onTurnDone() {
     :docked="docked"
     :panel-open="panelOpen"
     :panel-float="panelFloat"
-    :focus-mode="focusMode"
-    :chat-news="chatNews"
-    :focus-label="focusLabel"
-    :focus-icon="focusIcon"
-    :chat-style="chatStyle"
-    @toggle-focus="toggleFocus"
+    :conversation-target="room.panels.outlet('conversation')"
+    :layout="room.workLayout.value"
     @close-panel="closePanel"
-    @start-drag="startPaneDrag"
-    @reset-split="store.setChatPct(50)"
-    @freeze-chat="freezeChatWidth"
   >
     <template v-if="topic" #chat>
       <ChatPanel
@@ -266,7 +288,7 @@ function onTurnDone() {
         @open-resource="openResource"
       >
         <template #header-actions>
-          <PanelToggle :open="panelOpen" files @toggle="togglePanel" />
+          <PanelToggle :open="panelOpen" files :controls="room.panelControls.value" @toggle="togglePanel" />
         </template>
       </ChatPanel>
     </template>

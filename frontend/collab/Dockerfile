@@ -8,8 +8,12 @@ ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
 WORKDIR /app
 RUN corepack enable
-COPY package.json pnpm-lock.yaml ./
-# The install applies them (package.json's patchedDependencies): the binding
+# pnpm-workspace.yaml links dependencies out of the store's shared directory,
+# and the store here is a cache mount that later layers do not see: each
+# image keeps a node_modules of its own instead.
+ENV pnpm_config_virtual_store_type=project
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+# The install applies them (pnpm-workspace.yaml's patchedDependencies): the binding
 # that stores the document is one of the patched packages.
 COPY patches ./patches
 RUN --mount=type=cache,id=pnpm,target=/pnpm/store pnpm install --frozen-lockfile

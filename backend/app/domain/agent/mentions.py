@@ -34,6 +34,7 @@ import re
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
+from typing import Literal
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,7 +44,7 @@ from app.core.text import markdown_preview
 from app.domain.addressing import Event, Hand, address
 from app.domain.agent_instance.adapters import project_team
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.block.models import Block
+from app.domain.block.models import Block, BlockKind
 from app.domain.conversation.services import is_task
 from app.domain.delivery.ledger import deliver
 from app.domain.delivery.models import Delivery
@@ -139,6 +140,7 @@ async def person_mentions(
     *,
     dm: bool,
     members: Sequence[Member] | None = None,
+    seating: Sequence[str] = (),
 ) -> PersonMentions:
     """The mention rewrite a person's message gets in ``topic``: friendly
     ``@名字`` / ``@话题名`` become ``<@handle>`` / ``<#id>`` tokens, except in a
@@ -155,12 +157,17 @@ async def person_mentions(
     person's words through here, so an edit stores what sending stores.
 
     ``members`` is the project's `roster` when the caller already read it
-    (sending hands over the request's read); without it the roster is read."""
+    (sending hands over the request's read); without it the roster is read.
+
+    ``seating`` are seats the message would seat before it is read
+    (`own_calls.named_own_seats`): a preview reads the message as if they
+    already sat here, which sending makes true before it reads."""
     agent_handles = (
         await TopicMemberService(session).agent_handles(topic.id)
         if "@" in content
         else []
     )
+    agent_handles += [s for s in seating if s not in agent_handles]
     # Which agent each seat belongs to — 名册上 @ 到的是席位，而这一轮要跑
     # 起来的是它背后那个实例（记忆池的 key、署名用的 handle 都在实例上）。
     # 房间可以坐好几位，所以这张表按席位建，不按房间（#1192）。
@@ -493,6 +500,57 @@ async def mentioned_outside(
     )
 
 
+#: Why the sender of a message that asked nobody is offered to hand it to the
+#: AI teammate: they are the only person in the channel, or the message they
+#: sent just before it here was for the teammate.
+Unasked = Literal["alone", "after_agent"]
+
+
+async def unasked(
+    session: AsyncSession,
+    *,
+    conversation_id: uuid.UUID,
+    seq: int,
+    content: str,
+    meta: dict | None,
+    author: str,
+    people: Sequence[str],
+    may_summon: bool,
+) -> Unasked | None:
+    """Whether to tell ``author`` alone, under the message they just stored
+    (``seq`` in ``conversation_id``, saying ``content``, with ``meta``), that
+    it went to no AI teammate and offer to hand it over; and why.
+
+    A channel is people talking to each other by default, so a message that
+    asks nobody is ordinary and is not remarked on (#1743 removed a notice
+    that fired on every one). It is remarked on only where the sender looks
+    to be waiting for the teammate: nobody else is in the channel (``people``
+    is everyone who is), or the sender's message just before this one in the
+    same conversation was for the teammate. A message that names anyone,
+    teammate or person, asked someone; one from a sender who may not ask the
+    teammate is offered nothing it could not do."""
+    if not may_summon or _MENTION_RE.search(content):
+        return None
+    if ((meta or {}).get("agent_recipient") or {}).get("mentioned"):
+        return None
+    if set(people) == {author}:
+        return "alone"
+    before = await session.scalar(
+        select(Block.meta)
+        .where(
+            Block.conversation_id == conversation_id,
+            Block.author == author,
+            Block.kind == BlockKind.message,
+            Block.seq < seq,
+        )
+        .order_by(Block.seq.desc())
+        .limit(1)
+    )
+    if ((before or {}).get("agent_recipient") or {}).get("mentioned"):
+        return "after_agent"
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class CommentMentions:
     """What a document comment's @s did: the people it told, and, for its
@@ -531,20 +589,20 @@ async def announce_comment_mentions(
     The delivery is keyed by the comment, so delivering it again tells
     nobody twice; :func:`comment_notified` reads the same key back."""
     author = comment.author
+    mentioned = [
+        h
+        for h in dict.fromkeys(_MENTION_RE.findall(comment.content or ""))
+        if h != author
+    ]
+    if not mentioned or project_id is None:
+        return CommentMentions([], None)
     # What an AI teammate writes into a comment refers to people; it calls
     # nobody (its answer is read where it was asked).
     if await IdentityService(session).is_agent(author):
         return CommentMentions([], None)
-    if project_id is None:
-        # A team's own document tells nobody yet (`api.doc_mentions`).
-        return CommentMentions([], None)
     members = TopicMemberService(session)
     people = set(await members.project_people(project_id, team=project_team))
-    named = [
-        h
-        for h in dict.fromkeys(_MENTION_RE.findall(comment.content or ""))
-        if h != author and h in people
-    ]
+    named = [h for h in mentioned if h in people]
     if not named:
         return CommentMentions([], None)
     outside = None

@@ -83,10 +83,15 @@ def test_a_step_keeps_the_name_of_what_it_read():
             "tool_args",
             {"call": "c1", "text": '{"ref": "ml/tasks/12"}', "at": 0},
         ),
-        ("1200-0", "tool_done", {"call": "c1", "shown": "任务「报名说明」"}),
+        (
+            "1200-0",
+            "tool_done",
+            {"call": "c1", "shown": "任务「报名说明」", "effect": "reads"},
+        ),
     ]
 
     [step] = parts_of(told)["steps"]
 
     assert step["args"] == '{"ref": "ml/tasks/12"}'
     assert step["shown"] == "任务「报名说明」"
+    assert step["effect"] == "reads"

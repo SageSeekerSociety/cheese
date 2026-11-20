@@ -37,6 +37,11 @@ class RoutineTrigger(enum.StrEnum):
     library_file_added = "library_file_added"
     task_closed = "task_closed"
     card_accepted = "card_accepted"
+    # 任务这一层的审阅：一件活提交了审阅（``task_filed``）、它的审阅有了结果
+    # （``task_decided``，``spec["outcome"]`` 说采纳还是退回）。和个人那边同一套
+    # 名字，同一条活两边都能等。
+    task_filed = "task_filed"
+    task_decided = "task_decided"
 
 
 class RoutineState(enum.StrEnum):
@@ -187,9 +192,9 @@ class RoutineRun(UuidPk, Base):
     outputs: Mapped[list] = mapped_column(JSONB, default=list)
     #: The feedback this run handed to its teammate (a list of uuid strings),
     #: for a rule whose spec carries `feedback_batch`; empty otherwise. The
-    #: triage selection skips what an earlier run of the same rule handed out,
-    #: so a report is batched once — and a run that failed, or never started,
-    #: does not count (see `routine/service/firing.py`).
+    #: triage selection keeps these out of another batch while this run is
+    #: going, and afterwards puts them behind the reports never handed out
+    #: (see `routine/service/firing.py`, `feedback/triage.py`).
     feedback_offered: Mapped[list] = mapped_column(
         JSONB, default=list, server_default="[]"
     )

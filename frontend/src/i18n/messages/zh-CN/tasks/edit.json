@@ -5,5 +5,14 @@
   "resubmitted": "重新提交审核成功，等待管理员审核",
   "saveAndResubmit": "保存并提交审核",
   "saveChanges": "保存更改",
-  "unsaved": "有未保存的修改"
+  "unsaved": "有未保存的修改",
+  "stageEffect": {
+    "title": "保存这次对阶段的修改？",
+    "failing": "{stages}已过截止，{who}还没提交，保存后将判为未通过",
+    "reopening": "{who}将从未通过回到进行中",
+    "stage": "「{name}」",
+    "whoMore": "{names}等 {n} 人",
+    "joiner": "、",
+    "failingNoStage": "{who}有已过截止、还没提交的阶段，保存后将判为未通过"
+  }
 }

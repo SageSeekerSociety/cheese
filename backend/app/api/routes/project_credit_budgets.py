@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
 from app.api.response import ok, typed_response
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import Can, InProject
 from app.auth.project_roles import standing
 from app.core.errors import ForbiddenError, UnprocessableEntityError
 from app.core.sentences import say
@@ -54,19 +54,14 @@ async def project_credit_budget(
     return ok(await _named(db, project_id, await CreditBudgets(db).report(project_id)))
 
 
-@router.put(
-    "/{project_id}/credit-budget",
-    dependencies=[ROUTE_DECIDES],
-    **typed_response(ProjectCreditBudgetOut),
-)
+@router.put("/{project_id}/credit-budget", **typed_response(ProjectCreditBudgetOut))
 async def set_project_credit_budget(
-    project_id: uuid.UUID, body: BudgetUpdate, db: DbSession, resolver: ActorResolverDep
+    at: Annotated[InProject, Can(Permission.edit_settings)],
+    body: BudgetUpdate,
+    db: DbSession,
 ) -> dict:
-    actor = await _readable(project_id, resolver)
-    await resolver.authorize_project(
-        actor, project_id=project_id, permission=Permission.edit_settings
-    )
-    held = await standing(db, project_id=project_id, handle=actor.handle)
+    project_id = at.project.id
+    held = await standing(db, project_id=project_id, handle=at.actor.handle)
     if held is None or held.seat not in (Seat.owner, Seat.admin):
         raise ForbiddenError(say("creditBudgetAdminRequired"))
     people = await roster(db, project_id, team=project_team)

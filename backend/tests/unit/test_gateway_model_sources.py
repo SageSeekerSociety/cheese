@@ -17,6 +17,7 @@
 
 import json
 import uuid
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import httpx
@@ -28,6 +29,7 @@ from app.domain.agent import gateway_catalog
 from app.domain.agent.gateway import LlmGateway
 from app.domain.agent.gateway_admin import GatewayAdmin
 from app.domain.agent.gateway_models import GatewayModelsService, reset_cache
+from app.domain.agent.gateway_models import cache as gateway_cache
 from app.domain.agent.models import PlatformModelRole
 from app.domain.agent.schemas import (
     ModelCreate,
@@ -102,9 +104,12 @@ class _Gateway:
         self.requests: list[httpx.Request] = []
         # Virtual keys by alias -> the models each may call (`/key/update`).
         self.keys: dict[str, list[str]] = {}
-        # The ledger by upstream model (`breakdown.models`), and the start date
-        # of every usage window asked for.
+        # The ledger by upstream model (`breakdown.models`) as spent today, the
+        # same spent a month ago, and the start date of every usage window asked
+        # for. A usage read answers only the days it asks for, and with `model`
+        # only that upstream's rows, as LiteLLM does.
         self.ledger: dict[str, float] = {}
+        self.earlier_ledger: dict[str, float] = {}
         self.usage_starts: list[str] = []
 
     def _find(self, model_id: str) -> dict | None:
@@ -119,16 +124,28 @@ class _Gateway:
         if path == "/model/info":
             return httpx.Response(200, json={"data": self.rows})
         if path == "/user/daily/activity/aggregated":
-            self.usage_starts.append(request.url.params["start_date"])
-            models = {
-                upstream: {"metrics": {"spend": spend}}
-                for upstream, spend in self.ledger.items()
-            }
-            results = (
-                [{"date": "2026-10-20", "breakdown": {"models": models}}]
-                if models
-                else []
-            )
+            start = request.url.params["start_date"]
+            end = request.url.params["end_date"]
+            only = request.url.params.get("model")
+            self.usage_starts.append(start)
+            today = datetime.now(UTC).date()
+            results = [
+                {
+                    "date": day.isoformat(),
+                    "breakdown": {
+                        "models": {
+                            upstream: {"metrics": {"spend": spend}}
+                            for upstream, spend in spent.items()
+                            if only is None or upstream == only
+                        }
+                    },
+                }
+                for day, spent in (
+                    (today - timedelta(days=30), self.earlier_ledger),
+                    (today, self.ledger),
+                )
+                if spent and start <= day.isoformat() <= end
+            ]
             return httpx.Response(200, json={"results": results, "metadata": {}})
         if path == "/model/new":
             model_id = str(uuid.uuid4())
@@ -427,6 +444,31 @@ async def test_relabelling_a_model_relabels_every_source():
     infos = [r["model_info"] for r in gw.group("glm")]
     assert [i["cheese_label"] for i in infos] == ["GLM-5.2", "GLM-5.2"]
     assert [i["cheese_tier"] for i in infos] == ["premium", "premium"]
+
+
+@pytest.mark.anyio
+async def test_a_models_cache_lifetime_is_set_cleared_and_read_on_every_source():
+    """How long a model's cache stays warm is the model's: set on the page, the
+    platform reads it whichever row comes first, and 0 takes it away."""
+    gw = _Gateway()
+    service = _service(gw)
+    await _two_runtime_sources(gw, service)
+
+    saved = await service.update(
+        handle="admin", name="glm", payload=ModelUpdate(cache_lifetime_s=300)
+    )
+    assert saved["model"]["cache_lifetime_s"] == 300, "页面读回的是刚存的"
+    picker = {m.id: m for m in await gw.catalogue().models()}
+    assert picker["glm"].cache_lifetime_s == 300
+    gw.rows.reverse()
+    picker = {m.id: m for m in await gw.catalogue().models()}
+    assert picker["glm"].cache_lifetime_s == 300, "哪一行排第一都是同一个数"
+
+    await service.update(
+        handle="admin", name="glm", payload=ModelUpdate(cache_lifetime_s=0)
+    )
+    picker = {m.id: m for m in await gw.catalogue().models()}
+    assert picker["glm"].cache_lifetime_s is None
 
 
 @pytest.mark.anyio
@@ -920,14 +962,17 @@ async def test_marking_a_model_as_needing_approval_marks_every_source():
 def _argon_like_kimi() -> dict:
     config = json.loads(json.dumps(_KIMI_CONFIG))
     config["model_info"].update(
-        cheese_overseas=True, cheese_spend_cap_usd=1000, cheese_no_explicit_cache=True
+        cheese_overseas=True,
+        cheese_spend_cap_usd=1000,
+        cheese_no_explicit_cache=True,
+        cheese_cache_ttl="1h",
     )
     return config
 
 
 @pytest.mark.anyio
 async def test_a_source_on_another_upstream_needs_approval_but_no_cap_or_cache_rule():
-    """Approval is the model's; a spend cap and the cache-mark strip are what one
+    """Approval is the model's; a spend cap and the cache rules are what one
     upstream model needs, so a source on another upstream does not take them."""
     gw = _Gateway([_argon_like_kimi()])
     service = _service(gw)
@@ -940,12 +985,13 @@ async def test_a_source_on_another_upstream_needs_approval_but_no_cap_or_cache_r
     assert new_row["model_info"]["cheese_overseas"] is True
     assert "cheese_spend_cap_usd" not in new_row["model_info"]
     assert "cheese_no_explicit_cache" not in new_row["model_info"]
+    assert "cheese_cache_ttl" not in new_row["model_info"]
 
 
 @pytest.mark.anyio
 async def test_a_source_on_the_same_upstream_keeps_its_cap_and_cache_rule():
-    """Another key for the same upstream model must not escape the cap, nor send
-    the cache marks that upstream refuses."""
+    """Another key for the same upstream model must not escape the cap, nor lose
+    the cache rules that upstream needs."""
     gw = _Gateway([_argon_like_kimi()])
     service = _service(gw)
     same = {
@@ -966,6 +1012,7 @@ async def test_a_source_on_the_same_upstream_keeps_its_cap_and_cache_rule():
     assert new_row["litellm_params"]["model"] == config_row["litellm_params"]["model"]
     assert new_row["model_info"]["cheese_spend_cap_usd"] == 1000
     assert new_row["model_info"]["cheese_no_explicit_cache"] is True
+    assert new_row["model_info"]["cheese_cache_ttl"] == "1h"
 
 
 # --- Spend cap: one per upstream model, set from the page ----------------------
@@ -1060,6 +1107,52 @@ async def test_a_capped_source_shows_what_its_upstream_has_cost_all_time():
         (s["upstream_raw"], s["spend_cap_used_usd"]) for s in item["sources"]
     ) == [(_ARGON, 2100.0), (_ARGON, 2100.0), ("gemini/other", None)]
     assert "2000-01-01" in gw.usage_starts
+
+
+@pytest.mark.anyio
+async def test_used_counts_spend_before_the_window_and_inside_it_once_each():
+    """The cap is all-time, so a month-old spend counts as much as today's, and
+    neither is counted twice however the page's window splits them."""
+    gw = _Gateway()
+    service = _service(gw)
+    await _argon_rows(service)
+    await _set_cap(service, "argon", gw.group("argon")[0]["model_info"]["id"], 2500)
+    gw.earlier_ledger = {_ARGON: 2000.0}
+    gw.ledger = {_ARGON: 100.0}
+
+    item = await _listed(service, "argon")
+
+    assert sorted(
+        (s["upstream_raw"], s["spend_cap_used_usd"]) for s in item["sources"]
+    ) == [(_ARGON, 2100.0), (_ARGON, 2100.0), ("gemini/other", None)]
+
+
+@pytest.mark.anyio
+async def test_used_follows_a_late_ledger_write_to_an_earlier_day(monkeypatch):
+    """Spend the gateway records late against a day before the page's window
+    (its batch writer lags, a backfill) counts in Used as soon as the page's
+    own 15-second answers expire, not an hour later: Used is money the cap
+    will refuse on."""
+    clock = [1000.0]
+    monkeypatch.setattr(gateway_cache.time, "monotonic", lambda: clock[0])
+    gw = _Gateway()
+    service = _service(gw)
+    await _argon_rows(service)
+    await _set_cap(service, "argon", gw.group("argon")[0]["model_info"]["id"], 2500)
+    gw.earlier_ledger = {_ARGON: 2000.0}
+    gw.ledger = {_ARGON: 100.0}
+    assert {
+        s["spend_cap_used_usd"] for s in (await _listed(service, "argon"))["sources"]
+    } == {2100.0, None}
+
+    gw.earlier_ledger = {_ARGON: 2300.0}
+    clock[0] += 16
+    listing = await service.listing(days=7)
+
+    item = next(m for m in listing["models"] if m["name"] == "argon")
+    assert sorted(
+        (s["upstream_raw"], s["spend_cap_used_usd"]) for s in item["sources"]
+    ) == [(_ARGON, 2400.0), (_ARGON, 2400.0), ("gemini/other", None)]
 
 
 @pytest.mark.anyio

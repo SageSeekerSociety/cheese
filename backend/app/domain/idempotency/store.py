@@ -20,7 +20,7 @@ poisons the transaction with an IntegrityError when they collide.
 import logging
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -49,13 +49,18 @@ async def record_result(
 ) -> None:
     """Attach the winner's output to its key so a losing replay can return the
     SAME answer instead of an error. Best-effort by design: a missing result
-    degrades a replay to "already done, nothing returned", never to a repeat."""
-    row = (
-        await session.execute(select(IdempotencyKey).where(IdempotencyKey.key == key))
-    ).scalar_one_or_none()
-    if row is not None:
-        row.result = result
-        await session.flush()
+    degrades a replay to "already done, nothing returned", never to a repeat.
+
+    One ``UPDATE`` by key: every message sent records its result here, and
+    reading the row back first only to set one column on it was a second round
+    trip (and an ORM flush that ended the request's remembered answers). A key
+    that is not there updates nothing, as before."""
+    await session.execute(
+        update(IdempotencyKey)
+        .where(IdempotencyKey.key == key)
+        .values(result=result)
+        .execution_options(synchronize_session=False)
+    )
 
 
 async def stored_result(session: AsyncSession, key: str) -> dict[str, Any] | None:

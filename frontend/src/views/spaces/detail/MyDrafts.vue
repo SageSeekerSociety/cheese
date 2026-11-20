@@ -19,11 +19,11 @@ import type { TaskDraftSummary } from '@/types'
 import { computed, onMounted, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 
 import MyDraftsView from './MyDraftsView.vue'
 
 import { TaskDraftsApi } from '@/api/taskDrafts'
+import { toast } from '@/lib/toast'
 import { useSpaceStore } from '@/stores/space'
 
 const route = useRoute()

@@ -40,6 +40,7 @@ from app.domain.block.schemas import BlockOut, reply_preview
 # `room_task` imports this domain, so reaching its service from here closes a
 # C3 cycle.
 from app.domain.block.task_rows import _tasks
+from app.domain.conversation.numbering import lock_conversations
 from app.domain.conversation.services import is_task
 from app.domain.delivery_events import DeliveryEvent, NotificationType
 from app.domain.event_about import EventAbout, landing
@@ -120,6 +121,12 @@ async def edit_message[Sent: EditedText](
     assert block is not None
     if block.author != editor:
         raise ForbiddenError("Only the author can edit this message")
+    # The edit writes the message's whole meta back. Its conversation's
+    # numbering first, then the message read again: a question's answer is
+    # recorded on its meta under that numbering (`conversation.numbering`), so
+    # one recorded meanwhile is kept rather than written over.
+    await lock_conversations(session, [block.conversation_id])
+    await session.refresh(block)
     text = content.strip()
     if not text:
         raise ValidationError("content must not be blank")
@@ -129,6 +136,9 @@ async def edit_message[Sent: EditedText](
     # whose reading ended in a failure was never answered, and editing it
     # asks it again.
     already_read = consumed_turn(block) is not None and read_failed(block) is None
+    # A room's agent hears of an edit to a message it read; a task's message
+    # was never the room's, and its own session is told through the ledger.
+    in_room = not await is_task(session, block.conversation_id)
     await blocks.replace_content(block, sent.text, checklist=checklist)
     summoned = await notify_mentions(
         session,
@@ -137,9 +147,6 @@ async def edit_message[Sent: EditedText](
         editor,
         before=before,
     )
-    # A room's agent hears of an edit to a message it read; a task's message
-    # was never the room's, and its own session is told through the ledger.
-    in_room = not await is_task(session, block.conversation_id)
     notice = (
         await _tell_the_room(blocks, block, editor)
         if in_room and already_read

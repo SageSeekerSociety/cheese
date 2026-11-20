@@ -268,7 +268,7 @@ async def test_a_private_chat_answers_while_every_work_machine_is_offline(
     assert channel.asked == [False], "私聊这一轮不该去要手"
     async with factory() as session:
         blocks = await BlockRepository(session).list_for_topic(topic_id)
-        kept = await read(session, topic_id)
+        kept = await read(session, topic_id, reader=None)
     assert any(
         item["record"].get("type") == "result"
         and item["record"].get("result") == channel.reply

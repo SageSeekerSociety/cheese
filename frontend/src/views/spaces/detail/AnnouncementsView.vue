@@ -152,6 +152,7 @@ function submit() {
     <BaseEmptyState
       v-else-if="loaded && !current.length && !expired.length"
       size="inline"
+      align="center"
       :title="t('spaces.announcements.empty')"
     />
 

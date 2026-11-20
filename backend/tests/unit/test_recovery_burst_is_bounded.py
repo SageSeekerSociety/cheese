@@ -20,6 +20,11 @@ from app.api.routes.connector import devices
 @pytest.fixture
 def quiet_reconnect(monkeypatch):
     monkeypatch.setattr("app.core.background.spawn", lambda coro, *, name: coro.close())
+    # Recovery runs only on the backend that owns the sessions. The work runner is
+    # process-wide, and a test before this one on the same worker can leave it
+    # not owning them: recovery then returns at once and nothing here is counted.
+    owning = type("Runner", (), {"owns_sessions": True})()
+    monkeypatch.setattr("app.api.deps.get_work_runner", lambda: owning)
 
 
 @pytest.mark.anyio

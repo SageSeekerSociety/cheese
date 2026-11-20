@@ -60,7 +60,7 @@ def test_device_requests_read_the_current_room_token_file(tmp_path, monkeypatch)
         sock = None
 
         def request(self, method, path, *, body, headers):
-            seen.append(headers["X-Cheese-Token"])
+            seen.append(headers["Authorization"].removeprefix("Bearer "))
 
         @staticmethod
         def getresponse():
@@ -153,7 +153,7 @@ def test_platform_requests_read_the_rotated_room_token(tmp_path, monkeypatch):
 
     class Connection:
         def request(self, method, path, *, body, headers):
-            seen.append(headers["X-Cheese-Token"])
+            seen.append(headers["Authorization"].removeprefix("Bearer "))
 
         def getresponse(self):
             return self
@@ -337,7 +337,7 @@ def central_transport(executor, tmp_path):
             self.wfile.write(data)
 
         def do_POST(self):
-            assert self.headers["X-Cheese-Token"] == "fixture"
+            assert self.headers["Authorization"] == "Bearer fixture"
             clients.append(self.client_address)
             payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             status = 200
@@ -1022,7 +1022,7 @@ def test_a_session_prepared_here_does_not_credit_claude_code(
     monkeypatch.setattr(central, "__file__", str(helpers / "client.py"))
     target = json.loads((tmp_path / "central.json").read_text())
     version_probe = tmp_path / "claude-version"
-    version_probe.write_text("#!/bin/sh\nprintf '2.1.299\\n'\n")
+    version_probe.write_text("#!/bin/sh\nprintf '2.1.316\\n'\n")
     version_probe.chmod(0o700)
     directory = tmp_path / "prepared"
 
@@ -1054,7 +1054,7 @@ def test_generated_prefix_preserves_local_hook_and_remote_command_boundary(
     command = "cat > 'hook receipt.txt'; printf '%s' 'quoted * ? [value]'"
     directory = tmp_path / "prepared with spaces"
     version_probe = tmp_path / "claude-version"
-    version_probe.write_text("#!/bin/sh\nprintf '2.1.299\\n'\n")
+    version_probe.write_text("#!/bin/sh\nprintf '2.1.316\\n'\n")
     version_probe.chmod(0o700)
     launch = central.prepare(
         directory,
@@ -1168,6 +1168,46 @@ def test_structured_chat_publishes_literal_content_without_executor(central_tran
     assert len(clients) == discovery_clients + 2
     assert clients[-2] == clients[-1]
     assert not (work / "forbidden").exists()
+
+
+def test_a_message_about_a_task_reaches_the_room_naming_that_task(central_transport):
+    """A main-line message sent with `task` by its number reaches the room
+    saying which task it is about, so the room can tag it."""
+    process, _, _, _ = central_transport
+    process.call(
+        "tools/call",
+        {
+            "name": "chat_send",
+            "arguments": {
+                "content": "首页的报名表做好了",
+                "task": "#8",
+                "id": "tagged-publication",
+                "session_id": "fixture",
+            },
+        },
+    )
+    assert process.publications[-1]["task"] == "#8"
+
+
+def test_a_message_offering_quick_replies_reaches_the_room_with_them(
+    central_transport,
+):
+    """A main-line message sent with `replies` reaches the room offering them,
+    so the room can draw them under it."""
+    process, _, _, _ = central_transport
+    process.call(
+        "tools/call",
+        {
+            "name": "chat_send",
+            "arguments": {
+                "content": "报名的人要填什么？",
+                "replies": ["照去年四项", "只要姓名和学号"],
+                "id": "replies-publication",
+                "session_id": "fixture",
+            },
+        },
+    )
+    assert process.publications[-1]["replies"] == ["照去年四项", "只要姓名和学号"]
 
 
 def test_central_tools_reuse_process_and_http_connection(central_transport):
@@ -1401,7 +1441,7 @@ def test_deferred_tools_acquire_once_and_read_project_rules_before_writing(
             else:
                 seen.append(body["method"])
                 assert 0 < body["timeout"] <= 660
-                assert self.headers["X-Cheese-Token"] == "execution-only"
+                assert self.headers["Authorization"] == "Bearer execution-only"
                 result = runtime.request(state, body["method"], body["params"])
             encoded = json.dumps(result).encode()
             self.send_response(200)
@@ -1489,7 +1529,7 @@ class LeasingPlatform:
                     }
                 else:
                     platform.seen.append(body["method"])
-                    assert self.headers["X-Cheese-Token"] == "execution-only"
+                    assert self.headers["Authorization"] == "Bearer execution-only"
                     result = runtime.request(state, body["method"], body["params"])
                 encoded = json.dumps(result).encode()
                 self.send_response(200)

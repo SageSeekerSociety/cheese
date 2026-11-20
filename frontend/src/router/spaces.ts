@@ -1,7 +1,8 @@
 import type { RouteLocationNormalized, RouteLocationRaw, RouteRecordRaw } from 'vue-router'
 
 /**
- * `/spaces/:spaceId/manage/*` 的门：只有这个空间的所有者与管理员能进。
+ * `/spaces/:spaceId/manage/*` 的门：只有管得了这个空间的人能进 —— 所有者、管理员，
+ * 以及不占席位的平台管理员。
  *
  * 在这之前管理那一段（待审核、成员、数据、设置）没有任何守卫 —— 非管理员把地址
  * 直接敲进来就进得去，页面自己去拉只有管理员能读的接口，换回来一个 403，屏幕上
@@ -9,9 +10,9 @@ import type { RouteLocationNormalized, RouteLocationRaw, RouteRecordRaw } from '
  * 画的是一扇说清楚「为什么进不去、下一步去哪」的门（和项目页那扇同一个形状，
  * 组件是 `components/common/AccessNotice.vue`）。
  *
- * 判据是这个空间的管理员名单（`useSpaceStore` 的 `isManager`，和侧栏「管理」那一栏
- * 的显隐同源，不是另抄一份）。名单随这块板的详情一起来，所以这里按需先取一次 ——
- * 和页面外壳（`views/spaces/Detail.vue`）取的是同一份、同一条路
+ * 判据是服务端说读者能做什么（`useSpaceStore` 的 `isManager`，读 `viewerPermissions`，
+ * 和侧栏「管理」那一栏的显隐同源，不是另抄一份）。它随这块板的详情一起来，所以这里
+ * 按需先取一次 —— 和页面外壳（`views/spaces/Detail.vue`）取的是同一份、同一条路
  * （`useSpaceData.fetchSpace`）。取数失败它自己会提示；这里只按「没拿到 = 不是
  * 管理员」往下判，于是不存在、也不属于我的板同样进不了管理那一段。
  *
@@ -29,12 +30,32 @@ export async function spaceManageGuard(to: RouteLocationNormalized): Promise<Rou
     import('@/services/account'),
   ])
   // 「我是谁」在冷打开、访问令牌过期时要等会话恢复完才落定；不等的话，一个真管理员
-  // 会被自己刚打开的那一页挡在门外。恢复完好后 `isManager` 才读得到正确的名单比对。
+  // 会被自己刚打开的那一页挡在门外。
   await account.sessionRestored
   const store = useSpaceStore()
   if (store.currentSpace?.id !== spaceId) await useSpaceData().fetchSpace(spaceId)
   if (store.isManager) return true
   return { name: 'SpaceManageDenied', params: { spaceId: String(spaceId) } }
+}
+
+/**
+ * `/spaces/:spaceId/…` 的登录门：空间只对有席位的人开放，没登录的访客在这里读不到
+ * 任何东西 —— 板的详情、分类、题目，后端一律答 401。
+ *
+ * 以前这一段没有门：登录过期的人点开一条空间里的题目链接，会话恢复被服务端拒掉之后
+ * 他就成了访客（`AccountService.restoreSession` 只清会话、不跳转），页面照常挂上，
+ * 每个面板各自拉到一个 401，屏幕上是「获取分类失败」和「Request failed with
+ * status code 401」，没有一处告诉他该去登录。现在判据提到路由层：没登录就送去登录
+ * 页，`?redirect=` 带上这条地址，登录完回到他要看的那道题。
+ *
+ * 连不上（`restorePhase === 'unreachable'`）不算没登录：本地会话还在，界面那一层会
+ * 说「连不上、可以重试」，这时把人送去登录页就是把一个好好的会话当生人。
+ */
+export async function spaceSignInGuard(to: RouteLocationNormalized): Promise<RouteLocationRaw | true> {
+  const { default: account } = await import('@/services/account')
+  await account.sessionRestored
+  if (account.loggedIn || account.restorePhase === 'unreachable') return true
+  return { name: 'SignIn', query: { redirect: to.fullPath } }
 }
 
 /**
@@ -55,6 +76,7 @@ export default {
     drawer: true,
   },
   redirect: { name: 'SpacesDetailTasks' },
+  beforeEnter: spaceSignInGuard,
   children: [
     {
       path: 'announcements',
@@ -130,6 +152,13 @@ export default {
               component: () => import('@/views/tasks/detail/Insights.vue'),
               meta: { titleKey: 'navigation.pages.taskData' },
             },
+            {
+              // `?version=N` 落到第 N 版：项目里「题目更新」那一行、芝士读到的那一段都指到这里。
+              path: 'versions',
+              name: 'TasksVersions',
+              component: () => import('@/views/tasks/detail/Versions.vue'),
+              meta: { titleKey: 'navigation.pages.taskVersions' },
+            },
           ],
         },
         {
@@ -153,6 +182,14 @@ export default {
       name: 'SpacesLibrary',
       component: () => import('@/views/spaces/detail/library/SpaceLibrary.vue'),
       meta: { titleKey: 'spaces.materials.title' },
+    },
+    {
+      // 我的学习洞察（学情分析第 2 步）：只有本人看得到。侧栏只在这块板开着学情分析时
+      // 摆这一格；直接打开地址时页面自己说「没开启」。
+      path: 'learning-insight',
+      name: 'SpacesMyLearningInsight',
+      component: () => import('@/views/spaces/detail/MyLearningInsight.vue'),
+      meta: { titleKey: 'spaces.learningAnalysis.insight.title' },
     },
     {
       // 我在这个空间的草稿：新题目和对已发布题目的修改（侧栏「我的草稿」）。
@@ -239,6 +276,12 @@ export default {
           component: () => import('@/views/spaces/detail/settings/BasicInfo.vue'),
         },
         {
+          // 只对成员开放，还是开放给一组邮箱后缀（开放要等平台审核）。
+          path: 'access',
+          name: 'SpacesDetailSettingsAccess',
+          component: () => import('@/views/spaces/detail/settings/Access.vue'),
+        },
+        {
           // 分类与话题是两页现成的管理页，并排画在这一栏里：设置页给话题留了一个具名出口。
           path: 'categories',
           name: 'SpacesDetailSettingsCategories',
@@ -253,11 +296,6 @@ export default {
           component: () => import('@/views/spaces/detail/ManageTemplates.vue'),
         },
         {
-          path: 'invite-codes',
-          name: 'SpacesDetailSettingsInviteCodes',
-          component: () => import('@/views/spaces/detail/InviteCodes.vue'),
-        },
-        {
           path: 'domain-groups',
           name: 'SpacesDetailSettingsDomainGroups',
           component: () => import('@/views/spaces/detail/ManageDomainGroups.vue'),
@@ -266,6 +304,12 @@ export default {
           path: 'guidance',
           name: 'SpacesDetailSettingsGuidance',
           component: () => import('@/views/spaces/detail/settings/SpaceGuidance.vue'),
+        },
+        {
+          // 学情分析：开关 + 知识点清单 + 告知卡预览 + 平台那三条隐私规则。
+          path: 'learning-analysis',
+          name: 'SpacesDetailSettingsLearningAnalysis',
+          component: () => import('@/views/spaces/detail/settings/LearningAnalysis.vue'),
         },
         {
           // 资料库原来是设置里的一栏，现在是侧栏的一页；旧链接接着能打开。

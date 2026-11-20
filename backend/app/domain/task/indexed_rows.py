@@ -45,10 +45,9 @@ def _one_of(values: tuple[str, ...]) -> str:
 #: platform punish a person for a queue they do not control. `SUCCESS` is not
 #: here either — someone whose work passed is past this question.
 #:
-#: The sweep still also keeps its `~has_work_in_hand` guard: the two statuses
-#: are the ones a membership with nothing in hand can carry, so the two say the
-#: same thing, and the conjunction is kept because a wrong write fails a person
-#: for work they did while a guard that only skips is the cheaper mistake.
+#: The sweep still derives every candidate before writing (`deadline_scheduler`):
+#: a status read off the row can be stale, and a wrong write fails a person for
+#: work they did, while a derivation that only skips is the cheaper mistake.
 SWEEPABLE_STATUSES = ("REJECTED_RESUBMITTABLE", "NOT_SUBMITTED")
 
 SWEEPABLE_ROWS = text(

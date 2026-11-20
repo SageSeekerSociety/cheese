@@ -17,6 +17,7 @@ function application(
   hoursAgo: number
 ): SpaceApplication {
   return {
+    kind: 'create',
     id,
     avatarId: null,
     name,

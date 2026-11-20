@@ -33,23 +33,35 @@ export function useOpenLibraryDocument(
     else void router.push({ name: 'workspace-topic', params: { projectId: projectId(), topicId } })
   }
 
+  let aboutSequence = 0
   watch(
     selectedDocId,
     async (id) => {
-      openDocument.value = null
-      if (!id) return
+      const sequence = ++aboutSequence
+      if (!id) {
+        openDocument.value = null
+        return
+      }
+      openDocument.value = {
+        id,
+        projectId: projectId(),
+        title: '',
+      }
       try {
         const about = await docs.about(id)
-        if (selectedDocId.value !== id) return
+        if (selectedDocId.value !== id || sequence !== aboutSequence) return
         openDocument.value = {
           id: about.id,
-          projectId: about.project_id ?? '',
-          title: about.title ?? '',
+          projectId: about.project_id ?? projectId(),
+          title: openDocument.value?.title || about.title || '',
           created_by: about.created_by,
           drafted_by: about.drafted_by,
         }
       } catch (e) {
-        if (selectedDocId.value === id) failed(e instanceof Error ? e.message : String(e))
+        if (selectedDocId.value === id && sequence === aboutSequence) {
+          openDocument.value = null
+          failed(e instanceof Error ? e.message : String(e))
+        }
       }
     },
     { immediate: true }

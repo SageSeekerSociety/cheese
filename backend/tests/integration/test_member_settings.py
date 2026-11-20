@@ -33,7 +33,9 @@ def project(client, monkeypatch):
     monkeypatch.setattr(settings, "microcloud_vm_offering_id", "vm-offering")
     data = post_project(client, json={"name": "P"}, owner="alice").json()["data"]
     join_project_team(client, data["id"], "bob")
-    join_project_team(client, data["id"], "carol")
+    # A second person moves the project into a shared team; ask that one, not
+    # the personal team it was created in.
+    team_id = join_project_team(client, data["id"], "carol")
     made = client.put(
         f"/projects/{data['id']}/members/bob/role",
         json={"role": "admin"},
@@ -44,7 +46,7 @@ def project(client, monkeypatch):
     # Approved, so Claude is shown and its tier is what Free leaves out.
     async def approve() -> None:
         async with client.test_request_factory() as session:
-            await approve_overseas(session, data["team_id"])
+            await approve_overseas(session, team_id)
             await session.commit()
 
     client.portal.call(approve)

@@ -30,6 +30,7 @@ export interface PreviewLocate {
 
 export function createQuestionSubmit(options: {
   topic: () => Topic | null
+  conversationId?: () => string | null | undefined
   agentSeat: () => { handle: string; label: string } | null
   mentionPool: () => (MentionMember & { agent?: boolean })[]
   topicList: () => Topic[]
@@ -37,7 +38,15 @@ export function createQuestionSubmit(options: {
 }): SubmitPreviewQuestion {
   return (request) => {
     const seat = options.agentSeat()
-    if (request.intent !== 'ask-agent' || options.topic()?.id !== request.topicId || !seat || !request.content.trim())
+    const topicId = options.topic()?.id
+    const convId = options.conversationId?.()
+    if (
+      request.intent !== 'ask-agent' ||
+      (!topicId && !convId) ||
+      (request.topicId !== topicId && request.topicId !== convId) ||
+      !seat ||
+      !request.content.trim()
+    )
       return false
     const pool = options.mentionPool()
     const topics = options.topicList().filter((topic) => topic.kind !== 'root')

@@ -2,15 +2,7 @@
 // 错了，公告就会在到期日当天早上消失，或者多挂一天。
 import { describe, expect, it } from 'vitest'
 
-import {
-  announcementDay,
-  currentInviteCode,
-  dayOfExpiry,
-  expiryDay,
-  expiryFromDay,
-  inviteCodeStatus,
-  splitOrigin,
-} from './model'
+import { announcementDay, dayOfExpiry, expiryDay, expiryFromDay, splitOrigin } from './model'
 
 describe('公告的到期日', () => {
   it('到期日当天公告还在，第二天零点起才算到期', () => {
@@ -33,57 +25,6 @@ describe('公告的到期日', () => {
   it('不是今年的日期带上年份', () => {
     const now = new Date(2026, 8, 30).getTime()
     expect(announcementDay(new Date(2025, 11, 3).getTime(), now)).toEqual({ year: 2025, month: 12, date: 3 })
-  })
-})
-
-// 「哪张码还算数」与「当前用的是哪张」。头部下拉的摘要、成员页「让人进来」、邀请码
-// 弹窗三处念的是同一条，所以它错了会同时错在三处 —— 钉这一条比钉任何一页的渲染要紧。
-//
-// 两张形状都要认：真接口那一版（`maxUses` 是数字，0 = 不限，见 `SpaceInviteCode`）
-// 与 `store.ts` 映射过的那一版（`null` = 不限，见 `InviteCode`）。弹窗手里拿的是前者，
-// 板里别处拿的是后者。
-describe('一张码还算不算数', () => {
-  const NOW = 1_800_000_000_000
-
-  it('过期了就是过期了，哪怕还有名额', () => {
-    const status = inviteCodeStatus({ maxUses: 10, useCount: 1, expiresAt: NOW - 1 }, NOW)
-    expect(status.key).toBe('expired')
-  })
-
-  it('刚好到期的这一刻就算了，不是还要再等一毫秒', () => {
-    expect(inviteCodeStatus({ maxUses: 10, useCount: 1, expiresAt: NOW }, NOW).key).toBe('expired')
-    expect(inviteCodeStatus({ maxUses: 10, useCount: 1, expiresAt: NOW + 1 }, NOW).key).toBe('usable')
-  })
-
-  it('名额用完了就是用完了', () => {
-    expect(inviteCodeStatus({ maxUses: 3, useCount: 3, expiresAt: null }, NOW).key).toBe('exhausted')
-    // 还没用完的还在。
-    expect(inviteCodeStatus({ maxUses: 3, useCount: 2, expiresAt: null }, NOW).key).toBe('usable')
-  })
-
-  it('不限名额的两种写法都不该被判成用尽', () => {
-    // 真接口那一版：0 = 不限。
-    expect(inviteCodeStatus({ maxUses: 0, useCount: 500, expiresAt: null }, NOW).key).toBe('usable')
-    // `store.ts` 映射过的那一版：null = 不限。
-    expect(inviteCodeStatus({ maxUses: null, useCount: 500, expiresAt: null }, NOW).key).toBe('usable')
-  })
-
-  it('一张都没有可用的，就一个都不挑（不是「勉强挑第一张」）', () => {
-    const exhausted = { maxUses: 1, useCount: 1, expiresAt: null }
-    const expired = { maxUses: 10, useCount: 0, expiresAt: NOW - 1 }
-
-    expect(currentInviteCode([exhausted, expired], NOW)).toBeNull()
-    expect(currentInviteCode([], NOW)).toBeNull()
-  })
-
-  it('当前的那张是第一张还能用的 —— 用尽的、过期的都跳过去', () => {
-    const exhausted = { code: 'USED-UP', maxUses: 1, useCount: 1, expiresAt: null }
-    const expired = { code: 'OLD', maxUses: 10, useCount: 0, expiresAt: NOW - 1 }
-    const live = { code: 'LIVE', maxUses: 10, useCount: 0, expiresAt: null }
-    const later = { code: 'LATER', maxUses: 10, useCount: 0, expiresAt: null }
-
-    // 列表按建码时间排，所以这是**最早那张还开着的**，不是最后一张。
-    expect(currentInviteCode([exhausted, expired, live, later], NOW)?.code).toBe('LIVE')
   })
 })
 

@@ -2,8 +2,8 @@ package link
 
 import "encoding/base64"
 
-// The frames the connector writes up: two for one execution.call, and its
-// Heartbeat.
+// The frames the connector writes up: two for one execution.call, its
+// Heartbeat, and the machine.* frames of a stream its sandbox opened.
 //
 // They live here beside Msg, not inline at the call site in
 // cli/internal/host/executor.go, because nothing at this seam imports anything
@@ -50,4 +50,34 @@ func ExecOutput(id, line string) Msg {
 // at once instead of waiting for the socket to close.
 func Heartbeat() Msg {
 	return Msg{T: "heartbeat"}
+}
+
+// MachineOpen starts one stream a session's sandbox opened on its platform
+// socket. Path is the state directory as the backend named it in the
+// execution.call that made the connector listen there: which socket a stream
+// arrived on is the only thing that says whose it is.
+func MachineOpen(id, path string) Msg {
+	return Msg{T: "machine.open", ID: id, Path: path}
+}
+
+// MachineData carries bytes of one machine stream, base64 like ExecutionData,
+// in both directions.
+func MachineData(id string, payload []byte) Msg {
+	return Msg{T: "machine.data", ID: id, Data: base64.StdEncoding.EncodeToString(payload)}
+}
+
+// MachineEnd says the sandbox's side finished writing (it half-closed or its
+// read hit end of file); the answer may still be coming down.
+func MachineEnd(id string) Msg {
+	return Msg{T: "machine.end", ID: id}
+}
+
+// MachineClose ends one machine stream. Up, the sandbox's connection is gone
+// (Error says why when it failed); down, the platform has answered in full.
+func MachineClose(id string, err error) Msg {
+	m := Msg{T: "machine.close", ID: id}
+	if err != nil {
+		m.Error = err.Error()
+	}
+	return m
 }

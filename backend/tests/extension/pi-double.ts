@@ -35,7 +35,7 @@ const SOURCE = new URL(
   import.meta.url,
 ).href;
 
-export const NOTICE = "【平台】以下是平台自动发出的指令，不是任何人手打的话：";
+export const NOTICE = '<platform_notice type="harness">\n⟦slot:text⟧\n</platform_notice>';
 
 type Handler = (event: any, ctx: any) => any;
 
@@ -114,6 +114,20 @@ export class FakePi {
       Object.assign(event, (await handler({ ...event }, ctx)) ?? {});
     }
     return { content: event.content, isError: event.isError };
+  }
+
+  /** A finished message as pi 1.0.0 ends it (`emitMessageEnd` in
+   *  `core/extensions/runner.ts`): each `message_end` handler may hand back a
+   *  replacement of the same role, the next sees it, and the last stands in the
+   *  transcript the model reads. A tool pi does not know ends this way only:
+   *  its "not found" is written before any `tool_call` or `tool_result`. */
+  async endMessage(message: any, ctx: any = {}) {
+    let current = message;
+    for (const handler of this.handlers.get("message_end") ?? []) {
+      const answer = await handler({ type: "message_end", message: current }, ctx);
+      if (answer?.message && answer.message.role === current.role) current = answer.message;
+    }
+    return current;
   }
 
   async call(name: string, params: any, ctx: any = {}) {

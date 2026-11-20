@@ -40,7 +40,7 @@ MOCK_MATRIX: dict[PreferenceCategory, tuple[bool, bool, bool]] = {
     PreferenceCategory.ASSISTANT: (True, True, True),
 }
 
-#: 有今天的生产者的那几行；`额度与计费` 还没有码落到它上面，`resolve` 试不到它。
+#: 有生产者的那几行，`resolve` 试得到它们。
 PRODUCED = [c for c in CATEGORY_ORDER if CATEGORY_TYPES[c]]
 
 NOON = datetime(2025, 6, 1, 12, 0, tzinfo=UTC)  # 不在默认安静时段里
@@ -87,8 +87,8 @@ class TestResolveDefaults:
         assert intent.email is False
         assert intent.digest is email
 
-    def test_a_row_without_a_producer_keeps_its_columns(self):
-        """额度与计费还没有码落到它上面：矩阵那一行仍是设计稿的一格一格。"""
+    def test_the_billing_row_keeps_the_mocks_three_columns(self):
+        """额度与计费提醒（`usage.alerts`）：矩阵那一行仍是设计稿的一格一格。"""
         choice = default_preferences().channel(PreferenceCategory.BILLING)
         in_app, push, email = MOCK_MATRIX[PreferenceCategory.BILLING]
         assert (choice.in_app, choice.push, choice.email) == (in_app, push, email)

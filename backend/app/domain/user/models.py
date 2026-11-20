@@ -38,6 +38,9 @@ class User(Base):
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
         ),
+        # Reads match the bare column (`username = $1`), which the index
+        # above, over lower(username), cannot serve.
+        Index("ix_user_username", "username"),
         Index(
             "uq_user_email_lower",
             func.lower(text("email")),
@@ -103,6 +106,9 @@ class UserProfile(Base):
             unique=True,
             postgresql_where=text("deleted_at IS NULL"),
         ),
+        # Joins from a user (`user_profile.user_id = "user".id`) name no
+        # deleted_at, so the partial index above cannot serve them.
+        Index("ix_user_profile_user_id", "user_id"),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)

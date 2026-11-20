@@ -186,29 +186,30 @@ beforeEach(() => {
 beforeAll(loadMarkdownReader)
 
 describe('agent status messages', () => {
-  it.each([
-    'turn_failed',
-    'turn_timeout',
-    'sandbox_rebuilt',
-    'ci_failed',
-    'pr_conflict',
-    'card_filed',
-    'accept_done',
-    'deploy_failed',
-  ])('shows %s with the agent identity while preserving the next responder and full detail', async (eventType) => {
+  it('平台替队友说的那一行：头像列是它的小头像，不署名字，原因收着', async () => {
     listTopicMembers.mockResolvedValue({
       data: [{ member_handle: 'agent-test', name: '测试助手', agent: true }],
     })
     const { container } = mountRoom([
-      event('', '需要处理这次运行', { event_type: eventType, who: 'human', detail: '完整的处理说明' }),
+      {
+        ...event('', '这次没做完：模型服务繁忙', { event_type: 'turn_failed', who: 'human', detail: '完整的处理说明' }),
+        author: 'agent-test',
+        shown_as: 'for_agent',
+      },
     ])
     await flush()
-    const frame = container.querySelector('.agent-status')!
-    expect(frame.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe('测试助手')
-    expect(visibleText(frame)).toContain('等人处理')
-    expect(visibleText(frame)).not.toContain('完整的处理说明')
-    expand(frame.querySelector('details')!)
-    expect(visibleText(frame)).toContain('完整的处理说明')
+    const row = container.querySelector('[data-testid="platform-notice"]')!.closest('.notice-row')!
+    expect(row.querySelector('[role="img"]')?.getAttribute('aria-label')).toBe('测试助手')
+    expect(row.querySelector('.notice-row__name')).toBeNull()
+    expect(visibleText(row)).toContain('这次没做完')
+    expect(visibleText(row)).not.toContain('完整的处理说明')
+  })
+
+  it('后端说不给人看的平台事件，对话里没有它', async () => {
+    const { container } = mountRoom([{ ...ciFailed(), shown_as: 'hidden' }, event('', '编辑者加入了频道', null)])
+    await flush()
+    expect(visibleText(container)).not.toContain('CI 没过')
+    expect(visibleText(container)).toContain('加入了频道')
   })
 
   // 卡片本身打开文档；只有「查看改动」打开时把这一轮改的几处标出来。
@@ -309,6 +310,7 @@ describe('agent status messages', () => {
       author: 'cheese-a1',
       turn_id: 'turn-1',
       created_at: '2026-08-15T11:02:00Z',
+      shown_as: 'result' as const,
     }
     const ask = {
       ...event('', '把文档也改一下', null),
@@ -328,6 +330,7 @@ describe('agent status messages', () => {
       id: 'edit-alone',
       author: 'cheese-a1',
       created_at: '2026-08-15T11:06:00Z',
+      shown_as: 'happening' as const,
     }
     const { container } = mountRoom([
       said('m1', '我先看一下文档。', '01'),
@@ -363,71 +366,48 @@ describe('agent status messages', () => {
     }
   })
 
-  it('keeps a human document edit separate from an agent edit and preserves the document action', async () => {
+  it('不在哪一次工作里的改文档：各是一行记录，不挂在 AI 队友名下，按钮照旧', async () => {
     listTopicMembers.mockResolvedValue({
       data: [
         { member_handle: 'agent-test', name: '测试助手', agent: true },
         { member_handle: 'editor-test', name: '编辑者', agent: false },
       ],
     })
-    const ai = { ...event('', '测试助手 编辑了文档', { action: 'doc' }), author: 'agent-test' }
+    const ai = {
+      ...event('', '测试助手 编辑了文档', { action: 'doc' }),
+      author: 'agent-test',
+      shown_as: 'happening' as const,
+    }
     const human = {
       ...event('', '编辑者 编辑了文档', { action: 'doc' }),
       author: 'editor-test',
+      shown_as: 'happening' as const,
     }
     const { container, emitted } = mountRoom([ai, human])
     await flush()
-    expect(container.querySelectorAll('.agent-status')).toHaveLength(1)
-    expect(container.querySelector('.agent-status')?.textContent).toContain('测试助手')
+    expect(container.querySelector('.agent-status')).toBeNull()
     const cards = container.querySelectorAll('.action-card')
     expect(cards).toHaveLength(2)
-    expect(cards[1].closest('.agent-status')).toBeNull()
     ;(cards[0].querySelector('button') as HTMLButtonElement).click()
     expect(emitted()['open-resource']).toEqual([['doc', undefined, undefined, undefined]])
   })
 
-  // 同一位队友连着的几件事和它连着说的几句话一样：头像和名字只出现一次。
-  it('merges consecutive rows of the same agent into one line under one avatar and name', async () => {
+  // 一位队友一次工作里的几项结果接在它这一段里：头像和名字只出现一次。
+  it('一次工作的几项结果挂在那位队友名下，只署一次名', async () => {
     listTopicMembers.mockResolvedValue({
-      data: [
-        { member_handle: 'agent-test', name: '测试助手', agent: true },
-        { member_handle: 'editor-test', name: '编辑者', agent: false },
-      ],
+      data: [{ member_handle: 'agent-test', name: '测试助手', agent: true }],
     })
-    const a = { ...event('', '测试助手 编辑了文档', { action: 'doc' }), author: 'agent-test' }
-    const b = { ...event('', '测试助手 又编辑了文档', { action: 'doc' }), author: 'agent-test' }
-    const human = { ...event('', '编辑者 编辑了文档', { action: 'doc' }), author: 'editor-test' }
-    const c = { ...event('', '测试助手 第三次编辑了文档', { action: 'doc' }), author: 'agent-test' }
-    const { container } = mountRoom([a, b, human, c])
-    await flush()
-    // a 和 b 连着，合成一行；中间隔了别人，c 另起一行。
-    const rows = Array.from(container.querySelectorAll('.agent-status'))
-    expect(rows).toHaveLength(2)
-    const avatars = rows.map((row) => row.querySelector('[role="img"]')?.getAttribute('aria-label') ?? null)
-    expect(avatars).toEqual(['测试助手', '测试助手'])
-    expect(rows[0].textContent).toContain('2')
-  })
-
-  // 同一位队友连着的几件事和它连着说的几句话一样：头像和名字只出现一次。
-  it('merges consecutive rows of the same agent into one line under one avatar and name', async () => {
-    listTopicMembers.mockResolvedValue({
-      data: [
-        { member_handle: 'agent-test', name: '测试助手', agent: true },
-        { member_handle: 'editor-test', name: '编辑者', agent: false },
-      ],
+    const inTurn = (content: string, minute: number) => ({
+      ...event('', content, { action: 'doc' }),
+      author: 'agent-test',
+      turn_id: 'turn-1',
+      shown_as: 'result' as const,
+      created_at: new Date(Date.UTC(2026, 7, 15, 12, minute)).toISOString(),
     })
-    const a = { ...event('', '测试助手 编辑了文档', { action: 'doc' }), author: 'agent-test' }
-    const b = { ...event('', '测试助手 又编辑了文档', { action: 'doc' }), author: 'agent-test' }
-    const human = { ...event('', '编辑者 编辑了文档', { action: 'doc' }), author: 'editor-test' }
-    const c = { ...event('', '测试助手 第三次编辑了文档', { action: 'doc' }), author: 'agent-test' }
-    const { container } = mountRoom([a, b, human, c])
+    const { container } = mountRoom([inTurn('测试助手 编辑了文档', 1), inTurn('测试助手 又编辑了文档', 2)])
     await flush()
-    // a 和 b 连着，合成一行；中间隔了别人，c 另起一行。
-    const rows = Array.from(container.querySelectorAll('.agent-status'))
-    expect(rows).toHaveLength(2)
-    const avatars = rows.map((row) => row.querySelector('[role="img"]')?.getAttribute('aria-label') ?? null)
-    expect(avatars).toEqual(['测试助手', '测试助手'])
-    expect(rows[0].textContent).toContain('2')
+    const names = Array.from(container.querySelectorAll('.notice-row__name')).map((n) => n.textContent?.trim())
+    expect(names).toEqual(['测试助手'])
   })
 
   it('does not give member events or backend logs an agent avatar', async () => {
@@ -448,22 +428,33 @@ describe('agent status messages', () => {
     expect(visibleText(container)).toContain('这是分身交回的完整结果')
   })
 
-  it('keeps consecutive notices from different agents separate', async () => {
-    const { container } = mountRoom([
-      { ...ciFailed(), author: 'cheese-agentone', author_type: 'participant' },
-      { ...ciFailed(), author: 'cheese-agenttwo', author_type: 'participant' },
-    ])
+  it('两位队友各自停下：各一行，各带各的小头像', async () => {
+    listTopicMembers.mockResolvedValue({
+      data: [
+        { member_handle: 'cheese-agentone', name: '一号', agent: true },
+        { member_handle: 'cheese-agenttwo', name: '二号', agent: true },
+      ],
+    })
+    const stop = (author: string) => ({
+      ...event('', '这次没做完', { event_type: 'turn_failed', who: 'human', detail: '原因' }),
+      author,
+      shown_as: 'for_agent' as const,
+    })
+    const { container } = mountRoom([stop('cheese-agentone'), stop('cheese-agenttwo')])
     await flush()
-    expect(container.querySelectorAll('.agent-status')).toHaveLength(2)
+    const marks = Array.from(container.querySelectorAll('.notice-row__mark[role="img"]')).map((m) =>
+      m.getAttribute('aria-label')
+    )
+    expect(marks).toEqual(['一号', '二号'])
   })
 
-  it('keeps two workers starting under the same room author separate', async () => {
+  it('两个分身各自开工的旧记录不并成一行', async () => {
     const { container } = mountRoom([
-      event('', '分身开工', { event_type: 'subagent_start', agent_id: 'worker-one' }),
-      event('', '分身开工', { event_type: 'subagent_start', agent_id: 'worker-two' }),
+      { ...event('', '分身开工', { event_type: 'subagent_start', agent_id: 'worker-one' }), shown_as: 'happening' },
+      { ...event('', '分身开工', { event_type: 'subagent_start', agent_id: 'worker-two' }), shown_as: 'happening' },
     ])
     await flush()
-    expect(container.querySelectorAll('.agent-status')).toHaveLength(2)
+    expect(container.querySelectorAll('.room-happening')).toHaveLength(2)
   })
 })
 
@@ -496,33 +487,12 @@ describe('平台提示：一行 + 可展开', () => {
     expect(shown).toContain(CI_LOG)
   })
 
-  it('不点开也看得出「出了什么事」和「谁在管」', async () => {
+  it('不点开也看得出出了什么事', async () => {
     const { container } = mountRoom([ciFailed()])
     await flush()
 
     const shown = visibleText(container.querySelector('[data-testid="platform-notice"]')!)
     expect(shown).toContain('CI 没过')
-    expect(shown).toContain('芝士正在处理')
-  })
-
-  it('who 的三个码各渲染成一句人话', async () => {
-    // 每一句各在自己的房间里：同一张卡后来的一句会让前一句的尾标过时（见下一组）。
-    const said = async (block: Block) => {
-      const { container } = mountRoom([block])
-      await flush()
-      return visibleText(container.querySelector('[data-testid="platform-notice"]')!)
-    }
-
-    expect(await said(ciFailed({ who: 'platform' }))).toContain('平台已处理')
-    expect(
-      await said(
-        event('', '⚠️ 采纳时合并冲突，芝士在解（5 个文件）', {
-          event_type: 'accept_conflict',
-          who: 'human',
-          detail: 'backend/app/api/routes/accept.py',
-        })
-      )
-    ).toContain('等人处理')
   })
 })
 

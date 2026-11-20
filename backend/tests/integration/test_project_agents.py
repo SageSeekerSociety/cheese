@@ -446,7 +446,7 @@ def test_a_project_credential_is_refused_where_its_agent_has_no_seat(client):
         f"/documents/{doc}/comments",
         json={"content": "从项目级凭据发出的"},
         headers={
-            "X-Cheese-Token": mint_project_agent_credential(project_id=pid, epoch=0)
+            "Authorization": f"Bearer {mint_project_agent_credential(project_id=pid, epoch=0)}"
         },
     )
     assert r.status_code == 403, r.text

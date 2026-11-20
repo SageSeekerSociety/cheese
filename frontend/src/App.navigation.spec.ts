@@ -19,7 +19,7 @@ import i18n, { setLocale } from './i18n'
 vi.mock('@/api', async (original) => ({
   ...(await original<typeof import('@/api')>()),
   getAppVersion: vi.fn(async () => ({ sha: '', short: '', badge: false })),
-  getFeedbackCounts: vi.fn(async () => ({ all: 0, hot: 0, active: 0, resolved: 0, unread: 0 })),
+  getFeedbackCounts: vi.fn(async () => ({ all: 0, hot: 0, resolved: 0, unread: 0 })),
   getFeedbackMeta: vi.fn(async () => ({ is_admin: false, hot_min_items: 5 })),
   listProjects: vi.fn(async () => ({ data: [] })),
   listProjectAgents: vi.fn(async () => ({ data: [] })),
@@ -90,6 +90,7 @@ async function mountApp(path: string, width: number) {
       { path: '/', component: blank },
       { path: '/spaces', component: blank },
       { path: '/inbox', component: blank },
+      { path: '/admin/queue', component: blank },
       { path: '/projects/p1', name: 'workspace-project', component: List },
       {
         path: '/projects/p1/topics/t1',
@@ -156,22 +157,18 @@ it('keeps the room header usable when the app changes between desktop and mobile
   }
 })
 
-it('desktop rail opens 待办 from 首页, the first tile, with no separate 待办 tile', async () => {
-  const app = await mountApp('/', 1280)
-  try {
-    expect(app.failures).toEqual([])
-    const rail = app.container.querySelector('.app-rail')
-    expect(rail).not.toBeNull()
-    // 首页那一格点开就是待办：桌面上到得了 /inbox，而且只有这一条路，不再多一格。
-    const labels = Array.from(rail!.querySelectorAll('a[aria-label]')).map((a) => a.getAttribute('aria-label'))
-    expect(labels[0]).toBe('首页')
-    expect(labels).not.toContain('待办')
-    expect(rail!.querySelectorAll('a[href="/inbox"]')).toHaveLength(1)
-    // 点这一格走的是和项目格同一套 Vuetify 链接，所以这里只证明它到得了：
-    // 这套测试的假路由只要从 /projects/:id 出栈就崩（与本改动
-    // 无关——换成去 /spaces 同样崩），点进去的路由跳转留给真环境验证。
-  } finally {
-    app.dispose()
+it('desktop project pages reach 待办 in one click from the 首页 entry', async () => {
+  // 回首页是顶栏上那一处「首页」，每一页都在同一个位置。
+  for (const path of ['/projects/p1/topics/t1', '/projects/p1']) {
+    const app = await mountApp(path, 1280)
+    try {
+      expect(app.failures).toEqual([])
+      const toInbox = Array.from(app.container.querySelectorAll('a[href="/inbox"]'))
+      expect(toInbox, path).toHaveLength(1)
+      expect(toInbox[0].getAttribute('aria-label'), path).toMatch(/^首页/)
+    } finally {
+      app.dispose()
+    }
   }
 })
 
@@ -198,3 +195,20 @@ it.each(['/projects/p1', '/projects/p1/topics/t1'])(
     }
   }
 )
+
+it('the desktop bar names the admin area as the place you are in, and names nothing in the home area', async () => {
+  const admin = await mountApp('/admin/queue', 1280)
+  try {
+    expect(admin.failures).toEqual([])
+    expect(admin.container.querySelector('[data-testid="project-switcher"]')?.textContent).toContain('管理后台')
+  } finally {
+    admin.dispose()
+  }
+  const home = await mountApp('/inbox', 1280)
+  try {
+    expect(home.failures).toEqual([])
+    expect(home.container.querySelector('[data-testid="project-switcher"]')).toBeNull()
+  } finally {
+    home.dispose()
+  }
+})

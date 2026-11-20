@@ -13,7 +13,7 @@ from websockets.frames import CloseCode
 
 from app.core.config import settings
 from app.core.db import SessionFactory
-from app.core.forge_events import subscription_assertion
+from app.core.forge_events import signing_key, subscription_assertion
 from app.domain.delivery_events import SettleCard
 from app.domain.project.models import ProjectGitInstallation
 from app.domain.review import pr_poll
@@ -21,12 +21,17 @@ from app.domain.review.ports import (
     Announce,
     DispatchPending,
     RecordInstruction,
+    RecordSeatInstruction,
     TaskTeammate,
+    Uncommitted,
 )
 
 logger = logging.getLogger(__name__)
 
 RECONNECT_DELAY_S = 10
+#: How often an assertion is renewed. The assertion lives 300 s; renewing well
+#: inside that leaves room for a retry.
+RENEW_INTERVAL_S = 60
 
 
 async def register_subscriptions(socket, sessions: SessionFactory):
@@ -39,7 +44,9 @@ async def register_subscriptions(socket, sessions: SessionFactory):
     deployment = (
         urlsplit(settings.forge_event_relay_url).path.rstrip("/").split("/")[-2]
     )
-    private_key = Path(settings.github_app_private_key_path).read_text()
+    # Parsed once for the life of the renewal loop: `jwt.encode` parses a PEM
+    # on every call, and this loop signs once a minute on the event loop.
+    private_key = signing_key(Path(settings.github_app_private_key_path).read_text())
     while True:
         async with sessions() as session:
             rows = list(
@@ -61,7 +68,7 @@ async def register_subscriptions(socket, sessions: SessionFactory):
         await socket.send(
             json.dumps({"kind": "github_subscriptions", "assertion": assertion})
         )
-        await asyncio.sleep(60)
+        await asyncio.sleep(RENEW_INTERVAL_S)
 
 
 #: The key of a refresh of every project, run after each (re)connect.
@@ -90,15 +97,19 @@ class _Refreshes:
         *,
         settle_card: SettleCard,
         record_instruction: RecordInstruction,
+        record_seat: RecordSeatInstruction,
         dispatch_pending: DispatchPending,
         task_teammate: TaskTeammate,
+        uncommitted: Uncommitted,
     ) -> None:
         self._chat = chat
         self._announce = announce
         self._settle_card = settle_card
         self._record_instruction = record_instruction
+        self._record_seat = record_seat
         self._dispatch_pending = dispatch_pending
         self._task_teammate = task_teammate
+        self._uncommitted = uncommitted
         self._waiting: dict[tuple, dict] = {}
         self._wake = asyncio.Event()
 
@@ -142,7 +153,9 @@ class _Refreshes:
                     self._announce,
                     settle_card=self._settle_card,
                     record_instruction=self._record_instruction,
+                    record_seat=self._record_seat,
                     task_teammate=self._task_teammate,
+                    uncommitted=self._uncommitted,
                 )
             else:
                 await pr_poll.forge_repository_changed(
@@ -150,8 +163,10 @@ class _Refreshes:
                     announce=self._announce,
                     settle_card=self._settle_card,
                     record_instruction=self._record_instruction,
+                    record_seat=self._record_seat,
                     dispatch_pending=self._dispatch_pending,
                     task_teammate=self._task_teammate,
+                    uncommitted=self._uncommitted,
                     **event,
                 )
         except Exception:  # the next event or tick retries
@@ -165,16 +180,20 @@ async def listen(
     *,
     settle_card: SettleCard,
     record_instruction: RecordInstruction,
+    record_seat: RecordSeatInstruction,
     dispatch_pending: DispatchPending,
     task_teammate: TaskTeammate,
+    uncommitted: Uncommitted,
 ):
     refreshes = _Refreshes(
         chat,
         announce,
         settle_card=settle_card,
         record_instruction=record_instruction,
+        record_seat=record_seat,
         dispatch_pending=dispatch_pending,
         task_teammate=task_teammate,
+        uncommitted=uncommitted,
     )
     worker = asyncio.create_task(refreshes.run())
     try:

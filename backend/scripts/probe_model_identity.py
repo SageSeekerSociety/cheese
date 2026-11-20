@@ -173,7 +173,7 @@ def read_seat_config_binding(args: argparse.Namespace) -> DeclaredBinding:
                 # TYPE handle (e.g. ``cheesex-opus-cc``), not the room handle
                 # ``--seat`` carries. In a room with several seats it answers
                 # an empty state, and this source is then simply empty.
-                headers={"X-Cheese-Token": _token()},
+                headers={"Authorization": f"Bearer {_token()}"},
             )
     except httpx.HTTPError:
         return DeclaredBinding()
@@ -198,7 +198,7 @@ def read_card_binding(args: argparse.Namespace) -> DeclaredBinding:
             response = client.get(
                 f"{_backend().rstrip('/')}/topics/{topic}/blocks",
                 params={"limit": 50},
-                headers={"X-Cheese-Token": _token()},
+                headers={"Authorization": f"Bearer {_token()}"},
             )
     except httpx.HTTPError:
         return DeclaredBinding()
@@ -228,11 +228,10 @@ def read_declared_binding(args: argparse.Namespace) -> DeclaredBinding:
 
 
 def cmd_catalog(args: argparse.Namespace) -> int:
-    with httpx.Client(timeout=60, trust_env=False) as client:
-        response = client.get(
-            f"{_backend().rstrip('/')}/llm/v1/models",
-            headers={"authorization": f"Bearer {_token()}"},
-        )
+    endpoint = Endpoint.gateway(model="")
+    if not endpoint.socket:
+        _token()  # says why when there is neither road
+    response = endpoint.catalog()
     if response.status_code != 200:
         print(
             f"gateway refused the catalog: HTTP {response.status_code} "

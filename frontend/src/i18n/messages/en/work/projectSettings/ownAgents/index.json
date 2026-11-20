@@ -1,8 +1,12 @@
 {
-  "intro": "Choose a model from a team connection and an execution device. Member ownership is a prompt instruction and does not block other members from calling the AI.",
+  "intro": "Choose a model from a team connection and an execution environment. Member ownership is a prompt instruction and does not block other members from calling the AI.",
   "connection": "Model connection",
   "model": "Model",
-  "device": "Execution device",
+  "environment": "Execution environment",
+  "standardSandbox": "Platform standard sandbox",
+  "noEnvironments": "No execution environments available",
+  "sandboxUnavailable": "The platform does not currently offer a standard sandbox. You can select an enrolled team device.",
+  "sandboxAbout": "Runs in an isolated platform sandbox, without your own device. Billed by running time.",
   "add": "Add AI teammate",
   "loadFailed": "Could not load model connections",
   "saveFailed": "Could not add AI teammate"

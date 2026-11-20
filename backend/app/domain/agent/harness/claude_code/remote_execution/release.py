@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import contextlib
 import errno
+import functools
 import hashlib
 import json
 import os
@@ -21,10 +22,14 @@ from pathlib import Path
 # What a mountpoint is doing — told apart in the one way `os.path.ismount` cannot.
 #
 # When a forwarded_fs server process dies, its mount does NOT go away: the
-# directory stays occupied and answers every stat with ENOTCONN. `os.path.ismount`
-# swallows that OSError and returns False, which every caller reads as "nothing is
-# mounted here" — so a mount is attempted onto it and fails, and the cleanup that
-# would have removed it skips it. Nothing ever clears it again.
+# directory stays occupied and every stat on it fails. `os.path.ismount` swallows
+# that OSError and returns False, which every caller reads as "nothing is mounted
+# here" — so a mount is attempted onto it and fails, and the cleanup that would
+# have removed it skips it. Nothing ever clears it again.
+#
+# The error is ENOTCONN where the kernel has a connection to report, and EIO
+# where it does not: a mount whose server was killed answers `Input/output
+# error` (measured on 6.12), so that one is in the list beside the other three.
 #
 # It is not only the room's problem. Anything that walks the directory blocks
 # there, `actions/checkout` included: one left in a CI runner's workspace on
@@ -41,7 +46,7 @@ def mount_state(path):
     try:
         os.lstat(path)
     except OSError as error:
-        if error.errno in (errno.ENOTCONN, errno.ETIMEDOUT, errno.EHOSTDOWN):
+        if error.errno in (errno.ENOTCONN, errno.ETIMEDOUT, errno.EHOSTDOWN, errno.EIO):
             return MOUNT_DEAD
         return MOUNT_NONE
     return MOUNT_LIVE if os.path.ismount(path) else MOUNT_NONE
@@ -278,6 +283,25 @@ def release_abandoned_views():
 
 
 def sources():
+    """The helpers' own source, read and kept once per process.
+
+    24 files and 0.8 MiB, including `sandbox/cheese` whole, were read on every
+    call — and the call is a screen launch's preparation, so it lands on
+    whichever turn is starting a session. Production's stall board has a
+    131 ms stall whose stack is `json/encoder` over this dict inside
+    `release.digest`, called from `device_launch.holes` during a prewarm.
+
+    These are the image's own files, fixed for as long as it runs — the same
+    reading `remote_execution/launch._file_sources` already caches for its own
+    set. A caller that needs the current bytes from disk (a test that writes
+    one, a release that replaces one) has to start a process to see it, which
+    is what shipping the file means.
+    """
+    return dict(_sources())
+
+
+@functools.cache
+def _sources():
     # deferred-import: this file also runs on the machine, with no `app` package
     from app.domain.agent import executor_transport, pr_creation, task_checkout
 
@@ -313,6 +337,11 @@ def sources():
             "runtime_calls.py",
             "context_service.py",
             "forwarded_fs.py",
+            # The other direction: this machine's view of the session host's
+            # transcript, and the helper that binds it where the build names
+            # it (`bootstrap` starts that one).
+            "forwarded_transcript.py",
+            "transcript_view.py",
             "release.py",
         )
     }
@@ -429,6 +458,34 @@ def script(function, *args):
         + repr(json.dumps(args))
         + "))))\n"
     )
+
+
+def version_of(sources):
+    """``digest(sources)``, kept when the same dict is asked about again.
+
+    `digest` serializes the whole 0.8 MiB dict to JSON before hashing it — 6.2 ms
+    here — and `device_provider._resident_release_due` asks on every turn. The
+    answer depends only on the dict, so a repeat of the same dict can be
+    answered from the last one.
+
+    Compared by identity first and contents second: `sources()` hands back a
+    fresh dict of the same strings each call, so the strings compare equal
+    cheaply and the encode is skipped; a caller that substituted `sources()`
+    (a release, a test) gets its own answer, which is what it must get.
+    """
+    global _last_version, _last_sources
+    if _last_sources is None or sources != _last_sources:
+        _last_version = digest(sources)
+        # A copy, not the caller's dict: `sources != _last_sources` on the same
+        # object compares it with itself, so an in-place edit between two asks
+        # would return the stale digest — and a release that never gets applied.
+        _last_sources = dict(sources)
+    return _last_version
+
+
+#: The last dict `version_of` was asked about and the answer it gave.
+_last_sources: dict[str, str] | None = None
+_last_version = ""
 
 
 def digest(sources):

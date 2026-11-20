@@ -165,6 +165,11 @@ assert_plan 'backend=false,frontend=true,office_render=false,browser_render=fals
 assert_plan 'backend=true,frontend=true,office_render=true,browser_render=true,gateway=true,metering_proxy=true,private_executor=true' "$base_sha" workflow_dispatch branch
 assert_plan 'backend=true,frontend=true,office_render=true,browser_render=true,gateway=true,metering_proxy=true,private_executor=true' "$base_sha" push tag
 
+# The web build bakes in the backend's API generation, so raising it rebuilds both.
+git -C "$test_repo" switch -q --detach "$base_sha"
+commit_path backend/api-generation
+assert_plan 'backend=true,frontend=true,office_render=false,browser_render=false,gateway=false,metering_proxy=false,private_executor=false' "$base_sha"
+
 # Diff from the last successful build, not merely HEAD^, catches component
 # changes whose preceding build failed.
 git -C "$test_repo" switch -q --detach "$base_sha"
@@ -188,13 +193,13 @@ collab_plan() {
 git -C "$test_repo" switch -q --detach "$base_sha"
 mkdir -p "$test_repo/frontend/collab" "$test_repo/frontend/src/lib/docSchema"
 touch "$test_repo/frontend/collab/service.ts" "$test_repo/frontend/src/lib/docSchema/index.ts" \
-  "$test_repo/frontend/pnpm-lock.yaml"
+  "$test_repo/frontend/pnpm-lock.yaml" "$test_repo/frontend/pnpm-workspace.yaml"
 add_build_jobs collab
 git -C "$test_repo" add .
 git -C "$test_repo" commit -qm 'add collab image'
 collab_base="$(git -C "$test_repo" rev-parse HEAD)"
 for collab_file in frontend/collab/service.ts frontend/src/lib/docSchema/index.ts \
-  frontend/pnpm-lock.yaml; do
+  frontend/pnpm-lock.yaml frontend/pnpm-workspace.yaml; do
   git -C "$test_repo" switch -q --detach "$collab_base"
   commit_path "$collab_file"
   [[ "$(collab_plan "$collab_base")" == true ]] \
@@ -204,6 +209,30 @@ git -C "$test_repo" switch -q --detach "$collab_base"
 commit_path frontend/src/main.ts
 [[ "$(collab_plan "$collab_base")" == false ]] \
   || { echo "FAIL: an app-only change must not rebuild collab" >&2; exit 1; }
+
+# The judge's runtime images rebuild from their own recipes, and nothing else
+# rebuilds them.
+judge_plan() {
+  (
+    cd "$test_repo"
+    BASE_SHA="$1" CURRENT_SHA=HEAD EVENT_NAME=push REF_TYPE=branch \
+      GITHUB_OUTPUT=/dev/stdout bash "$planner" 2>/dev/null
+  ) | sed -n 's/^judge=//p'
+}
+git -C "$test_repo" switch -q --detach "$collab_base"
+mkdir -p "$test_repo/backend/sandbox/judge"
+touch "$test_repo/backend/sandbox/judge/Dockerfile.python"
+add_build_jobs judge
+git -C "$test_repo" add .
+git -C "$test_repo" commit -qm 'add judge images'
+judge_base="$(git -C "$test_repo" rev-parse HEAD)"
+commit_path backend/sandbox/judge/Dockerfile.python
+[[ "$(judge_plan "$judge_base")" == true ]] \
+  || { echo "FAIL: a judge recipe must rebuild the judge images" >&2; exit 1; }
+git -C "$test_repo" switch -q --detach "$judge_base"
+commit_path backend/app/main.py
+[[ "$(judge_plan "$judge_base")" == false ]] \
+  || { echo "FAIL: a backend change must not rebuild the judge images" >&2; exit 1; }
 
 # Every image is published under the first seven characters of its commit
 # (docker/metadata-action `type=sha`), and promotion and deploys must name it the
@@ -361,5 +390,17 @@ export REGISTRY_TEST_DOWN=1
 assert_plan 'backend=true,frontend=true,office_render=true,browser_render=true,gateway=true,metering_proxy=true,private_executor=true' lookup workflow_dispatch branch
 assert_plan 'backend=true,frontend=true,office_render=true,browser_render=true,gateway=true,metering_proxy=true,private_executor=true' lookup push tag
 unset REGISTRY_TEST_DOWN
+
+# The judge's one job publishes five images; a commit counts as built only once
+# all five are in the registry.
+git -C "$test_repo" switch -q --detach "$judge_base"
+commit_path docs/readme.md
+: > "$REGISTRY_TEST_TAGS"
+publish "$judge_base" "${all_images[@]}" collab judge-python judge-cpp judge-java judge-node
+[[ "$(lookup_plan | sed -n 's/^base_sha=//p')" != "$judge_base" ]] \
+  || { echo "FAIL: a judge image set missing a runtime is not a baseline" >&2; exit 1; }
+publish "$judge_base" judge-go
+[[ "$(lookup_plan | sed -n 's/^base_sha=//p')" == "$judge_base" ]] \
+  || { echo "FAIL: all five judge images make a baseline" >&2; exit 1; }
 
 echo 'PASS: image build planning contracts'

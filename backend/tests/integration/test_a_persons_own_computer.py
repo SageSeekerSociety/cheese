@@ -127,7 +127,7 @@ def test_the_conversation_gets_a_sandbox_of_its_own(cloud, mine):
 def _refused(case, seat) -> int:
     return case.client.post(
         f"/topics/{seat.room}/sessions/{seat.session}/work-lease",
-        headers={"X-Cheese-Token": seat.token},
+        headers={"Authorization": f"Bearer {seat.token}"},
         json={"env": {}, "timeout": 5},
     ).status_code
 
@@ -249,7 +249,7 @@ def test_only_its_own_session_works_in_it(cloud, mine):
 
     def ping(token) -> int:
         return cloud.client.post(
-            url, json={"method": "ping"}, headers={"X-Cheese-Token": token}
+            url, json={"method": "ping"}, headers={"Authorization": f"Bearer {token}"}
         ).status_code
 
     assert ping(lease["token"]) == 200

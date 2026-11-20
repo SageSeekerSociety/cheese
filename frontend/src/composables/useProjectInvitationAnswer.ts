@@ -1,9 +1,8 @@
 // Answering a project invitation from its row in 等你处理: the call and its toasts
 // live here, the row only clicks.
-import { toast } from 'vuetify-sonner'
-
 import { respondToInvitation } from '@/api'
 import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 
 export function useProjectInvitationAnswer() {
   /** Answers the invitation; true when the server took the answer. */

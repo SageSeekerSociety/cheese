@@ -89,7 +89,11 @@ def invocation(monkeypatch, tmp_path):
         "token": "ephemeral-test-token",
     }
     monkeypatch.setattr(forge_cli, "credentials", lambda: data)
-    monkeypatch.setattr(forge_cli, "fj_path_transport", contextlib.nullcontext)
+    monkeypatch.setattr(
+        forge_cli,
+        "fj_path_transport",
+        lambda destination, *_: contextlib.nullcontext(destination),
+    )
     monkeypatch.setattr(
         forge_cli.urllib.request, "urlopen", lambda *a, **kw: io.BytesIO()
     )

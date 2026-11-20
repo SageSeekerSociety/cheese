@@ -16,41 +16,24 @@ from tests.integration.test_accept_pr import _ready_card, _task_settled
 from tests.integration.test_accept_pr import app_world as app_world
 from tests.integration.test_assistant_agent import (
     _acting,
-    _as,
     _asked_in,
     _auth_headers,
     _Gatekeeper,
     _names,
 )
 from tests.integration.test_message_edit import _room
+from tests.support import assistant_actions
 
 
 def _do(client, monkeypatch, token: str, act: dict) -> list[dict]:
-    """Have the gate let ``act`` through, make its calls the way 芝士's tool
-    does, and return what each answered."""
+    """Have the gate take ``act``, make its calls the way 芝士's tool does, and
+    return what each answered."""
 
     async def looks(session):
         return _Gatekeeper("放", "放")
 
     monkeypatch.setattr(gate, "gatekeeper", looks)
-    r = client.post("/assistant/agent/act", json=act, headers=_as(token))
-    assert r.status_code == 200, r.text
-    got = r.json()["data"]
-    assert got["done"] is True, got
-    answers: list[dict] = []
-    made = ""
-    for call in got["calls"]:
-        sent = client.request(
-            call["method"],
-            call["path"].replace("{prev}", made),
-            json=call.get("body"),
-            headers={**_as(token), "X-Cheese-Pass": got["pass"]},
-        )
-        assert sent.status_code == 200, sent.text
-        answer = sent.json()["data"]
-        made = str(answer.get("id") or "")
-        answers.append(answer)
-    return answers
+    return [sent.json()["data"] for sent in assistant_actions.take(client, token, act)]
 
 
 def _blocks(client, topic: str, handle: str = "alice") -> list[dict]:

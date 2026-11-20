@@ -22,7 +22,8 @@ export interface MemberWait {
 export interface MemberActivityLine {
   handle: string
   name: string
-  kind: 'typing' | 'working'
+  /** `retrying`：这位队友的这一轮调用模型出错了，在等平台自动重试（useRunRecords）。 */
+  kind: 'typing' | 'working' | 'retrying'
   /** epoch 秒。 */
   since: number
   /** 干活的队友此刻在做的那一步（「思考中」「正在读文件」）；没有就不说。 */
@@ -69,4 +70,12 @@ export interface RailMemberMark {
   agent: boolean
   /** 悬停时说的那一句：谁、在做什么。 */
   title: string
+}
+
+/** 在干活，但这一轮的最后一帧（没有帧就从开工起）已超过 `STALE_AFTER_MS`：进度很久没变。
+ *  输入框上方那一行和频道顶部「AI 现在在干什么」读同一个判断。 */
+export function lineStale(line: MemberActivityLine, now: number, staleAfterMs: number): boolean {
+  if (line.kind !== 'working') return false
+  const last = Math.max(line.lastFrameAt ?? 0, line.since * 1000)
+  return now - last >= staleAfterMs
 }

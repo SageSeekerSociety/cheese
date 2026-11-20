@@ -113,6 +113,9 @@ from app.domain.agent.platform_failure_cli_notices import (
     _REQUEST_REFUSED as _REQUEST_REFUSED,
 )
 from app.domain.agent.platform_failure_cli_notices import (
+    CONTROL_PLANE_UNAVAILABLE_CODE as CONTROL_PLANE_UNAVAILABLE_CODE,
+)
+from app.domain.agent.platform_failure_cli_notices import (
     MODEL_LIMIT_REACHED_CODE as MODEL_LIMIT_REACHED_CODE,
 )
 from app.domain.agent.platform_failure_cli_notices import (
@@ -135,6 +138,9 @@ from app.domain.agent.platform_failure_cli_notices import (
 )
 from app.domain.agent.platform_failure_cli_notices import (
     classify_cli_notice as classify_cli_notice,
+)
+from app.domain.agent.platform_failure_cli_notices import (
+    is_compaction_refused as is_compaction_refused,
 )
 from app.domain.agent.platform_failure_cli_notices import (
     is_request_refused as is_request_refused,

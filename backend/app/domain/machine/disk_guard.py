@@ -156,6 +156,7 @@ class DiskGuard:
                 SandboxHome.topic_id,
                 SandboxHome.stopped_at,
                 SandboxHome.active_at,
+                SandboxHome.frozen_at,
             )
             .outerjoin(CloudHost, CloudHost.id == SandboxHome.host_id)
             .where(device == device_id)
@@ -171,7 +172,9 @@ class DiskGuard:
         idle = [
             row.resource_id
             for row in live
-            if row.stopped_at is None and now - row.active_at >= RECLAIM_AFTER
+            if row.stopped_at is None
+            and row.frozen_at is None
+            and now - row.active_at >= RECLAIM_AFTER
         ]
         reading = await self._read(device_id, live, idle)
         # When the values were true, for the machines page.
@@ -190,6 +193,13 @@ class DiskGuard:
         host = await self._repo.by_device(device_id)
         await self._session.commit()
         removed = 0
+        if full and host is not None and not host.whole_machine:
+            # Short of room: the frozen sandboxes go first, oldest frozen
+            # first. They are not in use; an active sandbox waits for its idle
+            # sweep as it always did.
+            removed += await lifecycle.SandboxLifecycle(
+                self._session, hub=self._hub
+            ).destroy_frozen_on(device_id, host_id=host.id)
         for home in reading["left_behind"]:
             if await self._remove_left_behind(
                 device_id, home["project"], home["resource"]

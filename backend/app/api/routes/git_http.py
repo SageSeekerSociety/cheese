@@ -1,14 +1,12 @@
-"""Machine task metadata and private backups; Git traffic goes to the forge."""
+"""Machine task metadata; Git traffic goes to the forge."""
 
-import asyncio
-import tempfile
 import uuid
-from typing import Annotated, BinaryIO, cast
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, Request, Response
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import require_seated_agent
+from app.api.auth import PresentedCredential, require_seated_agent
 from app.api.response import ok
 from app.api.write_access import ROUTE_DECIDES
 from app.core.db import get_db
@@ -32,7 +30,6 @@ from app.domain.delivery.agent import (
 from app.domain.delivery.ledger import settle_card
 from app.domain.review import credit
 from app.domain.review.services import AcceptService
-from app.domain.room_task import snapshots
 from app.domain.topic.services import TopicService
 
 router = APIRouter(prefix="/projects", tags=["git"])
@@ -42,10 +39,10 @@ async def _task_for(db, project_id, task_id, token, *, opening: bool = False):
     """The task a credential reaches here, and how.
 
     Its own session works it: a credential minted in the task's conversation.
-    A session of its room reaches it only to keep what is already on the
-    machine — the sync and backup a machine switch runs over every task
-    directory there — and never opens it: the task is worked in its own
-    conversation, by its owner and that session, and nowhere else.
+    A session of its room reaches it only to read what a machine switch needs
+    for every task directory there — the task and its worktree — and never
+    opens it: the task is worked in its own conversation, by its owner and that
+    session, and nowhere else.
     """
     # deferred-import: tests patch this name on app.domain.room_task.services
     from app.domain.room_task.services import TaskService
@@ -66,110 +63,37 @@ async def _task_for(db, project_id, task_id, token, *, opening: bool = False):
     return task
 
 
-@router.put(
-    "/{project_id}/git/tasks/{task_id}/snapshots/{snapshot_sha}",
-    dependencies=[ROUTE_DECIDES],
-)
-async def save_task_snapshot(
-    project_id: uuid.UUID,
-    task_id: uuid.UUID,
-    snapshot_sha: str,
-    request: Request,
-    db: Annotated[AsyncSession, Depends(get_db)],
-    x_cheese_token: str | None = Header(default=None),
-    x_cheese_head: str = Header(),
-    x_content_sha256: str = Header(),
-) -> dict:
-
-    task = await _task_for(db, project_id, task_id, x_cheese_token)
-    size = 0
-    with tempfile.SpooledTemporaryFile(max_size=8 * 1024 * 1024) as file:
-        async for chunk in request.stream():
-            size += len(chunk)
-            if size > 512 * 1024 * 1024:
-                raise ValidationError(say("taskBackupTooLarge"))
-            await asyncio.to_thread(file.write, chunk)
-        row = await snapshots.save(
-            db,
-            task,
-            file=cast(BinaryIO, file),
-            head_sha=x_cheese_head,
-            snapshot_sha=snapshot_sha,
-            digest=x_content_sha256,
-        )
-    return ok(
-        {"id": str(row.id), "snapshot_sha": row.snapshot_sha, "digest": row.digest}
-    )
-
-
-@router.get("/{project_id}/git/tasks/{task_id}/snapshots/latest")
-async def latest_task_snapshot(
-    project_id: uuid.UUID,
-    task_id: uuid.UUID,
-    db: Annotated[AsyncSession, Depends(get_db)],
-    x_cheese_token: str | None = Header(default=None),
-) -> dict:
-
-    await _task_for(db, project_id, task_id, x_cheese_token)
-    row = await snapshots.latest(db, task_id)
-    return ok(
-        {
-            "id": str(row.id),
-            "snapshot_sha": row.snapshot_sha,
-            "head_sha": row.head_sha,
-            "digest": row.digest,
-            "created_at": row.created_at.isoformat(),
-        }
-    )
-
-
-@router.get("/{project_id}/git/tasks/{task_id}/snapshots/{snapshot_id}")
-async def download_task_snapshot(
-    project_id: uuid.UUID,
-    task_id: uuid.UUID,
-    snapshot_id: uuid.UUID,
-    db: Annotated[AsyncSession, Depends(get_db)],
-    x_cheese_token: str | None = Header(default=None),
-) -> Response:
-
-    await _task_for(db, project_id, task_id, x_cheese_token)
-    row = await snapshots.get(db, task_id=task_id, snapshot_id=snapshot_id)
-    if row is None:
-        raise NotFoundError(say("taskBackupNotFound"))
-    return Response(
-        await snapshots.download(row),
-        media_type="application/x-git-bundle",
-        headers={"Cache-Control": "no-store"},
-    )
-
-
 @router.post("/{project_id}/git/tasks/{task_id}", dependencies=[ROUTE_DECIDES])
 async def open_task_workspace(
     project_id: uuid.UUID,
     task_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    x_cheese_token: str | None = Header(default=None, alias="X-Cheese-Token"),
+    credential: PresentedCredential,
 ) -> dict:
     # deferred-import: tests patch this name on app.domain.room_task.services
     from app.domain.room_task.services import TaskService
 
-    task = await _task_for(db, project_id, task_id, x_cheese_token, opening=True)
-    acting = token_agent_handle(x_cheese_token or "")
+    task = await _task_for(db, project_id, task_id, credential, opening=True)
+    acting = token_agent_handle(credential)
     if not acting:
         raise AuthenticationRequiredError("Opening a task needs an agent identity")
     if task.status == "closed":
         raise ValidationError(say("taskEndedCreateNew"))
     await TaskService(db).record_author(task, acting)
-    if task.branch_name is None:
+    if task.branch_name is None and not await TaskService(db).give_branch(task):
         # deferred-import: tests patch this name on app.domain.project.forge
         from app.domain.project.forge import binding_for_project
 
-        # A room turned into a task carries no branch; its own session opening
-        # it is the moment it needs one. Without it the opening was a 404 that
-        # said the task was not in the project (dev, 2026-10-06).
-        if await binding_for_project(project_id, db) is not None:
-            await TaskService(db).give_branch(task)
-    result = await task_workspace(project_id, task_id, db, x_cheese_token)
+        # A task made while the project had no default branch is worked
+        # without a checkout until it has one; its session's launch reads this
+        # answer as that (`task_checkout`), not as a failure to retry.
+        await db.commit()
+        raise NotFoundError(
+            say("taskWithoutRepository")
+            if await binding_for_project(project_id, db) is None
+            else say("forgeNoDefaultBranch")
+        )
+    result = await task_workspace(project_id, task_id, db, credential)
     await db.commit()
     return result
 
@@ -179,17 +103,18 @@ async def task_workspace(
     project_id: uuid.UUID,
     task_id: uuid.UUID,
     db: Annotated[AsyncSession, Depends(get_db)],
-    x_cheese_token: str | None = Header(default=None, alias="X-Cheese-Token"),
+    credential: PresentedCredential,
 ) -> dict:
     # deferred-import: tests patch this name on app.domain.project.forge
     from app.domain.project.forge import binding_for_project
 
-    task = await _task_for(db, project_id, task_id, x_cheese_token)
-    if task.branch_name is None:
-        raise NotFoundError(say("workTaskNotInProject"))
+    task = await _task_for(db, project_id, task_id, credential)
     binding = await binding_for_project(project_id, db)
     if binding is None:
-        raise NotFoundError(say("projectHasNoRepo"))
+        raise NotFoundError(say("taskWithoutRepository"))
+    if task.branch_name is None:
+        # Opening the task (POST) gives it its branch.
+        raise NotFoundError(say("taskNoOwnFileVersion"))
 
     room = await TopicService(db).get_or_404(task.room_id)
     # Who the task's commits are by, and who they credit: the same rule the

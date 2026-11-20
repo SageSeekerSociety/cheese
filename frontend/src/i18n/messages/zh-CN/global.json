@@ -29,6 +29,14 @@
   "transportReadFailure": "服务暂时不可达，请稍后重试（HTTP {status}）",
   "transportWriteFailure": "服务暂时不可达，无法确认操作是否完成，请刷新查看后再重试（HTTP {status}）",
   "updateFailed": "更新失败",
+  "outdatedClient": {
+    "message": "页面已有新版本，当前版本无法继续使用。刷新前先把还没保存或没发出的内容复制下来",
+    "refresh": "刷新"
+  },
+  "requiredUpdate": {
+    "message": "有重要修复，刷新后生效",
+    "refresh": "刷新"
+  },
   "desktop": {
     "macAppleSilicon": "Mac（Apple 芯片）",
     "macIntel": "Mac（Intel 芯片）",
@@ -45,6 +53,8 @@
     "imageFailed": "图片加载失败（HTTP {status}）",
     "fileReadFailed": "读取文件失败（HTTP {status}）",
     "downloadFailed": "下载失败（HTTP {status}）",
+    "downloadUnreachable": "网络连接失败，没能下载，检查网络后重试",
+    "downloaded": "已下载至浏览器当前下载目录",
     "revisionFileName": "{name}（第{seq}版）{ext}"
   },
   "dialog": {

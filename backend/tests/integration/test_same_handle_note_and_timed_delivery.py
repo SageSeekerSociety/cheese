@@ -455,7 +455,7 @@ def test_nondefault_timer_reaches_the_named_agent_through_real_turn_assembly(
     token = mint_scoped_token(project_id=project, topic_id=room, agent_handle=seat)
     response = client.post(
         f"/topics/{room}/deliveries",
-        headers={"X-Cheese-Token": token},
+        headers={"Authorization": f"Bearer {token}"},
         json={
             "at": (datetime.now(UTC) - timedelta(minutes=1)).isoformat(),
             "content": "neutral scheduled input",

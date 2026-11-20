@@ -22,6 +22,7 @@ from tests.integration.conftest import as_read, mail
 from tests.integration.test_accept_pr import (
     _accept,
     _approve,
+    _arm,
     _poll,
     _protect,
     _ready_card,
@@ -123,6 +124,28 @@ def test_a_second_poll_on_the_same_commit_does_not_ring_again(client, app_world)
     wait_work_idle()
 
     assert len(_notices(client, alice, "accept_ready")) == 1
+
+
+def test_a_version_the_reviewer_already_adopted_is_not_said_to_wait_for_them(
+    client, app_world
+):
+    """A reviewer who armed the merge has decided: when the checks go green the
+    version is merged on their decision, and nobody is told it waits for them."""
+    alice = seed_user(client, "alice")
+    fake = app_world["fake"]
+    pid, tid, cid, _number, head_sha = _ready_card(client, app_world)
+    _protect(client, pid, auto_merge_allowed=True)
+    fake.check_state_by_sha[head_sha] = ("pending", "还在跑")
+    _poll(client)
+    assert _arm(client, cid, "alice").status_code == 200
+
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+    _poll(client)
+    wait_work_idle()
+
+    assert [m["sha"] for m in fake.merge_calls] == [head_sha]
+    assert _events(client, tid, "accept_ready") == []
+    assert _notices(client, alice, "accept_ready") == []
 
 
 def test_the_reviewer_hears_when_the_pr_is_closed_without_merging(client, app_world):

@@ -19,12 +19,16 @@ from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine import session_work as work_lease
-from app.domain.project.models import Project
 from app.domain.team.models import TeamMemberRole, TeamUserRelation
 from app.domain.topic.models import Topic
 from app.domain.user.models import User
 from tests.executor_release import running
-from tests.integration.conftest import post_project, registered, session_auth_headers
+from tests.integration.conftest import (
+    post_project,
+    registered,
+    session_auth_headers,
+    shared_team_of,
+)
 from tests.support.devices import enrollment_team, place_in_project_team
 
 pytestmark = pytest.mark.anyio
@@ -46,7 +50,7 @@ async def _project_on_a_device(client):
         now = datetime.now(UTC)
         db.add(
             TeamUserRelation(
-                team_id=(await db.get(Project, project_id)).team_id,
+                team_id=await shared_team_of(db, project_id, joiner_user_id=bob),
                 user_id=bob,
                 role=TeamMemberRole.MEMBER,
                 created_at=now,

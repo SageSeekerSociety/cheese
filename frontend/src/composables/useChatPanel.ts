@@ -46,6 +46,7 @@ import { usePanelAuthorship } from './chatPanel/authorship'
 import { usePanelOutgoing } from './chatPanel/outgoing'
 import { usePanelPaging } from './chatPanel/paging'
 import { usePanelPeople } from './chatPanel/people'
+import { usePanelReceipts } from './chatPanel/receipts'
 import { usePanelRows } from './chatPanel/rows'
 import { usePanelSocket } from './chatPanel/socket'
 import { usePanelSurface } from './chatPanel/surface'
@@ -64,7 +65,6 @@ export type { ChatPanelEmit, ChatPanelOptions } from './chatPanelContract'
 
 export function useChatPanel(opts: ChatPanelOptions) {
   const { topic, alwaysSummon, showComposer, members, topicList, unreadOnOpen, focusBlock, emit } = opts
-  const answersInThread = () => opts.answersInThread?.() ?? false
   // 这一栏读的那段对话：房间自己，或房间里的一个任务（`conversationId`）。消息、连接、
   // 发送、草稿走它；名册、附件、标题还是房间的（`topic()`）。
   function place(): Topic | null {
@@ -175,6 +175,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     runRecords,
     turns,
     reactions,
+    receipts: () => receipts,
     errorMsg,
     awaitingReply: turns.awaitingReply,
     atBottom: scroll.atBottom,
@@ -203,7 +204,6 @@ export function useChatPanel(opts: ChatPanelOptions) {
     scrollToBottom: scroll.scrollToBottom,
     errorMsg,
     awaitingReply: turns.awaitingReply,
-    answersInThread,
     onPosted: opts.onPosted,
     timeline,
     sentNow: () => timelineMotion.sentNow,
@@ -220,6 +220,17 @@ export function useChatPanel(opts: ChatPanelOptions) {
     naming: people.naming,
     turnAgentHandle: turns.turnAgentHandle,
     connected: socket.connected,
+  })
+
+  // 已读：自己那几条谁读到了，我读到了哪几条 —— 见 chatPanel/receipts。
+  const receipts = usePanelReceipts({
+    place,
+    author: AUTHOR,
+    messages: timeline.messages,
+    isMine: authorship.isMine,
+    roster: people.roster,
+    scrollRef: scroll.scrollRef,
+    contentRef: scroll.contentRef,
   })
 
   // 画得出来的那几行、日期线、未读线，和跟着各块一起来的任务 —— 见 chatPanel/rows。
@@ -242,6 +253,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     roster: people.roster,
     turns,
     runRecords,
+    messages: timeline.messages,
   })
 
   // 翻页、断线对账、跳到某一条 —— 见 chatPanel/paging。`failed` 和 `flash` 分属下面两
@@ -260,6 +272,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     scrollToBottom: scroll.scrollToBottom,
     rememberScroll: scroll.rememberScroll,
     forgetScroll: scroll.forgetScroll,
+    beginOwnScroll: scroll.beginOwnScroll,
     loadingHistory,
     unseen,
     errorMsg,
@@ -397,6 +410,7 @@ export function useChatPanel(opts: ChatPanelOptions) {
     rowActions,
     clicks,
     reactions,
+    receipts,
     scroll,
     rowBatch,
     checklist,

@@ -6,11 +6,12 @@
   "filesChanged": "Changed files: {n}",
   "goConfirm": "Review and confirm",
   "goEnvironment": "Open environment settings",
+  "goAgentSettings": "Open AI teammates settings",
   "moreFiles": "{n} more files",
   "platform": "Platform",
   "quote": "“{text}”",
   "removed": "Removed",
   "showDetail": "Show details",
   "viewChanges": "View changes",
-  "working": "{name} is on it"
+  "rejectedCue": "Returned the change"
 }

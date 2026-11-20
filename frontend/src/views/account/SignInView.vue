@@ -100,7 +100,6 @@
 import type { SignInMethod } from './lastSignIn'
 
 import { computed, watch } from 'vue'
-import { toTypedSchema } from '@vee-validate/zod'
 import { useForm } from 'vee-validate'
 import { z } from 'zod'
 
@@ -113,6 +112,7 @@ import PasswordField from '@/components/account/PasswordField.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import NavLink from '@/components/common/NavLink.vue'
 import { t } from '@/i18n'
+import { toTypedSchema } from '@/lib/zodTypedSchema'
 
 /** One way in, as the container worked it out: which way, what it reads, its icon. */
 export interface SignInWay {

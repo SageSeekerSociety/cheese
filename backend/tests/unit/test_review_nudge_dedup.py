@@ -172,6 +172,8 @@ async def test_leaving_the_merge_queue_only_wakes_a_task_that_is_still_open():
 @pytest.mark.anyio
 async def test_merge_refusal_does_not_claim_checks_are_green():
     service, card, topic = _service_and_card()
+    # The project's repository is on GitHub (the card's PR is there).
+    service._resolve_forge = AsyncMock(return_value=SimpleNamespace(kind="github_app"))
     runner = MagicMock()
     with (
         patch(

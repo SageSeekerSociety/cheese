@@ -17,6 +17,7 @@
 from app.core import net_io
 from app.core import route_metrics as rm
 from app.core.loop_lag import lag_status
+from app.core.loop_stalls import stall_status
 
 #: 快照里最多放多少行路由 —— 这是**载荷上限**，不是看板展示条数：所有注册过的端点
 #: 都列出来，样本为 0 的也占一行。真越过这个数时截断并在 `routes_omitted` 里说出来，
@@ -92,6 +93,8 @@ def performance_snapshot(
         "active_requests": None,  # filled by the caller (needs the live counter)
         "uptime_seconds": None,
         "loop_lag": lag_status(),
+        # 卡住事件循环超过 0.1 秒的那几次，各带当时循环停在哪（`core/loop_stalls.py`）。
+        "loop_stalls": stall_status(),
         # 两面都要：上行是**这台机器的网卡**（含计量代理到 LLM 的出向流量），
         # api 是**本进程**的 HTTP 载荷。口径写在 `core/net_io.py` 的模块 docstring。
         "network": {

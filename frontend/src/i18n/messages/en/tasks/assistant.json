@@ -17,12 +17,22 @@
   "silent": "Cheese gave no answer",
   "today": "Today",
   "steps": {
-    "folded": "{first} and {n} steps",
     "thinking": "Thinking",
     "thought": "Thought for {s}s",
     "notFound": "Not found",
     "denied": "Not permitted",
-    "failed": "Call failed"
+    "failed": "Call failed",
+    "count": "Steps done: {n}",
+    "sent": "Messages sent: {n}",
+    "acted": "Actions taken: {n}",
+    "readCount": "Items looked at: {n}",
+    "reading": "{what}…",
+    "and": ", ",
+    "verbs": {
+      "read": "Read",
+      "find": "Find",
+      "search": "Search"
+    }
   },
   "changes": {
     "memory": {
@@ -105,6 +115,7 @@
   },
   "dock": "Pin to the right",
   "undock": "Unpin",
+  "dragHint": "Drag to move; double-click to put it back in the corner",
   "anywhere": {
     "greeting": "Ask a question, or tell me what to do.",
     "placeholder": "Ask or describe a task",
@@ -141,7 +152,11 @@
     "expired": "Expired"
   },
   "run": {
-    "routine": "Routine “{title}” started"
+    "routine": "Routine “{title}” started",
+    "wait": "“{title}” started",
+    "filed": "Task “{task}” went to review",
+    "accepted": "Task “{task}”: the delivery was accepted",
+    "rejected": "Task “{task}”: the delivery was returned"
   },
   "page": {
     "channel": "Channel “{name}”",
@@ -177,5 +192,22 @@
       "problem": "Problems"
     },
     "label": "Cite"
+  },
+  "rule": {
+    "waiting": "Waiting",
+    "on": "On",
+    "started": "Started",
+    "gaveUp": "Did not happen within {days} days; stopped waiting",
+    "cancelled": "Cancelled",
+    "ended": "Ended",
+    "paused": {
+      "person": "Paused",
+      "credits": "Out of credits; paused",
+      "away": "Away for long; paused"
+    },
+    "cancel": "Cancel",
+    "pause": "Pause",
+    "resume": "Resume",
+    "failed": "Could not do that"
   }
 }

@@ -11,6 +11,5 @@
   "preview": {
     "cannotShow": "Can't display this file",
     "generateFailed": "Could not generate a preview (HTTP {status})"
-  },
-  "downloadFailed": "Download failed"
+  }
 }

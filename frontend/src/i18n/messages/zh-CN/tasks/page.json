@@ -1,9 +1,12 @@
 {
   "claim": {
-    "claim": "领取这道题",
-    "notApproved": "审核通过后才能领取",
-    "pending": "领取申请待批准",
-    "rejected": "领取申请被拒绝"
+    "claim": "申请做这道题",
+    "continue": "继续做",
+    "expired": "已过期",
+    "notApproved": "审核通过后才能申请",
+    "notApprovedStart": "审核通过后才能开始",
+    "pending": "已申请，等待通过",
+    "start": "开始做这道题"
   },
   "dateFormat": "M月D日",
   "delete": "删除",
@@ -12,10 +15,13 @@
   "rejectReason": "审核未通过：{reason}",
   "reviewTitle": "{name} 的提交",
   "state": {
+    "applyClosed": "申请已截止",
     "closed": "已截止",
-    "full": "人数已满",
+    "ended": "已结束",
+    "full": "名额已满",
     "notStarted": "未开始",
-    "open": "报名中",
+    "open": "可申请",
+    "openToStart": "可开始",
     "pending": "待审核",
     "rejected": "未通过审核"
   },
@@ -28,6 +34,12 @@
     "data": "数据",
     "label": "题目页签",
     "mine": "我的提交",
-    "roster": "领取者"
+    "roster": "参与者",
+    "versions": "历史版本"
+  },
+  "mine": {
+    "doing": "进行中",
+    "pending": "等待通过",
+    "rejected": "未通过"
   }
 }

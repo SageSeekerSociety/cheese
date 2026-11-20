@@ -168,15 +168,14 @@ def test_a_member_gives_a_task_in_general_to_a_teammate_and_seats_it(client):
 
 
 def _take_bringing_people_in_from_members(client, project_id: str) -> None:
-    grants = client.get(
+    roles = client.get(
         f"/projects/{project_id}/roles", headers=session_auth_headers("alice")
-    ).json()["data"]["grants"]
-    changed = client.put(
-        f"/projects/{project_id}/roles",
+    ).json()["data"]["roles"]
+    member = next(r for r in roles if r["key"] == "member")
+    changed = client.patch(
+        f"/projects/{project_id}/roles/member",
         json={
-            "grants": {
-                "member": [g for g in grants["member"] if g != "create_channels"]
-            }
+            "permissions": [g for g in member["permissions"] if g != "create_channels"]
         },
         headers=session_auth_headers("alice"),
     )

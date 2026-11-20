@@ -1,6 +1,5 @@
 {
   "action": "Export project",
-  "failed": "Couldn't export the project",
   "hint": "Package the whole project: the code repository, library files, each channel's files and artifacts, and every document. Bigger projects take longer",
   "title": "Export project"
 }

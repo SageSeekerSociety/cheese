@@ -11,6 +11,8 @@ import type { PanelPreviewProps } from './types'
 
 import { ref } from 'vue'
 
+import { IMAGE_SUFFIXES, isWebPage, suffixOf } from '../../lib/fileKind'
+import { isLibraryPath } from '../../lib/library'
 import { useDocumentRevisions } from '../useDocumentRevisions'
 import { useRoomFileEditor } from '../useRoomFileEditor'
 import { useRoomFileHistory } from '../useRoomFileHistory'
@@ -68,8 +70,10 @@ export function usePanelPreviewEditing(deps: EditingDeps) {
   // 编辑器和预览台上那一份共用同一栏历史：编辑时它读编辑器里那份（刚存下的那一版也在里面），
   // 否则读预览台上这份。恢复完，编辑中还开着的会话要重新载入新版本，否则把那一页重取一遍。
   //
-  // 只在那一栏真的开着的时候读：历史是「要看才看」的东西，跟着每一份预览都去问一遍等于每次
-  // 翻文件都多打一次接口。编辑器开着时也读，因为那一栏和编辑共用同一份。
+  // 房间里的文件一打开就读：文档条上那一行「第 N 版 · 谁 · 什么时候」和「本版共修改 N 处」
+  // 都从这份清单来（`./versions.ts`），一份文件多问一次清单，换来读者不用点开历史就知道
+  // 这是哪一版。文档、图片、网页、SVG 都问（这几类顶上都有版本行，见 `PreviewFileBar`）；
+  // 资料库里的原件没有历史，不问；编辑器开着时读编辑器里那份。
   const fileHistory = useRoomFileHistory(
     {
       topicId: () => props.topicId,
@@ -82,7 +86,12 @@ export function usePanelPreviewEditing(deps: EditingDeps) {
             ? null
             : String(editor.savedSeq.value)
           : state.previewFile.value?.version ?? null,
-      enabled: () => !!editing.value || showHistory.value,
+      enabled: () => {
+        const path = state.previewFile.value?.path
+        const versioned =
+          !!state.documentType.value || (!!path && (isWebPage(path) || IMAGE_SUFFIXES.has(suffixOf(path))))
+        return !!editing.value || showHistory.value || (versioned && !!path && !isLibraryPath(path))
+      },
     },
     {
       onRestored: () => {

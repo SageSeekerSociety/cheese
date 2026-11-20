@@ -6,14 +6,22 @@
 // （`.claude/rules/architecture.md` 的组件边界）。这里只管画。
 import type { ArtifactVersion } from '../api'
 
+import { provide } from 'vue'
+
+import { PREVIEW_MARKABLE } from '../composables/panelPreview/previewMode'
 import { useArtifactVersionPreview } from '../composables/useArtifactVersionPreview'
 import { t } from '../i18n'
-import { sheetKindOf } from '../lib/fileKind'
+import { codeLanguageOf, sheetKindOf, SLIDE_SUFFIXES } from '../lib/fileKind'
 
 import DesignImage from './panels/preview/DesignImage.vue'
+import PreviewCode from './panels/preview/PreviewCode.vue'
+import PreviewMarkdown from './panels/preview/PreviewMarkdown.vue'
 import PreviewPages from './panels/preview/PreviewPages.vue'
 import PreviewSheet from './panels/preview/PreviewSheet.vue'
 import PreviewSlides from './panels/preview/PreviewSlides.vue'
+
+// 交付的某一版只读：PDF 和幻灯片上那颗「标一处」在这里接不住，不摆。
+provide(PREVIEW_MARKABLE, false)
 
 const props = withDefaults(
   defineProps<{
@@ -50,9 +58,11 @@ const { data, imageUrl, text, loading, error, suffix, view } = useArtifactVersio
       >{{ version.url }}</a
     >
     <div v-else-if="data" class="version-preview__body">
-      <PreviewSlides v-if="['pptx', 'ppt', 'odp'].includes(suffix)" :data="data" :title="version.filename || ''" />
+      <PreviewSlides v-if="SLIDE_SUFFIXES.has(suffix)" :data="data" :title="version.filename || ''" />
       <PreviewPages v-else-if="view === 'pages'" :data="data" />
       <PreviewSheet v-else-if="view === 'sheet'" :data="data" :kind="sheetKindOf(suffix)" />
+      <PreviewMarkdown v-else-if="view === 'markdown' && text !== null" :source="text" />
+      <PreviewCode v-else-if="view === 'code' && text !== null" :source="text" :language="codeLanguageOf(suffix)" />
       <DesignImage
         v-else-if="imageUrl"
         :src="imageUrl"

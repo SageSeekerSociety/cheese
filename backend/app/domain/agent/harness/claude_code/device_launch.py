@@ -30,7 +30,7 @@ from app.domain.agent.harness.claude_code.remote_execution import (
     launch as executor_launch,
 )
 from app.domain.agent.harness.claude_code.remote_execution import release
-from app.domain.agent.harness.claude_code.runner import LAUNCH
+from app.domain.agent.harness.claude_code.runner import LAUNCH, RETIRED_ENV
 from app.domain.agent.harness.claude_code.session_launch import session_settings
 from app.domain.agent.launch import ExecutorLaunch, MachineLaunch, MachinePlace
 from app.domain.agent.place import (
@@ -79,8 +79,8 @@ from app.domain.skill_library import (
 # ``scripts/remote_execution/package.json`` 和它的 lock 也装一个固定版本，那份没
 # 有守卫：对不上时 ``remote_execution/client.py`` 的版本闸门在 CI 里当场拒掉，
 # 红得见。
-CLAUDE_PINNED_VERSION = "2.1.299"
-CLAUDE_MIN_VERSION = "2.1.299"
+CLAUDE_PINNED_VERSION = "2.1.316"
+CLAUDE_MIN_VERSION = "2.1.316"
 
 # What every session carries as its Claude login. It authenticates nothing; the
 # metering proxy replaces it with the platform's credential, or answers for it
@@ -206,6 +206,7 @@ def launch_holes(
     system_prompt: str = "",
     ca_pem: str = "",
     resume_session_id: str | None = None,
+    retired_session_id: str | None = None,
     project_id: str | None = None,
     launch_name: str = "",
     seat: str = "",
@@ -348,7 +349,7 @@ api = os.environ.get("CHEESE_API", "").rstrip("/")
 if blob is None and api:
     request = urllib.request.Request(
         api + "/connector/skill-bundles/" + want,
-        headers={{"X-Cheese-Token": os.environ.get("CHEESE_TOKEN", "")}},
+        headers={{"Authorization": "Bearer " + os.environ.get("CHEESE_TOKEN", "")}},
     )
     # The pause between attempts grows from this step; a test sets it to 0.
     step = float(os.environ.get("CHEESE_SKILL_FETCH_BACKOFF_S", "2"))
@@ -446,6 +447,11 @@ CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
 ROOM_CONFIG_DIR="$HOME/.claude"
 SEAT="{seat_home}"
 export CLAUDE_CONFIG_DIR="$SEAT/.claude"
+# The session is kept to its own seat of this room
+# (`remote_execution/namespace._keep_only`): a seat's memory tree holds the
+# private memory of the person its turn answers. To its own room of the
+# machine, the platform half of the launch says (`CHEESE_HOMES_ROOT`).
+export CHEESE_SEATS_ROOT="$(dirname "$SEAT")"
 mkdir -p "$ROOM_CONFIG_DIR/projects" "$CLAUDE_CONFIG_DIR"
 # Conversation transcripts belong to the room for resume and transfer, while
 # settings, skills and generated instructions belong to this seat.
@@ -630,6 +636,10 @@ CLAUDE_RUNNER="python3 -I -S \\"$CLAUDE_ARTIFACT\\" --state \\"$CLAUDE_STATE\\" 
         # on the env for the same reason the tunnel vars are — a remote launch
         # is built entirely out of its environment.
         env["CHEESE_RESUME_SESSION"] = resume_session_id
+    if retired_session_id:
+        # The conversation the platform no longer continues: the runner does
+        # not take it up from its own record either (``runner.start``).
+        env[RETIRED_ENV] = retired_session_id
     if launch_name:
         # Which start of the runner this is, so a wait on it reads only what
         # this start left in the runner's log (``runner.LAUNCH``).
@@ -660,8 +670,10 @@ cheese_launch_phase credentials_selected
     # What a running session is compared against: the whole launch, written
     # without the two things that are not the platform's. The system prompt is
     # the room's and is rebuilt every turn; a live session keeps the one it
-    # started with. The resume offer names the conversation, which a relaunch
-    # continues, and the launch name is new on every turn. The helpers a
+    # started with. The resume offer and the retired conversation name the
+    # conversation, which a relaunch continues or replaces by its own rule
+    # (``ClaudeCodeDriver.launch``), and the launch name is new on every turn.
+    # The helpers a
     # release puts into a running session are left out too, since changing
     # one is a release and not a relaunch, and so is the installer of the
     # pinned build, which runs before the session starts and is not kept by
@@ -673,7 +685,9 @@ cheese_launch_phase credentials_selected
     # reach a live session as a new one.
     configured, prepared = holes("", release.launch_only(helper_sources), "")
     fixed_env = {
-        k: v for k, v in env.items() if k not in ("CHEESE_RESUME_SESSION", LAUNCH)
+        k: v
+        for k, v in env.items()
+        if k not in ("CHEESE_RESUME_SESSION", RETIRED_ENV, LAUNCH)
     }
     contract = hashlib.sha256(
         json.dumps(
@@ -773,6 +787,8 @@ class ClaudeLaunch:
     system_prompt: str
     model: str | None = None
     resume_session_id: str | None = None
+    # The conversation the platform no longer continues (``RETIRED_ENV``).
+    retired_session_id: str | None = None
     # Names this start of the runner (``runner.LAUNCH``); new on every turn,
     # so it is never part of what a live session is compared against.
     launch_name: str = ""
@@ -789,6 +805,7 @@ class ClaudeLaunch:
             # A screen is retired and reopened for reasons that say nothing
             # about the conversation, so every launch offers to continue it.
             resume_session_id=self.resume_session_id,
+            retired_session_id=self.retired_session_id,
             launch_name=self.launch_name,
         )
 
@@ -798,6 +815,7 @@ def on_machine(
     *,
     system_prompt: str,
     resume_session_id: str | None,
+    retired_session_id: str | None = None,
     launch_name: str = "",
 ) -> MachineLaunch:
     """Claude Code, now that a machine has said where and what this room is.
@@ -811,6 +829,7 @@ def on_machine(
         system_prompt=system_prompt,
         ca_pem=place.ca_pem,
         resume_session_id=resume_session_id,
+        retired_session_id=retired_session_id,
         project_id=place.project_id,
         launch_name=launch_name,
         # Which seat this session is: the agent the place was opened for, in

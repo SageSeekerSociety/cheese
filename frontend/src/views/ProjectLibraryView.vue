@@ -19,17 +19,22 @@
 // 哪一份和写操作接到地址与状态上（`useLibrarySelection`／`useLibraryTransfers`）、摆出
 // 这一列和右栏。每一行长什么样在 `library/LibraryRows.vue`。
 import type { LocationQueryRaw } from 'vue-router'
+import type { ProjectChange } from '@/cx_types'
 import type { ListedDocument } from '../api/projectDocuments'
 import type { LibraryFile, LibraryFolder } from '../lib/libraryApi'
+import type { LibrarySort } from '../lib/libraryQuery'
 
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
+import { useQuery } from '@tanstack/vue-query'
 
+import { listProjectChanges } from '../api'
 import DocMoveDialog from '../components/library/DocMoveDialog.vue'
 import DocShareDialog from '../components/library/DocShareDialog.vue'
 import LibraryDocumentHits from '../components/library/LibraryDocumentHits.vue'
 import LibraryDocumentPage from '../components/library/LibraryDocumentPage.vue'
+import ProjectFilesEntry from '../components/library/ProjectFilesEntry.vue'
 import { useDocumentMove } from '../composables/useDocumentMove'
 import { useDocumentShare } from '../composables/useDocumentShare'
 import { useLibraryDocuments } from '../composables/useLibraryDocuments'
@@ -52,6 +57,10 @@ import { useTopBarBack } from '@/components/common/topBarBack'
 import { t } from '@/i18n'
 import { fmtBytes } from '@/lib/changesTree'
 import { refRoute } from '@/lib/refDirectory'
+import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
+import { TASK_FOLDER } from '@/lib/taskRevision'
+import { queryClient } from '@/query/client'
+import { projectQuery } from '@/query/project'
 import { usePageTitleStore } from '@/stores/title'
 import { useWorkspaceStore } from '@/stores/workspace'
 import LibraryCrumbs from '@/views/library/LibraryCrumbs.vue'
@@ -80,6 +89,28 @@ function clearFilters() {
   query.value = ''
   kind.value = 'all'
 }
+
+// ---- 排：一个框，点一下在 升 → 降 → 关 之间转 --------------------------------------
+//
+// 关 = 这一页原本的样子（文件夹一拨、其余一拨）；升、降把文件夹和文件排进同一条
+// 时间线，只比时间，同一刻才比名字。记在 `?sort=` 上，刷新和把链接发给别人都回到
+// 同一档。换挡位就是换视图，`useLibraryPages` 自己会从头取。
+const SORTS: LibrarySort[] = ['asc', 'desc', 'off']
+const sortLabelKey = { off: 'sortOff', asc: 'sortAsc', desc: 'sortDesc' } as const
+const sortHintKey = { off: 'sortOffHint', asc: 'sortAscHint', desc: 'sortDescHint' } as const
+const sort = computed<LibrarySort>(() => {
+  const raw = route.query.sort
+  return raw === 'asc' || raw === 'desc' ? raw : 'off'
+})
+// 点一下换下一档；换完把列表带回顶部（顺序整个变了，停在原处没有意义）。
+function nextSort() {
+  const at = SORTS.indexOf(sort.value)
+  const next = SORTS[(at + 1) % SORTS.length]
+  const target: LocationQueryRaw = { ...route.query, sort: next === 'off' ? undefined : next }
+  delete target.file
+  void router.replace({ query: target })
+  void nextTick(() => listEl.value?.scrollTo({ top: 0 }))
+}
 // ---- 文档：和文件摆进同一张列表，最近改过的在前 ------------------------------------
 
 const docs = useLibraryDocuments(
@@ -96,11 +127,56 @@ const dir = computed(() => (typeof route.query.dir === 'string' ? route.query.di
 const listEl = ref<HTMLElement | null>(null)
 const pages = useLibraryPages(
   () => props.projectId,
-  () => ({ dir: browsing.value ? dir.value : '', q: query.value, kind: kind.value }),
-  listEl
+  () => ({ dir: browsing.value ? dir.value : '', q: query.value, kind: kind.value, sort: sort.value }),
+  listEl,
+  () => !props.docId
 )
 const { rows: entries, loading, loadFailed, loadReason } = pages
+
+// 项目文件那一行：项目里有提交才有（`listProjectChanges` 问到最近一次）。资料库不等它，
+// 问不到——还没有提交、代码托管服务慢或断了——就不画这一行，资料库照常。整页开着一份
+// 文档时不画列表，也就不问。
+const projectFilesLatest = ref<ProjectChange | null>(null)
+watch(
+  () => (props.docId ? null : props.projectId),
+  async (projectId) => {
+    projectFilesLatest.value = null
+    if (!projectId) return
+    try {
+      const [latest] = await listProjectChanges(projectId, { limit: 1 })
+      if (props.projectId === projectId) projectFilesLatest.value = latest ?? null
+    } catch {
+      projectFilesLatest.value = null
+    }
+  },
+  { immediate: true }
+)
+function openProjectFiles() {
+  void router.push({ name: 'project-library-files', params: { projectId: props.projectId } })
+}
 const inFolder = computed(() => browsing.value && !!dir.value)
+// 这一层是只读的（项目资料库里的 `题目/`）：服务端在每一行上说，这里只看它。
+const readonlyHere = computed(
+  () => inFolder.value && entries.value.some((row) => row.file?.readonly || row.folder?.readonly)
+)
+
+// 在 `题目/` 这一层：上面写一行它来自哪道题、现在第几版，连到题目页（`GET /projects/{id}`
+// 的 `task`，看的人看得到这个文件夹时才有）。
+const project = useQuery(
+  computed(() => ({
+    ...projectQuery(props.projectId),
+    enabled: !props.docId && browsing.value && dir.value === TASK_FOLDER,
+  })),
+  queryClient
+)
+const taskHere = computed(() => (browsing.value && dir.value === TASK_FOLDER ? project.data.value?.task ?? null : null))
+
+// 拖进 `题目/` 的文件放不进去：说一句为什么，而不是什么也不发生。
+function dropHere(event: DragEvent) {
+  if (!readonlyHere.value) return onDrop(event)
+  dragging.value = false
+  actionError.value = t('work.library.readonlyDrop', { folder: dir.value })
+}
 
 function goTo(path: string) {
   const next: LocationQueryRaw = { ...route.query, dir: path || undefined }
@@ -146,6 +222,7 @@ const transfers = useLibraryTransfers({
 const {
   busy,
   uploading,
+  progress: uploadProgress,
   confirming,
   replacing,
   dragging,
@@ -259,6 +336,18 @@ const sharer = useDocumentShare()
 useCommands(() => {
   const open = selected.value
   // 手机上看着一份文件时，顶栏的 ⋯ 是这一份的操作；否则页头上是「上传文件」。
+  if (!mdAndUp.value && open?.readonly) {
+    return [
+      {
+        id: 'library.versions',
+        title: t('work.library.versions'),
+        icon: 'mdi-history',
+        palette: false as const,
+        header: {},
+        run: () => (versionsOf.value = open.path),
+      },
+    ]
+  }
   if (!mdAndUp.value && open) {
     return [
       {
@@ -290,6 +379,7 @@ useCommands(() => {
   }
   // 一份文档开着时，它的操作在文档自己的顶栏上。
   if (selectedDocId.value) return []
+  if (readonlyHere.value) return []
   return [
     {
       id: 'library.newFolder',
@@ -349,7 +439,7 @@ function read(file: LibraryFile) {
       :class="{ 'library--dragging': dragging }"
       @dragover.prevent="dragging = true"
       @dragleave.self="dragging = false"
-      @drop.prevent="onDrop"
+      @drop.prevent="dropHere"
     >
       <input ref="picker" type="file" multiple hidden :aria-label="t('work.library.upload')" @change="onPicked" />
       <input
@@ -373,6 +463,13 @@ function read(file: LibraryFile) {
           @retry="pages.reset()"
         />
         <p v-if="actionError" role="alert" class="t-body c-danger">{{ actionError }}</p>
+        <p v-if="uploadProgress" role="status" class="t-body c-muted">
+          {{
+            uploadProgress.percent >= 100
+              ? t('work.library.uploadProcessing', uploadProgress)
+              : t('work.library.uploadProgress', uploadProgress)
+          }}
+        </p>
 
         <div v-if="anything" class="library__tools">
           <v-text-field
@@ -399,9 +496,43 @@ function read(file: LibraryFile) {
               {{ kindLabel(k) }}
             </button>
           </div>
+          <!-- 排序：一个框，点一下在 升 → 降 → 关 之间转。 -->
+          <button
+            type="button"
+            class="library__sort"
+            data-testid="library-sort"
+            :data-sort="sort"
+            :aria-label="
+              t('work.library.sortTitle', {
+                state: `${t('work.library.sortLabel')} ${t(`work.library.${sortLabelKey[sort]}`)}`,
+              })
+            "
+            :title="t(`work.library.${sortHintKey[sort]}`)"
+            @click="nextSort"
+          >
+            <v-icon icon="mdi-sort" size="16" aria-hidden="true" />
+            <span>{{ t('work.library.sortLabel') }}</span>
+            <span class="library__sort-state" aria-hidden="true">{{ t(`work.library.${sortLabelKey[sort]}`) }}</span>
+          </button>
         </div>
 
         <LibraryCrumbs v-if="inFolder" :dir="dir" :root="t('navigation.project.library')" @go="goTo" />
+        <!-- Inside the read-only task folder: which task it belongs to, its version now, and its page. -->
+        <p v-if="taskHere" class="t-body c-muted library__task" data-testid="library-task-folder">
+          <span data-user-content>{{
+            taskHere.version
+              ? t('work.library.taskFolderFrom', { name: taskHere.name, version: taskHere.version })
+              : t('work.library.taskFolderFromUnversioned', { name: taskHere.name })
+          }}</span>
+          <router-link
+            class="library__task-link"
+            :to="{
+              name: TASK_ROUTE_NAMES.detail,
+              params: { spaceId: String(taskHere.space_id), taskId: String(taskHere.id) },
+            }"
+            >{{ t('work.library.taskFolderOpen') }}</router-link
+          >
+        </p>
 
         <div
           v-if="loading && !entries.length"
@@ -422,6 +553,11 @@ function read(file: LibraryFile) {
           @keep="make"
         />
 
+        <ProjectFilesEntry
+          v-if="projectFilesLatest && browsing && !dir"
+          :latest="projectFilesLatest"
+          @open="openProjectFiles"
+        />
         <LibraryRows
           v-if="entries.length"
           :rows="entries"
@@ -596,6 +732,22 @@ function read(file: LibraryFile) {
   outline-color: var(--accent);
 }
 
+.library__task {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0;
+}
+
+.library__task-link {
+  color: var(--accent-ink);
+  text-decoration: none;
+}
+
+.library__task-link:hover {
+  text-decoration: underline;
+}
+
 .library__list {
   display: flex;
   flex: 1 1 auto;
@@ -660,6 +812,41 @@ function read(file: LibraryFile) {
   border-color: var(--ink);
 }
 
+/* 排序框：和类型药丸同一排、同一个高度。关着的时候是灰的（这一页原本的顺序），
+   升 / 降用文字写出来，不用只靠箭头——箭头在中文里容易被读成「展开」。 */
+.library__sort {
+  display: inline-flex;
+  flex: none;
+  gap: 6px;
+  align-items: center;
+  height: 28px;
+  padding: 0 12px;
+  font-size: 13px;
+  color: var(--muted);
+  white-space: nowrap;
+  cursor: pointer;
+  background: none;
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-pill);
+  transition:
+    background-color var(--dur-quick) var(--ease-standard),
+    color var(--dur-quick) var(--ease-standard);
+}
+
+.library__sort:hover {
+  background: var(--fill);
+}
+
+.library__sort-state {
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.library__sort[data-sort='off'] .library__sort-state {
+  font-weight: 400;
+  color: var(--muted);
+}
+
 .library__empty {
   padding: 32px 0;
   text-align: center;
@@ -678,6 +865,21 @@ function read(file: LibraryFile) {
   }
 
   .library__kind::before {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    content: '';
+    transform: translate(-50%, -50%);
+  }
+
+  /* 排序框也撑到 44：触屏上 28px 的一颗按不准（设计系统 §10.1）。 */
+  .library__sort {
+    position: relative;
+  }
+
+  .library__sort::before {
     position: absolute;
     top: 50%;
     left: 50%;

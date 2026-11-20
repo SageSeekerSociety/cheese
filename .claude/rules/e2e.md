@@ -16,9 +16,13 @@ paths:
 - **Selectors**: `getByLabel` / `getByRole` match substrings by default. The
   show-password toggle is labelled `显示密码` and the passkey button reads
   `使用通行密钥登录`, so use `getByLabel('密码', { exact: true })` and
-  `getByRole('button', { name: '登录', exact: true })`. Project rail tiles are
-  `.app-rail-item--tile`; the bare `:not(--add)` also matches the 首页 icon
-  which sits first.
+  `getByRole('button', { name: '登录', exact: true })`. On desktop the top
+  bar's 首页 is `getByTestId('bar-home')` and its search `getByTestId('bar-search')`;
+  inside a project or space the place name next to it is
+  `getByTestId('project-switcher')`, whose list rows are the projects
+  (`openProjectSwitcher` in `helpers.ts`). From the home area, projects are rows
+  of its sidebar (`home-nav-project`, `clickFirstProject`), and 待办 is a row of
+  that directory (`getByRole('link', { name: '待办' })`).
 - **Seed chain**: alice comes from the seed migration; her PROJECT comes from
   `backend/scripts/seed_fusion_demo.py` (CI runs it in e2e.yml). A spec
   assuming a project tile without that seed passes locally on a dev DB and

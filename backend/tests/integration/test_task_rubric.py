@@ -9,9 +9,9 @@ from fastapi.testclient import TestClient
 from tests.integration.conftest import UserCreator, create_approved_space, unique_int
 
 RUBRIC = [
-    {"item": "正确性", "points": 60, "criteria": "8 组访存记录全对"},
-    {"item": "实现", "points": 20, "criteria": "LRU 替换正确"},
-    {"item": "报告", "points": 20, "criteria": ""},
+    {"item": "正确性", "points": 60, "criteria": "8 组访存记录全对", "stage": None},
+    {"item": "实现", "points": 20, "criteria": "LRU 替换正确", "stage": None},
+    {"item": "报告", "points": 20, "criteria": "", "stage": None},
 ]
 
 
@@ -42,6 +42,12 @@ def board(user_client: UserCreator, api_client: TestClient) -> dict:
         },
         headers=_headers(creator),
     ).json()["data"]["space"]
+    joined = api_client.post(
+        f"/spaces/{space['id']}/members",
+        json={"userId": student.user_id},
+        headers=_headers(creator),
+    )
+    assert joined.status_code == 201, joined.text
     return {"creator": creator, "student": student, "space": space}
 
 
@@ -124,10 +130,10 @@ def test_editing_replaces_the_rubric_and_its_visibility(
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["data"]["task"]["rubric"] == [
-        {"item": "正确性", "points": 100, "criteria": "全对"}
+        {"item": "正确性", "points": 100, "criteria": "全对", "stage": None}
     ]
     assert _read(api_client, board["student"], task_id)["rubric"] == [
-        {"item": "正确性", "points": 100, "criteria": "全对"}
+        {"item": "正确性", "points": 100, "criteria": "全对", "stage": None}
     ]
 
     # An edit that leaves the rubric out leaves it as it is.

@@ -1,6 +1,7 @@
 {
   "personalTeamCannotDisband": "个人团队跟着你的账号，不能解散",
   "personalTeamCannotTransfer": "个人团队跟着你的账号，不能转让",
+  "personalTeamTakesNoRecruits": "个人团队招不到人",
   "teamAdminGrantOwnerOnly": "无法设置管理员：只有团队所有者可以设置",
   "teamAlreadyMember": "这个人已经是这个团队的成员了",
   "teamApplicationPending": "这个人已经有一条加入这个团队的邀请或申请在等处理",

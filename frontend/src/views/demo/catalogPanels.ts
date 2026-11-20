@@ -34,6 +34,7 @@ import {
   PANEL_NAMES,
   previewBundle,
   projectFileProps,
+  RECYCLED_THREAD_ROW,
   ROUTINE_ACCEPTED,
   ROUTINE_RUNS,
   ROUTINE_WEEKLY,
@@ -608,6 +609,7 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
     needs: UI,
     args: {
       rows: THREAD_ROWS,
+      recycled: [],
       loading: false,
       error: null,
       refs: { mentionNames: PANEL_NAMES, topicTitles: {} },
@@ -646,6 +648,12 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         note: '开不了支线的人没有顶上那一颗，空态也不给动作。',
         props: { rows: [], canCreate: false },
         expect: '暂无支线',
+      },
+      {
+        name: '有已回收的支线',
+        note: '报错满三天、没人回来的那条收在下面「已回收」一栏里，平时收着；点开能读、能恢复。',
+        props: { rows: THREAD_ROWS, recycled: [RECYCLED_THREAD_ROW] },
+        expect: '已回收 · 1',
       },
     ],
   },

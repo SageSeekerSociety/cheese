@@ -46,12 +46,8 @@ export function useLibraryVersions(
   async function download(version: LibraryVersion) {
     const name = path()
     if (!name) return
-    actionError.value = ''
-    try {
-      await downloadFile(libraryVersionRawUrl(shelf(), name, version.id), name.split('/').pop() || name)
-    } catch (e) {
-      actionError.value = e instanceof Error ? e.message : t('work.library.downloadFailed')
-    }
+    // 成功和失败各弹一句，在 `downloadFile` 那一层说（`lib/download`）；这里不留红字。
+    await downloadFile(libraryVersionRawUrl(shelf(), name, version.id), name.split('/').pop() || name)
   }
 
   async function restore(version: LibraryVersion) {

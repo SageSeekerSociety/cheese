@@ -3,15 +3,18 @@
     :task-data="taskData"
     :participants="participants"
     :latest-by-participant="latestByParticipant"
+    :judge-by-submission="judgeBySubmission"
     :loading="loading"
     :denied="denied"
     :failed="failed"
     :failure-reason="failureReason"
     :busy-id="busyId"
+    :rejudging="rejudging"
     @approve="approve"
     @reject="reject"
     @deadline="setDeadline"
     @retry="load"
+    @rejudge="rejudge"
     @review="events.emit('review-participant', $event)"
   />
 </template>
@@ -21,20 +24,21 @@
 // 逐版评审那张对话框挂在题目详情那一层（它自己取数），这里只在总线上说要看谁的。
 // 这里批了、拒了、改了截止，或者那张对话框里判了一版，都在总线上发 `participation-changed`：
 // 这里听见了重读名单，题目页听见了重读我自己那一份（出题人也可能领了自己的题）。
-import type { Task, TaskMembership } from '@/types'
+import type { Task, TaskJudgeSummary, TaskMembership } from '@/types'
 import type { Latest } from './RosterView.vue'
 
 import { computed, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
-import { toast } from 'vuetify-sonner'
-import dayjs from 'dayjs'
 
 import RosterView from './RosterView.vue'
 
+import { axiosErrorMessage } from '@/api/axiosHttp'
 import { SpacesApi } from '@/api/spaces'
 import { TaskBoardApi } from '@/api/taskBoard'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
+import { toast } from '@/lib/toast'
+import { readJudgeSummaries, rejudgeLatest } from '@/views/tasks/composables/useTaskJudge'
 import { useEvents } from '@/views/tasks/events'
 
 const props = defineProps<{
@@ -47,6 +51,8 @@ const events = useEvents()
 
 const participants = ref<TaskMembership[]>([])
 const latestByParticipant = ref(new Map<number, Latest>())
+/** 挂了测试点的题：每人最新那一版的评测摘要（「测试点」那一列）。 */
+const judgeBySubmission = ref(new Map<number, TaskJudgeSummary>())
 const loading = ref(true)
 /** 名单没读出来时的那个错。403 是「不给你看」，其余是「这次没读到」——在下面分开。 */
 const loadError = ref<unknown>(null)
@@ -82,6 +88,12 @@ async function load() {
       }
     }
     latestByParticipant.value = latest
+    if (task.testSuite?.length) {
+      judgeBySubmission.value = await readJudgeSummaries(
+        task.id,
+        [...latest.values()].map((entry) => entry.submissionId)
+      )
+    }
   } catch (error) {
     // 原来这里不看错是什么，一律画「只有出题人和管理员能看领取者」：接口 500 的时候，
     // 出题人会去查自己的权限 —— 方向就是错的。是「不给你看」还是「这次没读到」，
@@ -97,25 +109,19 @@ function nameOf(id: number): string {
   return m?.member?.name ?? ''
 }
 
-/** 批准时顺手给这个人定截止：领取后 N 天（题目的「提交期限」），没设就 7 天。
- *  发题表单存的是天数，老数据里存的是毫秒，两种都换成天。 */
+/** 批准：这个人的截止时间由服务端在通过的那一刻定（申请制从这天起 N 天，直接开始的题
+ *  是题目的截止日期），项目也在这时建出来。 */
 async function approve(id: number) {
   const task = props.taskData
   if (!task) return
   busyId.value = id
-  const raw = task.defaultDeadline ?? 0
-  const days = raw >= 86_400_000 ? Math.round(raw / 86_400_000) : raw
   try {
-    await TaskBoardApi.updateParticipant(task.id, id, {
-      approved: 'APPROVED',
-      deadline: dayjs()
-        .add(days || 7, 'day')
-        .valueOf(),
-    })
+    await TaskBoardApi.updateParticipant(task.id, id, { approved: 'APPROVED' })
     toast.success(t('tasks.roster.approved', { name: nameOf(id) }))
     events.emit('participation-changed')
-  } catch {
-    toast.error(t('tasks.roster.approveFailed'))
+  } catch (e) {
+    // 服务端拒绝时说的那一句（比如名额已满）照原样给出题人看。
+    toast.error(axiosErrorMessage(e, t('tasks.roster.approveFailed')))
   } finally {
     busyId.value = null
   }
@@ -142,6 +148,24 @@ async function setDeadline(id: number, at: number) {
     events.emit('participation-changed')
   } catch {
     toast.error(t('tasks.roster.deadlineFailed'))
+  }
+}
+
+const rejudging = ref(false)
+/** 重新评测全部最新提交：排上几版、复用几版说一声，再重读「测试点」那一列。 */
+async function rejudge() {
+  const task = props.taskData
+  if (!task || rejudging.value) return
+  rejudging.value = true
+  try {
+    const counts = await rejudgeLatest(task.id)
+    if (counts.queued + counts.reused === 0) toast.info(t('tasks.judge.rejudge.nothing'))
+    else toast.success(t('tasks.judge.rejudge.done', { queued: counts.queued, reused: counts.reused }))
+    await load()
+  } catch (e) {
+    toast.error(axiosErrorMessage(e, t('tasks.judge.rejudge.failed')))
+  } finally {
+    rejudging.value = false
   }
 }
 

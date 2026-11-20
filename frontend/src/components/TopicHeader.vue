@@ -35,11 +35,11 @@ import TopicMembers from '@/components/TopicMembers.vue'
 import TopicUsageSummary from '@/components/TopicUsageSummary.vue'
 import { t } from '@/i18n'
 import { routeIds } from '@/lib/addresses'
-import { mayIn } from '@/lib/projectPermissions'
+import { mayIn, roleName } from '@/lib/projectPermissions'
 import { topicShortId, topicStateBadge, topicTitle } from '@/lib/topicState'
 import { normalizeTopicTitle, TOPIC_TITLE_MAX_LENGTH } from '@/lib/topicTitle'
 import { queryClient } from '@/query/client'
-import { projectQuery } from '@/query/project'
+import { projectQuery, projectRolesQuery } from '@/query/project'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const props = defineProps<{
@@ -50,6 +50,10 @@ const props = defineProps<{
   connected: boolean
   /** 右侧面板是不是开着——「概览」那颗开关读它。 */
   panelOpen?: boolean
+  /** 读者挪过这一页的摆法时给：⋯ 里多一项「恢复默认摆法」。 */
+  resetLayout?: () => void
+  /** 「概览」开合的那几块的 id（见 PanelToggle）。 */
+  panelControls?: string
 }>()
 
 const emit = defineEmits<{
@@ -115,7 +119,15 @@ function roomCommands() {
   if (!nav) return []
   return topicActions(props.topic, nav.router, { rename: startRename, remove: () => (deleteOpen.value = true) })
 }
-const roomActions = computed<MenuAction[]>(() => roomCommands().map(menuActionOf))
+// 「恢复默认摆法」只在 ⋯ 里：命令面板里那一条是页面登记的（views/workspace/roomLayout.ts）。
+const roomActions = computed<MenuAction[]>(() =>
+  [
+    ...roomCommands(),
+    ...(props.resetLayout
+      ? [{ id: 'room.resetLayout', title: t('shell.layout.reset'), icon: 'mdi-restore', run: props.resetLayout }]
+      : []),
+  ].map(menuActionOf)
+)
 
 // 频道详情：点页头的频道名打开。管理者是谁从页头名册那里来。
 const detailsOpen = ref(false)
@@ -131,6 +143,12 @@ const projectRead = useQuery(
   queryClient
 )
 const managesProject = computed(() => mayIn(projectRead.data.value, 'manage_channels'))
+// 项目的角色：详情里选「谁能发言」用，打开详情时才问（#4795）。
+const rolesRead = useQuery(
+  computed(() => ({ ...projectRolesQuery(props.topic.project_id), enabled: detailsOpen.value })),
+  queryClient
+)
+const channelRoles = computed(() => (rolesRead.data.value ?? []).map((r) => ({ key: r.key, name: roleName(r) })))
 // 不管频道也能拉人：人在这个频道里，角色又允许拉人进自己所在的频道。
 // 项目还没读到时先按在不在频道里给，后端加人时再判一次。
 const bringsPeopleIn = computed(
@@ -230,6 +248,7 @@ useCommands(roomCommands)
       :manager-name="managerName"
       :level="store.levelOf(topic.id)"
       :muted-until="store.mutedUntil(topic.id)"
+      :roles="channelRoles"
       @rename="(next) => emit('rename', next)"
       @describe="(text) => store.describe(topic.id, text)"
       @set-private="(membersOnly) => store.setMembersOnly(topic.id, membersOnly)"
@@ -239,6 +258,7 @@ useCommands(roomCommands)
       @delete="removeChannel"
       @open-members="openMembersFromDetails"
       @notify="(level, until) => store.setNotifyLevel(topic.id, level, until)"
+      @speakers="(roles, open) => store.setSpeakers(topic.id, roles, open)"
     />
 
     <ChannelNotifyMenu
@@ -249,7 +269,7 @@ useCommands(roomCommands)
     />
 
     <!-- 右侧面板的开关。手机上面板是页签里的一格，没有这颗。 -->
-    <PanelToggle v-if="mdAndUp" :open="!!panelOpen" @toggle="emit('toggle-panel')" />
+    <PanelToggle v-if="mdAndUp" :open="!!panelOpen" :controls="panelControls" @toggle="emit('toggle-panel')" />
 
     <!-- 这一行常驻的只有标题、状态、成员。其余的都是偶尔才用的，按「做一件事 /
          看一个数」分成两段：专注模式、用量，编号垫在最底下。工作电脑在成员名册里。

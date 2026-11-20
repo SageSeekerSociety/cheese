@@ -104,6 +104,8 @@ export function useCurrentPreview(deps: CurrentPreviewDeps) {
           (host.displayed.value?.identity === identity && host.navigation.value !== 'failed'))
       state.previewAppNote.value = art.kind === 'app' ? art.path : ''
       state.previewTunnelUp.value = !!art.tunnel_up
+      state.previewAppUp.value = art.kind === 'app' && !!art.url && !!art.tunnel_up
+      state.previewArtifactId.value = art.artifact_id ?? null
       // 屏幕上这一帧被换掉了实例、或者断线后又回来了：不能只把状态画出来——旧那一帧的请求
       // 可能已经被拒了。换实例就跟上去：`observeConnection` 在替换期间每一轮都报，所以一次
       // 跟丢（授权 404、应用还在冷启动）还能在后面的轮询里再试，试到 FOLLOW_WINDOW_MS 为止；
@@ -195,7 +197,7 @@ export function useCurrentPreview(deps: CurrentPreviewDeps) {
         // text/markdown 发出来浏览器只显示源码；其余是因为「读得成文本」不代表它是
         // 网页：一份字节其实是文字的 .pdf 会被按 application/pdf 发进沙箱 iframe，
         // 浏览器画不出也不报错，面板就是一片空白。交给查看器，它会说清楚。
-        if (state.documentType.value) {
+        if (state.documentType.value || state.isVideoArtifact.value) {
           host.reset()
           state.previewUrl.value = null
           return

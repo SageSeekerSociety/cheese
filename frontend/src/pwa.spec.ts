@@ -14,6 +14,20 @@ vi.mock('virtual:pwa-register', () => ({
   },
 }))
 
+type Notice = { text: string; action?: { label?: string; onClick?: () => void } }
+/** 屏幕上弹出过的提示。 */
+const notices = vi.hoisted(() => [] as Notice[])
+vi.mock('vuetify-sonner', () => ({
+  toast: {
+    warning: (text: string, options?: Omit<Notice, 'text'>) => {
+      notices.push({ text, ...options })
+    },
+  },
+}))
+
+// 提示里的字从语言包来；这里只看提示有没有出来、点了做什么，不取真的语言包。
+vi.mock('@/i18n', () => ({ t: (key: string) => key }))
+
 /** 浏览器那一侧：一个 registration，可能有一个等着的新 worker。 */
 function fakeBrowser({ waiting, takesOver = true }: { waiting: boolean; takesOver?: boolean }) {
   const container = new EventTarget()
@@ -36,7 +50,7 @@ function fakeBrowser({ waiting, takesOver = true }: { waiting: boolean; takesOve
 
 const blank = { template: '<div />' }
 
-async function start() {
+async function start(path = '/a') {
   vi.resetModules()
   const { registerPwa } = await import('./pwa')
   const router = createRouter({
@@ -44,10 +58,12 @@ async function start() {
     routes: [
       { path: '/a', component: blank },
       { path: '/b', component: blank },
+      // 门口那几页（首页、分享的文档……）：App.vue 不给它们套外框，那里没有提示条。
+      { path: '/landing', component: blank, meta: { publicLanding: true } },
     ],
   })
   registerPwa(router)
-  await router.push('/a')
+  await router.push(path)
   return router
 }
 
@@ -60,7 +76,8 @@ beforeEach(() => {
 afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllGlobals()
-  document.querySelectorAll('script[data-test-entry]').forEach((s) => s.remove())
+  document.querySelectorAll('[data-test-entry]').forEach((s) => s.remove())
+  notices.length = 0
 })
 
 /** 这一页是哪一版：index.html 里那颗带内容哈希的入口脚本。 */
@@ -280,5 +297,89 @@ describe('房间连接一直连不上', () => {
     await reloadIfBehind()
     await reloadIfBehind()
     expect(fetched).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('修了严重问题的那一版', () => {
+  // 普通发版等下一次跳转再换上，不问人；修严重问题的那一版调高 index.html 里的
+  // cx-min-build，落在它之前、还开着的页面要被告知刷新，而不是等一次点击。
+
+  /** 这一页是哪一版：入口脚本，和构建时写进 HTML 的最低版本。 */
+  function pageBuilt(entry: string, minBuild: number) {
+    pageRuns(entry)
+    document.head.insertAdjacentHTML('beforeend', `<meta name="cx-min-build" content="${minBuild}" data-test-entry>`)
+  }
+
+  function serverNow(entry: string, minBuild: number) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            `<!doctype html><head><meta name="cx-min-build" content="${minBuild}" />` +
+              `<script type="module" crossorigin src="${entry}"></script></head>`
+          )
+      )
+    )
+  }
+
+  /** 开着这一页过了一个小时：例行的「有没有新版本」查过一次。 */
+  async function anHourLater(path = '/a') {
+    vi.useFakeTimers()
+    const router = await start(path)
+    await vi.advanceTimersByTimeAsync(60 * 60 * 1000)
+    return router
+  }
+
+  let reload: ReturnType<typeof vi.fn>
+  beforeEach(() => {
+    reload = vi.fn()
+    vi.stubGlobal('location', { ...window.location, assign, reload })
+  })
+
+  it('这一页早于服务器要求的最低版本：提示刷新，点了先让新 worker 接管再刷新', async () => {
+    pageBuilt('/assets/main-old.js', 3)
+    serverNow('/assets/main-new.js', 4)
+    const { messages } = fakeBrowser({ waiting: true })
+    await anHourLater()
+
+    expect(notices).toHaveLength(1)
+    notices[0]!.action!.onClick!()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(messages).toEqual([{ type: 'SKIP_WAITING' }])
+    expect(reload).toHaveBeenCalledTimes(1)
+  })
+
+  // 门口那几页没有提示条，在那儿弹的提示谁也看不见；人走进应用时得补上，不能就此没了。
+  it('例行检查时停在门口那几页：走进应用时提示刷新', async () => {
+    pageBuilt('/assets/main-old.js', 3)
+    serverNow('/assets/main-new.js', 4)
+    fakeBrowser({ waiting: false })
+    const router = await anHourLater('/landing')
+    expect(notices).toEqual([])
+
+    await router.push('/a')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(notices).toHaveLength(1)
+  })
+
+  it('这一页就是修复所在的那一版，或者更新：不提示', async () => {
+    pageBuilt('/assets/main-fix.js', 4)
+    serverNow('/assets/main-later.js', 4)
+    fakeBrowser({ waiting: true })
+    await anHourLater()
+
+    expect(notices).toEqual([])
+    expect(reload).not.toHaveBeenCalled()
+  })
+
+  it('普通发版（最低版本没动）：不提示，等下一次跳转', async () => {
+    pageBuilt('/assets/main-old.js', 3)
+    serverNow('/assets/main-new.js', 3)
+    fakeBrowser({ waiting: true })
+    await anHourLater()
+
+    expect(notices).toEqual([])
+    expect(reload).not.toHaveBeenCalled()
   })
 })

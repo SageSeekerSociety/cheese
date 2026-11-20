@@ -8,6 +8,7 @@
 """
 
 import re
+from collections.abc import Mapping
 from datetime import date
 from typing import Any
 from urllib.parse import urlsplit
@@ -279,24 +280,24 @@ def _spend_cap(source: AdminSource) -> float | None:
 LEDGER_START = date(2000, 1, 1)
 
 
-def _capped(models: list[AdminModel]) -> bool:
-    """有没有哪条线路设了消费上限：没有就不必去读那份终身账。"""
-    return any(_spend_cap(s) is not None for m in models for s in m.sources)
-
-
-def _spend_cap_used(source: AdminSource, ledger: UsageWindow | None) -> float | None:
+def _spend_cap_used(
+    source: AdminSource, ledger: Mapping[str, ModelUsage] | None
+) -> float | None:
     """这条线路的上游模型累计花了多少，口径与 spend_cap.py 拦截时一样：网关账里
     这个上游模型名下的全部花费，不分窗口、不分模型名。没设上限、或没读那份账时是
     None。"""
     if _spend_cap(source) is None or ledger is None:
         return None
-    used = ledger.by_upstream.get(source.upstream_model)
+    used = ledger.get(source.upstream_model)
     return used.spend_usd if used is not None else 0.0
 
 
-def _source_item(source: AdminSource, ledger: UsageWindow | None = None) -> dict:
+def _source_item(
+    source: AdminSource, ledger: Mapping[str, ModelUsage] | None = None
+) -> dict:
     """页面上的一条线路。上游凭据网关本就不给；请求头只给名字不给值。
-    ``ledger`` 是从 `LEDGER_START` 起的那份终身账，给「上限已用多少」。"""
+    ``ledger`` 是设了上限的上游各自从 `LEDGER_START` 起的终身账
+    （`answers._cap_spend`），给「上限已用多少」。"""
     return {
         "source_id": source.source_id,
         "origin": source.origin,

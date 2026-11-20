@@ -121,7 +121,7 @@ def main() -> None:
             reply(request, kind)
             emit({"type": "agent_settled"})
         elif kind == "compact":
-            # A manual compaction (`cheese_compact` through the runner). The
+            # A manual compaction (`cheese_session(action=compact)` through the runner). The
             # real pi answers when its summary is written and reports the two
             # ends as events of their own (`compaction_start` / `compaction_end`),
             # which the runner journals as the room's line.

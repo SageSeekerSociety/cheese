@@ -2,11 +2,12 @@
 
 import uuid
 from datetime import datetime
-from typing import Literal
+from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.orm import Mapped
 
-from app.domain.project.models import AiMode
+from app.domain.project.models import AiMode, ProjectAvatarKind
 from app.domain.shell_catalog import ShellOut
 
 
@@ -24,12 +25,69 @@ class ProjectCreate(BaseModel):
     # 项目归团队 (v4): the shared team this project belongs to. Omitted → the
     # owner's personal team is resolved server-side.
     team_id: int | None = None
-    # The 赛题 this project comes from, when it was created from one.
+    # Retired: a project from a task is made by starting the task
+    # (``POST /tasks/{id}/participations/*``), the one way in. Still read so a
+    # page from before that change is refused out loud instead of getting a
+    # project that is not the task's (``create_project``).
     external_task_id: int | None = None
     forge_kind: Literal["forgejo", "github_app"] = "forgejo"
     # 建项目时问的那一句「你打算做什么」（#946 片 C）。可选：空串就是没问过或
     # 用户跳过了，那时新生房间里什么都不写——房间靠它自己的起手区块顶上。
     intent: str = Field(default="", max_length=2000)
+
+
+class AvatarColumns(Protocol):
+    """A project row as far as its avatar goes."""
+
+    avatar_kind: Mapped[str | None]
+    avatar_glyph: Mapped[str | None]
+    avatar_hue: Mapped[int | None]
+    avatar_image_id: Mapped[int | None]
+
+
+class ProjectAvatarOut(BaseModel):
+    """What a project's tile shows. ``kind`` null is the default tile: letters
+    from the name. ``hue`` null is the colour derived from the id."""
+
+    kind: ProjectAvatarKind | None = None
+    #: The icon's name, the emoji or the text; null for the default and an image.
+    glyph: str | None = None
+    hue: int | None = None
+    #: The uploaded picture (`/avatars/{image_id}`) when ``kind`` is ``image``.
+    image_id: int | None = None
+
+    @classmethod
+    def of(cls, project: AvatarColumns) -> "ProjectAvatarOut":
+        return cls(
+            kind=ProjectAvatarKind(project.avatar_kind)
+            if project.avatar_kind
+            else None,
+            glyph=project.avatar_glyph,
+            hue=project.avatar_hue,
+            image_id=project.avatar_image_id,
+        )
+
+
+class ProjectNameIn(BaseModel):
+    """A new name for a project, held to what a new project's name is."""
+
+    name: str = Field(min_length=1, max_length=200)
+
+
+class ProjectNameOut(BaseModel):
+    """A project's name after a rename."""
+
+    id: uuid.UUID
+    name: str
+
+
+class ProjectAvatarIn(BaseModel):
+    """Replace a project's avatar; every field left out goes back to the default."""
+
+    kind: ProjectAvatarKind | None = None
+    glyph: str | None = Field(default=None, max_length=64)
+    hue: int | None = None
+    image_id: int | None = None
 
 
 class ProjectOut(BaseModel):
@@ -60,6 +118,8 @@ class ProjectOut(BaseModel):
     #: browser without a frontend release. None only on a payload built without
     #: a session; every route fills it.
     shell: ShellOut | None = None
+    #: What the project's tile shows. Filled by the route, like ``shell``.
+    avatar: ProjectAvatarOut | None = None
 
 
 class StartStepsOut(BaseModel):
@@ -90,7 +150,6 @@ class CommitCreditUpdate(BaseModel):
 
 
 class ProjectDefaultModelUpdate(BaseModel):
-    """Omitted fields remain unchanged; null clears the corresponding override."""
+    """The project main model; null clears it (「自动」)."""
 
     model: str | None = None
-    subagent_model: str | None = None

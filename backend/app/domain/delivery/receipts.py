@@ -8,50 +8,20 @@ Nothing here resubmits an input whose outcome is uncertain.
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, or_, select, true, update
+from sqlalchemy import delete, func, or_, select, true, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
 from app.domain.block.input_effects import apply_input_echo, mark_read_failed
 from app.domain.block.models import Block
+from app.domain.delivery.agent import seat_epoch_of
 from app.domain.delivery.input_holds import unread_input_with_over_work
 from app.domain.delivery.input_identity import InputEffects, InputIdentity, InputReceipt
 from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
-from app.domain.notification.models import NotificationType
 from app.domain.thread.services import thread_opening
 
+
 #: payload key carrying the message a person's `@` named this seat in.
-_SUMMON_BLOCK = "blockId"
-
-
-async def _mention_summon_block(session, identity, delivery) -> uuid.UUID | None:
-    """The message this delivery's recipient was named in, when it may be
-    marked read by them; None for every delivery that is not a person's mention.
-
-    Only a person's mention: an agent's `@` is at most advisory (I13) and a
-    system wake names no one. The read receipt goes to the seat the delivery is
-    for — ``identity.recipient_handle``, the receiver that has to agree — so a
-    room woken by one `@` over two teammates shows one 👀 per teammate rather
-    than one for the whole room.
-    """
-    if delivery is None or delivery.type != NotificationType.MENTION.value:
-        return None
-    payload = delivery.payload or {}
-    if payload.get("eventType") != "person_mention":
-        return None
-    raw = payload.get(_SUMMON_BLOCK)
-    if not raw:
-        return None
-    try:
-        block_id = uuid.UUID(str(raw))
-    except ValueError:
-        return None
-    # The platform owns this mark; the message must be there for it to land on.
-    if await session.get(Block, block_id) is None:
-        return None
-    return block_id
-
-
 def _same_receiver(row: NativeInput, identity: InputIdentity) -> bool:
     return all(
         getattr(row, field) == getattr(identity, field)
@@ -92,8 +62,6 @@ async def register_input(
         "event_id": event_id,
         "held_block_ids": [str(block) for block in effects.held_block_ids],
         "block_ids": [str(block) for block in effects.block_ids],
-        "seen_block_ids": [str(block) for block in effects.seen_block_ids],
-        "seen_by": effects.seen_by,
     }
     existing = await session.scalar(
         select(NativeInput)
@@ -117,7 +85,16 @@ async def register_input(
     # edge. Validation failure requires caller rollback of this whole transaction.
     inserted = await session.scalar(
         insert(NativeInput)
-        .values(id=uuid.uuid4(), registered_at=datetime.now(UTC), **values)
+        .values(
+            id=uuid.uuid4(),
+            registered_at=datetime.now(UTC),
+            # The process this is about to be handed to: the seat's current
+            # registration. `hand_to` moves it if a restart hands it on.
+            handed_epoch=seat_epoch_of(
+                identity.conversation_id, identity.recipient_handle, identity.harness
+            ),
+            **values,
+        )
         .on_conflict_do_nothing(constraint="uq_native_input_identity")
         .returning(NativeInput.id)
     )
@@ -135,14 +112,8 @@ async def register_input(
         raise ValidationError("Native input identity was reused for another input")
     if inserted is None:
         return
-    affected = (
-        set(effects.held_block_ids)
-        | set(effects.block_ids)
-        | set(effects.seen_block_ids)
-    )
+    affected = set(effects.held_block_ids) | set(effects.block_ids)
     await _lock_blocks(session, identity, affected)
-    if effects.seen_by is not None and effects.seen_by != identity.recipient_handle:
-        raise ValidationError("Input cannot mark blocks as read by another receiver")
     if effects.held_block_ids:
         held = await held_blocks(
             session,
@@ -193,8 +164,8 @@ async def held_blocks(
     input given up on with its fate unknown keeps holding its batch, so nothing
     the session may have read is offered again.
 
-    One row is not a hold: an input nobody ever read whose work the platform has
-    already ended (:func:`unread_input_with_over_work`). Nothing can settle its
+    One row is not a hold: an input nobody ever read whose outcome can no longer
+    be reported (:func:`unread_input_with_over_work`). Nothing can settle its
     outcome, so continuing to hide its batch is what would lose it — the next
     prompt has to be able to carry it again (#416).
     """
@@ -264,6 +235,51 @@ async def withdraw_input(session, identity: InputIdentity, effects: InputEffects
             )
             .values(state="claimed")
         )
+
+
+async def hand_to(session, *, harness, native_session_id, input_id, epoch) -> None:
+    """This input is being handed to the process registered under ``epoch``.
+
+    Written before the call that hands it over, so that whatever happens to the
+    process it was handed to before is not taken for the fate of this one: an
+    exit of the earlier process applied after this no longer names the input,
+    and one applied before it is cleared. Only ever moves to a newer process.
+    """
+    await session.execute(
+        update(NativeInput)
+        .where(
+            NativeInput.harness == harness,
+            NativeInput.native_session_id == native_session_id,
+            NativeInput.input_id == input_id,
+            NativeInput.echoed_at.is_(None),
+            NativeInput.terminated_at.is_(None),
+            or_(NativeInput.handed_epoch.is_(None), NativeInput.handed_epoch < epoch),
+        )
+        .values(handed_epoch=epoch, receiver_exited_at=None)
+    )
+
+
+async def receiver_exited(
+    session, *, conversation_id, recipient_handle, harness, epoch
+) -> int:
+    """The process the seat registered under ``epoch`` has exited: every input
+    still unread that was last handed to it will never be read, and is marked
+    so (``input_holds.unread_input_with_over_work``). Stamped with the
+    database's clock. Returns how many."""
+    result = await session.execute(
+        update(NativeInput)
+        .where(
+            NativeInput.conversation_id == conversation_id,
+            NativeInput.recipient_handle == recipient_handle,
+            NativeInput.harness == harness,
+            NativeInput.handed_epoch == epoch,
+            NativeInput.echoed_at.is_(None),
+            NativeInput.terminated_at.is_(None),
+            NativeInput.receiver_exited_at.is_(None),
+        )
+        .values(receiver_exited_at=func.now())
+    )
+    return result.rowcount or 0  # type: ignore[attr-defined]
 
 
 async def drop_input(
@@ -446,6 +462,39 @@ async def terminate_inputs_of_dead_works(session, work_ids, *, reason) -> int:
     return result.rowcount or 0  # type: ignore[attr-defined]
 
 
+async def terminate_unread_of_session(
+    session, *, harness, native_session_id, reason
+) -> int:
+    """Give up on every unread input written into this native session.
+
+    For a session whose machine the platform destroyed: the runner that would
+    have reported any of them read or dropped went with the machine, so no
+    later fact about them can arrive, and an unfinished input refuses its seat
+    every later message (``seat_has_unfinished_input``).
+
+    Keyed by the session rather than by its works, because the input that
+    leaks is exactly the one no open work accounts for: a mid-turn addition
+    whose own turn had already stopped when the machine went. Nothing in the
+    works' close reaches it — that only names the turns still open.
+
+    Only ``terminated_at`` / ``termination`` are written, as
+    :func:`terminate_inputs_of_dead_works` does: the machine's death says
+    nothing about whether they were read before it, so their holds stay held
+    and nothing inside them is sent again.
+    """
+    result = await session.execute(
+        update(NativeInput)
+        .where(
+            NativeInput.harness == harness,
+            NativeInput.native_session_id == native_session_id,
+            NativeInput.echoed_at.is_(None),
+            NativeInput.terminated_at.is_(None),
+        )
+        .values(terminated_at=datetime.now(UTC), termination=reason)
+    )
+    return result.rowcount or 0  # type: ignore[attr-defined]
+
+
 async def record_receipt(session, receipt: InputReceipt) -> NativeInput | None:
     """Reject unknown/conflicting identity without selecting by prompt text.
 
@@ -522,24 +571,10 @@ async def record_receipt(session, receipt: InputReceipt) -> NativeInput | None:
         or delivery.state not in ("sending", "uncertain", "received")
     ):
         return None
-    affected = {
-        uuid.UUID(block)
-        for block in (row.held_block_ids + row.block_ids + row.seen_block_ids)
-    }
-    # A teammate woken by a mention reads the message that named it, so it owes
-    # that message the same read receipt a summoned seat owes its own. The
-    # message is on the delivery, and this is where the delivery is settled.
-    summon = await _mention_summon_block(session, identity, delivery)
-    if summon is not None:
-        affected.add(summon)
+    affected = {uuid.UUID(block) for block in (row.held_block_ids + row.block_ids)}
     await _lock_blocks(session, identity, affected)
-    if row.seen_by is not None and row.seen_by != identity.recipient_handle:
-        raise ValidationError("Input cannot mark blocks as read by another receiver")
     row.echoed_at = row.echoed_at or stamp
     row.execution_work_id = execution_work
-    seen_ids = [uuid.UUID(block) for block in row.seen_block_ids]
-    if summon is not None:
-        seen_ids.append(summon)
     # Read is delivered: the batch the input held is consumed with it, and the
     # hold released (`held_blocks`).
     held = set(row.held_block_ids) - set(row.released_block_ids)
@@ -550,8 +585,6 @@ async def record_receipt(session, receipt: InputReceipt) -> NativeInput | None:
             uuid.UUID(block) for block in dict.fromkeys(row.block_ids + sorted(held))
         ],
         work_id=execution_work,
-        seen_ids=seen_ids,
-        seen_by=row.seen_by or row.recipient_handle,
     )
     if delivery is not None:
         delivery.state = "received"

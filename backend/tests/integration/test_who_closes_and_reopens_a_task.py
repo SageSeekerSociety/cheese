@@ -174,7 +174,7 @@ def test_the_rooms_session_does_not(client, closed, act, stays, key):
         access_scope="project",
     )
 
-    refused = act(client, task, {"X-Cheese-Token": token})
+    refused = act(client, task, {"Authorization": f"Bearer {token}"})
 
     assert refused.status_code == 403, refused.text
     assert refused.json()["error"]["i18n"]["key"] == key

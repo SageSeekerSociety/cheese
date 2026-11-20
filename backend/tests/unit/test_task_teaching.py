@@ -17,8 +17,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.domain.agent.harness.prompt import build_session_opening, teaching_section
 from app.domain.memory.files_store import IndexSection, MemoryIndex
+from app.domain.prompts import build_session_opening, teaching_section
 from app.domain.task.protocol import Protocol, Teaching, resolve
 from app.domain.task.teaching import TeachingContext
 
@@ -164,6 +164,60 @@ def test_the_space_and_the_task_are_both_in_force() -> None:
     assert got.teaching.system_prompt == "本题先写测试。"
     assert got.teaching.material_ids == [7, 9]
     assert got.teaching_source == "both"
+
+
+def test_a_task_giving_only_skills_keeps_the_spaces_guidance_whole() -> None:
+    """Skills are not guidance: a 题目 that gives skills and says nothing else
+    leaves the space's requirements, goals and private guidance in force."""
+    space = {
+        "system_prompt": "空间的要求",
+        "learning_goals": ["写出循环"],
+        "private_prompt": "参考答案",
+    }
+    got = resolve(
+        space=_space(space),
+        task=_task({"teaching": {"skills": ["wolfram"]}}),
+        project=_project(),
+    ).teaching
+
+    assert got.system_prompt == "空间的要求"
+    assert got.learning_goals == ["写出循环"]
+    assert got.private_prompt == "参考答案"
+    assert got.skills == ["wolfram"]
+    section = teaching_section(TeachingContext(course=None, teaching=got)) or ""
+    assert "空间的要求" in section
+
+
+def test_a_blank_default_teammate_on_a_task_inherits_the_categorys() -> None:
+    """A blank `default_role` (what 「继承」 stored) says nothing: the level
+    above stands."""
+    got = resolve(
+        category=_category(default_role="fullstack-engineer"),
+        task=_task({"default_role": ""}),
+    )
+
+    assert got.default_role == "fullstack-engineer"
+
+
+def test_the_skills_of_the_space_and_the_task_are_both_carried() -> None:
+    """Skills ride the guidance: the space's and the 题目's are both in force,
+    each named once, and a level with only skills is still a configuration."""
+    got = resolve(
+        space=_space({"skills": ["documents"]}),
+        task=_task({"teaching": {"skills": ["wolfram", "documents", "  "]}}),
+        project=_project(),
+    )
+
+    assert got.teaching.skills == ["documents", "wolfram"]
+    assert got.teaching_source == "both"
+
+
+def test_a_task_with_only_skills_adds_no_guidance_section() -> None:
+    """The skills reach the agent as skills; the 辅导学生 section has nothing to
+    say for them, so it is not there at all."""
+    context = TeachingContext(course=None, teaching=Teaching(skills=["wolfram"]))
+
+    assert teaching_section(context) is None
 
 
 def test_a_task_that_picks_no_way_of_helping_keeps_the_spaces() -> None:
@@ -402,10 +456,10 @@ def test_fill_substitutes_the_goals_variable() -> None:
 def test_a_teaching_change_waits_for_the_next_session() -> None:
     """教学配置**不**是逐轮重说的现状：一个会话保持开场那一份，直到下一次新会话。
 
-    这是 #8d772257 定的语义（`harness/prompt.py` 模块说明第 3 条），#4525 把它写进
+    这是 #8d772257 定的语义（`prompts/render.py` 模块说明第 3 条），#4525 把它写进
     了 `TRACKED_SECTIONS` 的注释里。往一个上下文里全是旧范围的会话塞新范围，比让它
     按旧的做完这一轮更糟。"""
-    from app.domain.agent.harness.prompt import TRACKED_SECTIONS
+    from app.domain.prompts import TRACKED_SECTIONS
 
     assert "teaching" not in TRACKED_SECTIONS
 
@@ -436,13 +490,17 @@ def test_applying_the_default_role_leaves_the_other_keys_alone() -> None:
     assert task.protocol_override["teaching"] == {"current_week": 3}
     assert task.protocol_override["shell"] == "course"
 
-    # 空串是一次写（明说「不要默认队友」），不是「没写」。
-    apply_task_default_role(task, "")
-    assert task.protocol_override["default_role"] == ""
-
-    # None 才是「没写」：不改动已经存下的那一格。
+    # None 是「没写」：不改动已经存下的那一格。
     apply_task_default_role(task, None)
-    assert task.protocol_override["default_role"] == ""
+    assert task.protocol_override["default_role"] == "academic-research"
+
+    # 空串是「继承」：清掉这道题自己的，项目集那份重新生效。
+    apply_task_default_role(task, "")
+    assert "default_role" not in task.protocol_override
+    assert task.protocol_override["shell"] == "course"
+    assert (
+        resolve(category=_category(default_role="fullstack-engineer"), task=task)
+    ).default_role == "fullstack-engineer"
 
 
 # ── 出题人私有指导 (#944 第二种可见性) ─────────────────────────────────────────
@@ -482,3 +540,60 @@ def test_private_guidance_is_omitted_from_the_response_unless_asked() -> None:
     assert teaching_to_api(teaching, include_private=True)["privatePrompt"] == (
         "参考答案是 42"
     )
+
+
+# ── 引导为主的两项保护（学情分析第 4 步）─────────────────────────────────────
+
+
+def test_the_guards_are_off_unless_written_and_only_count_in_guide_mode() -> None:
+    """已有的空间不会自己打开：没写就是关着；写了但方式不是「引导为主」也不生效。"""
+    assert not Teaching.from_json({"mode": "guide"}).ladder
+    on = Teaching.from_json(
+        {"mode": "guide", "hint_ladder": True, "output_check": True}
+    )
+    assert on.ladder and on.checks_output
+    other = Teaching.from_json(
+        {"mode": "example", "hint_ladder": True, "output_check": True}
+    )
+    assert not other.ladder and not other.checks_output
+    # 一个字符串不是开关。
+    assert not Teaching.from_json({"mode": "guide", "hint_ladder": "yes"}).ladder
+
+
+def test_the_guards_ride_with_the_level_that_picks_the_way_of_helping() -> None:
+    space = {"mode": "guide", "hint_ladder": True, "output_check": True}
+    keeps = resolve(
+        space=_space(space),
+        task=_task({"teaching": {"system_prompt": "只用 SQL 标准语法。"}}),
+        project=_project(),
+    )
+    assert keeps.teaching.ladder and keeps.teaching.checks_output
+
+    own = resolve(
+        space=_space(space),
+        task=_task({"teaching": {"mode": "guide", "hint_ladder": True}}),
+        project=_project(),
+    )
+    assert own.teaching.ladder and not own.teaching.checks_output
+
+    elsewhere = resolve(
+        space=_space(space),
+        task=_task({"teaching": {"mode": "free", "system_prompt": "随便问"}}),
+        project=_project(),
+    )
+    assert not elsewhere.teaching.ladder and not elsewhere.teaching.checks_output
+
+
+def test_the_ladder_is_said_to_the_agent_only_when_it_is_on() -> None:
+    def section(raw: dict) -> str:
+        return (
+            teaching_section(
+                TeachingContext(course=None, teaching=Teaching.from_json(raw))
+            )
+            or ""
+        )
+
+    assert "提示阶梯" in section({"mode": "guide", "hint_ladder": True})
+    assert "[[hint:" in section({"mode": "guide", "hint_ladder": True})
+    assert "提示阶梯" not in section({"mode": "guide"})
+    assert "提示阶梯" not in section({"mode": "example", "hint_ladder": True})

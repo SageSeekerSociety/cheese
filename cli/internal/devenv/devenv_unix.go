@@ -104,9 +104,27 @@ func Ensure(ctx context.Context, base string, log io.Writer) error {
 			runtimepath.Put(onPath)
 		}
 	}
+	// What has a copy on the machine either way, and whose absence costs a
+	// feature rather than the machine: reported to the log, never returned.
+	// `Ensure`'s error is fatal where it is called — `cheesehost connect`
+	// returns it and stops installing the service (`daemoncmd.model_login`) —
+	// so a transient 503 on the toolchain route, or a release not fetched yet,
+	// must not travel as one. The copy placed before is kept if the fetch
+	// fails, which `ensureTool` does, so a machine that had it keeps it.
+	placeOptional := func(name string) {
+		if err := ensureTool(ctx, base, root, platform, tool{name, ".tar.gz", extractTarGz}, log); err != nil {
+			fmt.Fprintf(log, "%s: %v (not required; the machine runs without it)\n", name, err)
+		}
+	}
 	if runtime.GOOS == "linux" {
 		place("bubblewrap", filepath.Join(root, "bubblewrap"))
 		place("host-tools", "")
+		// A shared library, not a program: nothing is put on PATH. A room's
+		// executor points `fusepy` at `runtime/fuse-runtime/libfuse.so.2` by
+		// path (`bootstrap.placed_libfuse`), and a machine that cannot get it
+		// simply has no transcript view — the room runs as it did before. That
+		// is why it is placed as optional and not through `place`.
+		placeOptional("fuse-runtime")
 	}
 	for _, f := range needed {
 		place(f.tool, filepath.Join(root, f.tool, "bin"))

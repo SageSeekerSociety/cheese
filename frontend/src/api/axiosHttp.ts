@@ -4,6 +4,7 @@ import type { ApiEnvelope } from '../cx_types'
 import axios from 'axios'
 
 import { t } from '../i18n'
+import { apiGenerationHeaders, askToReload, CLIENT_OUTDATED } from '../lib/apiGeneration'
 import { refusalText } from '../lib/noticeText'
 import { refreshSession } from '../lib/session'
 import { isTransportFailure, transportFailureMessage } from '../lib/transportFailure'
@@ -33,6 +34,7 @@ type Retriable = InternalAxiosRequestConfig & { retriedAfterRefresh?: true }
 
 for (const instance of [axiosApi, axiosNewApi]) {
   instance.interceptors.request.use((config) => {
+    config.headers.set(apiGenerationHeaders())
     if (AccountService.loggedIn && AccountService.accessToken) {
       config.headers.Authorization = `Bearer ${AccountService.accessToken}`
     }
@@ -80,6 +82,7 @@ function mappedError(error: AxiosError<ErrorEnvelope>): Error {
       ? new ApiError(status, t('shell.errors.noPermission'))
       : new Error(error.message || t('shell.errors.network'))
   }
+  if (body.error?.name === CLIENT_OUTDATED) askToReload()
   const message = body.error?.name
     ? refusalText(body, body.error.message || body.message)
     : body.message || t(status === 403 ? 'shell.errors.noPermission' : 'shell.errors.server')

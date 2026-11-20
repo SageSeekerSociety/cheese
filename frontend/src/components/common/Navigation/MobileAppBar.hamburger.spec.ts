@@ -21,7 +21,7 @@ setLocale('zh-CN')
 
 vi.mock('@/api', async (original) => ({
   ...(await original<typeof import('@/api')>()),
-  getFeedbackCounts: vi.fn(async () => ({ all: 0, hot: 0, active: 0, resolved: 0, unread: 0 })),
+  getFeedbackCounts: vi.fn(async () => ({ all: 0, hot: 0, resolved: 0, unread: 0 })),
   getFeedbackMeta: vi.fn(async () => ({ is_admin: false, hot_min_items: 5 })),
 }))
 

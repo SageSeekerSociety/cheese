@@ -1,11 +1,13 @@
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import UTC, date, datetime
+from typing import Any, Protocol
 
 from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.content_review import TextKind, review_text
 from app.core.email import is_placeholder_email
 from app.core.errors import NotFoundError, UnprocessableEntityError
 from app.core.sentences import say
@@ -99,6 +101,38 @@ async def usernames_by_ids(
     return {uid: user.username for uid, user in users.items()}
 
 
+class _Person(Protocol):
+    """Just enough of an account to read the viewer's remark for it.
+
+    ``Any`` because both shapes reach here: an ORM row (``Mapped[str]``, which
+    is the descriptor at the class level) and a DTO or test fake holding a plain
+    ``str``. What is read is always the value.
+    """
+
+    username: Any
+
+
+async def remarks_for_viewer(
+    session: AsyncSession, viewer_id: int | None, users: Mapping[int, _Person]
+) -> dict[str, str]:
+    """The viewer's own private names for ``users`` (id -> handle), one query.
+
+    Lives here rather than beside the routes that first needed it: a remark is
+    a user-domain fact, and the domain's own cards (``author_dto.page_names``)
+    read it too — ``app.domain`` may not import ``app.api``.
+    """
+    if viewer_id is None or not users:
+        return {}
+    viewer = users.get(viewer_id)
+    if viewer is None:
+        viewer = await UserRepository(session=session).get_by_id(viewer_id)
+    if viewer is None:
+        return {}
+    return await remarks_by_handles(
+        session, viewer.username, (user.username for user in users.values())
+    )
+
+
 async def languages_by_ids(
     session: AsyncSession, user_ids: Iterable[int]
 ) -> dict[int, str | None]:
@@ -141,17 +175,8 @@ async def timezones_by_handles(
 ) -> dict[str, str]:
     """handle -> 他浏览器报上来的时区；没报过的人不在结果里。"""
 
-    wanted = set(handles)
-    if not wanted:
-        return {}
-    rows = await session.execute(
-        select(User.username, User.timezone).where(
-            User.username.in_(wanted),
-            User.timezone.is_not(None),
-            User.deleted_at.is_(None),
-        )
-    )
-    return {handle: zone for handle, zone in rows.all() if zone}
+    users = await UserRepository(session).get_by_handles(list(set(handles)))
+    return {handle: user.timezone for handle, user in users.items() if user.timezone}
 
 
 REMARK_MAX_LENGTH = 32
@@ -488,6 +513,14 @@ class UserProfileService:
         profile = await self._profile_repo.get_profile_by_user_id(user_id)
         if profile is None:
             raise NotFoundError("User profile not found")
+        # Every signed-in user reads a profile, so what changes in it is
+        # published; what stays as it was has been through this already.
+        await review_text(
+            TextKind.NAME, [nickname if nickname != profile.nickname else None]
+        )
+        await review_text(
+            TextKind.PUBLIC_TEXT, [intro if intro != profile.intro else None]
+        )
         await self._profile_repo.update_profile(
             profile, nickname=nickname, intro=intro, avatar_id=avatar_id
         )

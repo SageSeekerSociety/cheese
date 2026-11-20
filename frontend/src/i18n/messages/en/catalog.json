@@ -293,10 +293,10 @@
     }
   },
   "previewPanelFrameStage": {
-    "about": "The web/app stage: an app bar (which file, which version), a runtime status line, the frames below, and region picking laid over the app.",
+    "about": "The web/app tier: a little browser row (back, forward, reload, address bar, the platform › tunnel › app chain) over a layer of frames; when the app sleeps, a static snapshot and a wake card cover it, and a region can still be picked on the page.",
     "s1": {
-      "name": "An app that is running",
-      "note": "The bar says what this frame is called, the 'running app' chip says it answers; the line below reports resource, instance and readiness."
+      "name": "A running app",
+      "note": "The address bar shows where this frame is now and all three links of the chain are green; resource, instance and readiness are inside the chain's details."
     },
     "s2": {
       "name": "Two frames both running",
@@ -309,6 +309,14 @@
     "s4": {
       "name": "Picking a region on an app",
       "note": "While picking is on, a transparent overlay covers the app; drag out a rectangle."
+    },
+    "s5": {
+      "name": "The app is asleep",
+      "note": "The teammate's computer sleeps: the platform link stays green, the tunnel and app links turn amber (waiting), the page becomes the last static snapshot, dimmed, with a card offering to wake and restart the app."
+    },
+    "s6": {
+      "name": "Waking",
+      "note": "After pressing wake the card becomes steps — start the computer, connect the tunnel, the teammate restarts the app, wait for the port — each ticked in turn; the ones after the current step stay empty."
     }
   },
   "previewPanelDocStage": {
@@ -357,6 +365,10 @@
     "s1": {
       "name": "A markdown snippet",
       "note": "A single newline in the file is a soft break; links open a new page."
+    },
+    "s2": {
+      "name": "A commented file",
+      "note": "The words a comment is about carry a mark; the thread being read is drawn stronger."
     }
   },
   "previewPanelSlides": {
@@ -395,7 +407,7 @@
     "about": "The bar that appears after 'point at a spot': write a line, then decide whether it becomes a comment on that spot or goes into the conversation for a teammate.",
     "s1": {
       "name": "Pointed at a spot",
-      "note": "On top, what it points at (label + that sentence); below, an input and two exits: comment / send."
+      "note": "On top, what it points at (label + that sentence); below, an input and three exits: send to Cheese / ask your personal Cheese in private / comment only."
     },
     "s2": {
       "name": "This file takes no comments",
@@ -464,13 +476,6 @@
       "note": "A freehand stroke and a rectangle annotation, laid back onto the image to scale."
     }
   },
-  "previewPanelRegionNote": {
-    "about": "The small card that appears when pointing at a region of an image: it says what it points at, then write what to change, send or cancel.",
-    "s1": {
-      "name": "Pointing at this region",
-      "note": "On top, what it points at (label + that sentence); below, the input and 'Send'. It says so when the region is outside the view."
-    }
-  },
   "previewPanelDesignImage": {
     "about": "Design preview: an image laid into the viewport, zoomable, pannable, region-selectable, annotation layer toggleable; scale and 'Fit to viewport' on top.",
     "s1": {
@@ -523,6 +528,14 @@
     "s5": {
       "name": "Cheese closed",
       "note": "With the panel closed, the header has a button that brings it back; while it is open the button is gone."
+    },
+    "s6": {
+      "name": "Publish refused",
+      "note": "Publish was clicked and the server refused it: beside the publish button, the server's own words (in red) replace the review note and stay until the next publish or another draft opens."
+    },
+    "s7": {
+      "name": "Publish all with one refused",
+      "note": "After \"Publish all\", the server refused the second task: the note says how many went out, and the refused one carries the server's own words."
     }
   },
   "basicInfoView": {
@@ -577,7 +590,7 @@
     "about": "Task detail 'Data' tab: how many claimed this task, how far they got, where they stalled, when they moved. Every number is computed from the roster and submissions.",
     "s1": {
       "name": "Claimed and submitted",
-      "note": "Default cell: four KPIs (claimed / submitted / pass rate / claimed-but-idle), a claiming trend, how far they got, squad makeup."
+      "note": "Default cell: four KPIs (participants / submitted / pass rate / idle since starting), a participation trend, how far they got, squad makeup."
     },
     "s2": {
       "name": "Read failure, not drawn as 0",
@@ -593,18 +606,18 @@
     }
   },
   "rosterView": {
-    "about": "Task detail 'Claimants' tab: reviewing claim requests, viewing submissions per version, filtering by status — all in this one table. Fetching is in the container; here it only reports 'what to do to whom'.",
+    "about": "Task detail 'Participants' tab: handling applications, viewing submissions per version, filtering by status — all in this one table. Fetching is in the container; here it only reports 'what to do to whom'.",
     "s1": {
       "name": "Roster loaded",
       "note": "Default cell: status-filter tabs on top, a table below — who claimed, when, how far they got, the latest version, the deadline; at the row's end, what that row can do."
     },
     "s2": {
       "name": "Roster still loading",
-      "note": "Not loaded yet: says 'Loading' in place, doesn't say 'No claimants' first."
+      "note": "Not loaded yet: says 'Loading' in place, doesn't say 'No participants' first."
     },
     "s3": {
       "name": "Not for you",
-      "note": "The server gates by permission; 403 is 'not showing you': it spells out that only the author and space admins can see claimants."
+      "note": "The server gates by permission; 403 is 'not showing you': it spells out that only the author and space admins can see participants."
     },
     "s4": {
       "name": "Failed this time",
@@ -612,7 +625,7 @@
     },
     "s5": {
       "name": "No one has claimed",
-      "note": "Loaded and the roster is indeed empty: only then does it say 'No claimants yet'."
+      "note": "Loaded and the roster is indeed empty: only then does it say 'No participants'."
     }
   },
   "views404": {
@@ -1177,10 +1190,10 @@
     }
   },
   "projectTasksView": {
-    "about": "The project's 'All tasks': tasks grouped by 'whose turn is next' (to-do, in review, in progress, not started), the ones waiting on a person written in warm colour; filterable on top by 'whose', 'which channel' and 'show closed'.",
+    "about": "The project's 'All tasks': tasks grouped by status (needs help, awaiting answer, in review, in progress, not started), the ones waiting on a person written in warm colour; filterable on top by 'whose', 'which channel' and 'show ended'.",
     "s1": {
       "name": "Tasks in progress",
-      "note": "Default cell: a row of filters (all / mine / helping / others, each with a count), a channel menu, show-closed; below, grouped by status, one task per row."
+      "note": "Default cell: a row of filters (all / mine / helping / others, each with a count), a channel menu, show-ended; below, grouped by status, one task per row."
     },
     "s2": {
       "name": "First load",
@@ -1327,7 +1340,7 @@
     }
   },
   "alertsView": {
-    "about": "The analytics 'alerts' block: the counts of work waiting on someone (tasks to approve, claims to review, stalled tasks…). A count that can be acted on is a button that carries its filter to the tasks block; the rest are plain numbers.",
+    "about": "The analytics 'alerts' block: the counts of work waiting on someone (tasks to approve, applications to review, stalled tasks…). A count that can be acted on is a button that carries its filter to the tasks block; the rest are plain numbers.",
     "s1": {
       "name": "Counts with alerts",
       "note": "The default: one card per count, and the ones you can act on are buttons that jump to the tasks filtered to them."
@@ -1619,7 +1632,7 @@
     },
     "s5": {
       "name": "Earlier topics",
-      "note": "What was said before New topic sits above, to read only; Earlier topics reads further back. On desktop the panel can be pinned to the right or unpinned."
+      "note": "What was said before New topic sits above, to read only; Earlier topics reads further back. On desktop the panel can be pinned to the right or unpinned; unpinned it is a card the person drags by its header, and double-clicking the header puts it back in the corner."
     },
     "s6": {
       "name": "Drafting in a project",
@@ -1705,7 +1718,7 @@
     }
   },
   "settingsAssistantView": {
-    "about": "The Cheese page in settings: the lists of what needs and needs no confirmation (checked kinds plus your own entries), routines (when they run, the next run, how the last one went, credits over 7 days; view the conversation, pause, resume, delete), and recent actions (done or asked, with the reason when asked).",
+    "about": "The Cheese page in settings: the lists of what needs and needs no confirmation (checked kinds plus your own entries), automations (one list: when, what, its state; repeating ones can be viewed, paused, resumed and deleted, a waiting one-off cancelled, and a one-off leaves the list once it has run), and recent actions (done or asked, with the reason when asked).",
     "s1": {
       "name": "With routines",
       "note": "Three routines: one on a schedule, one that runs when someone {'@'}-mentions you and left 1 action to confirm, one paused because credits ran out."
@@ -1728,6 +1741,143 @@
     "s3": {
       "name": "Five already cited",
       "note": "A question cites at most 5 things; typing {'@'} again only says so."
+    }
+  },
+  "versionsView": {
+    "about": "Task detail 'Version history' tab: each version's number, time, author, what changed, and the files it held. Whether they download is the server's to say.",
+    "s1": {
+      "name": "Three versions, newest on top",
+      "note": "Default cell: version 3 is marked current; a draft deleted later keeps only its name in version 2; version 1's files were not recorded."
+    },
+    "s2": {
+      "name": "Opened from a project",
+      "note": "The address carries ?version=2: version 2 is marked and scrolled to."
+    },
+    "s3": {
+      "name": "Someone who has not started the task",
+      "note": "Sees every version and file name, with no download button and a note that files download once they start."
+    }
+  },
+  "agentRules": {
+    "about": "When Cheese makes or changes an automation, the answer carries a card: when, in bold; what it does; and a line with its state and the one thing to do (cancel a wait, pause one that is on, resume a paused one). When a one-off fires, the platform says what happened in the same conversation and Cheese carries on.",
+    "s1": {
+      "name": "Just made",
+      "note": "Waiting once for a task to go to review: the card says Waiting, with Cancel. Nothing over the input."
+    },
+    "s2": {
+      "name": "After it happened",
+      "note": "The card says Started; the platform line says the task went to review, and Cheese answers below."
+    },
+    "s3": {
+      "name": "Card states",
+      "note": "Waiting, started, cancelled, gave up after 14 days, a repeating one that is on, one paused for credits. Ended cards are grey and have no button."
+    }
+  },
+  "learningAnalysisView": {
+    "about": "Space settings 'Learning analysis': the switch, the notice-card preview, the knowledge point list, and the privacy rules. Reads and writes live in the container `LearningAnalysis.vue`; this only draws and emits.",
+    "s1": {
+      "name": "On, two points in the list",
+      "note": "Default: the switch is on, the notice section offers a 'Preview', the knowledge point list shows two rows with rename / delete at the end, and three read-only privacy rules sit at the bottom."
+    },
+    "s2": {
+      "name": "A plain member sees this page",
+      "note": "No manage rights: the switch shows but cannot be moved, and the list offers no 'New knowledge point' — a button that can only fail (403) is worse than none."
+    },
+    "s3": {
+      "name": "Could not load",
+      "note": "The config could not be read: the whole block becomes an error with a retry, not 'off' — that would report a board that is on as off."
+    }
+  },
+  "myLearningInsightView": {
+    "about": "“My learning insight”: the page only its owner can see. On the left, the one knowledge point most worth working on (summary, evidence, mark inaccurate) and every knowledge point on a three-step bar; on the right, where the page comes from and what the member asks most. The container `MyLearningInsight.vue` fetches; this view only draws and emits.",
+    "s1": {
+      "name": "With results",
+      "note": "Default: the focus is “Correlated subqueries · Weak” with one piece of evidence and “mark it inaccurate”; one point mastered and one not touched yet; the side column lists the two tasks read and two kinds of frequent questions."
+    },
+    "s2": {
+      "name": "No analysis yet",
+      "note": "The analysis is on but tonight's pass has not read this member yet: an empty state on the left saying how it reads, the side column still saying what is read and who sees what."
+    },
+    "s3": {
+      "name": "Analysis off in this space",
+      "note": "The space has not turned learning analysis on (the sidebar hides the entry; only a direct link lands here): says so and draws nothing else."
+    },
+    "s4": {
+      "name": "Could not load",
+      "note": "Not read: the whole block becomes an error with a retry, not “no results yet”."
+    },
+    "s5": {
+      "name": "Practice and review reminders",
+      "note": "Under the point to work on: “Make 3 practice questions” and “Read a short explanation first”; a set a teacher sent that is still being prepared is under “Practice to do”; the review reminders on the right list one that is due, with another set to do."
+    }
+  },
+  "knowledgePointField": {
+    "about": "'Knowledge points involved': shared by the publish and edit pages. Adopted points are chips outside, with a 'Add from the list' beside them that unfolds the whole list; the AI's suggestions from the problem text go below, and only 'Adopt' takes effect.",
+    "s1": {
+      "name": "One adopted, two suggestions",
+      "note": "Default: the adopted 'Correlated subquery' is a chip; below are two suggestions — one already in the list ('Adopt' puts it on), one marked 'not in the list' ('Add to the list and adopt')."
+    },
+    "s2": {
+      "name": "Nothing adopted yet",
+      "note": "No knowledge point adopted: that row says 'Nothing adopted yet' and offers only 'Add from the list'; without permission to read the problem text no AI button shows."
+    },
+    "s3": {
+      "name": "The list could not load",
+      "note": "The list could not be read: it says so and offers no candidates, but never drops the ids already on the task — one failed request must not lose them."
+    }
+  },
+  "learningClassView": {
+    "about": "Learning analysis (the class as a whole): seven tabs, the knowledge point detail and the export entry; quotes carry codes only, and groups under 3 people are not analysed.",
+    "s1": {
+      "name": "Overview",
+      "note": "Four numbers, completion per problem, points worth teaching next; the existing messages and queues follow."
+    },
+    "s2": {
+      "name": "Hard points",
+      "note": "Quadrant and per-point table; a point under 3 people only says it is not analysed."
+    },
+    "s3": {
+      "name": "Knowledge point",
+      "note": "People stuck, common misconceptions with coded quotes, mastery and teaching advice; no names."
+    },
+    "s4": {
+      "name": "Frequent questions",
+      "note": "Question groups ranked by people, with this week's change and a coded quote."
+    },
+    "s5": {
+      "name": "Frequent words",
+      "note": "Word cloud, ranking and frequent errors."
+    },
+    "s6": {
+      "name": "Problem difficulty",
+      "note": "Completion, turns, time, stuck rate and answer-seeking per problem."
+    },
+    "s7": {
+      "name": "How they ask",
+      "note": "Question kinds, weekday × time heat map and three levels of reliance."
+    },
+    "s8": {
+      "name": "Trend",
+      "note": "People stuck per point per week; weeks under 3 people are gaps."
+    },
+    "s9": {
+      "name": "Off",
+      "note": "Learning analysis is off: a hint to turn it on in settings, and the existing content."
+    },
+    "s10": {
+      "name": "Load failed",
+      "note": "The analysis did not load: the reason and a retry, with the existing content still shown."
+    }
+  },
+  "learningPracticeDialog": {
+    "about": "The practice dialog: three AI-made multiple-choice questions aimed at where the member is stuck; each answer shows right or wrong and an explanation at once, and finishing folds the result into the judgment on that point. Only the member sees it.",
+    "s1": {
+      "name": "Halfway",
+      "note": "Question 1 right, question 2 wrong with its explanation, question 3 not answered; “Done” needs every question answered."
+    },
+    "s2": {
+      "name": "Finished",
+      "note": "2 of 3 correct, the level unchanged, and the date of the next review."
     }
   }
 }

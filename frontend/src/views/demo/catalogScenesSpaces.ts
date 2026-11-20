@@ -3,7 +3,7 @@
  * 一个页面（`X.vue` —— 读地址、取数、跳转）加一个画面（`XView.vue` —— 只收 props、只发
  * 事件）。这里摆的是画面那一半，所以每一件都不带路由、不带接口就能单独渲染。
  *
- * 这一组有七件：待审核题目、分类管理、域名组管理、题目模板管理、邀请码、分类话题，以及
+ * 这一组有六件：待审核题目、分类管理、域名组管理、题目模板管理、分类话题，以及
  * 它们共用的那只话题选择器（`TopicSelectorView.vue`，只认 props —— 搜索与新建都由容器
  * 通过回调传进来）。条目和别的分册没有两样（「这是什么 / 在哪儿 / 需要哪几样 / 看哪几格」，
  * 规矩见 `catalog.ts`），单放一份是因为 `catalog.ts` 已经顶到将近一千行的上限。这里的
@@ -15,8 +15,6 @@ import type { CatalogEntry, CatalogNeed } from './catalog'
 import {
   auditTask,
   domainGroup,
-  inviteCode,
-  inviteRefTo,
   spaceCategory,
   spaceTemplate,
   topic,
@@ -26,13 +24,12 @@ import { AGENT_TYPES } from './catalogSharedFixtures'
 
 import TopicSelectorView from '@/components/common/TopicSelectorView.vue'
 import AuditTaskView from '@/views/spaces/detail/AuditTaskView.vue'
-import InviteCodesView from '@/views/spaces/detail/InviteCodesView.vue'
 import ManageCategoriesView from '@/views/spaces/detail/ManageCategoriesView.vue'
 import ManageDomainGroupsView from '@/views/spaces/detail/ManageDomainGroupsView.vue'
 import ManageTemplatesView from '@/views/spaces/detail/ManageTemplatesView.vue'
 import ManageTopicsView from '@/views/spaces/detail/ManageTopicsView.vue'
 
-/** 七件都要 Vuetify 的画法和一套语言包。去处（进某个人的主页、去某一页）由容器给，
+/** 六件都要 Vuetify 的画法和一套语言包。去处（进某个人的主页、去某一页）由容器给，
  *  画面自己没有路由就退化成点不动的字，照旧画得出来。 */
 const UI_T: CatalogNeed[] = ['vuetify', 'i18n']
 
@@ -162,7 +159,7 @@ export const SCENES_SPACES_ENTRIES: CatalogEntry[] = [
     id: 'manage-templates-view',
     title: 'ManageTemplatesView',
     about:
-      '「题目模板管理」那一屏的画面：一列模板，每行写着它定下的那几项（个人/团队、难度、默认领取天数、是否要实名），右边编辑 / 删除。去新建/编辑页、真删都归容器 `ManageTemplates.vue`。',
+      '「题目模板管理」那一屏的画面：一列模板，每行写着它定下的那几项（个人/团队、难度、默认限时天数、是否要实名），右边编辑 / 删除。去新建/编辑页、真删都归容器 `ManageTemplates.vue`。',
     file: 'src/views/spaces/detail/ManageTemplatesView.vue',
     component: ManageTemplatesView,
     needs: UI_T,
@@ -184,59 +181,6 @@ export const SCENES_SPACES_ENTRIES: CatalogEntry[] = [
           ],
         },
         expect: '个人题',
-      },
-    ],
-  },
-  {
-    id: 'invite-codes-view',
-    title: 'InviteCodesView',
-    about:
-      '「邀请码」那一页的画面：最上面单列「当前使用中的码」，下面一列每张码的用量、有效期、建码人和说明，每行可复制、就地调整、撤销（点两下）。读列表、改、撤、建都 emit 给容器 `InviteCodes.vue`。',
-    file: 'src/views/spaces/detail/InviteCodesView.vue',
-    component: InviteCodesView,
-    needs: UI_T,
-    args: {
-      codes: [],
-      loading: false,
-      failed: false,
-      errorDetail: null,
-      busy: false,
-      userRefTo: inviteRefTo,
-      newOpen: false,
-      confirmingId: null,
-      editingId: null,
-      copiedId: null,
-      newMaxUses: '1',
-      newExpiresOn: '',
-      newNote: '',
-      editMaxUses: '1',
-      editExpiresOn: '',
-      editNote: '',
-    },
-    states: [
-      {
-        name: '还没有码',
-        note: '一张都没有：就地说一句「暂无邀请码」，并摆着「新建」那颗按钮。',
-        props: {},
-        expect: '暂无邀请码',
-      },
-      {
-        name: '有两张码',
-        note: '一张还能用（单列在「当前使用中的码」里），一张已经用尽（躺在列表里，标着「已用尽」）。',
-        props: { codes: [inviteCode(), inviteCode({ id: 2, code: 'ZZZZZZZZ', maxUses: 10, useCount: 10 })] },
-        expect: 'K7PM3QXW',
-      },
-      {
-        name: '在读',
-        note: '列表还在路上的时候只有一颗转圈。',
-        props: { loading: true },
-        expectSelector: '.v-progress-circular',
-      },
-      {
-        name: '读失败',
-        note: '列表没读出来：错误替换列表那一格，不落进「暂无邀请码」。',
-        props: { failed: true, errorDetail: '邀请码读不出来' },
-        expect: '邀请码读不出来',
       },
     ],
   },

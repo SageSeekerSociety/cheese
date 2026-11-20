@@ -7,9 +7,9 @@
    （否则卡片会把队友的进度说成我的）。领了没交是进行中，交上去没判是已提交，
    判过没通过是未通过，判过通过是已通过；没领过的题给 null，卡片那一格整块不出现。
    未通过之后再交一版，又回到「已提交」—— 那一版还没判。
-2. 「附件 N」是**还挂着**的材料数：摘掉的不算，别的题上的不算，且它只是一个数 ——
-   带不出文件名、大小、内容。下载权限一个字没动（那是另一条路由的事，见
-   ``test_task_attachments.py``）。
+2. 「附件 N」是题目**现在**的材料数：删掉的不算，别的题上的不算，生成的题目说明不算，
+   且它只是一个数 —— 带不出文件名、大小、内容。下载权限一个字没动（那是另一条路由的
+   事，见 ``test_task_files.py``）。
 3. 标签就是题目 topics 的名字，跟着列表一起回来（``queryTopics``）。
 4. 「我的发布」每行的领取上限：库里 0 表示不限，接口一律折成 null —— 客户端不该
    去猜 0 说的是「不限」还是「一个都不许」。
@@ -17,7 +17,6 @@
 
 from __future__ import annotations
 
-import io
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -30,6 +29,7 @@ from app.core import storage as storage_module
 from app.core.config import settings
 from app.domain.tag.models import Tag
 from tests.integration.conftest import UserCreator, create_approved_space, unique_int
+from tests.integration.test_task_files import _add
 
 
 @pytest.fixture
@@ -205,14 +205,10 @@ def _review(
 
 def _upload_to_task(
     api_client: TestClient, task_id: int, token: str, *, filename: str
-) -> int:
-    resp = api_client.post(
-        f"/tasks/{task_id}/attachments",
-        headers=_auth(token),
-        files={"file": (filename, io.BytesIO(b"%PDF-1.4 material"), "application/pdf")},
-    )
+) -> str:
+    resp = _add(api_client, task_id, token, filename, b"%PDF-1.4 material")
     assert resp.status_code == 201, resp.text
-    return resp.json()["data"]["attachment"]["id"]
+    return resp.json()["data"]["name"]
 
 
 def _create_tags_in_db(
@@ -356,7 +352,7 @@ def test_someone_elses_claim_and_verdict_do_not_move_my_tier(
 def test_the_card_counts_the_materials_that_are_still_attached(
     api_client: TestClient, user_client: UserCreator, upload_root: Path
 ):
-    """挂着两个就是 2，摘掉一个就是 1 —— 算的是还挂着的那些。"""
+    """有两份就是 2，删掉一份就是 1 —— 算的是现在的那些。"""
     board = _new_board(user_client, api_client)
     task_id = _create_task(api_client, board, name="带材料的题")
     first = _upload_to_task(
@@ -368,10 +364,11 @@ def test_the_card_counts_the_materials_that_are_still_attached(
     assert rows[task_id]["attachmentCount"] == 2
 
     removed = api_client.delete(
-        f"/tasks/{task_id}/attachments/{first}",
+        f"/tasks/{task_id}/files",
+        params={"name": first},
         headers=_auth(board["creator_token"]),
     )
-    assert removed.status_code == 204, removed.text
+    assert removed.status_code == 200, removed.text
 
     rows = _board_rows(api_client, board, board["creator_token"])
     assert rows[task_id]["attachmentCount"] == 1

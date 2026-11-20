@@ -27,6 +27,8 @@ import NotificationsView from './NotificationsView.vue'
 import { getNotificationPreferences, saveNotificationPreferences } from '@/api/notificationPreferences'
 import { t } from '@/i18n'
 import { eventCellKey } from '@/lib/notificationPreferences'
+import { keys } from '@/query/keys'
+import { fromSnapshot } from '@/query/snapshot'
 import { disablePush, enablePush } from '@/services/webPush'
 
 const prefs = ref<NotificationPreferences | null>(null)
@@ -55,12 +57,13 @@ async function settled() {
   while (inFlight) await inFlight
 }
 
-async function load() {
+async function load(fresh = false) {
   loading.value = true
   failed.value = false
   failingReason.value = null
   try {
-    prefs.value = await getNotificationPreferences()
+    const read = () => getNotificationPreferences()
+    prefs.value = fresh ? await read() : await fromSnapshot(keys.notificationPreferences(), read)
   } catch (e) {
     failed.value = true
     failingReason.value = e instanceof Error ? e.message : null
@@ -69,7 +72,7 @@ async function load() {
   }
 }
 
-onMounted(load)
+onMounted(() => void load())
 
 /** 先按新值画出来，保存失败再放回原值——放回也是一次该被重画的变化。 */
 async function persist(key: NotificationChangeKey, next: NotificationPreferences, previous: NotificationPreferences) {
@@ -128,7 +131,7 @@ async function toggleEvent(category: NotificationEventCategory, channel: Notific
     :saved="saved"
     :error="error"
     :pending="pending"
-    @retry="load"
+    @retry="load(true)"
     @set-field="setField"
     @toggle-event="toggleEvent"
   />

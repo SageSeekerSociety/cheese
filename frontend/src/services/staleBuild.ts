@@ -49,11 +49,10 @@
  */
 import type { Router } from 'vue-router'
 
-import { toast } from 'vuetify-sonner'
-
 import { t, unattendedPackIsLoading } from '@/i18n'
 import { storageGet, storageRemove, storageSet } from '@/lib/browserStorage'
 import { prefetchingChunks } from '@/lib/routePrefetch'
+import { toast } from '@/lib/toast'
 import { takeWaitingWorker } from '@/pwa'
 
 // Set before the reload and cleared once a navigation lands, so a failure

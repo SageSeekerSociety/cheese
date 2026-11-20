@@ -61,7 +61,7 @@ def _task_session(client, pid: str, room: str, task: str) -> dict:
     ).json()["data"]["data"]
     [seat] = [m["member_handle"] for m in rows if m["agent"]]
     token = mint_scoped_token(project_id=pid, topic_id=task, agent_handle=seat)
-    return {"X-Cheese-Token": token}
+    return {"Authorization": f"Bearer {token}"}
 
 
 def _image(client, doc: str, path: str, who: str):

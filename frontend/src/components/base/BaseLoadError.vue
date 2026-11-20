@@ -14,12 +14,16 @@
  * 说没权限、**不给重试**——再试一次仍然是同一个 401/403，摆一颗按了没用的按钮只会
  * 让人以为是自己点得不对。判断交给 `lib/loadFailure.ts` 的 `isForbidden`。
  * 也别把它退回「暂无」：那是「本来就没有」，和「不给你看」是两回事。
+ *
+ * 页面被告知版本过期之后（lib/toast.ts 的 `failureNoticesHeld`）这块什么也不画：
+ * 那时每次读都因同一个原因被拒，重试也一样，「请刷新」那条提示是唯一该说的话。
  */
 import { computed } from 'vue'
 
 import BaseButton from './BaseButton.vue'
 
 import { t } from '@/i18n'
+import { failureNoticesHeld } from '@/lib/toast'
 
 const props = withDefaults(
   defineProps<{
@@ -46,7 +50,7 @@ const resolvedTitle = computed(() =>
 
 <template>
   <!-- role="alert" so a reader is told this block is empty because it failed, not because nothing is there. -->
-  <div class="base-load-error" role="alert">
+  <div v-if="!failureNoticesHeld" class="base-load-error" role="alert">
     <v-alert type="error" variant="tonal" :title="resolvedTitle" :text="props.error?.trim() || undefined" />
     <!-- 401/403 offers no retry: asking again returns the same answer, and a button that cannot work reads as a mistake of the reader's. -->
     <BaseButton v-if="!props.forbidden" kind="secondary" class="mt-3" @click="$emit('retry')">

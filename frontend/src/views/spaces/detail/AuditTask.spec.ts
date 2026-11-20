@@ -34,8 +34,11 @@ vi.mock('vue-i18n', async () => {
   return { ...actual, useI18n: () => ({ t: (key: string) => key }) }
 })
 
+import { toast as sonner } from 'vuetify-sonner'
+
 import AuditTask from './AuditTask.vue'
 
+import { ApiError } from '@/api/http'
 import { setLocale } from '@/i18n'
 import { useSpaceStore } from '@/stores/space'
 
@@ -51,6 +54,20 @@ describe('审核题目', () => {
     await waitFor(() =>
       expect(mocks.list).toHaveBeenCalledWith(expect.objectContaining({ space: 8, approved: 'NONE' }))
     )
+    view.unmount()
+  })
+
+  // 队列空的时候这一页只剩那句「暂无待审核的题目」：它得落在内容区正中，不能贴
+  // 左半边——贴左看上去像右边还有东西没画出来（docs/design-system.md §3.12）。
+  it('队列空着时，「暂无待审核的题目」落在内容区正中', async () => {
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useSpaceStore()
+    const view = render(AuditTask, { global: { plugins: [pinia, createVuetify()], stubs: { TipTapViewer: true } } })
+    store.currentSpaceId = 8
+
+    await waitFor(() => expect(view.container.querySelector('.bes--center')).toBeTruthy())
+    expect(view.container.querySelector('.bes--start')).toBeNull()
     view.unmount()
   })
 
@@ -136,6 +153,44 @@ describe('审核题目', () => {
     await waitFor(() =>
       expect(mocks.update).toHaveBeenCalledWith(202, { approved: 'DISAPPROVED', rejectReason: '题面缺少输入格式' })
     )
+    view.unmount()
+  })
+})
+
+describe('通过被服务端拒绝', () => {
+  it('提示里是服务端说的原因，不是一句「操作失败」', async () => {
+    mocks.list.mockResolvedValue({
+      tasks: [
+        {
+          id: 303,
+          name: '后发的题',
+          intro: '',
+          description: '',
+          creator: { id: 1, nickname: '出题人', avatarId: null },
+          createdAt: Date.now(),
+          deadline: null,
+          submitterType: 'USER',
+          resubmittable: false,
+          editable: false,
+          teamLockingPolicy: 'NO_LOCK',
+          requireRealName: false,
+          category: null,
+          topics: [],
+          submissionSchema: [],
+        },
+      ],
+      page: { hasMore: false, nextStart: null },
+    })
+    mocks.update.mockRejectedValueOnce(new ApiError(400, '这位出题人还有更早的题目在等审核，先审核那些'))
+    const pinia = createPinia()
+    setActivePinia(pinia)
+    const store = useSpaceStore()
+    const view = render(AuditTask, { global: { plugins: [pinia, createVuetify()], stubs: { TipTapViewer: true } } })
+    store.currentSpaceId = 8
+    await fireEvent.click(await view.findByText('后发的题'))
+    await fireEvent.click(view.getByRole('button', { name: 'spaces.detail.auditTasks.approve' }))
+
+    await waitFor(() => expect(sonner.error).toHaveBeenCalledWith('这位出题人还有更早的题目在等审核，先审核那些'))
     view.unmount()
   })
 })

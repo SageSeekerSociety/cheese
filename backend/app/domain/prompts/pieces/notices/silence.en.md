@@ -1,0 +1,1 @@
+Someone spoke to you ⟦slot:minutes⟧ minutes ago and you have not answered; they are still waiting. Call chat_send now: answer if you can, or say what you understood and what you will do next. If your plan has changed, also update it with todo_write. Ignore this only if the turn is already finished.

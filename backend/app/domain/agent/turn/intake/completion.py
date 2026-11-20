@@ -1,17 +1,15 @@
 """Compose turn-stop accounting and post-commit room effects.
 
-Gateway reads, task/room affinity and changesets are dirty upper-layer facts.
+Gateway reads and task/room affinity are dirty upper-layer facts.
 The store owns the one encompassing stop transaction, not those collaborators.
 """
 
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
-from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.domain.agent.event_lines import _Changeset
 from app.domain.agent.gateway_usage import OWN_ROUTE
 from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent.service import AgentResult, AgentUsage
@@ -50,17 +48,6 @@ def reported_usage(route: str, result: AgentResult) -> AgentUsage | None:
     return usage
 
 
-class ChangeSummary(Protocol):
-    async def __call__(
-        self,
-        *,
-        project_id: uuid.UUID,
-        topic_id: uuid.UUID,
-        turn_id: uuid.UUID | None,
-        changeset: _Changeset,
-    ) -> dict | None: ...
-
-
 class TurnCompletion:
     def __init__(
         self,
@@ -74,13 +61,6 @@ class TurnCompletion:
         defer_drain: Callable[[uuid.UUID, uuid.UUID, uuid.UUID], None],
         effects: CompletionEffects,
         post_event: SystemEvent,
-        room_of_conversation: Callable[
-            [uuid.UUID], Awaitable[tuple[uuid.UUID, uuid.UUID | None]]
-        ],
-        turn_changeset: Callable[
-            [uuid.UUID, uuid.UUID, set[str] | None], Awaitable[_Changeset | None]
-        ],
-        persist_summary: ChangeSummary,
     ) -> None:
         self.sessions = sessions
         self.gateway_enabled = gateway_enabled
@@ -88,9 +68,6 @@ class TurnCompletion:
         self.defer_drain = defer_drain
         self.effects = effects
         self.post_event = post_event
-        self.room_of_conversation = room_of_conversation
-        self.turn_changeset = turn_changeset
-        self.persist_summary = persist_summary
 
     async def forget_claims(self, topic_id: uuid.UUID) -> None:
         """An unknown failed work can cost a replay, never a lost message."""
@@ -133,24 +110,4 @@ class TurnCompletion:
                 meta=notice(EVENT_TURN_FAILED, severity=SEVERITY_INFO, who=WHO_HUMAN),
             )
 
-        # Task changes belong to its branch; the room reads its own checkout.
-        _room, inner_id = await self.room_of_conversation(state.topic_id)
-        changeset = (
-            await self.turn_changeset(
-                state.project_id,
-                state.topic_id,
-                None if state.known_commits is None else await state.known_commits,
-            )
-            if inner_id is None
-            else None
-        )
-        if changeset is not None:
-            payload = await self.persist_summary(
-                project_id=state.project_id,
-                topic_id=state.topic_id,
-                turn_id=state.work_id,
-                changeset=changeset,
-            )
-            if payload is not None:
-                action_frames.append({"type": "event_block", "block": payload})
         return action_frames

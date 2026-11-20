@@ -100,7 +100,7 @@ const snapshot = (feedback_proposals: FeedbackProposal[]) =>
     skill_proposals: [],
     tasks: { open: [], recent: [] },
     pins: [],
-    threads: [],
+    threads: { open: [], recycled: [] },
   }) as never
 
 describe('房间里的反馈卡', () => {

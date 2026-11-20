@@ -15,6 +15,8 @@ const props = defineProps<{
   identity: string
   /** 有内容分界线时就智能起来：拖动吸附到块的边，单击直接框住整块。 */
   profile?: ContentProfile | null
+  /** 屏幕上的图转过、翻过没有：看到的点要先折回原图，才是框选坐标。 */
+  adjust?: { rotate: number; flip: boolean }
 }>()
 const emit = defineEmits<{ select: [selection: RasterSelection]; cancel: [] }>()
 const start = ref<Point | null>(null)
@@ -49,6 +51,7 @@ function measure(): ImageGeometry | null {
     height: rect.height,
     naturalWidth: image.naturalWidth,
     naturalHeight: image.naturalHeight,
+    adjust: props.adjust,
   }
 }
 function reset() {

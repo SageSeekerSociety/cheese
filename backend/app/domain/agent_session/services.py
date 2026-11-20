@@ -13,10 +13,16 @@ from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent_session.models import LOST_KEY, AgentSession, SessionPlace
+from app.domain.agent_session.models import (
+    LOST_KEY,
+    PARKED_KEY,
+    AgentSession,
+    SessionPlace,
+)
 from app.domain.agent_session.repositories import (
     AgentReadRepository,
     AgentSessionRepository,
+    Continuation,
 )
 
 
@@ -36,11 +42,43 @@ class AgentSessionService:
     ) -> AgentSession | None:
         return await self._repo.by_id(session_id, lock=lock)
 
-    async def resume_token(
+    async def continuation(
+        self,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        *,
+        harness: str,
+        generation: int,
+    ) -> Continuation:
+        """What this agent's next start in this conversation continues, and the
+        conversation it must not take up again, for a session of a kind whose
+        rules are at ``generation``."""
+        return await self._repo.continuation(
+            conversation_id, agent_handle, harness, generation=generation
+        )
+
+    async def retire_older(
+        self,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        *,
+        harness: str,
+        generation: int,
+    ) -> bool:
+        """Give up on this agent's conversation here when it was started under
+        rules its kind has replaced, and on what it was told. True when it
+        did."""
+        return await self._repo.retire_older(
+            conversation_id, agent_handle, harness, generation=generation
+        )
+
+    async def conversation(
         self, conversation_id: uuid.UUID, agent_handle: str, *, harness: str
-    ) -> str | None:
-        """What this agent resumes its session in this conversation by."""
-        return await self._repo.resume_token(conversation_id, agent_handle, harness)
+    ) -> tuple[str, int] | None:
+        """This agent's conversation here and the generation it was started
+        under, whatever generation its kind is at now; None when there is none
+        to go on with."""
+        return await self._repo.conversation(conversation_id, agent_handle, harness)
 
     async def remember(
         self,
@@ -49,13 +87,16 @@ class AgentSessionService:
         agent_handle: str,
         resume_token: str,
         harness: str,
+        generation: int,
     ) -> None:
-        """Record where this agent's conversation got to."""
+        """Record where this agent's conversation got to; a conversation not
+        recorded before is recorded as started under ``generation``."""
         await self._repo.save(
             conversation_id=conversation_id,
             agent_handle=agent_handle,
             resume_token=resume_token,
             harness=harness,
+            generation=generation,
         )
 
     async def told(
@@ -113,6 +154,18 @@ class AgentSessionService:
         """This agent's conversation was compacted: what it was told is now a
         summary at best, so the next input tells it the whole state again."""
         await self._repo.forget_told(
+            conversation_id=conversation_id,
+            agent_handle=agent_handle,
+            harness=harness,
+        )
+
+    async def forget_conversation(
+        self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str
+    ) -> bool:
+        """This agent's conversation cannot go on (a compaction that could not
+        be made): the next turn opens a new one, and tells it the whole state.
+        False when there was nothing of its own to give up here."""
+        return await self._repo.forget_conversation(
             conversation_id=conversation_id,
             agent_handle=agent_handle,
             harness=harness,
@@ -200,8 +253,10 @@ class AgentSessionService:
         self, conversation_id: uuid.UUID, generation: str
     ) -> tuple[dict, bool] | None:
         """The machine lease holding this task's (or 支线's) working copy on the
-        room's current ``generation``, and whether its cloud sandbox has been
-        destroyed since (``LOST_KEY``).
+        room's current ``generation``, and whether nothing on it answers for
+        that copy now: its cloud sandbox was destroyed (``LOST_KEY``), or
+        parked with its processes stopped (``PARKED_KEY``). Either way the
+        session's next tool call places it again.
 
         Each session works in a home of its own (``SandboxHome``), so a
         task's files are in its own session's home and in no other session's
@@ -229,7 +284,10 @@ class AgentSessionService:
                     or lease.get("home")
                 )
             ):
-                return lease, bool((row.execution_request or {}).get(LOST_KEY))
+                request = row.execution_request or {}
+                return lease, bool(
+                    request.get(LOST_KEY) or request.get(PARKED_KEY) is not None
+                )
         return None
 
     async def harness_in_room(self, room_id: uuid.UUID) -> str | None:
@@ -245,7 +303,7 @@ class AgentSessionService:
         return placed[0].harness if placed else None
 
     async def placed_sessions(
-        self,
+        self, *, harness: str | None = None, device_id: str | None = None
     ) -> list[
         tuple[
             uuid.UUID,
@@ -260,17 +318,20 @@ class AgentSessionService:
     ]:
         """``(project_id, room_id, inner_id, agent_handle, harness, resume_token,
         place, let_go)`` for every placed session — what a channel re-adopts after a
-        restart. ``inner_id`` is the task's or the 支线's, None for a room's
-        own session.
+        restart — or, with ``harness`` and ``device_id``, for that harness's
+        sessions placed on that machine. ``inner_id`` is the task's or the
+        支线's, None for a room's own session.
 
         One per (conversation, agent, harness) seat, and each comes back on its
-        own seat. Every channel reads this same list and keeps the rows whose
-        harness is its own. The stored resume token travels because it is the
+        own seat. A channel asks for its own harness and keeps the rows placed
+        through it. The stored resume token travels because it is the
         provenance a terminal answer has to match before it may close anything
         (FB-56).
         """
         found = []
-        for row, project_id, room_id in await self._repo.placed_everywhere():
+        for row, project_id, room_id in await self._repo.placed_everywhere(
+            harness=harness, device_id=device_id
+        ):
             place = row.place()
             if place is not None:
                 found.append(

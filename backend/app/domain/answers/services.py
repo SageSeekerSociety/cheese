@@ -1,11 +1,14 @@
-from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.errors import BadRequestError, NotFoundError
 from app.domain.answers.models import Answer
 from app.domain.answers.repositories import AnswerRepository, AnswerStats
 from app.domain.questions.lookup import ensure_question_exists
 from app.domain.questions.models import VoteType
 from app.domain.questions.repositories import QuestionRepository
-from app.domain.user.author_dto import profile_to_author
+from app.domain.user.author_dto import page_names, profile_to_author
 from app.domain.user.repositories import UserProfileRepository
+from app.domain.user.services import usernames_by_ids
 
 #: What a row shows when the stats query returned nothing for it. The query
 #: covers every requested id, so this is only a guard, never a normal path.
@@ -44,10 +47,14 @@ class AnswersService:
         repo: AnswerRepository,
         question_repo: QuestionRepository,
         profile_repo: UserProfileRepository,
+        session: AsyncSession | None = None,
     ) -> None:
         self._repo = repo
         self._question_repo = question_repo
         self._profile_repo = profile_repo
+        # Read the reader's own remarks on the people a page names, one query
+        # per page. Without it (an agent's read) the cards carry no remark.
+        self._session = session
 
     async def list_answers(
         self,
@@ -84,12 +91,17 @@ class AnswersService:
         stats = await self._repo.answer_stats_for_ids(
             answer_ids=[row.id for row in rows], viewer_id=viewer_id
         )
+        names = await page_names(self._session, viewer_id, author_ids)
         items: list[dict] = []
         for row in rows:
+            named = names.get(row.created_by_id, {})
             dto = _answer_to_dto(
                 row,
                 author=profile_to_author(
-                    profiles.get(row.created_by_id), chosen.get(row.created_by_id)
+                    profiles.get(row.created_by_id),
+                    chosen.get(row.created_by_id),
+                    username=named.get("username"),
+                    remark=named.get("remark"),
                 ),
             )
             self._attach_answer_stats(dto, stats.get(row.id, _EMPTY_ANSWER_STATS))
@@ -161,8 +173,16 @@ class AnswersService:
         )
         profile = await self._profile_repo.get_profile_by_user_id(user_id)
         chosen = await self._profile_repo.chosen_avatar_ids([user_id])
+        names = await page_names(self._session, user_id, [user_id])
+        named = names.get(user_id, {})
         return _answer_to_dto(
-            answer, author=profile_to_author(profile, chosen.get(user_id))
+            answer,
+            author=profile_to_author(
+                profile,
+                chosen.get(user_id),
+                username=named.get("username"),
+                remark=named.get("remark"),
+            ),
         )
 
     async def _ensure_question_exists(self, question_id: int) -> None:
@@ -240,9 +260,16 @@ class AnswersService:
         answer = await self._ensure_answer_exists(answer_id)
         profile = await self._profile_repo.get_profile_by_user_id(answer.created_by_id)
         chosen = await self._profile_repo.chosen_avatar_ids([answer.created_by_id])
+        names = await page_names(self._session, user_id, [answer.created_by_id])
+        named = names.get(answer.created_by_id, {})
         dto = _answer_to_dto(
             answer,
-            author=profile_to_author(profile, chosen.get(answer.created_by_id)),
+            author=profile_to_author(
+                profile,
+                chosen.get(answer.created_by_id),
+                username=named.get("username"),
+                remark=named.get("remark"),
+            ),
         )
         stats = await self._repo.answer_stats_for_ids(
             answer_ids=[answer_id], viewer_id=user_id
@@ -252,6 +279,11 @@ class AnswersService:
         question = await self._question_repo.get_by_id(answer.question_id)
         question_dto = None
         if question:
+            # 提问的人按这位读者的叫法：显式取那两格，不走 `**` 解包（它把
+            # `page_names` 的键名和这张卡的关键字参数绑在运行期）。
+            asked_named = (
+                await page_names(self._session, user_id, [question.created_by_id])
+            ).get(question.created_by_id, {})
             author_profile = await self._profile_repo.get_profile_by_user_id(
                 question.created_by_id
             )
@@ -278,33 +310,39 @@ class AnswersService:
                 "acceptedAnswerId": question.accepted_answer_id,
                 "createdBy": question.created_by_id,
                 "author": profile_to_author(
-                    author_profile, author_chosen.get(question.created_by_id)
+                    author_profile,
+                    author_chosen.get(question.created_by_id),
+                    username=asked_named.get("username"),
+                    remark=asked_named.get("remark"),
                 ),
                 "createdAt": created_at_ms,
                 "updatedAt": updated_at_ms,
             }
         return dto, question_dto
 
-    async def update_answer(
-        self, *, answer_id: int, user_id: int, content: str
-    ) -> dict:
+    async def update_answer(self, *, answer_id: int, content: str) -> dict:
         answer = await self._ensure_answer_exists(answer_id)
-        if answer.created_by_id != user_id:
-            raise ForbiddenError("Only the answer owner can update this answer")
         if not content.strip():
             raise BadRequestError("content cannot be empty")
         updated = await self._repo.update_answer(answer, content=content)
         profile = await self._profile_repo.get_profile_by_user_id(updated.created_by_id)
         chosen = await self._profile_repo.chosen_avatar_ids([updated.created_by_id])
+        # Only the answer's own author may edit it, so there is no third reader
+        # whose remark could apply: the card carries the account, no remark.
+        handle = None
+        if self._session is not None:
+            handle = (
+                await usernames_by_ids(self._session, [updated.created_by_id])
+            ).get(updated.created_by_id)
         return _answer_to_dto(
             updated,
-            author=profile_to_author(profile, chosen.get(updated.created_by_id)),
+            author=profile_to_author(
+                profile, chosen.get(updated.created_by_id), username=handle
+            ),
         )
 
-    async def delete_answer(self, *, answer_id: int, user_id: int) -> None:
+    async def delete_answer(self, *, answer_id: int) -> None:
         answer = await self._ensure_answer_exists(answer_id)
-        if answer.created_by_id != user_id:
-            raise ForbiddenError("Only the answer owner can delete this answer")
         await self._repo.soft_delete(answer)
 
     async def add_favorite(self, *, answer_id: int, user_id: int) -> dict:

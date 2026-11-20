@@ -23,7 +23,6 @@ import type { DocThreadActions, DocThreadState, ThreadPlace } from '../../lib/do
 import type { CanvasData } from '../../types/canvas'
 
 import { computed, nextTick, onActivated, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { scrollBehavior } from '@/utils/motion'
 
@@ -53,6 +52,7 @@ import BaseButton from '@/components/base/BaseButton.vue'
 import MentionOutsidePrompt from '@/components/chat/MentionOutsidePrompt.vue'
 import DocAuthors from '@/components/library/DocAuthors.vue'
 import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 
 const props = withDefaults(
   defineProps<{
@@ -69,6 +69,8 @@ const props = withDefaults(
     agentHandle?: string | null
     /** 账号 → 名字：正文和评论里的 `<@账号>` 标签上写的字。 */
     mentionNames?: Record<string, string>
+    /** 导出专用的公开名字；缺项保留账号，不回退个人展示名。 */
+    printMentionNames?: Record<string, string>
     /** 正文里打 @ 时列出来的人。 */
     mentionPeople?: MentionPoolEntry[]
     /** 这份文档 @ 到并通知过的人（只有他们的 `<@handle>` 画成 @chip）。 */
@@ -171,6 +173,7 @@ const props = withDefaults(
     agentName: () => t('work.room.defaultAgentName'),
     agentHandle: null,
     mentionNames: undefined,
+    printMentionNames: undefined,
     mentionPeople: () => [],
     notifiedMentions: () => [],
     fetchNotifiedMentions: undefined,
@@ -445,7 +448,7 @@ async function exportPdf() {
     const html = await documentPrintHtml({
       title: docTitle.value || 'document',
       markdown: exportMarkdown(props.session.doc),
-      names: { mentionNames: props.mentionNames ?? {}, topicTitles: {} },
+      names: { mentionNames: props.printMentionNames ?? {}, topicTitles: {} },
       image: props.imageData,
     })
     await props.savePdf(html, `${fileName(docTitle.value || 'document')}.pdf`)
@@ -550,6 +553,7 @@ defineExpose({
             :loading="loading"
             :connection="connection"
             :peers="peers"
+            :name-of="nameOf"
             :editable="editable"
             :read-only="readOnly"
             :last-edit="lastEdit"

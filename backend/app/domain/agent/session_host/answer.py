@@ -94,12 +94,14 @@ class Subagents:
 @dataclass(frozen=True)
 class ToolDone:
     """A call came back without an error: a reader shows it ended now rather
-    than when the model next does something. ``shown`` names what it read,
-    when what came back says (「频道「综合」」), for a reader to show in place
-    of the reference it was given."""
+    than when the model next does something. ``shown`` names what it acted
+    on (「频道「综合」」), as the tool said it, for a reader to show in place
+    of the reference it was given; ``effect`` is what the call does (reads,
+    changes, reaches others), which a reader groups its steps by."""
 
     call: str
     shown: str | None = None
+    effect: str | None = None
 
 
 @dataclass(frozen=True)
@@ -291,8 +293,15 @@ class Progress:
             if call in self.announced and call not in self.returned:
                 self.returned.add(call)
                 said += self.complete(calls.get(call))
-                shown = (calls.get(call) or {}).get("shown")
-                said.append(ToolDone(call, str(shown) if shown else None))
+                made_call = calls.get(call) or {}
+                shown, effect = made_call.get("shown"), made_call.get("effect")
+                said.append(
+                    ToolDone(
+                        call,
+                        str(shown) if shown else None,
+                        str(effect) if effect else None,
+                    )
+                )
         now = json.dumps(list(branches), ensure_ascii=False, sort_keys=True)
         if branches and now != self.branched:
             self.branched = now

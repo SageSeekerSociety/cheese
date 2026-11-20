@@ -156,6 +156,11 @@ class PeriodicRunner:
     every process starts it, and the tick lease it takes in ``runs`` is what
     keeps one tick from being run twice. A job moving out of the lock is flipped
     here, one job per PR.
+
+    ``woken_by`` is for a job with work that should not wait for its clock:
+    given the seconds to the next tick, it returns whether something woke the
+    job before then, and the job runs at once. The clock still ticks, for a
+    wake that was lost.
     """
 
     def __init__(
@@ -167,7 +172,12 @@ class PeriodicRunner:
         owner_only: bool = True,
         interval_policy: Callable[[float], float | None] | None = None,
         pause_wait: Callable[[], float] | None = None,
+        woken_by: Callable[[float], Awaitable[bool]] | None = None,
     ) -> None:
+        if woken_by is not None and not owner_only:
+            raise ValueError(  # i18n-exempt: invalid scheduler setup for developers
+                "a job woken between ticks must run on the owner only"
+            )
         if interval_policy is not None and pause_wait is None:
             raise ValueError(  # i18n-exempt: invalid scheduler setup for developers
                 "a paused interval policy needs a resume wait"
@@ -178,6 +188,7 @@ class PeriodicRunner:
         self._pause_wait = pause_wait
         self._job = job
         self._owner_only = owner_only
+        self._woken_by = woken_by
         self._task: asyncio.Task[None] | None = None
         self._last_started_at: datetime | None = None
         self._last_succeeded_at: datetime | None = None
@@ -292,6 +303,40 @@ class PeriodicRunner:
             logger.exception("%s: could not take its tick; running anyway", self._name)
             return True
 
+    async def _run_once(self) -> None:
+        """One run of the job, its outcome recorded and never raised."""
+        try:
+            self._last_started_at = self._running_since = datetime.now(UTC)
+            try:
+                # Tag only the job's own forge requests. The context is
+                # reset by the context manager on every exit path, so a
+                # failed or cancelled cycle cannot leak "job" into later
+                # work; scheduling and pause behaviour are untouched.
+                with forge_http.background_job(self._name):
+                    result = await self._job()
+            except asyncio.CancelledError:
+                # `stop()` cancels this task, and THAT has to end the loop.
+                # But a job can raise the same exception with nobody having
+                # asked this loop to stop: a `wait_for` it ran, a task it
+                # awaited, a session torn down under it. Letting that through
+                # ends the job for the life of the process, with nothing in the
+                # log to say so, which is the failure this class exists to
+                # prevent, one level up from a job that was never scheduled.
+                if _cancellation_requested():
+                    raise
+                self._last_error = "cancelled inside the job"
+                logger.exception("%s was cancelled from inside; continuing", self._name)
+            except Exception as exc:  # one bad cycle must not end the loop
+                self._last_error = type(exc).__name__
+                logger.exception("%s failed", self._name)
+            else:
+                self._last_succeeded_at = datetime.now(UTC)
+                self._last_error = None
+                if _worth_reporting(result):
+                    logger.info("%s: %s", self._name, result)
+        finally:
+            self._running_since = None
+
     async def _loop(
         self, runs: "RunRecord", wait: float, interval: float | None
     ) -> None:
@@ -311,7 +356,15 @@ class PeriodicRunner:
                     continue
                 due_at = loop.time()
             else:
-                await asyncio.sleep(max(0.0, due_at - loop.time()))
+                delay = max(0.0, due_at - loop.time())
+                if self._woken_by is None:
+                    await asyncio.sleep(delay)
+                elif await self._woken_by(delay):
+                    # Woken between ticks. Only the owner runs a job that can be
+                    # woken, one run at a time in this loop, so no lease is
+                    # taken, and the clock's next tick stays where it was.
+                    await self._run_once()
+                    continue
                 interval = self._next_interval_seconds()
                 if interval is None:
                     wait = self._pause_wait_seconds()
@@ -328,45 +381,13 @@ class PeriodicRunner:
                 else:
                     due_at = cycle_started + interval
                 continue
-            try:
-                self._last_started_at = self._running_since = datetime.now(UTC)
-                try:
-                    # Tag only the job's own forge requests. The context is
-                    # reset by the context manager on every exit path, so a
-                    # failed or cancelled cycle cannot leak "job" into later
-                    # work; scheduling and pause behaviour are untouched.
-                    with forge_http.background_job(self._name):
-                        result = await self._job()
-                except asyncio.CancelledError:
-                    # `stop()` cancels this task, and THAT has to end the loop.
-                    # But a job can raise the same exception with nobody having
-                    # asked this loop to stop: a `wait_for` it ran, a task it
-                    # awaited, a session torn down under it. Letting that through
-                    # ends the job for the life of the process, with nothing in the
-                    # log to say so, which is the failure this class exists to
-                    # prevent, one level up from a job that was never scheduled.
-                    if _cancellation_requested():
-                        raise
-                    self._last_error = "cancelled inside the job"
-                    logger.exception(
-                        "%s was cancelled from inside; continuing", self._name
-                    )
-                except Exception as exc:  # one bad cycle must not end the loop
-                    self._last_error = type(exc).__name__
-                    logger.exception("%s failed", self._name)
-                else:
-                    self._last_succeeded_at = datetime.now(UTC)
-                    self._last_error = None
-                    if _worth_reporting(result):
-                        logger.info("%s: %s", self._name, result)
-            finally:
-                self._running_since = None
-                cycle_started = loop.time()
-                interval = self._next_interval_seconds()
-                if interval is None:
-                    wait = self._pause_wait_seconds()
-                else:
-                    due_at = cycle_started + interval
+            await self._run_once()
+            cycle_started = loop.time()
+            interval = self._next_interval_seconds()
+            if interval is None:
+                wait = self._pause_wait_seconds()
+            else:
+                due_at = cycle_started + interval
 
 
 def periodic_health(
@@ -380,12 +401,25 @@ def periodic_health(
         for name, reading in readings.items()
         if reading["status"] in {"not_started", "stopped", "failed"}
     }
-    return {
+    report: dict[str, Any] = {
         "status": "down" if unhealthy else "up",
         "owns_work": owns_work,
         "unhealthy": unhealthy,
         "jobs": readings,
     }
+    if unhealthy:
+        # The one line every reader of the report shows (the admin overview
+        # keeps only status and `error`): which clock, in what state, and why.
+        report["error"] = "; ".join(
+            f"{name}: {status}"
+            + (
+                f" ({readings[name]['last_error']})"
+                if readings[name].get("last_error")
+                else ""
+            )
+            for name, status in unhealthy.items()
+        )
+    return report
 
 
 async def watch_periodic_jobs(
@@ -445,6 +479,7 @@ class PeriodicJobs:
         *,
         owner_only: bool = True,
         forge_bound: bool = False,
+        woken_by: Callable[[float], Awaitable[bool]] | None = None,
     ) -> None:
         if name in self._jobs:
             # i18n-exempt: startup wiring error for developers, not a user refusal
@@ -458,6 +493,7 @@ class PeriodicJobs:
                 forge_quota.background_interval_seconds if forge_bound else None
             ),
             pause_wait=forge_quota.background_resume_after if forge_bound else None,
+            woken_by=woken_by,
         )
 
     def ordered(self, names: Sequence[str]) -> list[PeriodicRunner]:

@@ -74,6 +74,10 @@ class SelectTest(unittest.TestCase):
                 self.assertFalse(any(gate.select([path], "draft").values()))
 
 
+#: The commit scope names as the diff's base; a main push with no anchor has "".
+BASE = "0" * 40
+
+
 def needs_for(paths, tier):
     """A happy-path ``toJSON(needs)``: every job the workflow runs for ``paths``
     at ``tier`` succeeded and every other one was skipped.
@@ -85,6 +89,7 @@ def needs_for(paths, tier):
     selected = gate.select(list(paths), tier)
     outputs = {k: str(v).lower() for k, v in selected.items()}
     outputs["tier"] = tier
+    outputs["base"] = BASE
     api_due = gate.api_selected(outputs, tier)
     return {
         "scope": {"result": "success", "outputs": outputs},
@@ -367,6 +372,7 @@ class ApiSurfaceTest(unittest.TestCase):
         selected = gate.select(list(paths))
         outputs = {k: str(v).lower() for k, v in selected.items()}
         outputs["tier"] = "full"
+        outputs["base"] = BASE
         needs = {
             "scope": {"result": "success", "outputs": outputs},
             **{k: {"result": "success" if v else "skipped"} for k, v in selected.items()},
@@ -396,6 +402,24 @@ class ApiSurfaceTest(unittest.TestCase):
                     {"result": "success", "outputs": {"moved": "maybe"}}):
             with self.subTest(api=api):
                 self.assertTrue(gate.failures(self.needs(api=api, frontend="skipped"), "full"))
+
+    def test_a_change_to_both_halves_still_asks_api(self):
+        # Whether the change breaks pages built against the base is asked of
+        # every backend change, the frontend suite selected by paths or not.
+        paths = ("backend/app/api/rooms.py", "frontend/src/main.ts")
+        self.assertTrue(gate.failures(self.needs(paths, api={"result": "skipped"}), "full"))
+        needs = self.needs(paths, api={"result": "success", "outputs": {"moved": "true"}})
+        self.assertEqual(gate.failures(needs, "full"), [])
+
+    def test_a_main_push_with_no_base_does_not_ask_api(self):
+        # Nothing to print a base document from: every path is in scope, so
+        # the frontend suite runs on the paths, and api stays out.
+        needs = needs_for(["backend/app/api/rooms.py", "frontend/src/main.ts"], "full")
+        needs["scope"]["outputs"]["base"] = ""
+        needs["api"] = {"result": "skipped"}
+        self.assertEqual(gate.failures(needs, "full"), [])
+        needs["api"] = {"result": "failure"}
+        self.assertTrue(gate.failures(needs, "full"))
 
     def test_a_draft_never_asks_api(self):
         needs = needs_for(["backend/app/api/rooms.py"], "draft")
@@ -454,16 +478,17 @@ class ApiSurfaceTest(unittest.TestCase):
                 for frontend in ("true", "false"):
                     for moved in ("true", "false"):
                         for others in ("true", "false"):
-                            with self.subTest(tier=tier, backend=backend, frontend=frontend,
-                                              moved=moved, others=others):
-                                self._judge_agrees(jobs, tier, backend, frontend, moved, others)
+                            for base in (BASE, ""):
+                                with self.subTest(tier=tier, backend=backend, frontend=frontend,
+                                                  moved=moved, others=others, base=base):
+                                    self._judge_agrees(jobs, tier, backend, frontend, moved, others, base)
 
-    def _judge_agrees(self, jobs, tier, backend, frontend, moved, others):
+    def _judge_agrees(self, jobs, tier, backend, frontend, moved, others, base=BASE):
         # Scope's outputs as written; `others` is every remaining suite,
         # post-merge ones included, so a pull request whose scope says e2e is
         # selected still has to leave e2e out.
         outputs = {suite: others for suite in gate.PATHS}
-        outputs.update(tier=tier, backend=backend, frontend=frontend)
+        outputs.update(tier=tier, backend=backend, frontend=frontend, base=base)
         api_runs = self._holds(jobs["api"]["if"], outputs, "", True)
         self.assertEqual(api_runs, gate.api_selected(outputs, tier))
         # A skipped job's outputs are empty strings.

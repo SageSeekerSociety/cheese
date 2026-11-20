@@ -43,6 +43,30 @@ describe("平台工具", () => {
     );
   });
 
+  it("把 CLI 的命令当工具调，模型读到的是去 bash 里跑它，而不是 pi 的 not found", async () => {
+    // pi refuses a name it has no tool for before any tool handler runs, so
+    // the finished result is the one place left to say where the command went.
+    const told = "cheese_worktree 不是工具：CLI 的命令在 bash 里跑，`cheese worktree …`";
+    const { pi } = await load({ commands: { cheese_worktree: told } });
+    const notFound = (toolName: string) => ({
+      role: "toolResult",
+      toolCallId: "c-1",
+      toolName,
+      content: [{ type: "text", text: `Tool ${toolName} not found` }],
+      isError: true,
+    });
+
+    const worktree = await pi.endMessage(notFound("cheese_worktree"));
+    assert.deepEqual(worktree.content, [{ type: "text", text: told }]);
+    assert.equal(worktree.toolCallId, "c-1", "the same call's result, not another");
+    assert.equal(worktree.isError, true);
+
+    const invented = await pi.endMessage(notFound("cheese_frobnicate"));
+    assert.equal(invented.content[0].text, "Tool cheese_frobnicate not found");
+    const reply = { role: "assistant", content: [{ type: "text", text: "cheese_worktree" }] };
+    assert.deepEqual(await pi.endMessage(reply), reply);
+  });
+
   it("chat_send 以提示里的名字注册，调用送到 runner 的就是这个名字", async () => {
     // The room's system prompt says `chat_send` on every turn, and the catalog
     // carries the platform's tool under that name — one name, one tool.

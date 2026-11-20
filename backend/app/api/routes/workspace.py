@@ -3,29 +3,43 @@
 import asyncio
 import mimetypes
 import uuid
+from functools import partial
 from typing import Annotated, Literal
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, Header, Request, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
+from pydantic import BaseModel
 
-from app.api.auth import ActorResolverDep, require_seated_in_its_room
+from app.api.auth import (
+    ActorResolverDep,
+    PresentedCredential,
+    require_seated_in_its_room,
+)
 from app.api.deps import get_chat_service
 from app.api.doc_access import require_role
+from app.api.place import rooms_seen
 from app.api.request_deps import DbSession
-from app.api.response import ok, page
+from app.api.response import ok, page, typed_response
 from app.api.write_access import ROUTE_DECIDES
-from app.auth.caller import may_access_project
-from app.core.errors import GatewayUnavailableError, NotFoundError, ValidationError
+from app.auth.project_access import may_read_project
+from app.core.errors import (
+    AuthenticationRequiredError,
+    GatewayUnavailableError,
+    NotFoundError,
+    ValidationError,
+)
 from app.core.sandbox_auth import verify_scoped_token
 from app.core.sentences import say
 from app.domain.agent import execution
 from app.domain.agent.chat import ChatService
 from app.domain.agent.file_edits import announce_edit
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.machine.preview_wake import wake_for_files
 from app.domain.project.services import ProjectService
 from app.domain.project_permissions import Permission
 from app.domain.repository.forge_files import ProjectFiles
 from app.domain.review import forge_clients
+from app.domain.review.landed import tasks_that_landed
 from app.domain.room_task.place import Task, TaskStatus, TopicStatus, place_or_404
 from app.domain.room_task.services import TaskService
 from app.domain.topic.services import TopicService
@@ -33,14 +47,27 @@ from app.domain.topic.services import TopicService
 router = APIRouter(prefix="/projects", tags=["workspace"])
 
 
+async def _may_read(resolver, db, project_id: uuid.UUID) -> bool:
+    """Whether the person this request acts as may read the project's
+    conversations (`app.auth.project_access`). A sign-in that was presented and
+    did not verify is a 401, not 「no such project」: the browser refreshes on a
+    401 and has nothing to do with a 404."""
+    person = await resolver.person()
+    if person is None and resolver.presented_sign_in():
+        raise AuthenticationRequiredError(say("sessionExpired"))
+    return await may_read_project(
+        db, project_id=project_id, handle=person.handle if person else None
+    )
+
+
 async def require_place_access(
     project_id: uuid.UUID,
     request: Request,
     db: DbSession,
     resolver: ActorResolverDep,
+    credential: PresentedCredential,
     topic: uuid.UUID | None = None,
     task: uuid.UUID | None = None,
-    x_cheese_token: str | None = Header(default=None, alias="X-Cheese-Token"),
 ) -> Task | None:
     """Reject a caller with no claim on this project; answer the task it names.
 
@@ -49,17 +76,17 @@ async def require_place_access(
     project id was served the file list and file contents.
 
     Both legitimate callers keep working: a human in the browser (member or
-    owner, resolved by HANDLE — see app.auth.caller for why user id is not
-    enough) and the agent on a machine (its project-scoped token). Anything else
+    owner, resolved by HANDLE — see app.auth.caller.handle_named_by for why
+    user id is not enough) and the agent on a machine (its project-scoped token). Anything else
     gets NotFound, so the answer does not confirm the project exists.
 
     A route dependency rather than a line in each handler: the per-handler shape
     is exactly how six routes came to share one hole.
     """
-    scoped = bool(x_cheese_token) and verify_scoped_token(
-        x_cheese_token or "", project_id=str(project_id)
+    scoped = bool(credential) and verify_scoped_token(
+        credential, project_id=str(project_id)
     )
-    if not scoped and not await may_access_project(request, db, project_id):
+    if not scoped and not await _may_read(resolver, db, project_id):
         raise NotFoundError(say("projectNotFound"))
 
     # Files and Git diffs contain the private room's source, not just its title.
@@ -83,9 +110,7 @@ async def require_place_access(
     if scoped and room_id is None:
         # The whole project's source, to an agent that still sits in the room
         # its credential was minted in.
-        await require_seated_in_its_room(
-            db, x_cheese_token or "", project_id=project_id
-        )
+        await require_seated_in_its_room(db, credential, project_id=project_id)
     if room_id is not None:
         try:
             room_uuid = uuid.UUID(str(room_id))
@@ -128,7 +153,12 @@ async def list_files(
     await ProjectService(db).get_or_404(project_id)
     # A selected task owns its worktree; otherwise show the project base.
     files, actual_source = await ProjectFiles(
-        db, project_id, task, release_session=True, executor=execution.call
+        db,
+        project_id,
+        task,
+        release_session=True,
+        executor=execution.call,
+        wake=partial(wake_for_files, db.bind),
     ).files(source)
     return ok({**page(files, len(files)), "source": actual_source})
 
@@ -152,7 +182,12 @@ async def read_file(
     await ProjectService(db).get_or_404(project_id)
     return ok(
         await ProjectFiles(
-            db, project_id, task, release_session=True, executor=execution.call
+            db,
+            project_id,
+            task,
+            release_session=True,
+            executor=execution.call,
+            wake=partial(wake_for_files, db.bind),
         ).text(path, source)
     )
 
@@ -171,7 +206,12 @@ async def read_file_raw(
     (the text endpoint would mangle binary content)."""
     await ProjectService(db).get_or_404(project_id)
     data, actual_source = await ProjectFiles(
-        db, project_id, task, release_session=True, executor=execution.call
+        db,
+        project_id,
+        task,
+        release_session=True,
+        executor=execution.call,
+        wake=partial(wake_for_files, db.bind),
     ).raw(path, source)
     mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
     # Arbitrary uploads must never execute in the app's origin.
@@ -231,7 +271,12 @@ async def write_file(
         raise ValidationError(say("chooseTaskToEdit"))
     actor = await resolver.resolve(project_id=project_id, topic_id=task)
     saved = await ProjectFiles(
-        db, project_id, task, release_session=True, executor=execution.call
+        db,
+        project_id,
+        task,
+        release_session=True,
+        executor=execution.call,
+        wake=partial(wake_for_files, db.bind),
     ).save(path, content, version, base if isinstance(base, str) else None)
     row = await TaskService(db).get(task)
     if row is not None and actor.authenticated and actor.via != "cheese":
@@ -258,6 +303,67 @@ async def write_file(
     )
 
 
+class LandedTaskOut(BaseModel):
+    id: str
+    title: str
+    room_id: str
+
+
+class ProjectChangeOut(BaseModel):
+    sha: str
+    subject: str
+    author: str
+    at: str
+    task: LandedTaskOut | None
+
+
+class ProjectHistoryOut(BaseModel):
+    commits: list[ProjectChangeOut]
+
+
+@router.get(
+    "/{project_id}/history",
+    dependencies=[Depends(require_project_access)],
+    **typed_response(ProjectHistoryOut),
+)
+async def project_history(
+    project_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    path: str | None = None,
+    limit: Annotated[int, Query(ge=1, le=50)] = 30,
+) -> dict:
+    """The project's current version, change by change, newest first: when each
+    landed, whose name it carries, and the task it came from. With ``path``,
+    the changes to that one file.
+
+    A task is named only when an accept in this project merged the commit
+    (`review.landed`) and the reader can see the channel the task is in: a
+    private channel's task is not named to someone outside it, so that change
+    reads as one with no task."""
+    await ProjectService(db).get_or_404(project_id)
+    commits = await ProjectFiles(db, project_id, None, release_session=True).commits(
+        path, limit
+    )
+    landed = await tasks_that_landed(db, project_id, [c["sha"] for c in commits])
+    seen: set[uuid.UUID] = set()
+    if landed:
+        actor = await resolver.resolve(project_id=project_id)
+        seen = await rooms_seen(db, resolver, actor, project_id)
+    out = []
+    for commit in commits:
+        task = landed.get(commit["sha"])
+        named = None
+        if task is not None and task.room_id in seen:
+            named = {
+                "id": str(task.id),
+                "title": task.title,
+                "room_id": str(task.room_id),
+            }
+        out.append({**commit, "task": named})
+    return ok({"commits": out})
+
+
 @router.get("/{project_id}/git/diff", dependencies=[Depends(require_project_access)])
 async def git_diff(
     project_id: uuid.UUID,
@@ -276,6 +382,7 @@ async def git_diff(
                 task,
                 release_session=True,
                 executor=execution.call,
+                wake=partial(wake_for_files, db.bind),
                 compare_status=forge_clients.compare_status,
             ).diff(source, ref)
         }

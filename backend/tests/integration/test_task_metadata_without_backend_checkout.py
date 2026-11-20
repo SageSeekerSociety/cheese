@@ -21,7 +21,7 @@ def test_task_metadata_does_not_create_a_backend_workspace_descriptor(client):
     response = client.get(
         f"/projects/{project}/git/tasks/{task['id']}",
         headers={
-            "X-Cheese-Token": mint_scoped_token(project_id=project, topic_id=room)
+            "Authorization": f"Bearer {mint_scoped_token(project_id=project, topic_id=room)}"
         },
     )
     assert response.status_code == 200, response.text
@@ -42,7 +42,8 @@ def test_task_metadata_names_the_pr_while_it_is_in_the_merge_queue(client):
 
     def queued_pr():
         response = client.get(
-            f"/projects/{project}/git/tasks/{task}", headers={"X-Cheese-Token": token}
+            f"/projects/{project}/git/tasks/{task}",
+            headers={"Authorization": f"Bearer {token}"},
         )
         assert response.status_code == 200, response.text
         return response.json()["data"]["merge_queued_pr"]

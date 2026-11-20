@@ -1,13 +1,13 @@
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, NamedTuple
 
-import jwt
 from fastapi import Header
 
+from app.core import credentials
 from app.core.config import settings
-from app.core.errors import AuthenticationRequiredError, BaseError
+from app.core.credentials import Kind
 
 
 def _utcnow() -> datetime:
@@ -18,36 +18,36 @@ def _utcnow() -> datetime:
     return datetime.now(UTC)
 
 
+def _lasting(ttl_s: int) -> dict[str, int]:
+    """Issued now and expiring in ``ttl_s``, on this module's clock."""
+    now = int(_utcnow().timestamp())
+    return {"iat": now, "exp": now + ttl_s}
+
+
 def create_access_token(
     user_id: int | None, handle: str | None = None, *, sid: uuid.UUID | None = None
 ) -> str:
     """Create a short-lived access token for the given user.
 
-    ``handle`` (= the user's username) is embedded as an extra claim so the ONE
-    token also satisfies the 2.0 layer, which keys on handle. The numeric layer
-    reads the user id from ``sub``. With no ``user_id`` the token names the
-    handle alone: the handle-keyed layer accepts it and the numeric one treats
-    its bearer as a guest.
+    ``handle`` (= the user's username) is embedded as an extra claim: every
+    authorization key is the handle, and a token that states it is named by it
+    (`app.auth.caller.handle_named_by`). ``sub`` carries the user id. With no
+    ``user_id`` the token names the handle alone, and a request resolves the
+    user id from that handle (`ActorResolver.person`).
 
     ``sid`` names the sign-in session the token was issued under, so a request
     can tell which session is its own. Nothing looks the session up per
     request (``app.domain.user.sessions``)."""
     if user_id is None and not handle:
         raise ValueError("an access token names a user id, a handle, or both")
-    now = _utcnow()
-    payload = {
-        "sub": str(user_id) if user_id is not None else handle,
-        "type": "access",
-        "iat": int(now.timestamp()),
-        "exp": int(
-            (now + timedelta(seconds=settings.access_token_expires_seconds)).timestamp()
-        ),
-    }
+    payload = {"sub": str(user_id) if user_id is not None else handle}
     if handle:
         payload["handle"] = handle
     if sid is not None:
         payload["sid"] = str(sid)
-    return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+    return credentials.mint(
+        Kind.ACCESS, payload | _lasting(settings.access_token_expires_seconds)
+    )
 
 
 # Exported so the single-use reservation that retires a pending token expires
@@ -84,13 +84,12 @@ def mint_2fa_pending_token(
     jti = uuid.uuid4().hex
     payload = {
         "sub": str(user_id),
-        "type": "2fa_pending",
         "jti": jti,
         "iat": now,
         "exp": expires_at if expires_at is not None else now + PENDING_2FA_TTL_S,
     }
     return Minted2faPendingToken(
-        token=jwt.encode(payload, settings.jwt_secret, algorithm="HS256"), jti=jti
+        token=credentials.mint(Kind.TWO_FA_PENDING, payload), jti=jti
     )
 
 
@@ -110,11 +109,8 @@ def verify_2fa_pending_token(token: str) -> Pending2faClaims | None:
     gone within the 300s TTL, and the login page already tells the user to
     sign in again.
     """
-    try:
-        decoded = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
-    except jwt.PyJWTError:  # type: ignore[attr-defined]
-        return None
-    if decoded.get("type") != "2fa_pending":
+    decoded = credentials.read(token, Kind.TWO_FA_PENDING)
+    if decoded is None:
         return None
     jti = decoded.get("jti")
     if not isinstance(jti, str) or not jti:
@@ -174,18 +170,11 @@ def mint_sudo_ticket(user_id: int, purpose: SudoPurpose) -> MintedSudoTicket:
     this module stays pure JWT with no I/O, and a ticket whose reservation
     failed must never reach a client, because nothing would redeem it.
     """
-    now = int(_utcnow().timestamp())
     jti = uuid.uuid4().hex
-    payload = {
-        "sub": str(user_id),
-        "type": "sudo",
-        "purpose": purpose.value,
-        "jti": jti,
-        "iat": now,
-        "exp": now + SUDO_TICKET_TTL_S,
-    }
+    payload = {"sub": str(user_id), "purpose": purpose.value, "jti": jti}
     return MintedSudoTicket(
-        token=jwt.encode(payload, settings.jwt_secret, algorithm="HS256"), jti=jti
+        token=credentials.mint(Kind.SUDO, payload | _lasting(SUDO_TICKET_TTL_S)),
+        jti=jti,
     )
 
 
@@ -199,16 +188,13 @@ def verify_sudo_ticket(token: str) -> SudoTicketClaims | None:
     """The claims a valid, unexpired sudo ticket carries, else None.
 
     An access token is not a sudo ticket however freshly it was issued: the
-    ``type`` check is what keeps "is signed in" from being read as "just
+    kind check is what keeps "is signed in" from being read as "just
     proved they are here". A purpose this build does not know is likewise no
     ticket — an unrecognised name cannot be matched against the entrance
     redeeming it, so it can only be refused.
     """
-    try:
-        decoded = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
-    except jwt.PyJWTError:  # type: ignore[attr-defined]
-        return None
-    if decoded.get("type") != "sudo":
+    decoded = credentials.read(token, Kind.SUDO)
+    if decoded is None:
         return None
     jti = decoded.get("jti")
     if not isinstance(jti, str) or not jti:
@@ -249,30 +235,22 @@ def create_notice_token(user_id: int, sid: uuid.UUID) -> str:
 
     It does nothing else: only the live notices connection
     (``app/api/routes/notifications_live.py``) accepts it, and every other route
-    reads ``type == "access"``. It carries no expiry of its own; it is good for
+    takes an access token. It carries no expiry of its own; it is good for
     as long as the sign-in session ``sid`` is, which that connection checks.
     """
-    payload = {
-        "sub": str(user_id),
-        "type": "notices",
-        "sid": str(sid),
-        "iat": int(_utcnow().timestamp()),
-    }
-    return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+    now = int(_utcnow().timestamp())
+    return credentials.mint(
+        Kind.NOTICES, {"sub": str(user_id), "sid": str(sid), "iat": now}
+    )
 
 
 def verify_notice_token(token: str) -> tuple[int, uuid.UUID] | None:
     """(user id, session id) a notices credential names, if its signature holds."""
-    try:
-        decoded = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
-    except jwt.PyJWTError:  # type: ignore[attr-defined]
+    decoded = credentials.read(token, Kind.NOTICES)
+    if decoded is None:
         return None
     sub = decoded.get("sub")
-    if (
-        decoded.get("type") != "notices"
-        or not isinstance(sub, str)
-        or not sub.isdigit()
-    ):
+    if not isinstance(sub, str) or not sub.isdigit():
         return None
     try:
         return int(sub), uuid.UUID(decoded["sid"])
@@ -297,28 +275,18 @@ def create_app_sign_in_code(user_id: int, challenge: str) -> str:
     travels through a ``cheese://`` link, which any program on the computer
     could have registered for.
     """
-    now = int(_utcnow().timestamp())
-    payload = {
-        "sub": str(user_id),
-        "type": "app_sign_in",
-        "chl": challenge,
-        "jti": uuid.uuid4().hex,
-        "iat": now,
-        "exp": now + APP_SIGN_IN_TTL_S,
-    }
-    return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
+    payload = {"sub": str(user_id), "chl": challenge, "jti": uuid.uuid4().hex}
+    return credentials.mint(Kind.APP_SIGN_IN, payload | _lasting(APP_SIGN_IN_TTL_S))
 
 
 def verify_app_sign_in_code(code: str) -> AppSignInClaims | None:
-    try:
-        decoded = jwt.decode(code, settings.jwt_secret, algorithms=["HS256"])
-    except jwt.PyJWTError:  # type: ignore[attr-defined]
+    decoded = credentials.read(code, Kind.APP_SIGN_IN)
+    if decoded is None:
         return None
     sub = decoded.get("sub")
     challenge, jti = decoded.get("chl"), decoded.get("jti")
     if (
-        decoded.get("type") != "app_sign_in"
-        or not isinstance(sub, str)
+        not isinstance(sub, str)
         or not sub.isdigit()
         or not isinstance(challenge, str)
         or not isinstance(jti, str)
@@ -335,14 +303,11 @@ def verify_access_token(token: str) -> AccessClaims | None:
     presented to. It verifies the signature only: the session the token names
     is not consulted (``app.domain.user.sessions``).
     """
-    if not token:
-        return None
-    try:
-        decoded = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
-    except jwt.PyJWTError:  # type: ignore[attr-defined]
+    decoded = credentials.read(token, Kind.ACCESS)
+    if decoded is None:
         return None
     sub = decoded.get("sub")
-    if decoded.get("type") != "access" or not isinstance(sub, str) or not sub:
+    if not isinstance(sub, str) or not sub:
         return None
     try:
         sid = uuid.UUID(decoded["sid"]) if decoded.get("sid") else None
@@ -370,60 +335,9 @@ def _bearer_claims(authorization: str | None) -> AccessClaims | None:
     return verify_access_token(token)
 
 
-async def get_current_user_id(
-    x_user_id: Annotated[
-        int | None, Header(alias="X-User-Id", convert_underscores=False)
-    ] = None,
-    authorization: Annotated[str | None, Header(alias="Authorization")] = None,
-) -> int:
-    """Resolve current user ID from Authorization bearer token or X-User-Id header.
-
-    - Preferred: `Authorization: Bearer <accessToken>` issued by Python auth flow.
-    - Fallback: `X-User-Id` header, a local-development convenience. Refused on
-      any deployment: one started by the deploy compose file, whatever
-      `environment` reads, and any whose `environment` is not development/test.
-    """
-    if authorization:
-        claims = _bearer_claims(authorization)
-        if claims is None or claims.user_id is None:
-            raise AuthenticationRequiredError("Invalid or expired token")
-        return claims.user_id
-
-    if x_user_id is not None:
-        if settings.deployed_via_compose or settings.environment not in (
-            "development",
-            "test",
-        ):
-            raise AuthenticationRequiredError(
-                "X-User-Id header is not allowed on a deployment"
-            )
-        return x_user_id
-
-    raise AuthenticationRequiredError("Authorization header is required")
-
-
 async def get_current_session_id(
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
 ) -> uuid.UUID | None:
     """The sign-in session the caller's access token was issued under."""
     claims = _bearer_claims(authorization)
     return claims.sid if claims is not None else None
-
-
-async def get_optional_user_id(
-    x_user_id: Annotated[
-        int | None, Header(alias="X-User-Id", convert_underscores=False)
-    ] = None,
-    authorization: Annotated[str | None, Header(alias="Authorization")] = None,
-) -> int | None:
-    """Best-effort variant of get_current_user_id that returns None instead of 401.
-
-    用于那些「可选」依赖当前用户上下文的查询（例如 task 列表的 joined 过滤），
-    不强制要求调用方携带认证信息。
-    """
-    try:
-        return await get_current_user_id(
-            x_user_id=x_user_id, authorization=authorization
-        )
-    except (AuthenticationRequiredError, BaseError):
-        return None

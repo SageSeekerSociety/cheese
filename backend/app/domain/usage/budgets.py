@@ -5,11 +5,12 @@ import uuid
 from collections.abc import Mapping
 from datetime import UTC, datetime
 
-from sqlalchemy import and_, delete, func, select
+from sqlalchemy import and_, delete, func, literal, select, true
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import BadRequestError
+from app.core.request_facts import recall, remember
 from app.core.sentences import say
 from app.domain.conversation.models import Conversation, ConversationKind
 from app.domain.project.services import ProjectService
@@ -20,6 +21,47 @@ from app.domain.usage.models import (
     ResourceUsage,
     WorkCreditOwner,
 )
+from app.domain.usage.repositories import (
+    gateway_spend_select,
+    remember_gateway_spend,
+)
+
+_MEMBER_REMAINING_TABLES = frozenset(
+    {"member_credit_budgets", "project_credit_budgets", "resource_usage"}
+)
+
+
+def _member_remaining_key(project_id: uuid.UUID, owner_handle: str) -> tuple:
+    return ("member_remaining", project_id, owner_handle)
+
+
+def _member_columns(project_id: uuid.UUID, owner_handle: str) -> tuple:
+    """The member's own cap and what they have used since the project's
+    budget was set, as two scalars: what `_member_remaining` reads in three."""
+    since = (
+        select(ProjectCreditBudget.since)
+        .where(ProjectCreditBudget.project_id == project_id)
+        .scalar_subquery()
+    )
+    limit = (
+        select(MemberCreditBudget.credits_limit)
+        .where(
+            MemberCreditBudget.project_id == project_id,
+            MemberCreditBudget.owner_handle == owner_handle,
+        )
+        .scalar_subquery()
+    )
+    used = (
+        select(func.coalesce(func.sum(ResourceUsage.credits), 0))
+        .where(
+            ResourceUsage.project_id == project_id,
+            ResourceUsage.credit_owner_handle == owner_handle,
+            ResourceUsage.created_at >= since,
+            ResourceUsage.created_at <= datetime.now(UTC),
+        )
+        .scalar_subquery()
+    )
+    return limit.label("member_limit"), used.label("member_used")
 
 
 class CreditBudgets:
@@ -197,15 +239,48 @@ class CreditBudgets:
         }
 
     async def project_caps(
-        self, project_ids: list[uuid.UUID]
+        self,
+        project_ids: list[uuid.UUID],
+        *,
+        with_gateway_spend: bool = False,
+        member: str | None = None,
     ) -> dict[uuid.UUID, tuple[float, float]]:
+        """Project → (credit limit, credits used since the limit was set), for
+        the projects among ``project_ids`` that have a limit.
+
+        ``with_gateway_spend``: the same statement also reads what each
+        project's gateway key has spent, and leaves it for
+        `UsageRepository.gateway_spend` to answer from. Admission prices the
+        key's budget from both; the other callers want the caps alone. Only a
+        call that reads the caps brings the spend: when they were already read
+        in this request, the spend is left to its own statement, as before, so
+        a caller that wants it saved asks this first (`routes/llm_proxy.py`).
+
+        ``member``, with the spend and one project: the same statement reads
+        that member's own cap and what they have used under it, and leaves it
+        for `member_remaining` (a task's admission asks it to refuse the call
+        and again for the task key's budget)."""
+        if member is not None and not (with_gateway_spend and len(project_ids) == 1):
+            raise ValueError(  # i18n-exempt: programmer invariant, never shown
+                "project_caps reads a member's cap only with the spend, for one project"
+            )
         if not project_ids:
             return {}
-        rows = await self._session.execute(
+        # Admitting a model call asks this, then asks it again for the budget
+        # its gateway key carries (`routes/llm_proxy.py`).
+        can_cache = isinstance(self._session, AsyncSession)
+        key = ("project_caps", frozenset(project_ids))
+        if can_cache:
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, key)
+            if found:
+                return cached
+        capped = (
             select(
                 ProjectCreditBudget.project_id,
                 ProjectCreditBudget.credits_limit,
-                func.coalesce(func.sum(ResourceUsage.credits), 0),
+                func.coalesce(func.sum(ResourceUsage.credits), 0).label("used"),
             )
             .outerjoin(
                 ResourceUsage,
@@ -221,7 +296,67 @@ class CreditBudgets:
             )
             .group_by(ProjectCreditBudget.project_id)
         )
-        return {project_id: (limit, spent) for project_id, limit, spent in rows}
+        if not with_gateway_spend:
+            rows = await self._session.execute(capped)
+        else:
+            # Each sum is its own subquery, so neither multiplies the other's
+            # rows; the gateway one is `UsageRepository`'s own, with the
+            # predicate of the index that answers it.
+            caps_q = capped.subquery("capped")
+            spent_q = gateway_spend_select(project_ids).subquery("gateway")
+            stmt = select(
+                func.coalesce(caps_q.c.project_id, spent_q.c.project_id),
+                caps_q.c.credits_limit,
+                caps_q.c.used,
+                spent_q.c.spent,
+            ).select_from(
+                caps_q.join(
+                    spent_q, spent_q.c.project_id == caps_q.c.project_id, full=True
+                )
+            )
+            if member is not None:
+                # A row even when the project has neither a cap nor spend: a
+                # member may have a cap of their own under a budget whose
+                # project limit is unset.
+                combined = stmt.subquery("combined")
+                anchor = select(literal(1).label("one")).subquery("one")
+                stmt = select(
+                    *combined.c, *_member_columns(project_ids[0], member)
+                ).select_from(anchor.outerjoin(combined, true()))
+            rows = (await self._session.execute(stmt)).all()
+        caps: dict[uuid.UUID, tuple[float, float]] = {}
+        gateway_spend: dict[uuid.UUID, float] = {}
+        member_answer: list[float | None] = []
+        for row in rows:
+            project_id, limit, used, *rest = row
+            if project_id is not None and limit is not None:
+                caps[project_id] = (limit, used)
+            if project_id is not None and rest and rest[0] is not None:
+                gateway_spend[project_id] = float(rest[0])
+            if member is not None and not member_answer:
+                member_limit = row._mapping["member_limit"]
+                member_answer.append(
+                    None
+                    if member_limit is None
+                    else member_limit - float(row._mapping["member_used"] or 0)
+                )
+        if can_cache:
+            remember(
+                self._session,
+                key,
+                caps,
+                tables=frozenset({"project_credit_budgets", "resource_usage"}),
+            )
+            if with_gateway_spend:
+                remember_gateway_spend(self._session, project_ids, gateway_spend)
+            if member is not None and member_answer:
+                remember(
+                    self._session,
+                    _member_remaining_key(project_ids[0], member),
+                    member_answer[0],
+                    tables=_MEMBER_REMAINING_TABLES,
+                )
+        return caps
 
     async def member_refusal(
         self, project_id: uuid.UUID, owner_handle: str | None
@@ -236,6 +371,31 @@ class CreditBudgets:
     ) -> float | None:
         if owner_handle is None:
             return None
+        # A task's admission asks it twice: to refuse the call, then for the
+        # budget the task's key carries (`gateway_usage.task_key_in_step`).
+        # A member with no cap of their own is the common answer, and a miss
+        # is not kept by the session the way a row is.
+        can_cache = isinstance(self._session, AsyncSession)
+        key = _member_remaining_key(project_id, owner_handle)
+        if can_cache:
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, key)
+            if found:
+                return cached
+        remaining = await self._member_remaining(project_id, owner_handle)
+        if can_cache:
+            remember(
+                self._session,
+                key,
+                remaining,
+                tables=_MEMBER_REMAINING_TABLES,
+            )
+        return remaining
+
+    async def _member_remaining(
+        self, project_id: uuid.UUID, owner_handle: str
+    ) -> float | None:
         cap = await self._session.get(MemberCreditBudget, (project_id, owner_handle))
         if cap is None:
             return None

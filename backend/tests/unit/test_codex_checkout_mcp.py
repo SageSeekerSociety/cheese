@@ -197,7 +197,7 @@ def platform(machine, monkeypatch, lease_answers):
                     }
                 }
             else:
-                assert self.headers["X-Cheese-Token"] == "execution-only"
+                assert self.headers["Authorization"] == "Bearer execution-only"
                 seen.append(body["method"])
                 result = runtime.request(state, body["method"], body["params"])
             encoded = json.dumps(result).encode()

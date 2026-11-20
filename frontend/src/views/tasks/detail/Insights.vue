@@ -8,7 +8,10 @@
     :failed="failed"
     :failure-reason="failureReason"
     :forbidden="forbidden"
+    :progress="progress ?? null"
+    :judge-stats="judgeStats"
     @retry="load"
+    @judge-stage="loadJudgeStats"
   />
 </template>
 
@@ -22,7 +25,9 @@
 // 数据来自两个真接口，没有一个数字是本地编的：
 // - `GET /tasks/{id}/participants` —— 领取名单（含每人加入时刻，走势图就从它算）
 // - `GET /spaces/{id}/submissions?taskId=…` —— 这道题的所有提交（含判没判、判过没过）
-import type { Task, TaskMembership, TaskSubmissionReview } from '@/types'
+// - `GET /tasks/{id}/judge/stats` —— 挂着测试点的题：用例通过率、测试分分布、评测累计额度。
+//   只有能批改的人读得到；读不到（或没有测试点）就不画那一块，不拖累上面的数。
+import type { Task, TaskJudgeStatsView, TaskMembership, TaskProgress, TaskSubmissionReview } from '@/types'
 
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
@@ -31,12 +36,15 @@ import InsightsView from './InsightsView.vue'
 
 import { SpacesApi } from '@/api/spaces'
 import { TaskBoardApi } from '@/api/taskBoard'
+import { TaskJudgeApi } from '@/api/taskJudge'
 import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 
 const props = defineProps<{
   taskData: Task | null
   isCreator?: boolean
   isAdmin?: boolean
+  /** 每个阶段上的进度，题目页取的那一份（全体分布只有批改的人读得到）。 */
+  progress?: TaskProgress | null
 }>()
 
 const route = useRoute()
@@ -52,12 +60,43 @@ const failed = computed(() => loadError.value !== null)
 const failureReason = computed(() => loadFailureReason(loadError.value))
 const forbidden = computed(() => isForbidden(loadError.value))
 
+const judgeStats = ref<TaskJudgeStatsView | null>(null)
+/** 测试点那一块现在是哪道题、哪个阶段的：换题时清掉，重试时沿用老师选的阶段。 */
+let judgeFor: { taskId: number; stage: string | null } | null = null
+/** 最后发出去的那一次：先发后到的回答不许盖掉后发的（快速切阶段、换题）。 */
+let judgeTicket = 0
+
+/** 测试点那一块单独取：它读不到不该让整页显示「加载失败」。换阶段时也走这里。 */
+async function loadJudgeStats(stage?: string | null) {
+  const taskId = props.taskData?.id
+  const ticket = ++judgeTicket
+  if (!taskId || !(props.isCreator || props.isAdmin)) {
+    judgeStats.value = null
+    judgeFor = null
+    return
+  }
+  if (judgeFor?.taskId !== taskId) judgeStats.value = null
+  const wanted = stage !== undefined ? stage : judgeFor?.taskId === taskId ? judgeFor.stage : null
+  judgeFor = { taskId, stage: wanted }
+  try {
+    const got = await TaskJudgeApi.stats(taskId, wanted)
+    if (ticket === judgeTicket) judgeStats.value = got
+  } catch {
+    if (ticket !== judgeTicket) return
+    judgeStats.value = null
+    // 问不到的那个阶段可能已经不在了（出题人删了它或它的测试点）：放掉它，下一次重试
+    // 回到默认阶段，不然阶段切换按钮跟着这一块消失，重试只会再问同一个被拒的阶段。
+    judgeFor = { taskId, stage: null }
+  }
+}
+
 async function load() {
   const taskId = props.taskData?.id
   if (!taskId) return
   loading.value = true
   // 上一次的失败不许留到这一次：重新问一次，屏幕上先干净。
   loadError.value = null
+  void loadJudgeStats()
   try {
     const [rosterRes, subsRes] = await Promise.all([
       TaskBoardApi.getParticipants(taskId),

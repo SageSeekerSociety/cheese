@@ -40,7 +40,7 @@ covers:
 - **按时间窗口限额**：不发包，每个窗口在一段时间内最多用多少。窗口有两种：`{hours, credits}` 从团队第一次调用开始计时，到点清零，下一次调用再开新的一轮；`{calendar: "week" | "month", credits}` 在平台时区的周一 0 点、每月 1 日 0 点清零。每个团队每个窗口这一轮的开始时间和已用额度记在 `plan_window_use`，扣费时一条 upsert 写入，过期的一轮由这次扣费重开，并发的两笔都会记上。扣费先扣题目给这个项目的定向额度，剩下的计入每个窗口；有窗口满了之后，剩下的改扣另购或管理员发放的额度，这两类都不计入窗口。准入在所有窗口都没满时放行；有窗口满了，还有定向、另购或发放的额度就放行，没有就拒绝，说明那个窗口何时清零。方案从按月发放改成按时间窗口时，本月已发的方案包不再动用。
 - **余额**：按时间窗口限额的方案，最满的那个窗口还能用多少，和其他额度包一起算进余额，所以项目网关 key 的预算上限照样能算出来。
 - **Reserve**（`unlimited`）：方案本身不限量、不发包、不扣包，用量照样记；项目和成员预算仍然适用。
-- **模型档位**：网关模型的档位由管理员在模型管理页设（`cheese_tier`），订阅模型的档位写在 `_SUB_MODELS` 里。闸门（`domain/policy/gate.py`）对模型先看方案允许的档位，超出一律拒绝（「当前方案不能使用模型「…」。」），不变成提议；项目设置只能在方案范围内再收紧。机器的档位不受方案影响。模型选择（`GET /projects/{id}/default-model` 的 `choices`）给每个模型标出方案是否允许（`allowed`），不允许的标出排在最前、允许它的方案名（`requires_plan`，`usage/model_access.py`）；只算这个团队能挂的方案（个人团队不算只给团队的方案），没有就为空。方案还没有价格，顺序由管理员设的排序（`rank`）决定，只给管理员的方案排在最后。设为项目默认、分身默认或队友的模型时，方案不允许的一律拒绝。
+- **模型档位**：网关模型的档位由管理员在模型管理页设（`cheese_tier`），订阅模型的档位写在 `_SUB_MODELS` 里。闸门（`domain/policy/gate.py`）对模型先看方案允许的档位，超出一律拒绝（「当前方案不能使用模型「…」。」），不变成提议；项目设置只能在方案范围内再收紧。机器的档位不受方案影响。模型选择（`GET /projects/{id}/default-model` 的 `choices`）给每个模型标出方案是否允许（`allowed`），不允许的标出排在最前、允许它的方案名（`requires_plan`，`usage/model_access.py`）；只算这个团队能挂的方案（个人团队不算只给团队的方案），没有就为空。方案还没有价格，顺序由管理员设的排序（`rank`）决定，只给管理员的方案排在最后。设为项目主模型，或队友的模型、「任务里使用」「分身使用」时，方案不允许的一律拒绝；没人选、由平台角色挑的模型（「自动」）不受方案限制（[平台模型角色](/dev/gateway#roles)）。
 - **需开通的模型**：Claude、GPT、Gemini 这类模型（网关模型标 `cheese_overseas: true`，订阅的 Claude 模型一律算）只有平台管理员开通过的团队能用（`overseas_model_approvals`，一个团队一行）；开通一个人就是开通他的个人团队。没开通的团队在模型选择里看不到它们，设为默认或队友模型按「目录里没有」拒绝；已经绑在这种模型上的项目，闸门在轮次开始前拒绝（「模型「…」需要平台管理员为这个团队开通后才能使用。」）。档位规则照旧叠在上面。管理员在额度后台的团队详情里开关（`PUT /admin/teams/{id}/overseas-access`），每次写落 `credit_admin_audit`（`team.overseas`）；网关模型在模型管理页勾「需开通」。
 
 方案、团队挂哪个方案、给团队发额度都只能由平台管理员在 `/admin/plans`、`/admin/teams` 下操作，每一次写都记进 `credit_admin_audit`（谁、对什么、改前改后），`/admin/credits/audit` 和 `/admin/teams/{id}/history` 读它。管理员发的额度可以写一句原因，只有管理员看得到。
@@ -84,11 +84,7 @@ covers:
 任务命名、旧记忆搬迁、环境准备失败时的「让芝士看看」和记忆整理（dream）都是平台为某个项目做的事，和项目里的其他调用一样记到项目上、扣项目所在团队的额度，团队的用量页把它们算进「协作」。每一行带 `project_id` 和团队，`kind` 写明是哪件事（`topic_naming`、`memory_migration`、`environment_diagnosis`、`memory_dream`）。
 
 - 任务命名、旧记忆搬迁和「让芝士看看」各走平台的一把服务 key（各带一份平台设的预算），`cost_usd` 取网关在响应头里给的价格，由 `Ledger.record_project_call` 按项目的付款方写一行并扣额度。
-- 记忆整理是总览房间的一轮会话，整理期间它一直占着总览的轮次锁，所以这段时间里从总览发出的模型调用都是整理的。准入逐个调用认出它们（`llm_proxy._dreams`：调用的凭证指向总览，且项目有一次正在跑、没超过 `CLAIM_TTL` 的整理）：
-  - 走网关的，准入交给它项目的第二把 key（`project.settings["llm_gateway_dream_key"]`，同样由项目付费、同样带项目的预算），一轮结束后当场按 `memory_dream` 结算这把 key 的新增花费（读不到时 20 秒后再读一次）。房间的轮次只结算第一把 key，所以整理期间结束的对话拿不走整理的花费；什么都没收到时写一行 `memory_dream:unmetered`，说明这一轮跑过。
-  - 走订阅的，准入在回答里带上 `supply.kind = "memory_dream"`，计量代理把它写在 `usage.jsonl` 那一行的 `kind` 上，收取时按它记账（`subscription_ingest.LINE_KINDS`，名单外的一律按 `chat`）。
-  - 计量代理按（项目、频道、凭证）缓存准入的回答 30 秒（`CHEESE_ADMISSION_CACHE_S`），所以整理开始和结束前后最多这么久的调用沿用上一个回答。走 `/llm` 转发的 Codex 和 pi 每次都问，没有这段。
-  - 会话自报的用量不计，否则同一批调用会被网关或计量代理和自报各算一次。整理的触发阈值按 `kind` 把整理自己的花费剔掉。
+- 记忆整理的每一份（team 一份，每个有 private 的人一份）都是后端在项目的整理 key（`project.settings["llm_gateway_dream_key"]`，同样由项目付费、同样带项目的预算）上直接发的一次调用。几份都跑完后当场按 `memory_dream` 结算这把 key 的新增花费（读不到时 20 秒后再读一次）；什么都没收到时写一行 `memory_dream:unmetered`，说明这一次跑过。房间的轮次只结算项目的第一把 key，所以拿不走整理的花费。整理的触发阈值按 `kind` 把整理自己的花费剔掉。
 
 ## 三处计量 {#metering}
 
@@ -105,7 +101,7 @@ covers:
 两条路用同一把尺子（`backend/app/domain/usage/credits.py` 的 `spend_to_credits`）：**额度 = 这次调用的美元花费 ÷ 0.01**（`CREDIT_USD`）。1 额度就是 1 分钱，界面上叫「点」。
 
 - **单价**：都写成美元，账本和每把 key 的预算都按美元算。用人民币结算我们账户的服务商（DeepSeek、智谱、月之暗面、小米），单价取它的中文价目表，按 7.1 元兑 1 美元折算，并在 `deploy/gateway/config.yaml` 那一行写明页面和读到的日期；它英文页上的美元价是另一种账户的价格，不是我们付的。
-- **网关路**：花费是网关按模型单价算出来的。网页搜索也在这条路上：`cheese_web_search` 在调用方自己的网关 key 上搜（DeepSeek 的搜索接口接在网关里，`deploy/gateway/deepseek_search.py`），每次搜到结果按 ¥5 / 1000 次 ÷ 7.1 = 0.000704 美元计，没搜到不计；它和这把 key 的模型调用一起收取，落成 `route = "search"`、`kind = "web_search"` 的行，不算模型调用。Claude Code 的 WebSearch 由模型的上游执行，每次搜索按同一个价钱算进那次模型调用。LiteLLM 的 `prompt_tokens` 已经含缓存读和缓存写，所以 `input_tokens` 和订阅路一样记全部输入，`cache_read_tokens`、`cache_write_tokens` 取它按天累计的 `cache_read_input_tokens`、`cache_creation_input_tokens` 的差值；缓存写不分有效期，`cache_write_1h_tokens` 记 0。
+- **网关路**：花费是网关按模型单价算出来的。网页搜索也在这条路上：`cheese_web(action=search)` 在调用方自己的网关 key 上搜（DeepSeek 的搜索接口接在网关里，`deploy/gateway/deepseek_search.py`），每次搜到结果按 ¥5 / 1000 次 ÷ 7.1 = 0.000704 美元计，没搜到不计；它和这把 key 的模型调用一起收取，落成 `route = "search"`、`kind = "web_search"` 的行，不算模型调用。Claude Code 的 WebSearch 由模型的上游执行，每次搜索按同一个价钱算进那次模型调用。LiteLLM 的 `prompt_tokens` 已经含缓存读和缓存写，所以 `input_tokens` 和订阅路一样记全部输入，`cache_read_tokens`、`cache_write_tokens` 取它按天累计的 `cache_read_input_tokens`、`cache_creation_input_tokens` 的差值；缓存写不分有效期，`cache_write_1h_tokens` 记 0。
 - **订阅路**：订阅按月付费，调用本身没有账单，所以按同一个模型在网关价目表里的单价估算。价目表在 `deploy/gateway/config.yaml`：订阅用到的 Claude 模型各有一条只记价格的条目（`model_info.blocked: true`，网关拒绝路由，也没有凭证），单价取 Anthropic 公开的 API 价格。计量代理的日志里 token 是分开记的：新输入、输出、缓存读、缓存写，缓存写再按有效期分成 5 分钟和 1 小时两部分；入库时 `input_tokens` 记全部输入（新输入、缓存读、缓存写之和），`cache_read_tokens`、`cache_write_tokens` 记其中的缓存部分，`cache_write_1h_tokens` 记缓存写里 1 小时的那部分。各部分按各自的单价计价：缓存读按缓存读价，不当新输入算；1 小时缓存写按 1 小时的价，比 5 分钟的贵。日志里的模型名带日期后缀（`claude-haiku-4-5-20251001`）时，按去掉后缀的名字查价。
 - 计量代理开始分开记录缓存写的有效期之前写下的日志行没有这一拆分，这些行的缓存写全部按 1 小时的单价算：Claude Code 用的是 1 小时缓存，而且估算宁可多算不少算。
 - 价目表里查不到的订阅模型：这一行用量照记，花费为 0、不扣额度，每一轮收取在日志里列出这些模型和行数。缺价是平台配置的问题，不该让团队因此被拒；补上价格即可。读不到价目表（网关配置了但连不上）时这一轮不收取，检查点不动，下一轮再收，不会把一段日志按 0 记掉。

@@ -39,7 +39,7 @@ def wired(client, monkeypatch):
     monkeypatch.setattr(llm_proxy.httpx, "AsyncClient", _FakeClient)
     # The test client sends the platform's secret on every request; a session
     # has no such thing.
-    monkeypatch.delitem(client.headers, "X-Cheese-Token")
+    monkeypatch.delitem(client.headers, "Authorization")
 
 
 def _person(client, handle: str) -> tuple[int, dict, str]:
@@ -103,12 +103,14 @@ def test_a_room_and_a_person_do_not_open_each_others_doors(client, wired):
     topic = client.post(
         "/topics",
         json={"project_id": project, "title": "Work"},
-        headers={"X-Cheese-Token": SANDBOX_TOKEN},
+        headers={"Authorization": f"Bearer {SANDBOX_TOKEN}"},
     ).json()["data"]["id"]
 
     # A room's endpoint, as the agent in that room would call it.
     note = client.post(
-        f"/topics/{topic}/note", json={"text": "hi"}, headers={"X-Cheese-Token": token}
+        f"/topics/{topic}/note",
+        json={"text": "hi"},
+        headers={"Authorization": f"Bearer {token}"},
     )
     assert note.status_code == 401
     # The admission the metering proxy asks for a room's turns.
@@ -120,7 +122,9 @@ def test_a_room_and_a_person_do_not_open_each_others_doors(client, wired):
     )
     # The tool routes a question's credential opens.
     assert (
-        client.get("/tasks/joined", headers={"X-Cheese-Token": token}).status_code
+        client.get(
+            "/tasks/joined", headers={"Authorization": f"Bearer {token}"}
+        ).status_code
         == 401
     )
     # The person's own API, which takes their login.

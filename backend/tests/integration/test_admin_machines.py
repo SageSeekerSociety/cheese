@@ -7,10 +7,12 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.core.config import settings
+from app.domain.machine import infra_records
 from app.domain.machine.models import (
     CloudHost,
     MachineStatus,
     SandboxHome,
+    SandboxUsage,
     WarmMachine,
 )
 from app.domain.run_record.models import RunRecord
@@ -112,6 +114,44 @@ def test_each_host_shows_its_sandboxes_and_the_pool_counts_who_waits(client, adm
     assert data["pool"]["hosts"] == 2
     assert data["pool"]["used"] == 2
     assert data["pool"]["waiting"] == 1
+
+
+def test_a_parked_sandbox_is_counted_apart_from_the_slots(client, admin):
+    """A parked sandbox keeps only its directory: it takes no slot, so the
+    host and the pool count it on its own, with the disk it holds."""
+    project, room = _room(client)
+    now = datetime.now(UTC)
+
+    async def build(s):
+        host = _host("keeping", enrolled_at=now - timedelta(hours=1))
+        s.add(host)
+        await s.flush()
+        running = _home(host, project, room)
+        kept = [
+            _home(
+                host,
+                project,
+                room,
+                frozen_at=now - timedelta(hours=3),
+                parked_at=now - timedelta(hours=1),
+            )
+            for _ in range(2)
+        ]
+        s.add_all([running, *kept])
+        await s.flush()
+        s.add_all(
+            [
+                SandboxUsage(home_id=kept[0].id, disk_bytes=3 * 10**9),
+                SandboxUsage(home_id=kept[1].id, disk_bytes=10**9),
+            ]
+        )
+
+    _seed(client, build)
+
+    data = client.get("/admin/stats/machines", headers=admin).json()["data"]
+    (host,) = [h for h in data["hosts"] if h["hostname"] == "keeping"]
+    assert (host["used"], host["parked"], host["parked_bytes"]) == (1, 2, 4 * 10**9)
+    assert (data["pool"]["used"], data["pool"]["parked"]) == (1, 2)
 
 
 def test_an_unclaimed_warm_machine_is_listed_with_its_name_size_and_stage(
@@ -241,3 +281,44 @@ def test_the_wait_for_a_sandbox_is_from_preparing_to_ready(client, admin):
     assert (history["prepared"], history["ready"], history["abandoned"]) == (3, 2, 1)
     assert history["wait_max_s"] == pytest.approx(300, abs=1)
     assert 30 <= history["wait_p50_s"] <= 300
+
+
+def test_how_long_each_step_of_preparing_a_sandbox_took_is_read_by_step(client, admin):
+    """Each prepared sandbox keeps its steps' seconds (`infra_records`); the
+    page gives each step's percentiles over the day, and its total."""
+    project, room = _room(client)
+
+    async def build(s):
+        for executor, thaw in ((2.0, None), (4.0, 1.0), (30.0, 3.0)):
+            await infra_records.keep_prepared(
+                s,
+                conversation_id=room,
+                session_id=uuid.uuid4(),
+                stages={"place": 0.1, "thaw": thaw, "executor": executor},
+                total_s=executor + (thaw or 0) + 0.1,
+                waited_s=None,
+            )
+        await infra_records.keep_checked_out(
+            s,
+            conversation_id=room,
+            session_id=None,
+            total_s=20.0,
+            steps={"fetch": 1.5, "deps": 17.0},
+        )
+
+    _seed(client, build)
+
+    timings = client.get("/admin/stats/machines", headers=admin).json()["data"][
+        "history"
+    ]["timings"]
+    prepared = timings["sandbox_prepared"]
+    assert prepared["executor"]["count"] == 3
+    assert prepared["executor"]["p50_s"] == pytest.approx(4.0)
+    # A step that did not happen is not counted as a zero.
+    assert prepared["thaw"]["count"] == 2
+    assert "host" not in prepared
+    assert prepared["total"]["count"] == 3
+    assert timings["sandbox_checked_out"]["checkout"]["p50_s"] == pytest.approx(20.0)
+    # What the CLI timed of the open, step by step.
+    assert timings["sandbox_checked_out"]["deps"]["p50_s"] == pytest.approx(17.0)
+    assert "seed" not in timings["sandbox_checked_out"]

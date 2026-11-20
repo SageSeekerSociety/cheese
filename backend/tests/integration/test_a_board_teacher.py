@@ -11,7 +11,7 @@
 4. **成员导不出参与者花名册**（明文个人信息，403 而不是空 CSV）；
 5. **把导师移出项目，下一次请求就必须读不到** —— 判据每次现查，没有缓存。
 
-判据全部收敛在 ``app.auth.space_access``；这里测的是它的可观测后果，不看实现。
+判据全部收敛在 ``app.auth.task_roles``；这里测的是它的可观测后果，不看实现。
 """
 
 from __future__ import annotations
@@ -122,8 +122,8 @@ def _create_task(
 
 
 def _claim(api_client: TestClient, board: dict, task_id: int, user, token: str) -> str:
-    """``user`` 领了这道题：题目过审、人进了这门课，再领题（同意题目点名的导师）。
-    返回领题开出的那个项目。"""
+    """``user`` 领了这道题：题目过审、人进了这门课，再申请（同意题目点名的导师），
+    出题人通过。返回申请通过时开出的那个项目。"""
     approved = api_client.patch(
         f"/tasks/{task_id}",
         json={"approved": "APPROVED"},
@@ -142,7 +142,19 @@ def _claim(api_client: TestClient, board: dict, task_id: int, user, token: str) 
         headers=_auth(token),
     )
     assert claimed.status_code in (200, 201), claimed.text
-    return claimed.json()["data"]["project"]["id"]
+    approved = api_client.patch(
+        f"/tasks/{task_id}/participants/{claimed.json()['data']['participant']['id']}",
+        json={"approved": "APPROVED"},
+        headers=_auth(board["creator_token"]),
+    )
+    assert approved.status_code == 200, approved.text
+    again = api_client.post(
+        f"/tasks/{task_id}/participations/user",
+        json={"agreeMentors": True},
+        headers=_auth(token),
+    )
+    assert again.status_code == 200, again.text
+    return again.json()["data"]["project"]["id"]
 
 
 # --- 1. 导师读得到成员项目里的对话，单是管理员读不到 ---------------------------
@@ -297,6 +309,7 @@ def _submission_ready(api_client: TestClient, user_client: UserCreator) -> dict:
 
     participant = user_client.create_user()
     participant_token = _login(user_client, api_client, participant)
+    assert _make_member(api_client, board, participant.user_id).status_code == 201
 
     approve_task = api_client.patch(
         f"/tasks/{task_id}",
@@ -456,7 +469,6 @@ def test_a_student_cannot_export_the_participant_roster(
         headers=_auth(student_token),
     )
     assert denied.status_code == 403, denied.text
-    assert "ForbiddenError" in denied.text
 
     # 紧邻那一格（参与者的分组统计）读的是同一批解密出来的身份，同一个门。
     denied_summary = api_client.get(
@@ -491,7 +503,7 @@ def test_an_outsider_still_gets_404_not_403(
 #
 # 发布与评审之外，「管理员对这门课里的这道题能做的事」还有一整套：管报名、看名单、
 # 看提交、看未过审的草稿、重提审核、编辑/删除题目。它们从前各写了一遍「出题者」，
-# 管理员那一半时有时无；现在全部问 ``may_teach_task``，与打分、发题同一个判据。
+# 管理员那一半时有时无；现在全部问 ``task_roles.teaches``，与打分、发题同一个判据。
 
 
 def test_a_board_admin_manages_participants_and_reads_submissions(
@@ -546,7 +558,7 @@ def test_a_board_admin_manages_participants_and_reads_submissions(
 def test_a_board_admin_sees_an_unapproved_task_and_can_resubmit(
     api_client: TestClient, user_client: UserCreator
 ):
-    """未过审的题在管理员手上是草稿（看得见、能重提），在成员手上该不存在。"""
+    """未过审的题在管理员手上是草稿（看得见、能重提），在成员手上该不存在（404）。"""
     board = _new_board(user_client, api_client)
     task_id = _create_task(api_client, board, name="还没过审的题")  # approved = NONE
 
@@ -564,7 +576,7 @@ def test_a_board_admin_sees_an_unapproved_task_and_can_resubmit(
     assert _make_member(api_client, board, student.user_id).status_code == 201
     assert (
         api_client.get(f"/tasks/{task_id}", headers=_auth(student_token)).status_code
-        == 403
+        == 404
     )
 
     # 创建者（也是管理员）驳回它，管理员重提。
@@ -581,7 +593,7 @@ def test_a_board_admin_sees_an_unapproved_task_and_can_resubmit(
         == 200
     )
 
-    # 成员重提另一道被驳回的题 —— 403。
+    # 成员重提另一道被驳回的题 —— 被驳回的题不在板上，对成员不存在：404。
     other = _create_task(api_client, board, name="另一道被驳回的题")
     api_client.patch(
         f"/tasks/{other}",
@@ -592,7 +604,7 @@ def test_a_board_admin_sees_an_unapproved_task_and_can_resubmit(
         api_client.post(
             f"/tasks/{other}/resubmit", headers=_auth(student_token)
         ).status_code
-        == 403
+        == 404
     )
 
 

@@ -9,14 +9,17 @@ import dayjs from 'dayjs'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import TaskDescription from '@/components/tasks/TaskDescription.vue'
+import { userName } from '@/lib/agentNames'
 
-const props = defineProps<{ task: Task; open: boolean }>()
+/** `showSpace`：几个空间的题排在一起时（平台管理员的待审核题目），每行写上它在哪个空间。 */
+const props = defineProps<{ task: Task; open: boolean; showSpace?: boolean }>()
 defineEmits<{ toggle: []; approve: []; reject: [] }>()
 
 const { t } = useI18n()
 
 const date = (at: number) => dayjs(at).format('MM-DD HH:mm')
-const publisher = computed(() => props.task.creator.nickname || props.task.creator.username)
+// `userName` 已经退到账号，不再另加兜底。
+const publisher = computed(() => userName(props.task.creator))
 const bodyId = computed(() => `audit-task-${props.task.id}`)
 
 /** 这道题的几项设置，一项一句，排成一行。 */
@@ -29,7 +32,9 @@ const facts = computed(() => {
       ? t(
           task.teamLockingPolicy === 'NO_LOCK'
             ? 'spaces.detail.auditTasks.teamLockingPolicyNoLock'
-            : 'spaces.detail.auditTasks.teamLockingPolicyLockOnApproval'
+            : task.startMode === 'DIRECT'
+              ? 'spaces.detail.auditTasks.teamLockingPolicyLockOnStart'
+              : 'spaces.detail.auditTasks.teamLockingPolicyLockOnApproval'
         )
       : '',
     task.requireRealName ? t('spaces.detail.auditTasks.requireRealName') : '',
@@ -46,6 +51,7 @@ const facts = computed(() => {
         <span class="ar__name">{{ task.name }}</span>
         <span v-if="task.intro" class="ar__intro">{{ task.intro }}</span>
         <span class="ar__meta">
+          <span v-if="showSpace && task.space?.name">{{ task.space.name }}</span>
           <span>{{ t('spaces.detail.auditTasks.by', { name: publisher }) }}</span>
           <span>{{ date(task.createdAt) }}</span>
           <span v-if="task.category" class="ar__tag">{{ task.category.name }}</span>
@@ -57,7 +63,14 @@ const facts = computed(() => {
         <span>{{
           task.deadline == null
             ? t('spaces.detail.auditTasks.noDeadline')
-            : t('spaces.detail.auditTasks.deadline', { date: date(task.deadline) })
+            : t(
+                task.startMode === 'APPLY'
+                  ? 'spaces.detail.auditTasks.applyDeadline'
+                  : 'spaces.detail.auditTasks.deadline',
+                {
+                  date: date(task.deadline),
+                }
+              )
         }}</span>
         <v-icon :icon="open ? 'mdi-chevron-up' : 'mdi-chevron-down'" size="18" class="ar__chevron" />
       </span>

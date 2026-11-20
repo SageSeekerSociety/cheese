@@ -179,9 +179,8 @@ def open_tunnel(
     host = parsed.hostname or ""
     port = parsed.port or (443 if secure else 80)
     path = parsed.path or "/"
-    query = f"token={token}"
     if parsed.query:
-        query = f"{parsed.query}&{query}"
+        path = f"{path}?{parsed.query}"
 
     raw = socket.create_connection((host, port), timeout=_HANDSHAKE_TIMEOUT_S)
     # Separate TLS records must not wait for the preceding packet's delayed ACK.
@@ -195,8 +194,9 @@ def open_tunnel(
 
     key = base64.b64encode(secrets.token_bytes(16)).decode()
     request = (
-        f"GET {path}?{query} HTTP/1.1\r\n"
+        f"GET {path} HTTP/1.1\r\n"
         f"Host: {host}\r\n"
+        f"Authorization: Bearer {token}\r\n"
         "Upgrade: websocket\r\n"
         "Connection: Upgrade\r\n"
         f"Sec-WebSocket-Key: {key}\r\n"

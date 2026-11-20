@@ -45,7 +45,9 @@ def test_todo_write_still_says_what_it_said_before() -> None:
 
 def test_the_room_rule_and_the_tool_agree_that_every_step_is_written() -> None:
     """会话读的是系统提示词那一段、工具表读的是上面那段，两处说同一件事。"""
-    from app.domain.agent.harness.prompt import TODO_WRITE
+    from app.domain.prompts import piece
+
+    TODO_WRITE = piece("system/todo_write")
 
     assert re.search(r"别只在开工和收尾两头写", TODO_WRITE)
     assert "每做完一步" in TODO_WRITE.replace("\n", "")

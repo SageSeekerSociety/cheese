@@ -234,10 +234,6 @@ async def list_screens(hub: pkg.DeviceHub, device_id: str) -> list[dict[str, Any
     return await hub.session_request(device_id, {"t": "session.list"})
 
 
-def screen_by_token(hub: pkg.DeviceHub, token: str) -> HubScreen | None:
-    return hub._by_screen_token.get(token)
-
-
 def screen(hub: pkg.DeviceHub, sid: str) -> HubScreen | None:
     return hub._screens.get(sid)
 

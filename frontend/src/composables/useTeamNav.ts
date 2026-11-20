@@ -1,18 +1,16 @@
 // 首页那一格目录的判断：取数、写回、盯路由。
 //
-// `views/home/HomeNav.vue` 只吃 props 出事件（A 档），四个弹窗也只吃 props 出事件；
+// `views/home/HomeNav.vue` 只吃 props 出事件（A 档），三个弹窗也只吃 props 出事件；
 // 真去问后端、真去跳地址、真去确认「退不退得掉」的都在这一层。两端（桌面侧栏
 // `HomeSidebar`、手机整页 `HomeHub`）各挂一份目录，判断只有这一份。
 import type { SpaceLink, Team, TeamMember } from '@/types'
 
 import { computed, onScopeDispose, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 import { useEventListener } from '@vueuse/core'
 import { useQuery } from '@tanstack/vue-query'
 
 import { awaitingCount } from '@/composables/useAwaitingCount'
-import { useJoinSpace } from '@/composables/useJoinSpace'
 
 import { createAvatar } from '@/api/avatars'
 import { onAwaitingChanged } from '@/api/awaitingChanged'
@@ -20,6 +18,7 @@ import { SpacesApi } from '@/api/spaces'
 import { onSpacesChanged } from '@/api/spacesChanged'
 import { TeamsApi } from '@/api/teams'
 import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 import { useDialog } from '@/plugins/dialog'
 import { patchQuery, queryClient } from '@/query/client'
 import { mySpacesQuery, myTeamsQuery } from '@/query/homeNav'
@@ -100,34 +99,42 @@ export function useTeamNav(options: { active?: () => boolean } = {}) {
 
   const awaiting = awaitingCount()
 
-  // ---- 用邀请码加入空间：问后端、成了进那个空间，和待办页共用 `useJoinSpace`。
-  const {
-    open: joinOpen,
-    busy: joinBusy,
-    error: joinError,
-    join: joinSpace,
-  } = useJoinSpace(() => void spacesRead.refetch())
-
   // ---- 新建空间：提交以后就是一份待审核的申请，落到那份申请上。侧栏那一组由
   // `onSpacesChanged` 重读，这里不用管。
   const createOpen = ref(false)
   const createBusy = ref(false)
+  // 弹窗里那一句失败：服务端回绝了就说它自己那句话（「这个空间名称已被占用」这类，
+  // 人照着能改），没回绝（网络断了、未知错误）才说上一行那句「稍后重试」。
   const createError = ref('')
   watch(createOpen, (open) => {
-    if (open) createError.value = ''
+    if (!open) return
+    createError.value = ''
   })
   async function createSpace(payload: { name: string; intro: string; avatarFile?: File }) {
     const name = payload.name.trim()
     if (createBusy.value || !name) return
     createBusy.value = true
     createError.value = ''
+    const fail = async (e: unknown, fallback: string) => {
+      createError.value = await errorHandler.explain(e instanceof Error ? e : new Error(String(e)), fallback)
+    }
+    // 上传头像和创建空间分开 catch：举不上去和存不下是两件事，说的话也不一样。
+    // 合成一句「创建失败，稍后重试」时，人只会照着重试同一张图。
+    let avatarId: number | undefined
     try {
-      const avatarId = payload.avatarFile ? (await createAvatar(payload.avatarFile)).avatarId : undefined
+      if (payload.avatarFile) {
+        try {
+          avatarId = (await createAvatar(payload.avatarFile)).avatarId
+        } catch (e) {
+          await fail(e, t('spaces.create.avatarFailed'))
+          return
+        }
+      }
       const { space } = await SpacesApi.create({ name, intro: payload.intro.trim(), avatarId })
       createOpen.value = false
       void router.push({ name: 'HomeSpaceApplication', params: { spaceId: String(space.id) } })
-    } catch {
-      createError.value = t('spaces.create.failed')
+    } catch (e) {
+      await fail(e, t('spaces.create.failed'))
     } finally {
       createBusy.value = false
     }
@@ -248,10 +255,6 @@ export function useTeamNav(options: { active?: () => boolean } = {}) {
     spaces,
     awaiting,
     currentHandle,
-    joinOpen,
-    joinBusy,
-    joinError,
-    joinSpace,
     createOpen,
     createBusy,
     createError,

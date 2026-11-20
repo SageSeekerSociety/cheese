@@ -57,12 +57,12 @@ def off_the_street(client):
     client normally carries on every request. ``authorize_project`` lets a valid
     sandbox token through as a development credential, so leaving that header on
     would test the trusted path and call it anonymous."""
-    saved = client.headers.pop("X-Cheese-Token", None)
+    saved = client.headers.pop("Authorization", None)
     try:
         yield client
     finally:
         if saved is not None:
-            client.headers["X-Cheese-Token"] = saved
+            client.headers["Authorization"] = saved
 
 
 def _project(client) -> tuple[int, str]:

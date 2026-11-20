@@ -3,7 +3,13 @@
  * 「芝士」（`/users/settings/assistant`）。取数、保存在这里，画法在同目录的
  * `AssistantView.vue`。勾选、添加、删除一条、改一条记忆都是改一下存一下。
  */
-import type { AssistantActivityItem, AssistantMemory, AssistantRoutine, AssistantRules } from '@/api'
+import type {
+  AssistantActivityItem,
+  AssistantMemory,
+  AssistantRoutine,
+  AssistantRoutineForm,
+  AssistantRules,
+} from '@/api'
 
 import { onMounted, ref } from 'vue'
 
@@ -13,6 +19,7 @@ import AssistantView from './AssistantView.vue'
 
 import {
   clearAssistantMemory,
+  createAssistantRoutine,
   deleteAssistantMemoryItem,
   getAssistantActivity,
   getAssistantMemory,
@@ -22,6 +29,7 @@ import {
   saveAssistantRules,
   setAssistantMemoryEnabled,
   setAssistantRoutine,
+  updateAssistantRoutine,
 } from '@/api'
 import { t } from '@/i18n'
 import { openAgentConversation } from '@/stores/agent'
@@ -29,7 +37,6 @@ import { openAgentConversation } from '@/stores/agent'
 const rules = ref<AssistantRules | null>(null)
 const memory = ref<AssistantMemory | null>(null)
 const routines = ref<AssistantRoutine[]>([])
-const routineLimit = ref(0)
 const recent = ref<AssistantActivityItem[]>([])
 const loading = ref(true)
 const failed = ref(false)
@@ -54,7 +61,6 @@ async function load() {
     memory.value = kept
     recent.value = done.items
     routines.value = mine.routines
-    routineLimit.value = mine.limit
   } catch {
     failed.value = true
   } finally {
@@ -112,11 +118,27 @@ async function remembered(call: () => Promise<AssistantMemory>) {
   })
 }
 
-async function routine(id: string, action: 'pause' | 'resume' | 'delete') {
+async function routine(id: string, action: 'pause' | 'resume' | 'delete' | 'run-now') {
   await run(async () => {
     const now = await setAssistantRoutine(id, action)
     routines.value = now.routines
   })
+}
+
+/** The form: one rule saved, or one changed. The backend fills whatever was
+ *  left blank in it before the rule runs. */
+async function saveRoutine(id: string | null, body: AssistantRoutineForm): Promise<string> {
+  let said = ''
+  await run(async () => {
+    try {
+      const now = id ? await updateAssistantRoutine(id, body) : await createAssistantRoutine(body)
+      routines.value = now.routines
+    } catch (e) {
+      said = e instanceof Error ? e.message : String(e)
+      throw e
+    }
+  })
+  return said
 }
 </script>
 
@@ -125,7 +147,6 @@ async function routine(id: string, action: 'pause' | 'resume' | 'delete') {
     :rules="rules"
     :memory="memory"
     :routines="routines"
-    :routine-limit="routineLimit"
     :recent="recent"
     :loading="loading"
     :failed="failed"
@@ -137,6 +158,7 @@ async function routine(id: string, action: 'pause' | 'resume' | 'delete') {
     @add-item="addItem"
     @remove-item="removeItem"
     @routine="routine"
+    @save-routine="saveRoutine"
     @memory-enabled="(on: boolean) => remembered(() => setAssistantMemoryEnabled(on))"
     @memory-edit="(name: string, d: string, text: string) => remembered(() => saveAssistantMemoryItem(name, d, text))"
     @memory-delete="(name: string) => remembered(() => deleteAssistantMemoryItem(name))"

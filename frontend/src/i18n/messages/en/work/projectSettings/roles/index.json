@@ -1,6 +1,4 @@
 {
-  "intro": "What each role can do. The owner has every permission; team owners and team admins are admins",
-  "readOnly": "Only admins can change this",
   "locked": "This cannot be changed, so the project always has someone to manage it",
   "reset": "Restore defaults",
   "role": {
@@ -31,19 +29,17 @@
     "comment": "Comment",
     "configure_agents": "Configure AI teammates"
   },
-  "permHint": {
-    "manage_members": "Invite people into the project and remove them",
-    "change_roles": "Make people members or mentors; only the owner makes someone an admin",
-    "edit_settings": "Address, default model, environment, repository and merge rules, project site, importing skills",
-    "export_project": "Download the project's conversations, documents and files",
-    "create_channels": "Create public or private channels and add people to channels you are in",
-    "manage_channels": "Edit, archive and delete channels without being their admin, and join private channels",
-    "speak": "Send messages and replies",
-    "ask_agent": "Have {agent} answer questions, write documents and do work",
-    "tasks": "Hand work to {agent} as tasks, review what they return, and reopen closed tasks",
-    "edit_content": "Create, edit and delete documents and files, and save them to the library",
-    "share_documents": "Create and take back a document's read-only link, which people outside the project can read",
-    "comment": "Comment on documents",
-    "configure_agents": "Add and retire AI teammates, and manage skills, MCP servers and shared memory"
-  }
+  "holders": "{n} people",
+  "create": "New role",
+  "createSubmit": "Create",
+  "nameLabel": "Role name",
+  "copyFrom": "Copy permissions from",
+  "template": "Template",
+  "rename": "Rename",
+  "renameSubmit": "Save",
+  "delete": "Delete role",
+  "deleteTitle": "Delete the role \"{name}\"?",
+  "deleteSubmit": "Delete",
+  "moveTo": "Move its {n} people to",
+  "actions": "Actions for \"{name}\""
 }

@@ -1,10 +1,12 @@
 {
   "csv": "CSV spreadsheet",
   "document": "Document",
+  "image": "Image",
   "file": "File",
   "sheet": "Spreadsheet",
   "slides": "Slides",
   "vector": "Vector image",
   "webPage": "Web page",
-  "word": "Word document"
+  "word": "Word document",
+  "text": "Text"
 }

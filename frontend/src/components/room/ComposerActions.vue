@@ -26,8 +26,10 @@ import { t } from '@/i18n'
 const props = defineProps<{
   /** 附件还在上传：那一刻发不出去，灰着而不是把字吞掉。 */
   uploading: boolean
-  /** 现在能不能发（有字或者有附件）。 */
+  /** 现在能不能发（有字、有附件，或者攒着待发批注）。 */
   canSend: boolean
+  /** 攒着几条待发批注：发送键上写清这一下带几条。 */
+  pendingCount?: number
   /** 「+」里有没有「照片或视频」——桌面上贴一张截图或者拖进来就完事了。 */
   showImagePicker: boolean
   /** 回车是发送（触摸屏上是换行），这一行的间距跟着它走。 */
@@ -175,11 +177,24 @@ function onSend() {
   if (props.voice === 'recording') emit('voice-done')
   else if (!voiceOpen.value) emit('send')
 }
+/** 这一颗键上写什么字。只有攒着待发批注时才带字（其余时候是图标，见模板）。 */
 const sendLabel = computed(() => {
   if (props.voice === 'recording') return t('work.room.composer.voice.done')
   if (props.voice === 'thinking') return t('work.room.composer.voice.thinking')
-  return props.uploading ? t('work.room.composer.sendUploading') : t('work.room.composer.send')
+  if (props.uploading) return t('work.room.composer.sendUploading')
+  if (props.pendingCount && props.pendingCount > 0)
+    return t('work.room.preview.sendWithNotes', { count: props.pendingCount })
+  return t('work.room.composer.send')
 })
+/** 这一颗键此刻显示文字还是图标：对着「键上那句话此刻是不是真话说得出口的」——只有
+ *  攒着待发批注、且没有别的状态在用它的时候才带字。录音时它是「✓ 说完了」、整理中转
+ *  圈、上传时按不动，那几步各说各的，带上「发送（含 N 条批注）」会和它们抢同一块地方。
+ *
+ *  判据从 `sendLabel` 反推（键上那句话此刻是不是 `sendWithNotes` 那一句），不另写一遍
+ *  那几个状态——两处各写一遍迟早会漂。 */
+const pendingLabel = computed(() =>
+  !voiceOpen.value && !props.uploading && !!props.pendingCount && props.pendingCount > 0 ? sendLabel.value : ''
+)
 // 整理中不禁用：禁用的键会褪成灰色，而这一刻它是唯一在说「机器正在做」的地方，要保持琥珀色
 // 转圈。点它什么也不做（onSend 里拦着），读屏由 aria-disabled 说明。
 const sendDisabled = computed(() => {
@@ -279,10 +294,13 @@ const sendDisabled = computed(() => {
         :aria-label="t('work.room.composer.stop')"
         @click="emit('stop')"
       />
+      <!-- 攒着待发批注时这颗键带字（`发送（含 N 条批注）`）：只写进 title 的话，
+           读者在按下之前看不到这一下会带走几条。其余时候仍是纯图标。 -->
       <BaseButton
         v-else
         v-guide-anchor="guided ? 'composer-send' : ''"
         class="composer-send"
+        :class="{ 'composer-send--labelled': pendingLabel }"
         kind="primary"
         size="sm"
         :title="sendLabel"
@@ -291,7 +309,8 @@ const sendDisabled = computed(() => {
         :aria-disabled="voice === 'thinking' ? 'true' : undefined"
         @click="onSend"
       >
-        <span class="composer-send__face">
+        <span v-if="pendingLabel" class="composer-send__label">{{ pendingLabel }}</span>
+        <span v-else class="composer-send__face">
           <v-icon :class="{ 'composer-send__icon--off': voiceOpen }" size="16">mdi-send</v-icon>
           <v-icon :class="{ 'composer-send__icon--off': voice !== 'recording' }" size="18">mdi-check</v-icon>
           <span
@@ -339,6 +358,16 @@ const sendDisabled = computed(() => {
 .composer-send {
   min-width: 0;
   padding: 0;
+}
+/* 带字的时候不再固定 28px 的方：让那颗键按字长出来。 */
+.composer-send--labelled {
+  width: auto;
+  padding: 0 10px;
+}
+.composer-send__label {
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
 }
 /* 「+」打开时转成 ×：同一颗按钮，开和关是一件事的两头。 */
 .composer-plus :deep(.v-icon) {

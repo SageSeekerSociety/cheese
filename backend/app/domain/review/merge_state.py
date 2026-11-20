@@ -489,7 +489,7 @@ def compute_merge_state(
                 reasons=(
                     MergeReason(
                         kind="no_signal",
-                        detail="GitHub 尚未计算出 PR 的合并状态",
+                        detail="代码托管服务尚未算出 PR 能否合并",
                     ),
                 ),
             )

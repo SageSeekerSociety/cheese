@@ -51,7 +51,7 @@ const ARG_KEY: Record<string, string> = {
   ls: 'path',
   find: 'pattern',
   grep: 'pattern',
-  // 平台工具表里的工具，和 pi 房间里由 CLI 命令变成的工具。
+  // 平台工具表里的工具，和旧记录里 pi 房间曾当工具调的 CLI 命令。
   chat_send: 'content',
   'cheese_chat.edit': 'content',
   'cheese_chat.search': 'query',
@@ -59,8 +59,8 @@ const ARG_KEY: Record<string, string> = {
   'cheese_task.open': 'title',
   'cheese_task.close': 'conclusion',
   'cheese_task.state': 'note',
-  cheese_fetch: 'url',
-  cheese_web_search: 'query',
+  'cheese_web.fetch': 'url',
+  'cheese_web.search': 'query',
   cheese_decision: 'text',
   'cheese_room.rename': 'text',
   cheese_notify: 'title',

@@ -68,11 +68,13 @@ def _dispatch(client, room_id: str, title: str) -> str:
     opened = client.post(
         f"/projects/{room['project_id']}/git/tasks/{task_id}",
         headers={
-            "X-Cheese-Token": mint_scoped_token(
-                project_id=room["project_id"],
-                topic_id=task_id,
-                agent_handle=room_agent_seat(client, room_id),
-            )
+            "Authorization": f"Bearer {
+                mint_scoped_token(
+                    project_id=room['project_id'],
+                    topic_id=task_id,
+                    agent_handle=room_agent_seat(client, room_id),
+                )
+            }"
         },
     )
     assert opened.status_code == 200, opened.text
@@ -87,9 +89,9 @@ def _file_card(client, room_id: str, subject: str, tasks: list[str] | None = Non
         f"/topics/{tasks[0]}/accept-card",
         # Filed by that task's own session.
         headers={
-            "X-Cheese-Token": mint_scoped_token(
-                project_id=project_id, topic_id=str(tasks[0])
-            )
+            "Authorization": f"Bearer {
+                mint_scoped_token(project_id=project_id, topic_id=str(tasks[0]))
+            }"
         },
         json={
             **delivery_artifact(client, room_id),
@@ -303,7 +305,9 @@ def test_work_from_another_room_cannot_be_signed_onto_this_change(client):
 
     r = client.post(
         f"/topics/{theirs}/accept-card",
-        headers={"X-Cheese-Token": mint_scoped_token(project_id=pid, topic_id=room)},
+        headers={
+            "Authorization": f"Bearer {mint_scoped_token(project_id=pid, topic_id=room)}"
+        },
         json={
             "change_subject": "feat: claim someone else's work",
             "reviewer_handle": "alice",

@@ -1,9 +1,8 @@
 // Answering an offer to take a project over, from its row in 等你处理 (#3830): the
 // call and its toasts live here, the row only clicks.
-import { toast } from 'vuetify-sonner'
-
 import { respondToTransfer } from '@/api'
 import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 
 export function useProjectTransferAnswer() {
   /** Answers the offer; true when the server took the answer. */

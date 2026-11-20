@@ -63,10 +63,13 @@ def test_a_member_edits_and_a_mentor_only_suggests(client):
 def test_a_mentor_without_the_comment_permission_only_reads(client):
     p, doc = _doc(client)
     _invite(client, p, "teacher", "mentor")
-    grants = client.get(f"/projects/{p}/roles", headers=ALICE).json()["data"]["grants"]
-    without = [g for g in grants["mentor"] if g != "comment"]
-    changed = client.put(
-        f"/projects/{p}/roles", json={"grants": {"mentor": without}}, headers=ALICE
+    roles = client.get(f"/projects/{p}/roles", headers=ALICE).json()["data"]["roles"]
+    mentor = next(r for r in roles if r["template"] == "mentor")
+    without = [g for g in mentor["permissions"] if g != "comment"]
+    changed = client.patch(
+        f"/projects/{p}/roles/{mentor['key']}",
+        json={"permissions": without},
+        headers=ALICE,
     )
     assert changed.status_code == 200, changed.text
 

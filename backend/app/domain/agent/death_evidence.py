@@ -38,29 +38,36 @@ async def refresh(session, compute, live: LiveWork) -> None:
     field, another conversation's success — is unknown, and unknown is left
     out: zero recovered sessions is exactly the case this still runs for.
     """
+    # Each round's evidence, once: asked per pointer, it was every runtime's
+    # whole set scanned for every session ever given a resume token, and the
+    # sessions read whole (their leases and requests decoded) to get three
+    # columns: up to 850 ms with the event loop held, at a takeover and again
+    # on device reconnects. Only the pointers the evidence names can change.
+    found = compute.found_pairs()
+    terminal = compute.terminal_pairs()
+    named = {token for _, token in found | terminal}
+    if not named:
+        return
     pointers = (
-        (
-            await session.execute(
-                select(AgentSession).where(AgentSession.resume_token.is_not(None))
-            )
+        await session.execute(
+            select(
+                AgentSession.conversation_id,
+                AgentSession.agent_handle,
+                AgentSession.resume_token,
+            ).where(AgentSession.resume_token.in_(named))
         )
-        .scalars()
-        .all()
-    )
-    for pointer in pointers:
+    ).all()
+    for conversation_id, agent_handle, resume_token in pointers:
+        seat_token = ((conversation_id, agent_handle), resume_token)
         key: tuple[uuid.UUID, str, str] = (
-            pointer.conversation_id,
-            pointer.agent_handle,
-            pointer.resume_token,
+            conversation_id,
+            agent_handle,
+            resume_token,
         )
-        if pointer.resume_token in compute.found_conversations(
-            pointer.conversation_id, pointer.agent_handle
-        ):
+        if seat_token in found:
             live.dead_sessions.discard(key)
             continue
-        if pointer.resume_token in compute.terminal_conversations(
-            pointer.conversation_id, pointer.agent_handle
-        ):
+        if seat_token in terminal:
             live.dead_sessions.add(key)
 
 

@@ -78,7 +78,10 @@
     "alerting": "Alert channel",
     "database": "Database",
     "event_loop": "Event loop",
+    "feedback_announce": "Feedback announcements",
+    "feedback_triage": "Feedback triage",
     "note": "This moment only — not stock, not a window. Same checks as /health/detailed.",
+    "periodic_jobs": "Periodic jobs",
     "redis": "Redis",
     "routes": "Route modules",
     "title": "Platform health"

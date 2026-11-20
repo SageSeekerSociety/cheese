@@ -9,6 +9,7 @@ from app.domain.machine.models import (
     CloudHost,
     MachineStatus,
     SandboxHome,
+    sandbox_image_ready,
 )
 
 # What a tool waiting on its cloud sandbox is told.
@@ -32,17 +33,44 @@ VM_ERROR = "虚拟机沙箱出错：供应方报告错误。对话和平台工�
 # with its host (``HostPool._fail``). Either records it under ``LOST_KEY`` in
 # the session's ``execution_request``.
 SANDBOX_LOST = (
-    "沙箱环境已换成新的。每次停下时的检查点存下的东西都还在：已推送的提交在任务"
-    "分支上，当时没提交的改动和未跟踪文件在平台快照里，用 "
-    'cd "$(cheese worktree <任务 id>)" 重新打开任务目录时自动放回，并说明放回了'
-    "什么。检查点之后才做的改动、依赖和缓存、生成目录、/tmp、正在运行的进程不在"
-    "了，需要的重新做、重新安装、重新启动。"
+    "沙箱环境已换成新的。只有推上去的提交还在，在任务分支上，用 "
+    'cd "$(cheese worktree <任务 id>)" 重新打开任务目录。没提交的改动、没推的'
+    "提交、依赖和缓存、/tmp、正在运行的进程都不在了，需要的重新做、重新安装、"
+    "重新启动。"
+)
+# The same, in a project whose repository the platform hosts: what a task
+# checkout had not committed was kept off the sandbox (`repository.kept_work`)
+# and comes back with the checkout.
+SANDBOX_LOST_KEPT = (
+    "沙箱环境已换成新的。推上去的提交在任务分支上；任务目录里没提交的改动由平台"
+    '保存着，用 cd "$(cheese worktree <任务 id>)" 重新打开任务目录时会原样放回，'
+    "仍是没提交的改动。没推的提交、任务目录以外的文件、装过的依赖和缓存、/tmp、"
+    "正在运行的进程都不在了，需要的重新做、重新安装、重新启动。"
+)
+# Said after it when the kept changes were cut from a head the task's branch
+# has moved past: a new checkout leaves them out rather than guess a merge.
+KEPT_NOT_LAID_BACK = (
+    "{at} 保存的没提交的改动不会放回：保存时所在的提交已不是任务分支的最新提交"
+    "（之后分支有了新提交，或那个提交没推上去），平台没有替你合并。它们在 {ref}"
+    "（提交 {commit}），打开任务目录后用 git diff HEAD {commit} 查看，需要的对照"
+    "着重做。"
 )
 # The same, for a sandbox in no project (``holder.Personal``): nothing of it
 # was checkpointed, so nothing comes back.
 SANDBOX_REPLACED = (
     "沙箱环境已换成新的。之前的文件、装过的软件和正在运行的进程都不在了，需要的重新"
     "生成、重新安装、重新启动。"
+)
+# What was running in the sandbox when it was destroyed, said after the notice
+# above: one command line a line, as the host read them before stopping the
+# executor (``sandbox_home.destroy``). Left out when there was nothing to name
+# or the host could not read it, so the notice reads as it always did.
+STOPPED_PROCESSES = "停掉的进程：\n{processes}"
+# A sandbox parked while its session was away (``lifecycle._park``), started
+# again where it was.
+SANDBOX_RESUMED = (
+    "沙箱空闲太久，停过一段时间，现在在原来的位置重新启动了。目录里的文件都还在："
+    "代码、没推的提交、装好的依赖都在；之前运行的进程都停了，需要的后台服务重新启动。"
 )
 
 
@@ -57,17 +85,7 @@ async def _home_removed(db, session_id) -> bool:
 
 async def _cloud_progress(db, hub, host_id) -> str | bool:
     """Where the host of the session's sandbox is on its way to being usable."""
-    host = (
-        await db.execute(
-            select(
-                CloudHost.status,
-                CloudHost.device_id,
-                CloudHost.enroll_attempts,
-                CloudHost.released_at,
-                CloudHost.whole_machine,
-            ).where(CloudHost.id == host_id)
-        )
-    ).one_or_none()
+    host = await db.get(CloudHost, host_id)
     if host is None or host.released_at:
         # The pool let go of it; the next attempt places the session again.
         return True
@@ -88,4 +106,4 @@ async def _cloud_progress(db, hub, host_id) -> str | bool:
     if host.status in GONE:
         # Gone upstream: the next attempt forgets it and places the session.
         return True
-    return hub.is_online(host.device_id)
+    return hub.is_online(host.device_id) and sandbox_image_ready(host)

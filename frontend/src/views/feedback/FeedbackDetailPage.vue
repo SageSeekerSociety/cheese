@@ -3,7 +3,6 @@ import type { FeedbackDetail } from '@/cx_types'
 
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 
 import { useFeedbackAttachmentImages } from '@/composables/useFeedbackAttachmentImages'
 
@@ -13,6 +12,7 @@ import { ApiError, getFeedback } from '@/api'
 import { claimFeedback, type FeedbackClaimFlags, releaseFeedback } from '@/api/feedbackClaim'
 import { t } from '@/i18n'
 import { closeOverlay } from '@/lib/backOut'
+import { toast } from '@/lib/toast'
 import { useFeedbackStore } from '@/stores/feedback'
 
 // 公开反馈详情页 (/feedback/:id)。

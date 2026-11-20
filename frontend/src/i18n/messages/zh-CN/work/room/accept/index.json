@@ -1,6 +1,5 @@
 {
   "acceptAction": "采纳",
-  "acceptAndComplete": "采纳并完成任务",
   "accepted": "已采纳",
   "approve": "批准",
   "approvedCount": "{done}/{total} 已批准",
@@ -46,5 +45,19 @@
   "voidReason": "作废理由（可选）",
   "waitingOn": "待 {'@'}{name} 审阅",
   "waitingOnYou": "待你审阅",
-  "youApproved": "你已批准"
+  "youApproved": "你已批准",
+  "handIn": {
+    "unhanded": "有未提交的修改",
+    "submit": "提交审阅",
+    "resubmit": "再提交一版",
+    "submitAndAdopt": "提交并采纳",
+    "note": "说明",
+    "drafting": "正在起草",
+    "body": "补充说明",
+    "files": "改动的文件",
+    "reviewer": "审阅",
+    "you": "{name}（你）",
+    "loadFailed": "无法读取这次的改动",
+    "submitFailed": "提交审阅失败"
+  }
 }

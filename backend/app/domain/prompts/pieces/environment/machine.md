@@ -1,0 +1,1 @@
+- 这台机器：内存 ⟦slot:gb⟧GB、⟦slot:cores⟧ 核。吃内存的命令（前端 build/typecheck、大型编译）可能被内核 OOM 杀掉——那不是代码有问题，也不是工具链坏了。

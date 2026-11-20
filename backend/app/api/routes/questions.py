@@ -4,13 +4,14 @@ from fastapi import APIRouter, Body, Depends, Path, Query
 
 from app.api.deps import get_discussion_service
 from app.api.response import ok
-from app.api.write_access import ROUTE_DECIDES
-from app.auth.checker import require_auth_user, require_permission
-from app.auth.core import Action, AuthUserInfo, Resource
+from app.api.write_access import ROUTE_DECIDES, Can
+from app.auth.checker import require_auth_user
+from app.auth.core import AuthUserInfo
 from app.core.errors import BadRequestError, ForbiddenError, NotFoundError
 from app.db.session import get_db
 from app.domain.answers.repositories import AnswerRepository
 from app.domain.discussion.services import DiscussableModelType, DiscussionService
+from app.domain.questions.permissions import Permission as QuestionPermission
 from app.domain.questions.repositories import (
     QuestionInvitationRepository,
     QuestionRepository,
@@ -32,6 +33,7 @@ async def get_questions_service(db=Depends(get_db)) -> QuestionsService:
         topic_repo=topic_repo,
         answer_repo=answer_repo,
         profile_repo=profile_repo,
+        session=db,
     )
 
 
@@ -45,6 +47,7 @@ async def get_invitation_service(db=Depends(get_db)) -> QuestionInvitationServic
         question_repo=question_repo,
         profile_repo=profile_repo,
         answer_repo=answer_repo,
+        session=db,
     )
 
 
@@ -57,6 +60,10 @@ async def get_trending_questions(
     days: int = Query(default=7, ge=1, le=30),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
+    # 这个榜是公开的：未登录也读（`test_who_may_act_on_a_question` 钉着），而且
+    # agent 的凭据打到这里不认读者（`get_auth_user` 对限在某项目/房间上的票会
+    # 403），一个坏票又会被静默当成访客。它没有可靠的读者可认，就按公开昵称列
+    # —— 和任何一个未登录的人看到的一致。
     items = await service.get_trending_questions(limit=limit, days=days)
     return ok({"questions": items})
 
@@ -96,13 +103,13 @@ async def search_questions(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
-    _ = auth_user
     items, page = await service.search_questions(
         keyword=q,
         page_size=page_size,
         page_start=page_start,
         sort_by="createdAt",
         sort_order="desc",
+        viewer_id=auth_user.user_id if auth_user.user_id > 0 else None,
     )
     return ok({"questions": items, "page": page})
 
@@ -165,6 +172,7 @@ async def list_followed_questions(
         user_id=auth_user.user_id,
         page_size=pageSize,
         page_start=pageStart,
+        viewer_id=auth_user.user_id if auth_user.user_id > 0 else None,
     )
     return ok({"questions": items, "page": page})
 
@@ -222,7 +230,9 @@ async def unfollow_question(
 
 
 @router.put(
-    "/{question_id}/acceptance", summary="Accept Answer", dependencies=[ROUTE_DECIDES]
+    "/{question_id}/acceptance",
+    summary="Accept Answer",
+    dependencies=[Can(QuestionPermission.manage)],
 )
 async def accept_answer(
     question_id: Annotated[int, Path(ge=0)],
@@ -230,25 +240,21 @@ async def accept_answer(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
-    question = await service.accept_answer(
-        question_id=question_id, answer_id=answer_id, user_id=auth_user.user_id
-    )
+    question = await service.accept_answer(question_id=question_id, answer_id=answer_id)
     return ok({"question": question})
 
 
 @router.delete(
-    "/{question_id}/accept", summary="Unaccept Answer", dependencies=[ROUTE_DECIDES]
+    "/{question_id}/accept",
+    summary="Unaccept Answer",
+    dependencies=[Can(QuestionPermission.manage)],
 )
 async def unaccept_answer(
     question_id: Annotated[int, Path(ge=0)],
-    auth_user: AuthUserInfo = require_permission(
-        Action.ADMIN, Resource.QUESTION, "question_id"
-    ),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
-    question = await service.unaccept_answer(
-        question_id=question_id, user_id=auth_user.user_id
-    )
+    question = await service.unaccept_answer(question_id=question_id)
     return ok({"question": question})
 
 
@@ -383,7 +389,11 @@ async def delete_question_comment(
     return ok({"deleted": True})
 
 
-@router.put("/{question_id}", summary="Update Question", dependencies=[ROUTE_DECIDES])
+@router.put(
+    "/{question_id}",
+    summary="Update Question",
+    dependencies=[Can(QuestionPermission.manage)],
+)
 async def update_question(
     question_id: Annotated[int, Path()],
     payload: dict = Body(...),
@@ -423,14 +433,14 @@ async def update_question(
     "/{question_id}",
     summary="Delete Question",
     status_code=204,
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(QuestionPermission.manage)],
 )
 async def delete_question(
     question_id: Annotated[int, Path()],
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> None:
-    await service.delete_question(question_id=question_id, user_id=auth_user.user_id)
+    await service.delete_question(question_id=question_id)
 
 
 @router.get(
@@ -441,8 +451,11 @@ async def list_question_followers(
     question_id: Annotated[int, Path(ge=0)],
     page_start: int | None = Query(default=None, ge=0, alias="page_start"),
     page_size: int = Query(default=20, ge=1, le=100, alias="page_size"),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
+    # Who follows a question is read only signed in, as the question itself is.
+    _ = auth_user
     follower_ids, page = await service.list_followers(
         question_id=question_id,
         page_size=page_size,
@@ -468,7 +481,9 @@ async def follow_question_put(
 
 
 @router.put(
-    "/{question_id}/bounty", summary="Set Question Bounty", dependencies=[ROUTE_DECIDES]
+    "/{question_id}/bounty",
+    summary="Set Question Bounty",
+    dependencies=[Can(QuestionPermission.manage)],
 )
 async def set_question_bounty(
     question_id: Annotated[int, Path(ge=0)],
@@ -477,11 +492,7 @@ async def set_question_bounty(
     service: QuestionsService = Depends(get_questions_service),
 ) -> dict:
     bounty = int(payload.get("bounty", 0))
-    result = await service.set_bounty(
-        question_id=question_id,
-        user_id=auth_user.user_id,
-        bounty=bounty,
-    )
+    result = await service.set_bounty(question_id=question_id, bounty=bounty)
     return ok({"bounty": result["bounty"]})
 
 
@@ -552,6 +563,7 @@ async def list_question_invitations(
         question_id=question_id,
         page_start=page_start,
         page_size=page_size,
+        viewer_id=auth_user.user_id if auth_user.user_id > 0 else None,
     )
     return ok({"invitations": items, "page": page})
 
@@ -600,7 +612,11 @@ async def get_invitation_recommendations(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: QuestionInvitationService = Depends(get_invitation_service),
 ) -> dict:
-    users = await service.get_recommendations(question_id=question_id, limit=limit)
+    users = await service.get_recommendations(
+        question_id=question_id,
+        limit=limit,
+        viewer_id=auth_user.user_id if auth_user.user_id > 0 else None,
+    )
     return ok({"users": users})
 
 
@@ -615,7 +631,9 @@ async def get_invitation_detail(
     service: QuestionInvitationService = Depends(get_invitation_service),
 ) -> dict:
     invitation = await service.get_invitation(
-        question_id=question_id, invitation_id=invitation_id
+        question_id=question_id,
+        invitation_id=invitation_id,
+        viewer_id=auth_user.user_id if auth_user.user_id > 0 else None,
     )
     return ok({"invitation": invitation})
 
@@ -623,7 +641,7 @@ async def get_invitation_detail(
 @router.delete(
     "/{question_id}/invitations/{invitation_id}",
     summary="Delete Invitation",
-    dependencies=[ROUTE_DECIDES],
+    dependencies=[Can(QuestionPermission.manage)],
 )
 async def delete_invitation(
     question_id: Annotated[int, Path(ge=0)],
@@ -632,8 +650,6 @@ async def delete_invitation(
     service: QuestionInvitationService = Depends(get_invitation_service),
 ) -> dict:
     await service.delete_invitation(
-        question_id=question_id,
-        invitation_id=invitation_id,
-        user_id=auth_user.user_id,
+        question_id=question_id, invitation_id=invitation_id
     )
     return ok({"deleted": True})

@@ -9,6 +9,7 @@
 import type { ListedDocument } from '../api/projectDocuments'
 import type { LibraryEntry, LibraryFile, LibraryFolder, LibraryShelf } from '../lib/libraryApi'
 import type { Kind } from '../lib/libraryKinds'
+import type { LibrarySort } from '../lib/libraryQuery'
 
 import { computed, nextTick, type Ref, ref, watch } from 'vue'
 import { useEventListener } from '@vueuse/core'
@@ -17,6 +18,9 @@ import { listProjectDocuments } from '../api/projectDocuments'
 import { listTeamDocuments } from '../api/teamDocuments'
 import { listProjectLibrary } from '../lib/libraryApi'
 import { type MergeSource, starving, takeReady } from '../lib/rankMerge'
+
+import { keys } from '@/query/keys'
+import { fromSnapshot } from '@/query/snapshot'
 
 /** 一次往下摆这么多行。 */
 const PAGE = 50
@@ -33,6 +37,8 @@ export interface LibraryView {
   dir: string
   q: string
   kind: Kind
+  /** 排序框那一档；不给就是 `off`（这一页原本的顺序）。团队资料库那一页还没有这个框。 */
+  sort?: LibrarySort
 }
 
 type Item = LibraryEntry | (ListedDocument & { type: 'doc' })
@@ -54,7 +60,8 @@ function toRow(item: Item): LibraryRow {
 export function useLibraryPages(
   shelf: () => LibraryShelf,
   view: () => LibraryView,
-  scroller: Readonly<Ref<HTMLElement | null>>
+  scroller: Readonly<Ref<HTMLElement | null>>,
+  active: () => boolean = () => true
 ) {
   const rows = ref<LibraryRow[]>([])
   const loading = ref(false)
@@ -63,19 +70,28 @@ export function useLibraryPages(
   let sources: Source[] = []
   let generation = 0
 
-  function build(pid: LibraryShelf, { dir, q, kind }: LibraryView): Source[] {
+  function build(pid: LibraryShelf, { dir, q, kind, sort }: LibraryView): Source[] {
     const query = q.trim()
     const flat = !!query || kind !== 'all'
+    // 排了序就从头取：快照（和路由守卫预取的）记的是默认那一档的那一页。没给 `sort`
+    // 就是默认那一档——调用方不一定要写。
+    const fresh = !!sort && sort !== 'off'
     const library: Source = {
       buffer: [],
       done: false,
       next: null,
       fetch: async (cursor) => {
-        const page = await listProjectLibrary(pid, {
-          ...(flat ? { flat: true, q: query, kind: kind === 'all' ? undefined : kind } : { dir }),
-          cursor,
-          limit: PAGE,
-        })
+        const read = () =>
+          listProjectLibrary(pid, {
+            ...(flat ? { flat: true, q: query, kind: kind === 'all' ? undefined : kind } : { dir }),
+            ...(fresh ? { sort } : {}),
+            cursor,
+            limit: PAGE,
+          })
+        const page =
+          typeof pid === 'string' && !flat && cursor === null && !fresh
+            ? await fromSnapshot(keys.projectLibraryRoot(pid, dir), read)
+            : await read()
         return { rows: page.data, next: page.next }
       },
     }
@@ -89,7 +105,7 @@ export function useLibraryPages(
         done: false,
         next: null,
         fetch: async () => {
-          const page = await listTeamDocuments(team)
+          const page = await listTeamDocuments(team, sort)
           const rows = page.data.filter((doc) => !needle || (doc.title ?? '').toLocaleLowerCase().includes(needle))
           return { rows: rows.map((doc) => ({ ...doc, type: 'doc' as const })), next: null }
         },
@@ -103,7 +119,8 @@ export function useLibraryPages(
       done: false,
       next: null,
       fetch: async (cursor) => {
-        const page = await listProjectDocuments(pid, cursor, PAGE)
+        const read = () => listProjectDocuments(pid, cursor, PAGE, sort)
+        const page = cursor === null && !fresh ? await fromSnapshot(keys.projectDocumentsRoot(pid), read) : await read()
         return { rows: page.data.map((doc) => ({ ...doc, type: 'doc' as const })), next: page.next }
       },
     }
@@ -162,7 +179,7 @@ export function useLibraryPages(
     loading.value = false
     loadFailed.value = false
     loadReason.value = ''
-    void more()
+    if (active()) void more()
   }
 
   /** 摆完了：每一串都取完了，手里也都空了。 */
@@ -173,10 +190,20 @@ export function useLibraryPages(
 
   watch(
     // 团队的书架每次是一个新对象：按它是哪一个来比，不按是不是同一个对象。
-    () => [JSON.stringify(shelf()), view().dir, view().q.trim(), view().kind] as const,
+    () => [JSON.stringify(shelf()), view().dir, view().q.trim(), view().kind, view().sort] as const,
     () => reset(),
     { immediate: true }
   )
+
+  watch(active, (isActive) => {
+    if (!isActive) {
+      generation++
+      loading.value = false
+      return
+    }
+    if (!rows.value.length && !loading.value && !exhausted.value && !loadFailed.value) void more()
+    else void nextTick(fillIfShort)
+  })
 
   /** 一份文档在别处改了名：表里那一行跟着改，不必从头取。 */
   function renameDoc(id: string, title: string) {

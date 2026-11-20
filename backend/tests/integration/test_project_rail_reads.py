@@ -136,6 +136,7 @@ def test_weeklies_come_back_newest_first_and_carry_their_window(client):
         },
         "reactions": [],
         "created_at": _wire(NEWER),
+        "shown_as": None,
     }
 
 
@@ -214,6 +215,7 @@ def test_every_thread_comes_back_oldest_first_with_its_board_cell_and_card(clien
         "reviewer",
         "subject",
         "since",
+        "decided_by",
     }
     assert with_card["card"]["version"] == 1
     assert with_card["card"]["since"]
@@ -351,6 +353,23 @@ def test_a_decided_card_is_not_reported_as_waiting_for_review(client):
     }
 
 
+def test_a_returned_task_names_who_returned_it(client):
+    """被退回、还没人接着改的任务，第二行写「林老师已退回，修改中」：卡上带着
+    是谁退回的。"""
+    project = _project(client)
+    room = _room(client, project)
+    _carded_tasks(
+        client,
+        project,
+        room,
+        [{"status": AcceptStatus.rejected, "decided_by": "alice"}],
+    )
+
+    (row,) = _rows(client, project, "tasks")
+    assert row["presentation"]["phrase"] == NeedsYou.bounced
+    assert row["card"]["decided_by"] == "alice"
+
+
 def test_an_armed_auto_merge_counts_as_decided_too(client):
     """布防「绿了自动合」也是把这一步交出去了，判据和 `decided_by` 同一条。"""
     project = _project(client)
@@ -403,6 +422,7 @@ def test_an_unmirrored_pending_card_really_is_waiting_for_review(client):
         "reviewer": row["card"]["reviewer"],
         "subject": None,
         "since": row["card"]["since"],
+        "decided_by": None,
     }
 
 

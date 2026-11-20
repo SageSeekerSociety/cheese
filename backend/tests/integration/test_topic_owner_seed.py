@@ -226,7 +226,7 @@ def test_an_ai_teammate_cannot_turn_a_message_into_a_task(client):
     token = mint_scoped_token(project_id=p["id"], topic_id=room["id"])
 
     refused = client.post(
-        f"/blocks/{block_id}/upgrade", headers={"X-Cheese-Token": token}
+        f"/blocks/{block_id}/upgrade", headers={"Authorization": f"Bearer {token}"}
     )
 
     assert refused.status_code == 403

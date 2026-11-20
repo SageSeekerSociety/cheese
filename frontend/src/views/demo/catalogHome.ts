@@ -20,7 +20,6 @@ import CreateSpaceDialog from '@/views/home/CreateSpaceDialog.vue'
 import HomeHubView from '@/views/home/HomeHubView.vue'
 import HomeNav from '@/views/home/HomeNav.vue'
 import HomeSidebarView from '@/views/home/HomeSidebarView.vue'
-import JoinSpaceDialog from '@/views/home/JoinSpaceDialog.vue'
 import DisbandTeamDialog from '@/views/teams/DisbandTeamDialog.vue'
 import TransferTeamDialog from '@/views/teams/TransferTeamDialog.vue'
 
@@ -64,7 +63,6 @@ function navArgs(overrides: Record<string, unknown> = {}) {
     disbanding: null,
     transferring: null,
     transferCandidates: [] as TeamMember[],
-    joinOpen: false,
     createOpen: false,
     ...overrides,
   }
@@ -100,6 +98,19 @@ export const HOME_ENTRIES: CatalogEntry[] = [
         expect: '99+',
       },
       {
+        name: '桌面首页列出我的项目',
+        note: '桌面首页侧栏把我的项目列在团队上面，各带等我处理的件数（和侧栏头切换列表里同一份数）；「待办」那一行照旧在第一行。手机上不给 `projects`，这一段不画。',
+        props: {
+          inbox: true,
+          projects: [
+            { id: 'p-open-day', name: '开放日官网', to: '/projects/open-day', awaiting: 2 },
+            { id: 'p-cachelab', name: 'CacheLab 2026', to: '/projects/cachelab' },
+          ],
+          newProjectLabel: '新建项目',
+        },
+        expect: '开放日官网',
+      },
+      {
         name: '自己名下那几个项目',
         note: '自己名下那一个（`personal`）不当团队说：以自己的昵称单独一行，摆在「团队」小标题之上，展开后没有「成员」也没有「额度」，更没有那一行的 ⋯。',
         props: { teams: [OWN, CREW], currentHandle: 'linxia' },
@@ -124,7 +135,7 @@ export const HOME_ENTRIES: CatalogEntry[] = [
   {
     id: 'home-sidebar-view',
     title: 'HomeSidebarView',
-    about: '桌面首页那一格的侧栏：外面那只抽屉、「首页」那一行页头，和目录本体。',
+    about: '桌面首页那一格的侧栏：外面那只抽屉、待办那一行，和目录本体。',
     file: 'src/views/home/HomeSidebarView.vue',
     component: HomeSidebarView,
     needs: SIDEBAR_T,
@@ -134,7 +145,7 @@ export const HOME_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '桌面上常驻',
-        note: '和手机整页是同一份目录、同一套值，只是这里坐在抽屉里，顶上多一行「首页」。手机上这一份整个不画（`mdAndUp` 为假），那一格的整页是 `HomeHubView`。',
+        note: '和手机整页是同一份目录、同一套值，只是这里坐在抽屉里；侧栏头下面不画「首页」那一行（别的侧栏才有），去待办走目录自己那一行。手机上这一份整个不画（`mdAndUp` 为假），那一格的整页是 `HomeHubView`。',
         props: {},
         expect: '芝士核心组',
       },
@@ -158,37 +169,7 @@ export const HOME_ENTRIES: CatalogEntry[] = [
     ],
   },
 
-  // ---- 目录带的四个弹窗 ---------------------------------------------------------
-  {
-    id: 'join-space-dialog',
-    title: 'JoinSpaceDialog',
-    about: '用邀请码加入一个空间。加进去了就直接进那个空间 —— 留在原地等于什么都没发生。',
-    file: 'src/views/home/JoinSpaceDialog.vue',
-    component: JoinSpaceDialog,
-    needs: ['vuetify', 'i18n'],
-    teleport: true,
-    args: { modelValue: true },
-    states: [
-      {
-        name: '刚打开',
-        note: '框里空着，邀请码由空间的创建者给。这个弹窗自己不知道后端，按一下「加入」只把码报上去；真去问、成了往哪跳在 `useJoinSpace`（首页那份目录和待办页共用那一份）。',
-        props: {},
-        expect: '邀请码由空间的创建者提供',
-      },
-      {
-        name: '正在加入',
-        note: '主按钮转圈，这时候按不动第二下。',
-        props: { busy: true },
-        expectSelector: '.v-btn--loading',
-      },
-      {
-        name: '码不对、或者过期了',
-        note: '上一回没成的理由由外面给回来，画在输入框下面；画面上这一格留着不清，人还在这里改码。',
-        props: { error: '邀请码无效、已过期或已达使用上限' },
-        expect: '邀请码无效、已过期或已达使用上限',
-      },
-    ],
-  },
+  // ---- 目录带的三个弹窗 ---------------------------------------------------------
   {
     id: 'create-space-dialog',
     title: 'CreateSpaceDialog',
@@ -212,8 +193,14 @@ export const HOME_ENTRIES: CatalogEntry[] = [
         expectSelector: '.v-btn--loading',
       },
       {
-        name: '没建成',
-        note: '上一回没成的那一句由外面给回来，画在表单底下；填好的字还在。',
+        name: '没建成，服务端说了为什么',
+        note: '这句话由外面给回来，画在表单底下；填好的字还在。服务端回绝时说它自己那一句，人照着能改。',
+        props: { error: '这个空间名称已被占用，换一个' },
+        expect: '这个空间名称已被占用，换一个',
+      },
+      {
+        name: '没建成，服务端没说为什么',
+        note: '断了网这种：服务端没回话，退回「稍后重试」那一句——不这么写这里就是一片空白。',
         props: { error: '创建失败，稍后重试' },
         expect: '创建失败，稍后重试',
       },

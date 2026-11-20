@@ -16,6 +16,7 @@ from typing import cast
 
 import pytest
 
+from app.domain.agent import sandbox_image
 from app.domain.agent_session.models import LEFT_HOST_KEY
 from app.domain.identity.actor import Actor
 from app.domain.machine import services as machine_services
@@ -54,10 +55,11 @@ class _Repo:
     whose ``session_id`` was cleared by ``leave`` is nobody's.
     """
 
-    def __init__(self, home, hosts, *, load=None):
+    def __init__(self, home, hosts, *, load=None, cached=()):
         self.home = home
         self.hosts = list(hosts)
         self.load = dict(load or {})
+        self.cached = list(cached)
         self.placed: list[tuple[uuid.UUID, dict]] = []
         self.deleted: list = []
         self.locked = 0
@@ -81,6 +83,15 @@ class _Repo:
 
     async def occupancy(self):
         return dict(self.load)
+
+    async def last_readings(self, host_ids):
+        return {}
+
+    async def placed_since(self, readings):
+        return {}
+
+    async def stores(self, project_key):
+        return set(self.cached)
 
     async def put_home(self, host_id, home):
         self.placed.append((host_id, home))
@@ -132,6 +143,10 @@ class _Session:
     async def commit(self):
         self.commits += 1
 
+    async def scalar(self, query):
+        # The session's execution request, read to see whether a thaw waits.
+        return self.row.execution_request
+
 
 class _Hub:
     def __init__(self, online):
@@ -163,9 +178,11 @@ def _host(device_id, *, cores=4, memory_mb=8192, disk_gb=100, whole=False, **kw)
         memory_mb=memory_mb,
         disk_gb=40,
         sandbox_disk_gb=disk_gb,
+        sandbox_image=sandbox_image.default_image()["reference"],
         created_at=datetime.now(UTC) - timedelta(hours=1),
         enrolled_at=datetime.now(UTC) - timedelta(hours=1),
         idle_since=None,
+        draining_since=None,
     )
     base.update(kw)
     return SimpleNamespace(**base)
@@ -184,6 +201,8 @@ class _Case:
             conversation_id=uuid.uuid4(),
             stopped_at=None,
             active_at=None,
+            frozen_at=None,
+            parked_at=None,
         )
         self.row = SimpleNamespace(
             conversation_id=self.home.conversation_id,

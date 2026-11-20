@@ -370,4 +370,11 @@ describe('技能', () => {
     expect(sent.name).toBe('pi-gai-zuo-ye')
     expect(sent.imported).toBeUndefined()
   })
+
+  it('技能列表先于项目详情返回时当场渲染技能并收起加载态，不等 /projects/:id', async () => {
+    vi.mocked(getProject).mockReturnValue(new Promise(() => {}))
+    const { container } = mount()
+    await waitFor(() => expect(container.querySelectorAll('.skills-row').length).toBeGreaterThan(0))
+    expect(container.querySelector('[role="status"]')).toBeNull()
+  })
 })

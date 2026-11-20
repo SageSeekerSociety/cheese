@@ -6,7 +6,6 @@
   "forgeGithubHint": "Connect GitHub in the project settings after it is created. The hosting service cannot be changed after the project is created.",
   "forgeHint": "The hosting service cannot be changed after the project is created",
   "forgeHosted": "Hosted on the platform (default)",
-  "fromTask": "From task: {task}",
   "intent": "What do you plan to do (optional)",
   "intentExample": "For example: turn this term's course materials into an outline",
   "name": "Project name",

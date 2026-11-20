@@ -24,13 +24,12 @@ from app.domain.task import teaching as teaching_context
 from tests.integration.conftest import (
     UserCreator,
     create_approved_space,
-    post_project,
     unique_int,
 )
 
 SPACE_GUIDE = {"mode": "guide", "systemPrompt": "空间的要求"}
 
-#: All six fields set, in the request's spelling — what the settings form sends.
+#: All seven fields set, in the request's spelling — what the settings form sends.
 #: `privatePrompt` 是出题人可见的那一格（`teaching_to_api(include_private=True)`），
 #: 这几条用的都是出题人/管理员的身份，所以它也在读回来的那一份里。
 #: No 课件 / 知识 ids: naming one needs a real row, and the reference check has
@@ -42,6 +41,9 @@ FULL_TEACHING = {
     "learningGoals": ["会读栈追踪"],
     "materialIds": [],
     "documentIds": [],
+    "skills": ["wolfram"],
+    "hintLadder": False,
+    "outputCheck": False,
 }
 
 #: What a level that says nothing reads back as.
@@ -52,6 +54,9 @@ EMPTY_TEACHING = {
     "learningGoals": [],
     "materialIds": [],
     "documentIds": [],
+    "skills": [],
+    "hintLadder": False,
+    "outputCheck": False,
 }
 
 
@@ -115,8 +120,8 @@ def _publish_task(
 def _project_under(
     api_client: TestClient, user_client: UserCreator, board: dict, *, task_id: int
 ) -> str:
-    """A project built on this task: approve it, the student joins the 题目板,
-    claims the task, then `POST /projects` with the task linked."""
+    """A project built on this task: approve it, the student joins the 题目板
+    and starts the task, which makes the project."""
     student = user_client.create_user()
     student_token = user_client.login(api_client, student.username, student.password)
     approved = api_client.patch(
@@ -131,20 +136,12 @@ def _project_under(
         headers=_auth(board["token"]),
     )
     assert joined.status_code in (201, 409), joined.text
-    claimed = api_client.post(
+    # 开始做这道题 (a task starts directly by default): the claim opens its project.
+    started = api_client.post(
         f"/tasks/{task_id}/participations/user", json={}, headers=_auth(student_token)
     )
-    assert claimed.status_code in (200, 201), claimed.text
-    resp = post_project(
-        api_client,
-        json={
-            "name": "学生的项目",
-            "external_task_id": task_id,
-        },
-        headers=_auth(student_token),
-    )
-    assert resp.status_code == 200, resp.text
-    return resp.json()["data"]["id"]
+    assert started.status_code in (200, 201), started.text
+    return started.json()["data"]["project"]["id"]
 
 
 def _for_project(portal, session, project_id: str):
@@ -233,7 +230,7 @@ def test_a_non_admin_cannot_write_the_space_default(
         json={"teaching": SPACE_GUIDE},
         headers=_auth(outsider_token),
     )
-    assert resp.status_code == 403, resp.text
+    assert resp.status_code == 404, resp.text
     assert _space_teaching_of(api_client, board) == EMPTY_TEACHING
 
 
@@ -298,7 +295,7 @@ def test_a_stranger_cannot_write_a_task_override(
         json={"teaching": {"mode": "free"}},
         headers=_auth(outsider_token),
     )
-    assert resp.status_code == 403, resp.text
+    assert resp.status_code == 404, resp.text
 
 
 def test_the_task_and_the_space_are_both_read_on_the_real_read_path(
@@ -339,7 +336,7 @@ def test_a_later_edit_reaches_an_existing_project_on_its_next_read(
 ):
     """改一次配置，**已经建好的**那个项目下一次读就是新值。
 
-    这是生效语义的第 2 条（`harness.prompt` 顶上那段）：已有项目的新会话读到此刻
+    这是生效语义的第 2 条（`prompts/render.py` 顶上那段）：已有项目的新会话读到此刻
     的配置。钉的是「`for_project` 每次现取，不往项目那一行记一份」—— 谁要是哪天
     改成建项目时存个快照，这条会红。同一个 `project_id` 全程不动。
 

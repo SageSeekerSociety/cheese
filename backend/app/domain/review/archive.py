@@ -92,15 +92,16 @@ async def _converge_card(
     状态、收件箱、留痕、决议时间都在这一处写，两边不各写一份会走散的规矩。
     """
     card.status = AcceptStatus.revoked
-    # 卡跟着终结：等验收人动手的那几句一起收掉，别留在他的收件箱里说着「等你」。
-    await room_notices._settle_the_card(session, card, outcome, settle_card=settle_card)
     notes.record(card, note_code, prefix_note(card.note, note))
     # 只在空的时候补：已有的决议痕迹不覆盖。
     if card.decided_by is None and by is not None:
         card.decided_by = by
         card.decided_by_assistant = False
+        card.decided_by_seat = None
     if card.decided_at is None:
         card.decided_at = now
+    # 卡跟着终结：等验收人动手的那几句一起收掉，别留在他的收件箱里说着「等你」。
+    await room_notices._settle_the_card(session, card, outcome, settle_card=settle_card)
 
 
 async def close_cards_for_archived_topic(
@@ -211,10 +212,10 @@ def _note_for_closed_task(card: AcceptCard, was: AcceptStatus) -> str:
     """
     if pr_left_open(card):
         return (
-            f"任务已关闭，平台已停止跟进 PR #{card.pr_number}。"
+            f"任务已结束，平台已停止跟进 PR #{card.pr_number}。"
             f"PR 未合并：{card.pr_url or '（无链接）'}"
         )
-    return f"任务已关闭，审阅随之关闭，关闭时状态为「{was}」。"
+    return f"任务已结束，审阅随之关闭，关闭时状态为「{was}」。"
 
 
 async def close_cards_for_closed_task(

@@ -10,6 +10,7 @@ import type { SpaceMaterial, SpaceMaterialVisibility } from '@/types'
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
+import { usePaneWidth } from '@/composables/usePaneWidth'
 import { useRowMenu } from '@/composables/useRowMenu'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -19,6 +20,7 @@ import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import FileBytesPreview from '@/components/common/FileBytesPreview.vue'
 import PageHeader from '@/components/common/PageHeader.vue'
+import PaneHandle from '@/components/common/PaneHandle.vue'
 import { fmtBytes } from '@/lib/changesTree'
 import { type Kind, KIND_ICONS, kindLabel, kindOf, KINDS } from '@/lib/libraryKinds'
 import { relTime } from '@/lib/relTime'
@@ -133,6 +135,10 @@ function submitUpload() {
 }
 
 const showList = computed(() => props.wide || !props.selected)
+
+// 桌面上右边那一栏预览可以往左拖宽，和项目资料库记在同一份里（`usePaneWidth`）。
+const detailRef = ref<HTMLElement | null>(null)
+const pane = usePaneWidth('cheese.library.previewShare', detailRef)
 </script>
 
 <template>
@@ -245,8 +251,26 @@ const showList = computed(() => props.wide || !props.selected)
     </section>
 
     <!-- The open one: a pane beside the list on desktop, the whole page on a phone. -->
-    <section v-if="selected" class="slib-detail" :class="{ 'slib-detail--phone': !wide }" data-testid="slib-detail">
+    <section
+      v-if="selected"
+      ref="detailRef"
+      class="slib-detail"
+      :class="{ 'slib-detail--phone': !wide }"
+      :style="wide ? pane.style.value : undefined"
+      data-testid="slib-detail"
+    >
+      <PaneHandle v-if="wide" :pane="pane" />
       <header class="slib-detail__head">
+        <!-- 和项目资料库同一处：关一栏的那一颗钉在右上角，不跟下载挤在同一排。 -->
+        <BaseButton
+          v-if="wide"
+          icon="mdi-close"
+          size="sm"
+          class="slib-detail__close"
+          :title="t('spaces.materials.close')"
+          :aria-label="t('spaces.materials.close')"
+          @click="emit('close')"
+        />
         <h2 v-if="wide" class="t-title slib-detail__name" data-user-content>{{ selected.name }}</h2>
         <p class="slib-detail__meta t-meta c-muted">
           <span v-if="selected.uploaderName" data-user-content>{{ selected.uploaderName }}</span>
@@ -267,9 +291,6 @@ const showList = computed(() => props.wide || !props.selected)
         <div v-if="wide" class="slib-detail__actions">
           <BaseButton kind="primary" size="sm" prepend-icon="mdi-download-outline" @click="emit('download', selected)">
             {{ t('spaces.materials.download') }}
-          </BaseButton>
-          <BaseButton size="sm" prepend-icon="mdi-close" @click="emit('close')">
-            {{ t('spaces.materials.close') }}
           </BaseButton>
         </div>
       </header>
@@ -299,8 +320,13 @@ const showList = computed(() => props.wide || !props.selected)
     @confirm="submitUpload"
   >
     <div class="slib-upload">
+      <!-- `active` 一打开就挂着：「文件」一直骑在边框上，不在点下去时往上飞。
+           这个框不收打字，只有选好的文件名，框里空着不碍事。点下去那一下同时会叫出
+           系统的选文件面板，面板开着时页面不往前走，飞标签的动画会停在半道 —— 看上去
+           就是抖两下、没上去，关掉面板才落位。 -->
       <v-file-input
         v-model="pickedFile"
+        active
         autocomplete="off"
         density="compact"
         variant="outlined"
@@ -487,7 +513,8 @@ const showList = computed(() => props.wide || !props.selected)
   display: flex;
   flex: none;
   flex-direction: column;
-  width: 480px;
+  width: 50%;
+  min-width: min(480px, 100%);
   height: calc(100dvh - 120px);
   min-height: 360px;
   border-left: 1px solid var(--line);
@@ -506,8 +533,17 @@ const showList = computed(() => props.wide || !props.selected)
   flex: none;
   flex-direction: column;
   gap: 4px;
-  padding: 12px 20px;
+  /* 右边留出角落那颗 ✕ 的位置：名字和来源行再长也不从它底下穿过去。 */
+  padding: 12px 44px 12px 20px;
   border-bottom: 1px solid var(--line);
+}
+
+/* 钉在整栏的右上角，不跟着头栏里那几行文字重排。 */
+.slib-detail__close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: var(--z-raised);
 }
 
 .slib-detail--phone .slib-detail__head {

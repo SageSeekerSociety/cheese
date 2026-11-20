@@ -78,6 +78,8 @@ RELEASE_FILES = {
     "remote-execution/worker_quota.py": "app/domain/agent/worker_quota.py",
     "remote-execution/raster_images.py": "app/core/raster_images.py",
     "remote-execution/cli_worker.py": "app/domain/agent/cli_worker.py",
+    "remote-execution/forge_proxy.py": "app/domain/agent/forge_proxy.py",
+    "remote-execution/forge_requests.py": "app/domain/agent/forge_requests.py",
     "cheese": "sandbox/cheese",
 }
 
@@ -191,9 +193,22 @@ def socket_directory(state):
     """The directory this state's service binds its sockets in. A sandboxed
     executor (`confinement.sandbox_argv`) is shown this one directory of the
     machine's /tmp and nothing else there, so its sockets cannot sit beside
-    every other room's."""
+    every other room's. Socket paths use the connector's host UID even when
+    that user maps to UID 0 inside the sandbox."""
     digest = hashlib.sha256(str(Path(state).resolve()).encode()).hexdigest()[:24]
-    return f"/tmp/cheese-execution-{os.getuid()}-{digest}"
+    uid = os.environ.get("CHEESE_CONNECTOR_UID", str(os.getuid()))
+    return f"/tmp/cheese-execution-{uid}-{digest}"
+
+
+def platform_socket_directory(state):
+    """The directory of the platform socket the connector serves for this
+    state (`cli/internal/host/machine.go` names the same one): beside
+    `socket_directory`, and shown to the sandbox read-only. What the sandbox
+    asks of the platform it asks there, and the connector says whose it is by
+    which socket it came in on."""
+    digest = hashlib.sha256(str(Path(state).resolve()).encode()).hexdigest()[:24]
+    uid = os.environ.get("CHEESE_CONNECTOR_UID", str(os.getuid()))
+    return f"/tmp/cheese-platform-{uid}-{digest}"
 
 
 def connect(state):

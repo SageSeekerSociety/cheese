@@ -5,19 +5,35 @@ from collections.abc import Collection
 from datetime import UTC, datetime
 from functools import lru_cache
 
-from sqlalchemy import Select, Uuid, and_, bindparam, func, select, update
+from sqlalchemy import (
+    Select,
+    Uuid,
+    and_,
+    bindparam,
+    func,
+    inspect,
+    select,
+    update,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from app.core.errors import NotFoundError, UnprocessableEntityError
+from app.core.request_facts import recall, remember
 from app.core.sentences import say
 from app.domain.block.models import Block
+from app.domain.conversation.numbering import CREATED_TASKS_KEY
 from app.domain.identity.handles import names_a_person
+from app.domain.identity.predicates import names_a_live_agent
 from app.domain.identity.services import IdentityService
 from app.domain.living_doc.services import Documents
 from app.domain.project.models import Project
 from app.domain.project.protection import branch_protection_of, can_take_review
 from app.domain.room_task import progress
+from app.domain.room_task.lock_order import (
+    lock_task_for_change,
+    lock_tasks_for_change,
+)
 from app.domain.room_task.models import (
     Task,
     TaskStatus,
@@ -36,6 +52,52 @@ class TaskService:
     def __init__(self, session: AsyncSession):
         self._session = session
         self._repo = TaskRepository(session)
+
+    async def with_people(self, task_id: uuid.UUID) -> Task | None:
+        """The task, read with whether its owner and its creator are AI
+        teammates: who pays for its work asks that next (`credit_owner`),
+        and each was a statement of its own. A task the session holds, with
+        both answers known, is answered without reading."""
+        if not isinstance(self._session, AsyncSession):
+            # A hand-written stand-in session (unit tests) has no identity map.
+            return await self._repo.get(task_id)
+        held = self._session.sync_session.identity_map.get(
+            self._session.sync_session.identity_key(Task, (task_id,))
+        )
+        if (
+            held is not None
+            and not inspect(held).expired_attributes
+            and all(
+                recall(self._session, ("is_agent", handle))[0]
+                for handle in (held.owner_handle, held.created_by)
+                if handle
+            )
+        ):
+            return held
+        row = (
+            await self._session.execute(
+                select(
+                    Task,
+                    names_a_live_agent(Task.owner_handle),
+                    names_a_live_agent(Task.created_by),
+                ).where(Task.id == task_id)
+            )
+        ).first()
+        if row is None:
+            return None
+        task, owner_is_agent, creator_is_agent = row
+        for handle, answer in (
+            (task.owner_handle, owner_is_agent),
+            (task.created_by, creator_is_agent),
+        ):
+            if handle:
+                remember(
+                    self._session,
+                    ("is_agent", handle),
+                    bool(answer),
+                    tables=frozenset({"user", "agent_bindings"}),
+                )
+        return task
 
     async def credit_owner(self, task: Task) -> str | None:
         """A human owner pays for work; an AI's work stays with its requester."""
@@ -165,7 +227,9 @@ class TaskService:
                     Task.branch_name.is_not(None),
                     Task.pr_number.is_(None),
                 )
-                .with_for_update(skip_locked=True)
+                # FOR NO KEY UPDATE, after its numbering: the task lock order
+                # (`lock_order`).
+                .with_for_update(skip_locked=True, key_share=True)
             )
         ).first()
         return task
@@ -174,6 +238,28 @@ class TaskService:
         task.pr_number, task.pr_url = number, url
         await self._session.flush()
         return task
+
+    async def forget_open_prs(self, project_id: uuid.UUID) -> int:
+        """The project's repository moved to another forge: an open task's PR
+        lives on the one it left. Forget it, so the draft sweep
+        (`open_without_pr`) opens the task's PR again where the branch now is.
+        A closed task keeps its PR link as the record of where it landed.
+        Returns how many tasks were reset."""
+        ids = await self._session.scalars(
+            select(Task.id).where(
+                Task.status == TaskStatus.open,
+                Task.pr_number.is_not(None),
+                Task.room_id.in_(
+                    select(Topic.id).where(Topic.project_id == project_id)
+                ),
+            )
+        )
+        tasks = await lock_tasks_for_change(self._session, list(ids))
+        for task in tasks:
+            task.pr_number = task.pr_url = None
+            task.pr_checks_head = task.pr_checks_state = None
+        await self._session.flush()
+        return len(tasks)
 
     async def record_check(self, task: Task, *, ok: bool, detail: str) -> Task:
         task.last_check_at = datetime.now(UTC)
@@ -210,8 +296,12 @@ class TaskService:
         accepted: bool | None = None,
         rooms: Collection[uuid.UUID] | None = None,
         status: str | None = None,
+        open_or_touched_since: datetime | None = None,
     ) -> list[Task]:
         """这个项目里的活，最老的在前。
+
+        `open_or_touched_since` 只留还开着的、和那一刻之后建过、改过、采纳过、
+        关过的活：「最近进展」只看一个窗口，不用把整个项目的活都读出来。
 
         `rooms` 和 `status` 是把清单收窄交给数据库的两把刀（见 `list_for_project`）：
         给了就只装配满足的那些行。项目任务列表接口把「我看得见的房间」和 `status`
@@ -226,7 +316,11 @@ class TaskService:
         does not explicitly begin, commit or roll back.
         """
         return await self._repo.list_for_project(
-            project_id, accepted=accepted, rooms=rooms, status=status
+            project_id,
+            accepted=accepted,
+            rooms=rooms,
+            status=status,
+            open_or_touched_since=open_or_touched_since,
         )
 
     async def list_open(self) -> list[Task]:
@@ -365,22 +459,9 @@ class TaskService:
         """
         return await self._repo.list_for_room(room_id)
 
-    async def open_branches_in_room(self, room_id: uuid.UUID) -> list[Task]:
-        """This room's open work that has a branch, oldest first.
-
-        A channel holds every task its project ever ran — over a thousand on
-        dev — and only the few still open take commits.
-        """
-        rows = await self._session.scalars(
-            select(Task)
-            .where(
-                Task.room_id == room_id,
-                Task.status == TaskStatus.open,
-                Task.branch_name.is_not(None),
-            )
-            .order_by(Task.created_at, Task.id)
-        )
-        return list(rows.all())
+    async def list_in_rooms(self, room_ids: Collection[uuid.UUID]) -> list[Task]:
+        """Every piece of work across ``room_ids``, oldest first."""
+        return await self._repo.list_for_rooms(room_ids)
 
     async def list_by_ids(self, task_ids: list[uuid.UUID]) -> list[Task]:
         """These rows, oldest first, silently skipping ids that name nothing.
@@ -393,12 +474,24 @@ class TaskService:
         """
         return await self._repo.list_by_ids(task_ids)
 
+    @staticmethod
+    def is_closed(task: Task) -> bool:
+        return task.status == TaskStatus.closed
+
+    async def add_asker(self, task: Task, handle: str) -> None:
+        """Keep ``handle`` among the members a request was passed on to
+        ``task`` for (`Task.asker_handles`)."""
+        if handle not in (task.asker_handles or []):
+            task.asker_handles = [*(task.asker_handles or []), handle]
+            await self._session.flush()
+
     async def set_credits(
         self,
         task: Task,
         *,
         reporter_handle: str | None,
         contributor_handles: list[str],
+        flush: bool = True,
     ) -> None:
         """Record declared human contributions after validating their accounts."""
 
@@ -413,21 +506,35 @@ class TaskService:
                 )
         task.reporter_handle = reporter_handle
         task.contributor_handles = contributors
-        await self._session.flush()
+        if flush:
+            await self._session.flush()
 
     async def ensure_document(self, task: Task) -> uuid.UUID:
         """The task's living document, created empty the first time it is
         asked for. The row is locked so two first asks make one document."""
-
-        locked = await self._session.scalar(
-            select(Task)
-            .where(Task.id == task.id)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
+        if task.document_id is not None:
+            return task.document_id
+        if isinstance(self._session, AsyncSession) and task.id in (
+            self._session.sync_session.info.get(CREATED_TASKS_KEY, ())
+        ):
+            locked: Task | None = task
+        else:
+            locked = await lock_task_for_change(self._session, task.id)
         assert locked is not None
         if locked.document_id is None:
-            doc = await Documents(self._session).create(project_id=locked.project_id)
+            project = (
+                self._session.sync_session.identity_map.get(
+                    self._session.sync_session.identity_key(
+                        Project, (locked.project_id,)
+                    )
+                )
+                if isinstance(self._session, AsyncSession)
+                else None
+            )
+            doc = await Documents(self._session).create(
+                project_id=locked.project_id,
+                team_id=project.team_id if project is not None else None,
+            )
             locked.document_id = doc.id
             await self._session.flush()
         return locked.document_id
@@ -478,11 +585,16 @@ class TaskService:
             handle == task.owner_handle or handle in (task.contributor_handles or [])
         )
 
-    async def set_contributors(self, task: Task, handles: list[str]) -> Task:
+    async def set_contributors(
+        self, task: Task, handles: list[str], *, flush: bool = True
+    ) -> Task:
         """Who works the task beside its owner. They are credited on its
         commits too (``repository.identity``)."""
         await self.set_credits(
-            task, reporter_handle=task.reporter_handle, contributor_handles=handles
+            task,
+            reporter_handle=task.reporter_handle,
+            contributor_handles=handles,
+            flush=flush,
         )
         return task
 
@@ -514,23 +626,32 @@ class TaskService:
         base_task_id: uuid.UUID | None = None,
         title_source: TaskTitleSource = TaskTitleSource.human,
         task_id: uuid.UUID | None = None,
+        flush: bool = True,
     ) -> Task:
         """Record a task's branch; its executor creates the worktree on its machine.
+
+        A project with no repository, or whose repository has no default branch,
+        gives its tasks no branch: they are worked without a checkout, and one
+        opened after a repository is bound gets its branch then (`give_branch`).
 
         ``task_id`` is a 支线's id when the 支线 itself becomes the task: the
         conversation keeps its id, and with it everything said in it."""
         # deferred-import: tests replace this name on app.domain.project.forge
-        from app.domain.project.forge import default_branch
+        from app.domain.project.forge import default_branch_if_any
 
-        base = await default_branch(project_id, self._session)
+        base = await default_branch_if_any(project_id, self._session)
         if base_task_id is not None:
             parent = await self.require_in_room(room_id, base_task_id)
-            if parent.branch_name is None:
-                raise UnprocessableEntityError(say("pastTaskNoBranch"))
             # An open task's branch holds its step still to land; a closed
-            # task's landed, unless it never delivered.
-            if parent.status == TaskStatus.open or (
-                parent.accepted_at is None and parent.delivered_head is None
+            # task's landed, unless it never delivered. A task with no branch
+            # has nothing of its own to build on.
+            if (
+                base is not None
+                and parent.branch_name is not None
+                and (
+                    parent.status == TaskStatus.open
+                    or (parent.accepted_at is None and parent.delivered_head is None)
+                )
             ):
                 base = parent.branch_name
         if reviewer_handle is None:
@@ -546,15 +667,19 @@ class TaskService:
             created_by=created_by,
             title_source=title_source,
             task_id=task_id,
+            flush=False,
         )
         await self.set_credits(
             task,
             reporter_handle=reporter_handle,
             contributor_handles=contributor_handles or [],
+            flush=False,
         )
-        self._name_branch(task)
+        if base is not None:
+            self._name_branch(task)
         task.base_branch, task.base_task_id = base, base_task_id
-        await self._session.flush()
+        if flush:
+            await self._session.flush()
         return task
 
     async def next_step(self, task: Task, *, base_branch: str | None = None) -> None:
@@ -563,7 +688,9 @@ class TaskService:
         opens a PR of its own. The machine moves the task's checkout onto it
         (`cheese worktree`), carrying what had not landed. ``base_branch``: the
         project's default branch, when the caller read it from the forge before
-        locking ``task``."""
+        locking ``task``. A task with no branch goes on where it is."""
+        if task.branch_name is None:
+            return
         # deferred-import: tests replace this name on app.domain.project.forge
         from app.domain.project.forge import default_branch
 
@@ -584,6 +711,7 @@ class TaskService:
             raise UnprocessableEntityError(say("taskStillOpen"))
         task.status = TaskStatus.open
         task.closed_at = None
+        task.closed_reason = None
         task.conclusion = None
         # Reopened is 开启: what its teammate last reported was about the work
         # that closed.
@@ -598,15 +726,20 @@ class TaskService:
         await self._session.flush()
         return task
 
-    async def give_branch(self, task: Task) -> None:
+    async def give_branch(self, task: Task) -> bool:
         """The branch a task that arrived without one is worked on, cut from the
-        project's default branch like a new task's."""
+        project's default branch like a new task's. False, and the task left as
+        it is, while the project has no default branch to cut it from."""
         # deferred-import: tests replace this name on app.domain.project.forge
-        from app.domain.project.forge import default_branch
+        from app.domain.project.forge import default_branch_if_any
 
-        task.base_branch = await default_branch(task.project_id, self._session)
+        base = await default_branch_if_any(task.project_id, self._session)
+        if base is None:
+            return False
+        task.base_branch = base
         self._name_branch(task)
         await self._session.flush()
+        return True
 
     @staticmethod
     def _name_branch(task: Task) -> None:

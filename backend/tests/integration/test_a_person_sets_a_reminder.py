@@ -5,7 +5,7 @@ whether the caller is an agent. The reminder goes to whoever set it, to them
 alone: it reaches their inbox and does not appear in the room everyone reads.
 
 Requests here go out the way a browser sends them, with a session and no
-`X-Cheese-Token`; the test client otherwise attaches the sandbox token to
+other credential; the test client otherwise attaches the sandbox token to
 every request.
 """
 
@@ -15,7 +15,7 @@ from app.domain.delivery.timer import deliver_due
 from tests.conftest import seed_user
 from tests.integration.conftest import post_project, session_auth_headers
 
-BROWSER = {"X-Cheese-Token": ""}
+BROWSER = {"Authorization": ""}
 
 
 def _room(client, owner: str) -> str:

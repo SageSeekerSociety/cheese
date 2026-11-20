@@ -1,7 +1,7 @@
 import { computed, type ComputedRef, onScopeDispose, type Ref, ref } from 'vue'
-import { toast } from 'vuetify-sonner'
 
 import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 
 /**
  * 一次保存的四态（saving / saved / dirty / error）和跑它的那一个入口（run）。

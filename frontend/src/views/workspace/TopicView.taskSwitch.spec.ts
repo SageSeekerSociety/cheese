@@ -48,13 +48,11 @@ vi.mock('@/stores/workspace', () => ({
     members: [],
     projects: [],
     unreadMap: {},
-    chatPct: 50,
     rememberPlace: vi.fn(),
     loadingTopics: false,
     markRead: vi.fn(),
     refreshTopics: vi.fn(),
     refreshUnread: vi.fn(),
-    setChatPct: vi.fn(),
   }),
 }))
 vi.mock('@/me', () => ({ myHandle: () => 'alice' }))
@@ -76,6 +74,7 @@ vi.mock('@/api', async (importOriginal) => ({
   listRoomTasks: vi.fn(async () => ({ data: [listed], total: 1 })),
   // 任务的验收卡：这里不看它。
   getAcceptCards: vi.fn(async () => ({ data: [], total: 0 })),
+  getHandInStanding: vi.fn(async () => ({ unhanded: false, waiting: false })),
 }))
 // 任务改动上的审阅评论：这里不看它。
 vi.mock('@/api/reviewComments', async (importOriginal) => ({

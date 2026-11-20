@@ -10,7 +10,6 @@
 """
 
 import uuid
-from datetime import UTC, datetime
 
 from sqlalchemy import (
     Uuid,
@@ -19,12 +18,14 @@ from sqlalchemy import (
     select,
 )
 from sqlalchemy.dialects.postgresql import ARRAY
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.request_facts import recall, remember
 from app.domain.block.models import (
     BlockReaction,
 )
+
+_REACTION_TABLES = frozenset({"block_reactions"})
 
 
 class Reactions:
@@ -53,59 +54,48 @@ class Reactions:
     ) -> bool:
         """Slack-style toggle: add the (emoji, author) reaction, or remove it if
         it already exists. Returns True when added, False when removed."""
-        existing = await self._get_reaction(block_id, emoji, author)
+        stmt = (
+            select(BlockReaction)
+            .where(BlockReaction.block_id == block_id)
+            .order_by(BlockReaction.created_at, BlockReaction.id)
+        )
+        rows = list((await self._session.scalars(stmt)).all())
+        existing = next(
+            (r for r in rows if r.emoji == emoji and r.author == author), None
+        )
         if existing is not None:
             await self._session.delete(existing)
             await self._session.flush()
+            if isinstance(self._session, AsyncSession):
+                remember(
+                    self._session,
+                    ("block_reaction_rows", block_id),
+                    tuple(r for r in rows if r is not existing),
+                    tables=_REACTION_TABLES,
+                )
             return False
-        self._session.add(BlockReaction(block_id=block_id, emoji=emoji, author=author))
+        added = BlockReaction(block_id=block_id, emoji=emoji, author=author)
+        self._session.add(added)
         await self._session.flush()
+        if isinstance(self._session, AsyncSession):
+            remember(
+                self._session,
+                ("block_reaction_rows", block_id),
+                tuple([*rows, added]),
+                tables=_REACTION_TABLES,
+            )
         return True
 
     async def add_reaction_if_absent(
         self, block_id: uuid.UUID, emoji: str, author: str
     ) -> bool:
-        """Idempotent add (never removes) — for platform receipts like 芝士's 👀
-        on the message that summoned it. Returns True when a row was created."""
+        """Idempotent add (never removes) — what an AI teammate's `chat_react`
+        does. Returns True when a row was created."""
         if await self._get_reaction(block_id, emoji, author) is not None:
             return False
         self._session.add(BlockReaction(block_id=block_id, emoji=emoji, author=author))
         await self._session.flush()
         return True
-
-    async def add_reactions_if_absent(
-        self, block_ids: list[uuid.UUID], emoji: str, author: str
-    ) -> list[uuid.UUID]:
-        """The batch form of `add_reaction_if_absent`: one statement for many
-        blocks, same rule — an existing (block, emoji, author) is left alone, a
-        missing one gets a row. Returns the blocks a row was created for.
-
-        A delivery's read receipt covers every block it carried, and those rows
-        land in its settlement transaction; writing them one block at a time
-        put N round trips in that transaction. ``ON CONFLICT DO NOTHING``
-        leaves the existing rows untouched instead of selecting them first."""
-        ids = list(dict.fromkeys(block_ids))
-        if not ids:
-            return []
-        stamp = datetime.now(UTC)
-        created = await self._session.scalars(
-            pg_insert(BlockReaction)
-            .values(
-                [
-                    {
-                        "id": uuid.uuid4(),
-                        "block_id": block_id,
-                        "emoji": emoji,
-                        "author": author,
-                        "created_at": stamp,
-                    }
-                    for block_id in ids
-                ]
-            )
-            .on_conflict_do_nothing(constraint="uq_block_reaction")
-            .returning(BlockReaction.block_id)
-        )
-        return list(created.all())
 
     async def reactions_for_blocks(
         self, block_ids: list[uuid.UUID]
@@ -115,16 +105,37 @@ class Reactions:
         first appearance on the block, authors by reaction time (Slack)."""
         if not block_ids:
             return {}
-        # One array parameter, not an IN list: the whole timeline of a busy room
-        # is tens of thousands of ids, and asyncpg refuses more than 32767 bound
-        # values in one statement.
-        among = any_(bindparam(None, list(block_ids), type_=ARRAY(Uuid)))
-        stmt = (
-            select(BlockReaction)
-            .where(BlockReaction.block_id == among)
-            .order_by(BlockReaction.created_at, BlockReaction.id)
-        )
-        rows = (await self._session.scalars(stmt)).all()
+        if len(block_ids) == 1 and isinstance(self._session, AsyncSession):
+            if self._session.autoflush:
+                await self._session.flush()
+            found, cached = recall(self._session, ("block_reaction_rows", block_ids[0]))
+            if found:
+                rows = list(cached)
+            else:
+                among = any_(bindparam(None, list(block_ids), type_=ARRAY(Uuid)))
+                stmt = (
+                    select(BlockReaction)
+                    .where(BlockReaction.block_id == among)
+                    .order_by(BlockReaction.created_at, BlockReaction.id)
+                )
+                rows = list((await self._session.scalars(stmt)).all())
+                remember(
+                    self._session,
+                    ("block_reaction_rows", block_ids[0]),
+                    tuple(rows),
+                    tables=_REACTION_TABLES,
+                )
+        else:
+            # One array parameter, not an IN list: the whole timeline of a busy room
+            # is tens of thousands of ids, and asyncpg refuses more than 32767 bound
+            # values in one statement.
+            among = any_(bindparam(None, list(block_ids), type_=ARRAY(Uuid)))
+            stmt = (
+                select(BlockReaction)
+                .where(BlockReaction.block_id == among)
+                .order_by(BlockReaction.created_at, BlockReaction.id)
+            )
+            rows = (await self._session.scalars(stmt)).all()
         grouped: dict[uuid.UUID, dict[str, dict]] = {}
         for r in rows:
             per_block = grouped.setdefault(r.block_id, {})

@@ -285,8 +285,6 @@ paths:
     $ref: './domains/space/paths.yaml#/~1spaces~1{spaceId}~1publishers~1participation'
   /spaces/{spaceId}/participants/export:
     $ref: './domains/space/paths.yaml#/~1spaces~1{spaceId}~1participants~1export'
-  /spaces/join:
-    $ref: './domains/space/paths.yaml#/~1spaces~1join'
   /spaces/{spaceId}/announcements:
     $ref: './domains/space/paths.yaml#/~1spaces~1{spaceId}~1announcements'
   /spaces/{spaceId}/announcements/{announcementId}:
@@ -297,8 +295,20 @@ paths:
     $ref: './domains/space/paths.yaml#/~1spaces~1{spaceId}~1members~1{userId}'
   /spaces/{spaceId}/leave:
     $ref: './domains/space/paths.yaml#/~1spaces~1{spaceId}~1leave'
-  /spaces/{spaceId}/invite-codes:
-    $ref: './domains/space/paths.yaml#/~1spaces~1{spaceId}~1invite-codes'
+  /spaces/{spaceId}/join-link:
+    $ref: './domains/space/paths.yaml#/~1spaces~1{spaceId}~1join-link'
+  /spaces/{spaceId}/join-link/reset:
+    $ref: './domains/space/paths.yaml#/~1spaces~1{spaceId}~1join-link~1reset'
+  /spaces/{spaceId}/join-requests:
+    $ref: './domains/space/paths.yaml#/~1spaces~1{spaceId}~1join-requests'
+  /spaces/{spaceId}/join-requests/{requestId}/approve:
+    $ref: './domains/space/paths.yaml#/~1spaces~1{spaceId}~1join-requests~1{requestId}~1approve'
+  /spaces/{spaceId}/join-requests/{requestId}/reject:
+    $ref: './domains/space/paths.yaml#/~1spaces~1{spaceId}~1join-requests~1{requestId}~1reject'
+  /space-invites/{token}:
+    $ref: './domains/space/paths.yaml#/~1space-invites~1{token}'
+  /space-invites/{token}/join:
+    $ref: './domains/space/paths.yaml#/~1space-invites~1{token}~1join'
 
   # Task Domain
   /tasks:
@@ -485,8 +495,6 @@ components:
       $ref: './domains/space/schemas.yaml#/Space'
     SpaceMember:
       $ref: './domains/space/schemas.yaml#/SpaceMember'
-    SpaceInviteCode:
-      $ref: './domains/space/schemas.yaml#/SpaceInviteCode'
 
     # Task schemas
     Task:

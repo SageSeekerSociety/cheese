@@ -21,6 +21,7 @@ from app.domain.review import (
     notes,
     pr_signals,
 )
+from app.domain.review.archive import OPEN_CARD_STATUSES
 from app.domain.review.merge_state import MergeVerdict, Who
 from app.domain.review.models import (
     AcceptCard,
@@ -34,6 +35,7 @@ from app.domain.review.services._shared import (
     TopicRepository,
     _GitHubCredentials,
 )
+from app.domain.review.task_landing import Landed
 from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic
 
@@ -52,7 +54,9 @@ if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
     from app.domain.review.ports import (
         Announce,
         RecordInstruction,
+        RecordSeatInstruction,
         TaskTeammate,
+        Uncommitted,
     )
 
 
@@ -64,9 +68,11 @@ class AcceptService:
         announce: Announce | None = None,
         settle_card: SettleCard | None = None,
         record_instruction: RecordInstruction | None = None,
+        record_seat: RecordSeatInstruction | None = None,
         task_teammate: TaskTeammate | None = None,
         roster_team: ProjectTeam | None = None,
         executor: ExecutorCall | None = None,
+        uncommitted: Uncommitted | None = None,
     ):
         """``announce`` 是这个包说不了的那句话 —— 往房间里留一行（`ports.Announce`）。
 
@@ -77,24 +83,44 @@ class AcceptService:
         另外几个同理（`ports.py`）：结掉一张卡等着的那些话（`SettleCard`，形状就是
         `delivery/ledger.settle_card`）、给任务自己的席位留一句指令
         （`RecordInstruction`）、这个任务现在的 AI 队友是哪一个席位
-        （`TaskTeammate`）。前两个在说给任务听的那条路上，最后一个在交付落地的
-        那条路上 —— 都是上面一层的动作，本包够不着。
+        （`TaskTeammate`）、给频道主线上开这个任务的那位 AI 队友留一句平台指令
+        （`RecordSeatInstruction`，递卡时用）。前两个在说给任务听的那条路上，
+        `TaskTeammate` 在交付落地的那条路上 —— 都是上面一层的动作，本包够不着。
 
         ``executor`` 是建卡时把交付物从那条任务的工作目录里读下来的那次机器调用
         （`repository.ports.ExecutorCall`），只在递卡带交付物时才用得上。同上一个
         道理：够不着（`repository` 在本包下面），谁构造谁给。
+
+        ``uncommitted`` 是合并前问的那一句：任务的工作目录里还有没再提交一版的
+        修改（`ports.Uncommitted`）。采纳、人工放行、轮询器合布防过的卡都问它
+        （`accept._holds_uncommitted`）；要合一张交合并的卡却没接这一个，当场炸掉，
+        不会不问就合。
         """
 
         self._session = session
         self._announce = announce
         self._settle_card = settle_card
         self._record_instruction = record_instruction
+        self._record_seat = record_seat
         self._task_teammate = task_teammate
         self._roster_team = roster_team
         self._executor = executor
+        self._uncommitted = uncommitted
         # Set only while a claimed poll runs (): forge clients
         # then give the connection back before each call.
         self._commits_before_remote = False
+        # Set only while `accept` runs for a channel's main line adopting on
+        # its reviewer's word (``by_seat``): a merge that lands inside that
+        # call is told to that seat in its reply, not by waking it
+        # (`task_landing.Landed`).
+        self._adopting_seat: str | None = None
+        #: What the main line seat that adopted in this service's `accept`
+        #: reads in that call's reply, when the merge landed inside it.
+        self.for_adopter: str | None = None
+        #: The head whose merge state the forge was still working out when
+        #: this service's `advance_pr_card` read the card's PR; None when the
+        #: forge had answered, or the step read nothing (`pr_poll` asks again).
+        self.merge_state_computing_for: str | None = None
         self._repo = AcceptCardRepository(session)
         self._topics = TopicRepository(session)
         self._projects = ProjectRepository(session)
@@ -145,8 +171,8 @@ class AcceptService:
         about: str | None = None,
         deliver: str | None = None,
         deliver_url: str | None = None,
-        completes_task: bool = True,
         admits_reviewer: ReviewerAdmission,
+        handed_in_by: str | None = None,
     ) -> AcceptCard:
         return await cards.create_card(
             self,
@@ -161,8 +187,8 @@ class AcceptService:
             about=about,
             deliver=deliver,
             deliver_url=deliver_url,
-            completes_task=completes_task,
             admits_reviewer=admits_reviewer,
+            handed_in_by=handed_in_by,
         )
 
     async def redeliver(
@@ -177,8 +203,12 @@ class AcceptService:
             self, task_id, actor=actor, deliver=deliver, deliver_url=deliver_url
         )
 
-    async def _announce_filed(self, topic: Topic, card: AcceptCard, task: Task) -> None:
-        return await notices._announce_filed(self, topic=topic, card=card, task=task)
+    async def _announce_filed(
+        self, topic: Topic, card: AcceptCard, task: Task, *, by: str | None = None
+    ) -> None:
+        return await notices._announce_filed(
+            self, topic=topic, card=card, task=task, by=by
+        )
 
     async def _announce_new_artifact(
         self, topic: Topic, name: str, *, task_id: uuid.UUID
@@ -252,6 +282,28 @@ class AcceptService:
         call deeper.
         """
         return await self._repo.latest_by_task(task_ids)
+
+    async def waiting_card(self, task_id: uuid.UUID) -> AcceptCard | None:
+        """这条活上还在等人决定的那张卡（一条活同时只有一张，`list_for_task`）；
+        没有就是 None。关任务会作废它，所以队友关不关得了任务看的是它。"""
+        return next(
+            (
+                card
+                for card in await self._repo.list_for_task(task_id)
+                if card.status in OPEN_CARD_STATUSES
+            ),
+            None,
+        )
+
+    async def held_pr_deliveries(self, project_id: uuid.UUID) -> list[dict]:
+        """这个项目里骑着 PR、还在等人决定的交付：PR 号、它的分支和要并进去的分支。
+        关掉这样的 PR，删掉、改名或清空它的分支，都是作废那份交付，所以队友经
+        forge 代理做不了（`agent.forge_requests`）。"""
+        rows = await self._repo.held_pr_deliveries(project_id, OPEN_CARD_STATUSES)
+        return [
+            {"number": number, "branch": branch, "base": base}
+            for number, branch, base in sorted(rows, key=lambda row: row[0])
+        ]
 
     async def reviewer_handles_for_cards(
         self, card_ids: list[uuid.UUID]
@@ -336,6 +388,13 @@ class AcceptService:
             head_sha=head_sha,
         )
 
+    async def adopt_when_ready(
+        self, *, card_id: uuid.UUID, decided_by: str, head_sha: str
+    ) -> AcceptCard:
+        return await merge_queue.adopt_when_ready(
+            self, card_id=card_id, decided_by=decided_by, head_sha=head_sha
+        )
+
     def _notify_merge_result(
         self,
         topic: Topic,
@@ -381,15 +440,25 @@ class AcceptService:
         head_sha: str | None = None,
         deliverable_revision: str | None = None,
         by_assistant: bool = False,
+        by_seat: str | None = None,
     ) -> AcceptCard:
-        return await _accept.accept(
-            self,
-            card_id=card_id,
-            decided_by=decided_by,
-            head_sha=head_sha,
-            deliverable_revision=deliverable_revision,
-            by_assistant=by_assistant,
-        )
+        self._adopting_seat = by_seat if by_assistant else None
+        self.for_adopter = None
+        try:
+            return await _accept.accept(
+                self,
+                card_id=card_id,
+                decided_by=decided_by,
+                head_sha=head_sha,
+                deliverable_revision=deliverable_revision,
+                by_assistant=by_assistant,
+                by_seat=by_seat,
+            )
+        finally:
+            self._adopting_seat = None
+
+    async def _holds_uncommitted(self, card: AcceptCard) -> bool:
+        return await _accept._holds_uncommitted(self, card)
 
     async def _accept_github(
         self,
@@ -483,10 +552,10 @@ class AcceptService:
             ref=ref,
         )
 
-    def _write_merge_mirror(
+    async def _write_merge_mirror(
         self, card: AcceptCard, verdict: MergeVerdict, who: Who, head_sha: str
     ) -> None:
-        return merge_queue._write_merge_mirror(
+        return await merge_queue._write_merge_mirror(
             self, card=card, verdict=verdict, who=who, head_sha=head_sha
         )
 
@@ -587,7 +656,7 @@ class AcceptService:
 
     async def _mark_task_merged(
         self, card: AcceptCard, *, delivered_head: str | None = None
-    ) -> bool:
+    ) -> Landed | None:
         return await polling._mark_task_merged(
             self, card=card, delivered_head=delivered_head
         )
@@ -606,6 +675,7 @@ class AcceptService:
         change_subject: str | None = None,
         change_body: str | None = None,
         focus: str | None = None,
+        recorded_by_caller: bool = False,
     ) -> AcceptCard:
         return await decisions.redescribe(
             self,
@@ -614,6 +684,7 @@ class AcceptService:
             change_subject=change_subject,
             change_body=change_body,
             focus=focus,
+            recorded_by_caller=recorded_by_caller,
         )
 
     async def push_fix(
@@ -871,8 +942,12 @@ class AcceptService:
             self, card=card, topic=topic, reason=reason
         )
 
-    async def _stop_accept_conflict(self, card: AcceptCard, topic: Topic) -> NoReturn:
-        return await _accept._stop_accept_conflict(self, card=card, topic=topic)
+    async def _stop_accept_conflict(
+        self, card: AcceptCard, topic: Topic, status: PullRequestStatus
+    ) -> NoReturn:
+        return await _accept._stop_accept_conflict(
+            self, card=card, topic=topic, status=status
+        )
 
     async def _stop_accept_title_disagrees(
         self, card: AcceptCard, topic: Topic, pr_title: str

@@ -34,9 +34,8 @@ from app.api.chapter_rows import chapter_rows
 from app.api.project_skill_rows import proposals_in_conversation
 from app.api.review_comment_rows import review_comment_rows
 from app.api.room_task_rows import (
-    room_task_items,
+    room_snapshot_tasks,
     task_page_row,
-    with_session_running,
 )
 from app.api.task_origin import related_of
 from app.api.topic_member_rows import roster_rows
@@ -75,17 +74,9 @@ async def room_snapshot(
     }
     task = place.task
     if task is None:
-        snapshot["tasks"] = {
-            "open": await with_session_running(
-                db, await room_task_items(db, actor, room, limit=0, status="open")
-            ),
-            "recent": await with_session_running(
-                db,
-                await room_task_items(
-                    db, actor, room, limit=0, status="closed", latest=RECENT_DONE
-                ),
-            ),
-        }
+        snapshot["tasks"] = await room_snapshot_tasks(
+            db, actor, room, recent_done=RECENT_DONE
+        )
         snapshot["pins"] = await pin_rows(db, place.room_id)
         snapshot["threads"] = await thread_reads.in_room(
             db, place.room_id, viewer=viewer, limit=THREADS

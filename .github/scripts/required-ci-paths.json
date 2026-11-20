@@ -10,7 +10,9 @@
     ".github/scripts/allow-user-namespaces.sh",
     ".github/workflows/test.yml",
     ".github/scripts/backend_imports.py",
-    ".github/scripts/coverage_map.py"
+    ".github/scripts/coverage_map.py",
+    ".github/scripts/api_compat.py",
+    ".github/scripts/test_api_compat.py"
   ],
   "frontend": [
     "frontend/**",
@@ -76,6 +78,7 @@
   ],
   "harness": [
     "backend/app/domain/agent/**",
+    "backend/app/domain/prompts/**",
     "backend/tests/**",
     "backend/scripts/test_harness_contracts.py",
     "backend/scripts/assert_suite_ran.py",

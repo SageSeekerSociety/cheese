@@ -1,15 +1,21 @@
 <script setup lang="ts">
 // 资料库里打开的那一份：谁在哪给的、被引用和替换过几次、里面写了什么。桌面上是
-// 列表右边一栏，手机上是整一页（底下一颗「下载」）。
+// 列表右边一栏，手机上是整一页（底下一颗「下载」、关闭在顶栏的返回）。
 //
 // 字节怎么读由页面给（`read`）：这一栏只摆，不知道服务端在哪。
 import type { LibraryFile, LibraryShelf } from '@/lib/libraryApi'
 
+import { computed, ref, useId } from 'vue'
+
+import { usePaneWidth } from '@/composables/usePaneWidth'
+
 import BaseButton from '@/components/base/BaseButton.vue'
 import FileBytesPreview from '@/components/common/FileBytesPreview.vue'
 import NavLink from '@/components/common/NavLink.vue'
+import PaneHandle from '@/components/common/PaneHandle.vue'
 import { t } from '@/i18n'
 import { fmtBytes } from '@/lib/changesTree'
+import { PREVIEW_MAX_MB, tooLargeToPreview } from '@/lib/fileKind'
 import { relTime } from '@/lib/relTime'
 import { topicTitle } from '@/lib/topicState'
 
@@ -27,11 +33,40 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{ download: []; replace: []; close: [] }>()
+
+const tooLarge = computed(() => tooLargeToPreview(props.file.bytes))
+/** 「评论」那一行开着没有。资料库里的原件挂不了评论、也标不了一处（这一栏没有对话可交），
+ *  点开说清楚评论在哪：从某个任务存进来的，在那个任务里；别的要先放进一个任务。 */
+const commentsOpen = ref(false)
+const noteId = `library-comments-${useId()}`
+const fromRoom = computed(() => (props.file.room && typeof props.shelf === 'string' ? props.file.room : null))
+
+// 桌面上这一栏可以往左拖宽，记在这台浏览器上（项目和空间的资料库共用这一份）。
+const root = ref<HTMLElement | null>(null)
+const pane = usePaneWidth('cheese.library.previewShare', root)
 </script>
 
 <template>
-  <section class="library-detail" :class="{ 'library-detail--phone': !props.wide }">
+  <section
+    ref="root"
+    class="library-detail"
+    :class="{ 'library-detail--phone': !props.wide }"
+    :style="props.wide ? pane.style.value : undefined"
+  >
+    <PaneHandle v-if="props.wide" :pane="pane" />
     <header class="library-detail__head">
+      <!-- 关一栏的那一颗钉在右上角（助手栏、支线页头都这样），不跟下载、替换、评论挤
+           在同一排：挤在一起时它折行到哪里都像又一颗操作。手机上是整页，关闭在顶栏的
+           返回那里。 -->
+      <BaseButton
+        v-if="props.wide"
+        icon="mdi-close"
+        size="sm"
+        class="library-detail__close"
+        :title="t('work.library.close')"
+        :aria-label="t('work.library.close')"
+        @click="emit('close')"
+      />
       <h2 v-if="props.wide" class="t-title library-detail__name">{{ props.file.path }}</h2>
       <p class="t-meta c-faint library-detail__meta">
         {{ props.file.added_by ?? t('work.library.unknownSource') }} · {{ relTime(props.file.added_at) }} ·
@@ -57,6 +92,7 @@ const emit = defineEmits<{ download: []; replace: []; close: [] }>()
           {{ t('work.library.download') }}
         </BaseButton>
         <BaseButton
+          v-if="!props.file.readonly"
           kind="secondary"
           size="sm"
           prepend-icon="mdi-file-replace-outline"
@@ -65,31 +101,80 @@ const emit = defineEmits<{ download: []; replace: []; close: [] }>()
         >
           {{ t('work.library.replace') }}
         </BaseButton>
-        <BaseButton size="sm" prepend-icon="mdi-close" :aria-label="t('work.library.close')" @click="emit('close')">
-          {{ t('work.library.close') }}
+        <BaseButton
+          size="sm"
+          prepend-icon="mdi-comment-text-outline"
+          :aria-expanded="commentsOpen"
+          :aria-controls="commentsOpen ? noteId : undefined"
+          data-testid="library-comments"
+          @click="commentsOpen = !commentsOpen"
+        >
+          {{ t('work.library.comments') }}
         </BaseButton>
       </div>
     </header>
     <div class="library-detail__preview">
+      <!-- The download is the one already on the page: the header's on desktop, the bottom bar's on a phone. -->
+      <p v-if="tooLarge" class="library-detail__large t-body c-muted">
+        {{ t('work.library.tooLargeToPreview', { mb: PREVIEW_MAX_MB }) }}
+      </p>
       <FileBytesPreview
+        v-else
         :filename="props.file.path"
         :source="`${props.file.path}#${props.revision}`"
         :read="props.read"
       />
     </div>
+    <!-- One note for both layouts; CSS order puts it under the header on desktop and right above the bar on a phone. -->
+    <p v-if="commentsOpen" :id="noteId" class="t-meta c-muted library-detail__comments" role="note">
+      <template v-if="fromRoom && typeof props.shelf === 'string'">
+        {{ t('work.library.commentsInRoom') }}
+        <NavLink :to="{ name: 'workspace-topic', params: { projectId: props.shelf, topicId: fromRoom.id } }">{{
+          t('work.library.commentsGo', { title: topicTitle(fromRoom) })
+        }}</NavLink>
+      </template>
+      <template v-else>{{ t('work.library.commentsNone') }}</template>
+    </p>
     <div v-if="!props.wide" class="library-detail__bar">
       <BaseButton kind="primary" block @click="emit('download')">{{ t('work.library.download') }}</BaseButton>
+      <BaseButton
+        block
+        prepend-icon="mdi-comment-text-outline"
+        :aria-expanded="commentsOpen"
+        :aria-controls="commentsOpen ? noteId : undefined"
+        data-testid="library-comments-phone"
+        @click="commentsOpen = !commentsOpen"
+      >
+        {{ t('work.library.comments') }}
+      </BaseButton>
     </div>
   </section>
 </template>
 
 <style scoped>
+.library-detail__comments {
+  order: 1;
+  margin: 0;
+  padding: 0 16px 8px;
+}
+.library-detail__preview {
+  order: 2;
+}
+.library-detail--phone .library-detail__comments {
+  order: 3;
+  padding: 8px 16px;
+  border-top: 1px solid var(--line);
+}
+.library-detail__bar {
+  order: 4;
+}
 .library-detail {
+  position: relative;
   display: flex;
   flex: none;
   flex-direction: column;
-  width: 480px;
-  min-width: 0;
+  width: 50%;
+  min-width: min(480px, 100%);
   min-height: 0;
   border-left: 1px solid var(--line);
 }
@@ -107,6 +192,20 @@ const emit = defineEmits<{ download: []; replace: []; close: [] }>()
   gap: 4px;
   padding: 16px 20px 12px;
   border-bottom: 1px solid var(--line);
+}
+
+/* 桌面上右边留出角落那颗 ✕ 的位置：标题和来源行再长也不从它底下穿过去。手机上
+   没有那颗（关闭在顶栏的返回），不留这段空。 */
+.library-detail:not(.library-detail--phone) .library-detail__head {
+  padding-right: 44px;
+}
+
+/* 钉在整栏的右上角，不跟着头栏里那几行文字重排。 */
+.library-detail__close {
+  position: absolute;
+  top: 10px;
+  right: 8px;
+  z-index: var(--z-raised);
 }
 
 .library-detail--phone .library-detail__head {
@@ -135,6 +234,12 @@ const emit = defineEmits<{ download: []; replace: []; close: [] }>()
   margin: 4px 0 0 -8px;
 }
 
+.library-detail__large {
+  margin: 0;
+  padding: 24px;
+  text-align: center;
+}
+
 .library-detail__preview {
   flex: 1 1 auto;
   min-height: 0;
@@ -142,6 +247,9 @@ const emit = defineEmits<{ download: []; replace: []; close: [] }>()
 }
 
 .library-detail__bar {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
   flex: none;
   padding: 10px 16px calc(10px + env(safe-area-inset-bottom));
   border-top: 1px solid var(--line);

@@ -91,6 +91,8 @@ import { storageGet, storageSet } from '@/lib/browserStorage'
 import { dayKey, dayLabel } from '@/lib/chatGrouping'
 import { clockTime } from '@/lib/dateText'
 import { onInboxChange } from '@/lib/inboxLive'
+import { keys } from '@/query/keys'
+import { fromSnapshot } from '@/query/snapshot'
 
 const { t } = useI18n()
 
@@ -147,11 +149,16 @@ const fetchNotifications = async (isMore = false) => {
   if (!isMore) failed.value = false
   errorReason.value = ''
   try {
-    const page = await NotificationsApi.list({
-      read: readFilter(),
-      pageStart: cursorStart.value,
-      pageSize: pageSize.value,
-    })
+    const read = () =>
+      NotificationsApi.list({
+        read: readFilter(),
+        pageStart: cursorStart.value,
+        pageSize: pageSize.value,
+      })
+    const page =
+      !isMore && cursorStart.value === undefined
+        ? await fromSnapshot(keys.inboxNotifications(unreadOnly.value), read)
+        : await read()
 
     if (mine !== generation) return
     notifications.value = [...notifications.value, ...page.notifications]

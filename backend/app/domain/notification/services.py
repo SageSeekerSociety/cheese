@@ -7,7 +7,7 @@
 
 import uuid
 from collections.abc import Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -25,14 +25,21 @@ from app.domain.notification.models import (
     NotificationLevel,
     NotificationType,
 )
-from app.domain.notification.names import names_for, with_names
+from app.domain.notification.names import (
+    names_and_referents,
+    names_with_referents,
+    referents_for,
+    snapshot_id_swaps,
+    with_names,
+    with_snapshot_names,
+)
 from app.domain.notification.ports import DecisionLine
 from app.domain.notification.preferences import in_app_allowed
 from app.domain.notification.preferences_models import PreferencesRepository
 from app.domain.notification.repositories import NotificationRepository
 from app.domain.project.repositories import ProjectRepository
 from app.domain.topic_membership.services import TopicMemberService
-from app.domain.user.services import user_by_handle
+from app.domain.user.services import users_by_handle
 
 
 @dataclass(slots=True)
@@ -115,6 +122,13 @@ class NotificationQueryService:
         self, user_id: int, notification_id: int, desired_read_status: bool
     ) -> int:
         return await self._repo.set_read_status_for_user(
+            user_id=user_id, notification_id=notification_id, read=desired_read_status
+        )
+
+    async def set_read_status_and_get(
+        self, user_id: int, notification_id: int, desired_read_status: bool
+    ) -> Notification | None:
+        return await self._repo.set_read_status_and_get_for_user(
             user_id=user_id, notification_id=notification_id, read=desired_read_status
         )
 
@@ -274,6 +288,8 @@ class NotificationQueryService:
         *,
         resolved_entities: dict[str, ResolvedEntityInfoDTO | None] | None = None,
         names: Mapping[str, str] | None = None,
+        viewer_id: int | None = None,
+        referents: Mapping[int, str] | None = None,
     ) -> NotificationDTO:
         """Build NotificationDTO from Notification entity and its metadata.
 
@@ -283,11 +299,30 @@ class NotificationQueryService:
         """
         metadata_map = _metadata_map_of(notification)
         # A row names people by name, not by the room's <@handle> token
-        # (`names.py`). ``names`` is the page's, read once for every row.
-        if names is None and self._session is not None:
-            names = await names_for(self._session, metadata_map)
+        # (`names.py`). Both halves may be the page's, read once for every row;
+        # whatever the caller already handed in is kept and only the missing
+        # half is read here, so a page never falls back to per-row lookups
+        # because of which of the two it happened to supply.
+        if self._session is not None:
+            if names is None:
+                if referents is None:
+                    names, referents = await names_and_referents(
+                        self._session, metadata_map, viewer_id=viewer_id
+                    )
+                else:
+                    names = await names_with_referents(
+                        self._session,
+                        referents,
+                        metadata_map,
+                        viewer_id=viewer_id,
+                    )
+            elif referents is None:
+                referents = await referents_for(self._session, metadata_map)
         if names:
             metadata_map = with_names(metadata_map, names)
+            metadata_map = with_snapshot_names(
+                metadata_map, names, snapshot_id_swaps(names, referents or {})
+            )
 
         if resolved_entities is None:
             entities = (
@@ -297,6 +332,8 @@ class NotificationQueryService:
             )
         else:
             entities = resolved_entities
+        if names:
+            entities = _named_entities(entities, names)
 
         return NotificationDTO.from_notification(
             notification=notification,
@@ -305,23 +342,58 @@ class NotificationQueryService:
         )
 
     async def build_notification_dtos(
-        self, notifications: Sequence[Notification]
+        self, notifications: Sequence[Notification], *, viewer_id: int | None = None
     ) -> list[NotificationDTO]:
-        """整页 DTO，实体解析每类只发一次查询。列表端点走这里。"""
+        """整页 DTO，实体解析每类只发一次查询。列表端点走这里。
+
+        ``viewer_id`` 是这一页给谁看：设了个人备注的人在这里用备注，和名册一致。
+        """
+        if not notifications:
+            return []
         resolved_pages = await self.resolve_entities_for_notifications(notifications)
-        names = (
-            await names_for(self._session, *map(_metadata_map_of, notifications))
-            if self._session is not None
-            else {}
-        )
+        # Names and referenced people are read once for the whole page: a row
+        # that names someone only through an entity reference must get their
+        # remark too, and doing that per row would be a query per row.
+        if self._session is not None:
+            names, referents = await names_and_referents(
+                self._session,
+                *map(_metadata_map_of, notifications),
+                viewer_id=viewer_id,
+            )
+        else:
+            names, referents = {}, {}
         return [
             await self.build_notification_dto(
-                notification, resolved_entities=resolved_entities, names=names
+                notification,
+                resolved_entities=resolved_entities,
+                names=names,
+                referents=referents,
             )
             for notification, resolved_entities in zip(
                 notifications, resolved_pages, strict=True
             )
         ]
+
+
+def _named_entities(
+    entities: dict[str, ResolvedEntityInfoDTO | None], names: Mapping[str, str]
+) -> dict[str, ResolvedEntityInfoDTO | None]:
+    """A person entity's name, read the way the reader calls them.
+
+    ``names`` already carries the reader's own remarks over the public nickname
+    (``names.py``); a resolved entity is the same person the metadata tokens
+    name, so it gets the same label instead of a chip showing the public name
+    beside a remark elsewhere on the row.
+    """
+    renamed: dict[str, ResolvedEntityInfoDTO | None] = {}
+    for key, entity in entities.items():
+        handle = getattr(entity, "handle", None)
+        name = names.get(handle) if handle else None
+        if entity is None or not name or name == entity.name:
+            renamed[key] = entity
+        else:
+            renamed[key] = replace(entity, name=name)
+    return renamed
 
 
 def asks_for_decision(notification: Notification) -> bool:
@@ -388,14 +460,16 @@ class ProjectNotificationService:
             # `cheese_notify` 把返回值整个丢掉 —— 发的人和收的人都不会知道。一条
             # 到不了任何人的通知不是成功。
             raise ValidationError(say("notificationNoRecipients"))
+        users = await users_by_handle(self._session, recipients)
+        prefs = await self._prefs.for_users([u.id for u in users.values()])
         rows: list[Notification] = []
         for handle in recipients:
-            user = await user_by_handle(self._session, handle)
+            user = users.get(handle)
             # 站内也是收件人的选择：这一类他关掉了就不写进他的收件箱。没有账号行
             # 的收件人（`receiver_id` 为空）读不到偏好，按默认（进站内）。
             if user is not None:
-                pref = await self._prefs.for_user(user.id)
-                if not in_app_allowed(pref, kind):
+                pref = prefs.get(user.id)
+                if pref is not None and not in_app_allowed(pref, kind):
                     continue
             rows.append(
                 await self._repo.add(
@@ -408,8 +482,11 @@ class ProjectNotificationService:
                     body=body,
                     conversation_id=conversation_id,
                     payload=payload,
+                    flush=False,
                 )
             )
+        if rows:
+            await self._session.flush()
         return rows
 
     async def _broadcast_roster(
@@ -470,6 +547,8 @@ class ProjectNotificationService:
             limit=page_size + 1,
             at_or_before=cursor,
         )
+        if cursor is None and len(rows) <= page_size:
+            return rows, len(rows), None
         total = await self._repo.count_for_project(
             project_id, recipient_handle=target_handle, unread_only=unread_only
         )
@@ -517,8 +596,10 @@ class ProjectNotificationService:
             raise NotFoundError("Notification not found")
         return row
 
-    async def mark_read(self, notification_id: int) -> Notification:
-        row = await self.get_or_404(notification_id)
+    async def mark_read(
+        self, notification_id: int, *, row: Notification | None = None
+    ) -> Notification:
+        row = row if row is not None else await self.get_or_404(notification_id)
         row.read = True
         return await self._repo.save(row)
 
@@ -531,11 +612,12 @@ class ProjectNotificationService:
         publish: Callable[[str, dict], Awaitable[None]],
         decision_line: DecisionLine,
         by_assistant: bool = False,
+        row: Notification | None = None,
     ) -> Notification:
         """拍板 (spec G2)：把选的那一项记在这条上，并把决定丢回问这件事的那条
         对话，芝士下一轮读得到。``by_assistant``：是 ``decided_by`` 自己的芝士
         替他拍的板，那一句照样署他的名，并标明是芝士代他说的。"""
-        row = await self.get_or_404(notification_id)
+        row = row if row is not None else await self.get_or_404(notification_id)
         if row.type != NotificationType.DECISION_REQUEST:
             raise ValidationError(say("notificationOnlyDecisions"))
         # 幂等：一件事只拍一次板，重复拍不会往房间里再丢一条【决策】。

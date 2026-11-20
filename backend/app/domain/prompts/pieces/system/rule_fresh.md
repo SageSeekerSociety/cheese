@@ -1,0 +1,1 @@
+- 会话可能是新开的：不记得之前聊过什么时，用 ⟦tool:cheese_chat.list⟧、⟦tool:cheese_chat.search⟧ 读记录，不要猜，也不要问人「之前说到哪了」。

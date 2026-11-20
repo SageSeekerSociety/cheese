@@ -10,7 +10,12 @@ from datetime import UTC, datetime
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.integration.conftest import UserCreator, create_approved_space, unique_int
+from tests.integration.conftest import (
+    UserCreator,
+    create_approved_space,
+    join_task_space,
+    unique_int,
+)
 
 
 class TestBug7ParticipantUserInfo:
@@ -67,6 +72,12 @@ class TestBug7ParticipantUserInfo:
             headers={"Authorization": f"Bearer {creator.token}"},
         )
 
+        join_task_space(
+            api_client,
+            task_id,
+            participant.user_id,
+            admin_headers={"Authorization": f"Bearer {creator.token}"},
+        )
         # Participant joins task
         join_resp = api_client.post(
             f"/tasks/{task_id}/participants",

@@ -12,7 +12,8 @@
 // 任务负责人那里每句都交给队友，这是规则不是开关：头像常亮，点了不改正文。
 //
 // 表情只说状态：闭眼（不交给）、悬停时眯眼（点一下它就醒了）、睁眼（交给它）、往右上看
-// 冒泡（它正在这个频道里跑一轮，这条它会接着看）。
+// 冒泡（它正在这个频道里跑一轮，这条它会接着看）。三种状态是一个值（`face`），悬停提示读它。
+// 头像旁不写「交给谁」：正文里的 @ 标签、空着时输入框的提示语已经说了，旁边再写一句是重复。
 import { computed, onBeforeUnmount, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 import { useEventListener } from '@vueuse/core'
@@ -60,17 +61,19 @@ useEventListener(touchQuery, 'change', (e: MediaQueryListEvent) => (touchOnly.va
 const lead = computed(() => props.shown[0] ?? null)
 const canPick = computed(() => !props.fixed && props.ready && props.mates.length > 1)
 const isBusy = computed(() => !!lead.value && props.busy.includes(lead.value.handle))
+/** 这条发出去：交给它（on）、它正在跑一轮会接着看（busy）、谁也不交（off）。 */
+const face = computed<'on' | 'busy' | 'off'>(() => (props.on ? 'on' : isBusy.value ? 'busy' : 'off'))
 const names = computed(() => props.shown.map((m) => m.label).join(t('work.room.composer.summonJoin')))
 
 const tip = computed(() => {
   const name = lead.value?.label ?? ''
   if (props.fixed)
     return props.on ? t('work.room.composer.summonRule', { name }) : t('work.room.composer.summonPeopleOnly')
-  if (props.on)
+  if (face.value === 'on')
     return props.shown.length > 1
       ? t('work.room.composer.summonOnMany', { names: names.value })
       : t('work.room.composer.summonOn', { name })
-  if (isBusy.value) return t('work.room.composer.summonBusy', { name })
+  if (face.value === 'busy') return t('work.room.composer.summonBusy', { name })
   if (!canPick.value) return t('work.room.composer.summonOff', { name })
   return touchOnly.value
     ? t('work.room.composer.summonOffManyTouch', { name })
@@ -264,6 +267,7 @@ const rows = computed(() =>
 .summon {
   position: relative;
   display: inline-flex;
+  align-items: center;
 }
 .summon__btn {
   position: relative;

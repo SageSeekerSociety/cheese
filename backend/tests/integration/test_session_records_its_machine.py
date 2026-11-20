@@ -159,7 +159,7 @@ def _open(central, project, topic, agent, *, resume=None):
     assert target["kind"] == "deferred"
     response = client.post(
         target["lease_path"],
-        headers={"X-Cheese-Token": opening["token"]},
+        headers={"Authorization": f"Bearer {opening['token']}"},
         json={"env": {}},
     )
     assert response.status_code == 200, response.text
@@ -225,6 +225,7 @@ async def test_a_room_that_moves_keeps_what_it_said(client, room, monkeypatch):
             agent_handle="ada",
             resume_token="conversation-1",
             harness=harness_for(None),
+            generation=0,
         )
         await db.commit()
 
@@ -249,9 +250,12 @@ async def test_a_room_that_moves_keeps_what_it_said(client, room, monkeypatch):
     }
     # 下一轮：续接指针是从这条会话行上读出来的，和 `chat.py` 读的是同一处。
     async with client.test_factory() as db:
-        resumes_by = await AgentSessionService(db).resume_token(
-            topic, "ada", harness=harness_for(None)
-        )
+        resumes_by = (
+            await AgentSessionService(db).conversation(
+                topic, "ada", harness=harness_for(None)
+            )
+            or (None,)
+        )[0]
     target = _open(central, project, topic, "ada", resume=resumes_by)
     assert target["device_id"] == client.session_test_devices["hands-b"]
     assert target["resource_id"] != before_resource
@@ -277,9 +281,10 @@ async def test_a_room_that_moves_keeps_what_it_said(client, room, monkeypatch):
             harness=harness_for(None),
         )
         await db.commit()
-        resumes_by = await sessions.resume_token(
-            topic, "ada", harness=harness_for(None)
-        )
+        resumes_by = (
+            await sessions.conversation(topic, "ada", harness=harness_for(None))
+            or (None,)
+        )[0]
     on_new_host = _open(central, project, topic, "ada", resume=resumes_by)
 
     opened = central._ensure_screen.await_args.kwargs
@@ -313,6 +318,7 @@ async def test_a_room_with_no_resume_token_yet_has_not_run(business_db_factory, 
             agent_handle="ada",
             resume_token="conversation-1",
             harness=harness_for(None),
+            generation=0,
         )
         await db.commit()
         assert await sessions.has_run(topic) is True

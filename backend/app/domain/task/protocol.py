@@ -3,7 +3,7 @@
 An institution publishes a 题目板 (`space`, a course / an activity) whose
 题目分组 (`space_categories`: 作业, 实验, 小测) hold 题目 (`task`). Linking a
 project to a 题目 accepts a protocol: the institution provides a 资源包 (compute
-credits, a default expert role), the project accepts 条件 (e.g. 结题答辩 must be
+credits — nothing else rides in it) and a default expert role, the project accepts 条件 (e.g. 结题答辩 must be
 accepted by a mentor).
 
 **Where the protocol lives (#370, decided 2026-08-17).** On the 题目分组, with
@@ -22,7 +22,10 @@ Prose elsewhere still calls the 题目分组 a 项目集 — the name this level
 when it WAS the course. `app.domain.space.models.SpaceCategory` is the row.
 
 **教学配置 (#8d772257).** 一门课不只是给额度，它还教。`teaching` 键承载这件事 ——
-AI 队友怎么帮学生（四种方式之一）、老师写的补充要求、可以读的课件。
+AI 队友怎么帮学生（四种方式之一）、老师写的补充要求、可以读的课件、项目里每个 AI
+队友每一轮都带上的技能。控制 AI 的设置只在这一处：资源包里曾经也带过一段 prompt
+和一组技能名，只在建项目时抄给默认队友一次，后来的队友拿不到，题目改了也跟不上；
+这里不读资源包里的那两个键（#4767）。
 
 **两层同时生效（10-20 空间这一轮）。** 空间 (`Space.teaching`) 说这块板上的 AI 队友
 一般怎么帮，题目在它上面再加：自己的补充要求、自己的资料，也可以换一种方式。两层
@@ -31,7 +34,7 @@ AI 队友怎么帮学生（四种方式之一）、老师写的补充要求、�
 """
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 #: Keys a 题目 may override. Anything else on the 分组 is inherited as-is.
@@ -43,14 +46,6 @@ from typing import Any
 #: rule for the course's fields would be a second thing to keep in step, and the
 #: two would disagree the first time someone edited one of them.
 _OVERRIDABLE = ("resource_pack", "conditions", "default_role", "shell", "teaching")
-
-#: 题目包 (`resource_pack`) 里那两个由出题人带的 AI 配置键。它们和 `compute_credits`
-#: 同住一个 JSON 列 —— 不新开列、不新增协议字段的写入口：题目包本来就是「这门课给
-#: 建项目的人准备的东西」，一块 prompt 与一组 skill 名字正是它的一份子。整键替换的
-#: 语义照旧（`resource_pack` 在每一层整份覆盖），所以「这道题的包」取代「项目集
-#: 那一个包」，和其余字段同一个规矩。
-_PACK_PROMPT_KEY = "prompt"
-_PACK_SKILLS_KEY = "skills"
 
 
 def _text(value: Any) -> str | None:
@@ -132,7 +127,7 @@ class Teaching:
     #: 本节学习目标 — what the student should be able to do by the end. Its
     #: presence is also what makes a 教学安排 EDUCATIONAL: a config with goals
     #: and no `system_prompt` gets the default teaching template (Socratic +
-    #: 形态纪律, see `harness.opening`), because "学习目标" is the teacher saying
+    #: 形态纪律, see `prompts.opening`), because "学习目标" is the teacher saying
     #: "this one is here to learn" — and a blank prompt then means "use your
     #: teaching manners", not "have no manners".
     learning_goals: list[str] = field(default_factory=list)
@@ -153,6 +148,29 @@ class Teaching:
     #: The team documents the course points its AI teammates at (#3774): their
     #: agents may read these, and no other team document.
     document_ids: list[str] = field(default_factory=list)
+    #: Skill names every AI teammate in the project carries, on every turn, on
+    #: top of its own (`agent.turn.intake.context.carried_skills`). Read per
+    #: turn like the rest of this config, so a teammate added after the project
+    #: was built carries them too, and a 题目 that changes its list is heard on
+    #: the next turn rather than only by projects built after the change.
+    skills: list[str] = field(default_factory=list)
+    #: 「引导为主」时的两项保护（§ learning analysis, step 4）。它们跟着 `mode` 走：
+    #: 说了方式的那一层说了算（`combine`），而且只在最后的方式是 ``guide`` 时生效
+    #: （`ladder` / `checks_output`）。没写就是关着 —— 已有的空间不会自己打开。
+    #: 提示阶梯：问思路 → 给方向 → 给伪代码 → 给片段，逐级给，每条回复标出第几级。
+    hint_ladder: bool = False
+    #: 输出检查：回复里出现大段代码时改成提示（`app.domain.task.guide`）。
+    output_check: bool = False
+
+    @property
+    def ladder(self) -> bool:
+        """The hint ladder is in force: guide mode, and the switch on."""
+        return self.mode == "guide" and self.hint_ladder
+
+    @property
+    def checks_output(self) -> bool:
+        """The output check is in force: guide mode, and the switch on."""
+        return self.mode == "guide" and self.output_check
 
     @property
     def is_empty(self) -> bool:
@@ -168,6 +186,7 @@ class Teaching:
             or self.private_prompt
             or self.material_ids
             or self.document_ids
+            or self.skills
         )
 
     def fill(self, template: str) -> str:
@@ -183,13 +202,27 @@ class Teaching:
 
     def combine(self, task: "Teaching") -> "Teaching":
         """This (the space's) and a 题目's together: the 题目's way of helping
-        when it picks one, both requirements, both sets of materials."""
+        when it picks one, both requirements, both sets of materials and of
+        skills."""
         if task.is_empty:
             return self
         if self.is_empty:
             return task
+        if replace(task, skills=[]).is_empty:
+            # A 题目 that gives skills and says nothing else of how to help
+            # leaves the space's guidance as it is, its goals and private
+            # guidance included: skills are not guidance.
+            return replace(
+                self, skills=list(dict.fromkeys([*self.skills, *task.skills]))
+            )
+        # The two guards ride with the way of helping: the level that says the
+        # mode says them too, so a 题目 that keeps its space's 引导为主 keeps
+        # the space's guards, and one that picks its own brings its own.
+        guards = task if task.mode else self
         return Teaching(
             mode=task.mode or self.mode,
+            hint_ladder=guards.hint_ladder,
+            output_check=guards.output_check,
             system_prompt=task.system_prompt,
             space_prompt=self.system_prompt,
             # 学习目标与出题人私有指导是**题目**那一层说的：空间是「这块板上的课
@@ -198,6 +231,7 @@ class Teaching:
             private_prompt=task.private_prompt,
             material_ids=list(dict.fromkeys([*self.material_ids, *task.material_ids])),
             document_ids=list(dict.fromkeys([*self.document_ids, *task.document_ids])),
+            skills=list(dict.fromkeys([*self.skills, *task.skills])),
         )
 
     @classmethod
@@ -219,6 +253,10 @@ class Teaching:
             learning_goals=_texts(raw.get("learning_goals")),
             material_ids=_ids(raw.get("material_ids")),
             document_ids=_uuids(raw.get("document_ids")),
+            skills=_texts(raw.get("skills")),
+            # Only a literal true turns a guard on: a stray string is not a switch.
+            hint_ladder=raw.get("hint_ladder") is True,
+            output_check=raw.get("output_check") is True,
         )
 
 
@@ -226,7 +264,9 @@ class Teaching:
 class Protocol:
     """The effective terms for one 赛题."""
 
-    #: What the institution provides. `{"compute_credits": N}` issues a grant.
+    #: 资源包: the compute the institution provides, `{"compute_credits": N}`,
+    #: issued as a grant restricted to the project. Nothing else rides in it —
+    #: what the AI teammates are told and carry is `teaching`.
     resource_pack: dict[str, Any] = field(default_factory=dict)
     #: What the project accepts, e.g.
     #: ``{"required_topic": "结题答辩", "reviewer_role": "mentor"}``.
@@ -262,21 +302,31 @@ class Protocol:
         return float(value) if value > 0 else 0.0
 
     @property
-    def prompt(self) -> str | None:
-        """题目包里的「手动加的一段 prompt」—— 建项目时并入默认队友的人设正文。
-
-        和 `compute_credits` 同住 `resource_pack`，走同一条继承（`_OVERRIDABLE` 的
-        整键替换）。空 / 非字符串读成 None：一个 tab 过去的空格不是一段 prompt。
-        """
-        return _text(self.resource_pack.get(_PACK_PROMPT_KEY))
+    def pack_prompt(self) -> str | None:
+        """The prompt a 资源包 still carries (``resource_pack["prompt"]``), which
+        project creation appends to the default teammate's persona. Read until
+        the contract migration after b7d4e1a9c2f3 moves it into the guidance's
+        requirements; that migration's PR removes this."""
+        return _text(self.resource_pack.get("prompt"))
 
     @property
-    def skills(self) -> list[str]:
-        """题目包里指定的一组 skill 名字 —— 建项目时并入默认队友的技能。
+    def model(self) -> str | None:
+        """The model the pack's credits do the work on
+        (``resource_pack["model"]``, a catalog id such as ``deepseek-flash``):
+        a project opened from it runs its tasks on it unless the teammate
+        chose another — it becomes the default teammate's ``task_model`` when
+        that is unset. None leaves tasks to the teammate's and the project's
+        own choice."""
+        return _text(self.resource_pack.get("model"))
 
-        与 `prompt` 同源同规矩；去重、去空白，顺序即给定的顺序。
-        """
-        return _texts(self.resource_pack.get(_PACK_SKILLS_KEY))
+    @property
+    def once_per_person(self) -> bool:
+        """Whether this pack's credits go out once per person across every
+        题目 of the same 分组 (``resource_pack["once_per_person"]``), not once
+        per project. The new-user starters set it: an account gets one
+        starter's credits however many starters it takes. Only ``True`` turns
+        it on, so a stray string is not a switch."""
+        return self.resource_pack.get("once_per_person") is True
 
     def mentor_required_for(self, topic_title: str) -> bool:
         """Does a condition demand a mentor accept a topic with this title?
@@ -406,6 +456,10 @@ def resolve(
                 # presence rule below cannot express. `_resolve_teaching` owns it.
                 continue
             value = _level_value(source, key)
+            if key == "default_role" and not (isinstance(value, str) and value.strip()):
+                # A blank default teammate is a level saying nothing — the
+                # page's 「继承」 wrote it — so the level above stands.
+                continue
             if value is not None:
                 values[key] = value
     teaching, teaching_source = _resolve_teaching(

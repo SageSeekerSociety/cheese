@@ -29,12 +29,14 @@ import time
 import uuid
 import weakref
 from collections.abc import Callable, Iterable, Iterator, Mapping
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import delete
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import (
@@ -108,6 +110,9 @@ _PG_BASE = os.environ.get(
     "TEST_PG_BASE", "postgresql+asyncpg://postgres:postgres@localhost:5433"
 )
 settings.database_url = f"{_PG_BASE}/{_INTG_DB_NAME}"
+# A writer that reaches a second conversation's numbering late fails here
+# rather than only logging (`conversation.numbering`).
+settings.strict_numbering_order = True
 # Redis needs the same per-worker split as Postgres. Its keys are scoped by
 # user id (the #357 attempt budgets and lockouts), and user ids
 # restart from 1 in every worker's own database — so on ONE shared Redis, gw0's
@@ -138,6 +143,7 @@ import app.domain.agent.turn_inputs  # noqa: E402
 import app.models  # noqa: F401, E402  (registers all tables on Base.metadata)
 from app.core.db import Base, get_db  # noqa: E402
 from app.core.db import engine as app_engine  # noqa: E402
+from app.core.job_runs import JobRun  # noqa: E402
 from app.core.redis import get_redis_client  # noqa: E402
 from app.core.sandbox_auth import SANDBOX_TOKEN  # noqa: E402
 from app.domain.agent.central_provider import Placed  # noqa: E402
@@ -148,6 +154,7 @@ from app.domain.agent.harness.claude_code.journal import (  # noqa: E402
 )
 from app.domain.agent.harness.claude_code.runner import Runner  # noqa: E402
 from app.domain.agent.harness.driven import lifecycle  # noqa: E402
+from tests.support.clock import PinnedClock  # noqa: E402
 from tests.support.machine_path import resolved  # noqa: E402
 
 # NOTE: `app.main` is deliberately NOT imported at module scope. Importing it
@@ -167,6 +174,8 @@ from tests.support.machine_path import resolved  # noqa: E402
 if TYPE_CHECKING:
     from app.domain.agent.compute import ComputePool
 from tests.support.collab import install as install_collab  # noqa: E402
+from tests.support.content_review import Green  # noqa: E402
+from tests.support.content_review import install as install_green  # noqa: E402
 from tests.support.seat_channel import EPOCHS, SeatChannel  # noqa: E402
 
 # Tests exercise the real authz enforcement regardless of the dev .env (which
@@ -201,7 +210,10 @@ settings.model_spend_cap_alert_interval_s = 0
 # shipped numbers back.
 settings.request_rate_per_s = 1_000_000.0
 settings.request_rate_burst = 1_000_000_000
+settings.request_ip_rate_burst = 1_000_000_000
 settings.request_concurrency = 1_000_000
+settings.request_ip_rate_per_s = 1_000_000.0
+settings.request_ip_concurrency = 1_000_000
 
 
 #: Compiled SQL shared by the engines tests build. SQLAlchemy keys a compiled
@@ -355,6 +367,12 @@ class ScriptedSession(Runner):
         )
         self.written: list[dict] = []
 
+    def memory_root(self) -> Path:
+        """This seat's own memory tree, beside its state: a real runner is
+        told its seat's directory by its launch (`runner.memory_root`), and
+        the seats here share one process and its environment."""
+        return self.state.parent / "memory"
+
     async def _write(self, message: dict) -> None:
         self.written.append(message)
         if message.get("type") == "control_request":
@@ -485,6 +503,7 @@ class StubChannel(SeatChannel):
         self.sessions: dict[tuple[uuid.UUID, str], ScriptedSession] = {}
         self.last_system_prompt: str | None = None
         self.last_resume_session_id: str | None = None
+        self.last_retired_session_id: str | None = None
         self.last_prompt: str | None = None
         self.reply = "Hello world"
         self._alive = True
@@ -531,6 +550,7 @@ class StubChannel(SeatChannel):
         """The seat's runner, started the first time the seat starts."""
         self.last_system_prompt = launch.system_prompt
         self.last_resume_session_id = launch.resume_session_id
+        self.last_retired_session_id = launch.retired_session_id
         key = (session.conversation_id, agent)
         runner = self.sessions.get(key)
         if runner is None:
@@ -693,9 +713,7 @@ class StubChannel(SeatChannel):
         self, topic_id: uuid.UUID, message: dict, *, agent: str | None = None
     ) -> None:
         """The session read an input: it is queued, then the turn runs."""
-        content = message["message"]["content"]
-        text = content if isinstance(content, str) else content[0]["text"]
-        self.last_prompt = text
+        self.last_prompt = text = _said(message)
         if self.on_start is not None:
             self.on_start()
         self.record(
@@ -804,6 +822,16 @@ class StubChannel(SeatChannel):
         identifier = self.took(topic_id, prompt, agent=agent)
         if identifier is None:
             return
+        # Its text echoed block for block, as Claude Code echoes it: a block
+        # only one person may read is stamped by which block it is.
+        written = next(
+            m
+            for m in self._session_for(topic_id, agent).written
+            if m.get("uuid") == identifier
+        )
+        content = written["message"]["content"]
+        if not isinstance(content, str):
+            content = [b for b in content if b.get("type") == "text"]
         self.record(
             topic_id,
             agent=agent,
@@ -811,7 +839,7 @@ class StubChannel(SeatChannel):
             uuid=identifier,
             isReplay=True,
             parent_tool_use_id=None,
-            message={"role": "user", "content": prompt},
+            message={"role": "user", "content": content},
         )
 
     def says(
@@ -917,8 +945,11 @@ class StubChannel(SeatChannel):
 
 
 def _said(message: dict) -> str:
+    """Every text block of an input, as the model reads it."""
     content = message["message"]["content"]
-    return content if isinstance(content, str) else content[0]["text"]
+    if isinstance(content, str):
+        return content
+    return "\n\n".join(b["text"] for b in content if b.get("type") == "text")
 
 
 # Captured at import: a test that squeezes a production wait patches
@@ -1031,6 +1062,27 @@ def fast_timings(monkeypatch) -> FastTimings:
     is deliberately left out and why.
     """
     return FastTimings(monkeypatch).apply()
+
+
+@pytest.fixture
+def green(monkeypatch) -> Green:
+    """Content Moderation configured and answering as ``tests/support/
+    content_review.py`` says; request it in a test about what is published."""
+    return install_green(monkeypatch)
+
+
+@pytest.fixture
+def pinned_clock(monkeypatch) -> PinnedClock:
+    """The product's UTC "now" (`day_windows.utc_now`) held still for the test.
+
+    Request it in any test that dates rows "today" or "N days ago" and then reads
+    them back through a day window or the gateway's day: without it, a run that
+    crosses UTC midnight between the seed and the read finds the rows on the
+    wrong side of the window. Date the rows from `utc_now()`, not from
+    `datetime.now`, so both sides read the pinned moment;
+    ``pinned_clock.move_to(at)`` moves it. See ``tests/support/clock.py``.
+    """
+    return PinnedClock(monkeypatch, datetime.now(UTC))
 
 
 #: The machine's own git configuration, neutralized. `os.devnull` rather than the
@@ -1256,46 +1308,48 @@ def stub_project_forge(monkeypatch, tmp_path):
     merge tests supply their own PR state; tests/forgejo exercises the real API.
     """
     from app.domain.project import forge
-    from app.domain.project.models import Project, ProjectForge
-    from app.domain.repository import forge_files
+    from app.domain.project import starter as starter_code
+    from app.domain.repository import forge_files, kept_work
     from app.domain.review import forge_clients
     from tests.support import git_store
 
     monkeypatch.setattr(settings, "workspace_root", str(tmp_path / "forge-store"))
 
-    provision = forge.provision_repository
-    default_branch = forge.default_branch
     remote_head = forge_files.branch_head
     remote_data = forge_files.repository_data
     remote_status = forge_clients.compare_status
     remote_author_email = forge.ensure_author_email
 
-    async def provision_repository(project_id, session, **kwargs):
-        existing = await forge.binding_for_project(project_id, session)
-        project = await session.get(Project, project_id)
-        if (
-            existing is not None
-            or (project.settings or {}).get("forge_kind") == "github_app"
-        ):
-            return await provision(project_id, session, **kwargs)
-        binding = ProjectForge(
+    async def prepare_repository(project_id, *, initialize=True, **kwargs):
+        # The forge's half of making a repository; recording it
+        # (`bind_repository`) is the real code.
+        if initialize:
+            git_store.ensure_repo(project_id)
+        else:
+            # Like the real forge: an empty, bare repository that a push
+            # fills in (no working tree, so no path is checked out anywhere).
+            repo = git_store.path(project_id)
+            repo.mkdir(parents=True, exist_ok=True)
+            git_store.git(repo, "init", "-q", "--bare", "-b", "main")
+        return forge.PreparedRepository(
             project_id=project_id,
-            kind="forgejo",
             repo=f"project-{project_id.hex}/code",
             url=f"https://forge.test/project-{project_id.hex}/code.git",
             api_url="https://forge.test/api/v1",
             default_branch="main",
+            sealed_password="",
         )
-        session.add(binding)
-        await session.flush()
-        git_store.ensure_repo(project_id)
-        return binding
+
+    async def starter_remote(project_id, session):
+        # The starter push reaches the local repository with the real git
+        # commands (ls-remote, fetch, push).
+        return starter_code.Remote(
+            url=str(git_store.path(project_id)), username="test", password="test"
+        )
 
     async def read_default_branch(project_id, session):
         binding = await forge.binding_for_project(project_id, session)
-        if binding is None:
-            return await default_branch(project_id, session)
-        return binding.default_branch
+        return None if binding is None else binding.default_branch
 
     async def test_repository(project_id, session):
         binding = await forge.binding_for_project(project_id, session)
@@ -1347,8 +1401,33 @@ def stub_project_forge(monkeypatch, tmp_path):
         if route.startswith("/git/commits/") and route.endswith(".diff"):
             revision = route.removeprefix("/git/commits/").removesuffix(".diff")
             return git_store.git(repo, "show", "--format=", revision)
+        if route.startswith("/git/commits/"):
+            # As Forgejo: one commit by sha or full ref name; 404 (None) when
+            # it names none.
+            found = git_store.run(
+                [
+                    "git",
+                    "show",
+                    "-s",
+                    "--format=%H%n%P%n%cI",
+                    route.removeprefix("/git/commits/") + "^{commit}",
+                ],
+                repo,
+                20,
+                None,
+            )
+            if found.returncode != 0:
+                return None
+            sha, parents, date = found.stdout.splitlines()[:3]
+            return {
+                "sha": sha,
+                "parents": [{"sha": parent} for parent in parents.split()],
+                "commit": {"committer": {"date": date}},
+            }
 
-        def commits(revision):
+        def commits(revision, *, limit=50, only=None):
+            # As GitHub: `path` keeps the commits that changed that file.
+            scope = ["--", only] if only else []
             return [
                 {
                     "sha": sha,
@@ -1358,18 +1437,28 @@ def stub_project_forge(monkeypatch, tmp_path):
                                 repo, "show", "-s", "--format=%an", sha
                             ).strip()
                         },
+                        "committer": {
+                            "date": git_store.git(
+                                repo, "show", "-s", "--format=%cI", sha
+                            ).strip()
+                        },
                         "message": git_store.git(
                             repo, "show", "-s", "--format=%B", sha
                         ).strip(),
                     },
                 }
                 for sha in git_store.git(
-                    repo, "rev-list", "--max-count=50", revision
+                    repo, "rev-list", f"--max-count={limit}", revision, *scope
                 ).splitlines()
             ]
 
         if route == "/commits":
-            return commits(parse_qs(urlsplit(path).query)["sha"][0])
+            query = parse_qs(urlsplit(path).query)
+            return commits(
+                query["sha"][0],
+                limit=int(query.get("per_page", ["50"])[0]),
+                only=query.get("path", [None])[0],
+            )
         if route.startswith("/pulls/") and route.endswith(".diff"):
             from sqlalchemy import select
 
@@ -1436,6 +1525,17 @@ def stub_project_forge(monkeypatch, tmp_path):
                 ["git", "-C", str(repo), "cat-file", "blob", oid]
             )
             return {"encoding": "base64", "content": base64.b64encode(data).decode()}
+        if route.startswith("/branches/"):
+            # As Forgejo: what the branch points at now; 404 (None) when there
+            # is no such branch. `forge.branch_head` reads `commit.id` here (the
+            # binding kind is forgejo), the same shape `branch_head` above uses.
+            branch = route.removeprefix("/branches/")
+            result = git_store.run(
+                ["git", "rev-parse", "--verify", branch], repo, 20, None
+            )
+            if result.returncode != 0:
+                return None
+            return {"commit": {"id": result.stdout.strip()}}
         if not route.startswith("/compare/"):
             return await remote_data(project_id, session, path, **kwargs)
         base, head = route.removeprefix("/compare/").split("...")
@@ -1460,13 +1560,15 @@ def stub_project_forge(monkeypatch, tmp_path):
             ],
         }
 
-    monkeypatch.setattr(forge, "provision_repository", provision_repository)
+    monkeypatch.setattr(forge, "prepare_repository", prepare_repository)
+    monkeypatch.setattr(forge, "starter_remote", starter_remote)
     monkeypatch.setattr(forge, "ensure_author_email", ensure_author_email)
-    monkeypatch.setattr(forge, "default_branch", read_default_branch)
-    monkeypatch.setattr(forge_files, "default_branch", read_default_branch)
+    monkeypatch.setattr(forge, "default_branch_if_any", read_default_branch)
     monkeypatch.setattr(forge_files, "branch_head", branch_head)
     monkeypatch.setattr(forge_files, "repository_data", repository_data)
     monkeypatch.setattr(forge, "repository_data", repository_data)
+    monkeypatch.setattr(kept_work, "repository_data", repository_data)
+    monkeypatch.setattr(kept_work, "branch_head", branch_head)
     monkeypatch.setattr(forge_clients, "compare_status", compare_status)
 
 
@@ -1541,7 +1643,7 @@ def client(
             # The cheese-only write routes are token-gated (app/api/write_access.py);
             # send the secret on every test request so tests exercising those
             # endpoints (note/lock/...) aren't rejected with 401.
-            c.headers["X-Cheese-Token"] = SANDBOX_TOKEN
+            c.headers["Authorization"] = f"Bearer {SANDBOX_TOKEN}"
             # Expose the factory so tests can seed data (e.g. memory entries).
             c.test_factory = setup_factory  # type: ignore[attr-defined]
             # Direct business coroutines must run through ``portal.call`` with this
@@ -1636,19 +1738,20 @@ def _clean_slate_queries() -> tuple[str, str]:
     return occupied, moved_sequences
 
 
-#: The loop and engine the harness's own work on the client database runs on,
-#: made on first use. See ``_on_worker_connection``.
+#: The loop the harness's own work on this worker's databases runs on, and one
+#: engine per database, made on first use. See ``_on_worker_connection``.
 _worker_loop: asyncio.AbstractEventLoop | None = None
-_worker_engine = None
+_worker_engines: dict[str, AsyncEngine] = {}
 
 
-def _on_worker_connection(work):
-    """Run ``work(engine)`` on this worker's own connection to the client
-    database, and return what it returns.
+def _on_worker_connection(work, url: str = TEST_DATABASE_URL):
+    """Run ``work(engine)`` on this worker's own connection to the database at
+    ``url`` (the client database unless named), and return what it returns.
 
     The harness's reads and writes between tests (the clear, the seeded agent
-    user, the check for transactions a test left open) all go through one
-    connection that lives as long as the worker, on a loop of its own. A
+    user, the check for transactions a test left open, the emptied job clock)
+    all go through one connection per database that lives as long as the
+    worker, on a loop of its own. A
     backend's first read of a table loads its catalog entries: 25-45 ms on a
     fresh connection against under 1 ms on one that has read them before, and
     every engine the fixtures build is new per test. On a hosted runner a
@@ -1657,16 +1760,38 @@ def _on_worker_connection(work):
     (``asyncio.run`` per step) that an asyncpg connection cannot outlive.
     ``pool_pre_ping`` reconnects it if the database was recreated underneath.
     """
-    global _worker_loop, _worker_engine
+    global _worker_loop
     if _worker_loop is None:
         _worker_loop = asyncio.new_event_loop()
         threading.Thread(
             target=_worker_loop.run_forever, name="client-db-worker", daemon=True
         ).start()
-        _worker_engine = create_async_engine(
-            TEST_DATABASE_URL, pool_size=1, max_overflow=0, pool_pre_ping=True
+    if url not in _worker_engines:
+        _worker_engines[url] = create_async_engine(
+            url, pool_size=1, max_overflow=0, pool_pre_ping=True
         )
-    return asyncio.run_coroutine_threadsafe(work(_worker_engine), _worker_loop)
+    return asyncio.run_coroutine_threadsafe(work(_worker_engines[url]), _worker_loop)
+
+
+def _empty_the_job_clock() -> None:
+    """Start the test with no periodic job's clock in the integration database.
+
+    Every app lifespan a test enters (``client``, ``python_client``, a test's
+    own ``lifespan_context``) records its jobs' runs and tick leases in
+    ``periodic_job_runs`` through the app's own engine, which commits outside
+    both the client database's clear and ``db_session``'s rollback. Left
+    there, an earlier test's clock decides a later one's: once a worker is
+    300 s old, some ``client`` lifespan takes the real orphan sweep's overdue
+    tick, and its lease refuses every claim on that job for 300 s more. A test
+    whose own runner of that job has to tick then waits out a process it never
+    met. Each test begins as a first deployment does, with no job recorded.
+    """
+
+    async def empty(engine) -> None:
+        async with engine.begin() as connection:
+            await connection.execute(delete(JobRun))
+
+    _on_worker_connection(empty, settings.database_url).result(timeout=60)
 
 
 async def _clear_client_db(*, seed_agent_user: bool = False) -> None:
@@ -2444,6 +2569,7 @@ def _pg_schema_gate(request: pytest.FixtureRequest) -> None:
     if _needs_db(request):
         request.getfixturevalue("_pg_schema")
         drop_connections_left_in_the_app_pool()
+        _empty_the_job_clock()
         explicit_anyio = request.node.get_closest_marker("anyio") is not None
         if explicit_anyio or inspect.iscoroutinefunction(request.function):
             request.getfixturevalue("_app_engine_on_test_loop")
@@ -2676,7 +2802,7 @@ async def python_client(
         async with AsyncClient(
             transport=transport,
             base_url="http://test",
-            headers={"X-Cheese-Token": SANDBOX_TOKEN},
+            headers={"Authorization": f"Bearer {SANDBOX_TOKEN}"},
         ) as c:
             # Expose the per-worker factory so contract tests can seed rows (e.g. a
             # real authenticated user) on the SAME DB the app reads through get_db.
@@ -2741,15 +2867,15 @@ def seed_claim(
     *,
     handle: str | None = None,
     team_id: int | None = None,
-    approved: int = 2,
+    approved: int = 0,
 ) -> None:
     """A claim on ``task_id``: by ``handle`` for an individual task, by
-    ``team_id`` for a team one. Pending (``approved=2``) unless told otherwise;
-    ``ApproveType.APPROVED == 0``.
+    ``team_id`` for a team one. Approved (``ApproveType.APPROVED == 0``) unless
+    told otherwise; ``approved=2`` is one still waiting for the publisher.
 
-    A project can only be built from a task someone has claimed, so every test
-    that makes one from a task claims it first — through the DB, because the
-    claim itself is not what those tests are about.
+    A project can only be built from a task with an approved claim, so every
+    test that makes one from a task claims it first — through the DB, because
+    the claim itself is not what those tests are about.
     """
     import asyncio as _asyncio
     from datetime import UTC, datetime
@@ -2784,6 +2910,83 @@ def seed_claim(
             await session.commit()
 
     _asyncio.run(_seed())
+
+
+def start_task_project(
+    client: TestClient,
+    task_id: int,
+    *,
+    handle: str | None = None,
+    team_id: int | None = None,
+    by: str | None = None,
+) -> str:
+    """开始做这道题: the one way a project is made from a task. The claim is
+    ``handle``'s for an individual task, ``team_id``'s for a team one (started
+    by ``by``, a member of that team); it is seeded approved through the DB
+    unless one is held already, which must then be approved. The project is
+    made the way the claim routes make it (``task_claims.start_claim``), with
+    the task's mentors agreed to. Returns the project's id.
+
+    Through the DB because the claim is not what those tests are about; the
+    claim routes themselves are tested in ``test_task_start_mode.py``.
+    """
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from app.api.task_claims import start_claim
+    from app.domain.task.models import Task, TaskMembership
+    from app.domain.user.repositories import UserRepository
+
+    assert (handle is None) != (team_id is None), "a claim is by a person or a team"
+    actor_handle = by or handle
+    assert actor_handle is not None, "a team's claim is started by one of its members"
+
+    async def _start() -> str:
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            users = UserRepository(session)
+            actor = await users.get_by_username(actor_handle)
+            if actor is None:
+                actor = await users.create_user(
+                    username=actor_handle, email=f"{actor_handle}@example.com"
+                )
+            member_id = team_id if team_id is not None else actor.id
+            claim = await session.scalar(
+                select(TaskMembership)
+                .where(
+                    TaskMembership.task_id == task_id,
+                    TaskMembership.member_id == member_id,
+                    TaskMembership.is_team.is_(team_id is not None),
+                    TaskMembership.deleted_at.is_(None),
+                    TaskMembership.approved != 1,
+                )
+                .order_by(TaskMembership.approved)
+            )
+            if claim is None:
+                now = datetime.now(UTC)
+                claim = TaskMembership(
+                    task_id=task_id,
+                    member_id=member_id,
+                    is_team=team_id is not None,
+                    approved=0,
+                    created_at=now,
+                    updated_at=now,
+                )
+                session.add(claim)
+                await session.flush()
+            assert claim.approved == 0, "only an approved claim is started"
+            task = await session.get(Task, task_id)
+            project = await start_claim(
+                session,
+                task=task,
+                membership=claim,
+                acting_user_id=actor.id,
+                agreed_mentors=True,
+            )
+            await session.commit()
+            return str(project.id)
+
+    return client.portal.call(_start)  # type: ignore[attr-defined]
 
 
 def seed_task_with_protocol(
@@ -2872,6 +3075,46 @@ def seed_task_with_protocol(
 
     _asyncio.run(_seed())
     return holder["id"]
+
+
+def seed_problem_reader(client, *, task_id: int, user_id: int) -> None:
+    """Put ``user_id`` in the space ``task_id`` is published in: only a space's
+    members see and claim its problems (the creator, the space's admins and
+    those already taking part aside). Already a member is fine."""
+    import asyncio as _asyncio
+    from datetime import UTC, datetime
+
+    from sqlalchemy import select
+
+    from app.domain.space.models import SpaceMember
+    from app.domain.task.models import Task
+
+    async def _seed() -> None:
+        async with client.test_factory() as session:  # type: ignore[attr-defined]
+            task = await session.get(Task, task_id)
+            assert task is not None
+            existing = await session.scalar(
+                select(SpaceMember.id).where(
+                    SpaceMember.space_id == task.space_id,
+                    SpaceMember.user_id == user_id,
+                    SpaceMember.deleted_at.is_(None),
+                )
+            )
+            if existing is not None:
+                return
+            now = datetime.now(UTC)
+            session.add(
+                SpaceMember(
+                    space_id=task.space_id,
+                    user_id=user_id,
+                    created_at=now,
+                    updated_at=now,
+                    deleted_at=None,
+                )
+            )
+            await session.commit()
+
+    _asyncio.run(_seed())
 
 
 def seed_user(client: TestClient, handle: str) -> str:

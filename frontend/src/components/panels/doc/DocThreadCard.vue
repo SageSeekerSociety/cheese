@@ -86,8 +86,8 @@ const TOOL_STEPS: Record<string, string> = {
   grep: 'readingCode',
   git: 'readingCode',
   cheese_project_search: 'searching',
-  cheese_memory_read: 'readingMemory',
-  cheese_attachment_read: 'readingAttachment',
+  'cheese_memory.project': 'readingMemory',
+  'cheese_library.read': 'readingAttachment',
 }
 
 const step = computed(() => {

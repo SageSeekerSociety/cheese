@@ -21,13 +21,11 @@ from collections.abc import Iterable, Mapping
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.auth import ActorResolver
 from app.core.sentences import listing, say
 from app.domain.agent.announce import announce
 from app.domain.agent.environment import default_environment, stored
 from app.domain.agent.model_catalog import model_choices
 from app.domain.agent_instance.configuration import AgentConfiguration
-from app.domain.identity.actor import Actor
 from app.domain.identity.handles import agent_instance_handle
 from app.domain.machine.environments import environment_words
 from app.domain.notice_meta import (
@@ -39,14 +37,12 @@ from app.domain.notice_meta import (
 from app.domain.project.member_settings import MEMBER_SETTINGS
 from app.domain.project.models import Project
 from app.domain.project.services import ProjectService
-from app.domain.project_permissions import Permission
 from app.domain.repository.identity import CREDIT_OWNER, credit_mode
 from app.domain.room_task import naming
 
 #: Each member setting → the sentence that names it in the room line.
 _NAMES = {
     "default_model": "settingDefaultModel",
-    "default_subagent_model": "settingSubagentModel",
     "execution_environment": "settingEnvironment",
     "max_concurrent_turns": "settingMaxConcurrentTurns",
     naming.SETTINGS_KEY: "settingTaskNaming",
@@ -72,16 +68,6 @@ _EFFORTS = {
     "high": "settingEffortHigh",
     "max": "settingEffortMax",
 }
-
-
-async def member_setting_actor(resolver: ActorResolver, project_id: uuid.UUID) -> Actor:
-    """The caller, let through the door these settings take: someone whose role
-    may change the project's settings (#3830)."""
-    actor = await resolver.resolve(project_id=project_id)
-    await resolver.authorize_project(
-        actor, project_id=project_id, permission=Permission.edit_settings
-    )
-    return actor
 
 
 async def change_project_settings(
@@ -176,13 +162,9 @@ async def say_agent_changes(
 
 async def _words(db: AsyncSession, project: Project, key: str, value: object):
     """What the room line calls ``value`` of the member setting ``key``."""
-    if key in ("default_model", "default_subagent_model"):
+    if key == "default_model":
         if value is None:
-            return say(
-                "settingFollowDefault"
-                if key == "default_model"
-                else "settingInheritMain"
-            )
+            return say("settingAutomatic")
         labels = {c["id"]: c["label"] for c in model_choices(project.settings)}
         return labels.get(value, value)
     if key == "execution_environment":

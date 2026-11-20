@@ -1,6 +1,22 @@
-import type { Material, Space, SpaceCategory, SpaceTeaching, Team, TeamSummary, Topic, User } from '.'
+import type {
+  Material,
+  Space,
+  SpaceCategory,
+  SpaceKnowledgePoint,
+  SpaceTeaching,
+  Team,
+  TeamSummary,
+  Topic,
+  User,
+} from '.'
+import type { TaskTestSuite } from './taskJudge'
 
 export type TaskSubmitterType = 'USER' | 'TEAM'
+
+/** 怎么开始做：`DIRECT` 点「开始做这道题」就开始，所有人都按题目的截止时间交；
+ *  `APPLY` 先申请，出题人通过后才开始，限时（`defaultDeadline` 天）从通过那天算起。
+ *  从题目来的项目都在开始的那一刻建出来。 */
+export type TaskStartMode = 'DIRECT' | 'APPLY'
 export type TaskSubmissionEntryType = 'TEXT' | 'FILE'
 export type TaskTeamMembershipLockPolicy = 'NO_LOCK' | 'LOCK_ON_APPROVAL'
 export type EligibilityRejectReasonCode =
@@ -9,7 +25,6 @@ export type EligibilityRejectReasonCode =
   | 'PARTICIPANT_LIMIT_REACHED'
   | 'TASK_NOT_APPROVED'
   | 'REGISTRATION_NOT_STARTED'
-  | 'REGISTRATION_CLOSED'
   | 'MISSING_REAL_NAME'
   | 'TEAM_TOO_SMALL'
   | 'TEAM_TOO_LARGE'
@@ -53,6 +68,21 @@ export interface ParticipationEligibility {
 export interface TaskSubmissionSchemaEntry {
   prompt: string
   type: TaskSubmissionEntryType
+  /** 属于哪个阶段：阶段的 id；不分阶段的题是 null。 */
+  stage?: string | null
+}
+
+/** 评分要点的一行由谁给分（`app/domain/task/rubric.py` 的 `LINE_KINDS`）：老师评审时
+ *  手填、平台按这份领题用掉的额度自动算分，或按这个阶段的测试点自动算分。老题的行都
+ *  没有这一项，读作 `manual`。 */
+export type TaskRubricLineKind = 'manual' | 'usage' | 'tests'
+
+/** 自动算分那一行的设置（`rubric._usage_config`）：按阈值，或按全班排名。按阈值时
+ *  `full` 是不超过多少额度得满分、`zero` 是达到多少额度得 0 分（`zero > full`）。 */
+export interface TaskRubricLineConfig {
+  mode: 'threshold' | 'rank'
+  full?: number
+  zero?: number
 }
 
 /** 评分要点的一行：评什么、多少分、怎样算做到（`app/domain/task/rubric.py`）。 */
@@ -60,6 +90,36 @@ export interface TaskRubricLine {
   item: string
   points: number
   criteria: string
+  /** 评的是哪个阶段的提交：阶段的 id；不分阶段的题是 null。 */
+  stage?: string | null
+  /** 谁给这一行分。手动行写出去时省略它，自动行必须带上；读回来时缺省是 `manual`。 */
+  kind?: TaskRubricLineKind
+  /** 自动行怎么给分；手动行没有这一项。 */
+  config?: TaskRubricLineConfig
+}
+
+/** 题目的一个阶段（`app/domain/task/stages.py`）：名称、要做到什么、截止时间。 */
+export interface TaskStage {
+  /** 阶段的 id，调整先后也不变：提交项、评分要点和已交的提交都按它指这个阶段。新加的
+   *  阶段由表单当场给一个（`lib/taskStages.ts`）。 */
+  id?: string | null
+  name: string
+  description: string
+  /** 毫秒时间戳；`null` = 这个阶段不设截止。 */
+  dueAt: number | null
+}
+
+/** 一个阶段走到哪一步（`app/domain/task/submission_state.py` 的 STAGE_*）。`MISSED`
+ *  是过了截止、一版也没交，这条领取因它未通过：领取自己的状态和出题人看的人数里都有。 */
+export type TaskStageStatus = 'NOT_SUBMITTED' | 'PENDING_REVIEW' | 'PASSED' | 'REJECTED' | 'MISSED'
+
+/** `GET /tasks/{id}/progress`：每个阶段上的进度。不分阶段的题算一个阶段。 */
+export interface TaskProgress {
+  stages: TaskStage[]
+  /** 我那条获批的领取在每个阶段上的状态；没领到是 `null`。 */
+  mine: { participantId: number; stages: TaskStageStatus[] } | null
+  /** 批改的人才有：每个阶段上各状态的人数。 */
+  distribution: Partial<Record<TaskStageStatus, number>>[] | null
 }
 
 /** 我在一道题上走到哪一步：没交、交了等判、通过、退回可重交。
@@ -71,7 +131,12 @@ export type TaskClaimStatus = 'IN_PROGRESS' | 'SUBMITTED' | 'PASSED' | 'REJECTED
 
 export interface Task {
   /** 加入每个领取者项目的导师（#3830）；没有就是空。 */
-  mentors?: { handle: string; nickname: string }[]
+  mentors?: {
+    handle: string
+    nickname: string
+    /** 当前查看者给他设的个人备注；没设是 null，界面退回公开昵称。 */
+    remark?: string | null
+  }[]
   id: number
   name: string
   intro: string
@@ -81,6 +146,7 @@ export interface Task {
   deadline: number | null
   participantLimit: number
   defaultDeadline: number
+  startMode?: TaskStartMode
   resubmittable: boolean
   editable: boolean
   description: string
@@ -90,8 +156,17 @@ export interface Task {
   /** 评分要点。批改的人总能读到；学生只在 `rubricPublic` 时读到，否则是空的。 */
   rubric?: TaskRubricLine[]
   rubricPublic?: boolean
+  /** 各阶段挂的测试点（每个阶段至多一套）。学生读到的隐藏用例没有输入输出。 */
+  testSuite?: TaskTestSuite[]
+  /** 阶段；不分阶段是空的。详情与改题的响应才带。 */
+  stages?: TaskStage[]
   participants: {
+    /** 没删的申请份数，等批准的和被拒的都算。 */
     total: number
+    /** 申请通过的份数：页面上的「参与人数」，名额满没满也按它。 */
+    approved: number
+    /** 还算数的份数（通过的和等批准的）：有一份，开始方式就不能再改。 */
+    live?: number
     examples: TaskParticipantSummary[]
   }
   submittable: boolean
@@ -116,8 +191,17 @@ export interface Task {
   joined?: boolean
   joinedTeams?: Team[]
   topics?: Topic[]
+  /**
+   * 这道题归在这块板的哪几个知识点下（§ learning analysis, step 1）。与 `topics`
+   * 同一形状；详情、列表、编辑表单草稿都带，未点名时是空数组。服务端按知识点是否
+   * 软删过滤（`TaskKnowledgePointRepository`），所以已删的名字不在这里。
+   */
+  knowledgePoints?: SpaceKnowledgePoint[]
   userDeadline?: number
   participationEligibility?: ParticipationEligibility
+  /** 我（或我的团队）从这道题来的那个项目：题目页的「继续做」打开它。详情接口才带；
+   *  还没开始（申请在等通过、被拒了、没申请）是 null。 */
+  myProject?: { id: string; name: string } | null
   /** 这道题挂着几份材料。列表接口一并给（只增不改的那个数，不带文件本体）。 */
   attachmentCount?: number
   /** 我这条领取的档位。`null`/缺省 = 我没领这道题。随 `queryJoined` 一族回来。 */
@@ -134,12 +218,51 @@ export interface Task {
   defaultRole?: string | null
 }
 
+/** 一条评审里额度和手动两部分的来源（`usage_score.compose_review`）。题目在这一版的
+ *  阶段上有 `usage` 行、又是判通过时才有：`score` 是总分，`manual` 是老师填的那部分，
+ *  `lines` 说自动那几行各得几分（现在只有额度那一行）。老题的评审没有这一项。 */
+export interface TaskSubmissionAutoScores {
+  /** 老师手填的那部分分（0 到该阶段手动项分值之和）。 */
+  manual: number
+  /** 自动那部分的分定下了没有：按排名给分的题在截止前是 false（总分显示「暂定」）。 */
+  final: boolean
+  lines: (TaskUsageScoreLine | TaskTestsScoreLine)[]
+}
+
+/** 合成账里额度那一行。 */
+export interface TaskUsageScoreLine {
+  index: number
+  kind: 'usage'
+  points: number
+  score: number
+  /** 这份领题当时用掉的额度。 */
+  credits: number
+  mode: string
+}
+
+/** 合成账里测试点那一行（`auto_score.compose_review`）：这一版评测通过的用例分、折算的
+ *  分，老师改过时 `adjusted` 和原因；还没出结果或评测失败时 `pending`，分记 0。 */
+export interface TaskTestsScoreLine {
+  index: number
+  kind: 'tests'
+  points: number
+  score: number
+  passedPoints: number
+  totalPoints: number
+  runId?: number | null
+  adjusted?: boolean
+  reason?: string | null
+  pending?: boolean
+}
+
 export interface TaskSubmissionReview {
   reviewed: boolean
   detail: {
     accepted: boolean
     score: number
     comment: string
+    /** 合成总分的账（手动 + 自动）。手动给分的旧题没有这一项。 */
+    autoScores?: TaskSubmissionAutoScores
   }
 }
 
@@ -148,6 +271,8 @@ export interface TaskSubmission {
   member: TaskParticipantSummary
   submitter: User
   version: number
+  /** 这一版交的是哪个阶段：阶段的 id；不分阶段的题是 null。 */
+  stage: string | null
   index: number
   createdAt: number
   updatedAt: number
@@ -166,6 +291,10 @@ export interface TaskParticipantSummary {
   id: number
   intro: string
   name: string
+  /** 报名者的账号；名册上靠它认人、给它上色。 */
+  username?: string
+  /** 当前查看者给他设的个人备注；没设是 null，界面退回公开昵称。 */
+  remark?: string | null
   avatarId: number
 }
 
@@ -183,6 +312,38 @@ export interface TaskTeamParticipantMemberSummary {
   avatarId: number
   isLeader: boolean
   realNameInfo?: TaskParticipantRealNameInfo
+}
+
+/** 额度那一行给的分（`usage_score.usage_of_claims`）：这一行的分值和给分方式，排名
+ *  模式的题还带名次和参与份数（名次是「用得比它少的份数 + 1」）。 */
+export interface TaskUsageLine {
+  /** 这一行在评分要点里的位置。 */
+  index: number
+  points: number
+  mode: 'threshold' | 'rank'
+  /** 按阈值时：不超过多少额度得满分、达到多少额度得 0 分。 */
+  full?: number
+  zero?: number
+}
+
+/** 一份领题在这道题上用掉的额度。题目有额度那一行时多带它的分（`line`/`score`/…）；
+ *  没有那一行的老题只有 `credits`。学生本人看、且评分要点不公开时，`line` 那几项也
+ *  一并省掉。 */
+export interface TaskUsage {
+  /** 这份领题（团队题是全体队员）在这道题的项目里调用 AI 用掉的额度合计。 */
+  credits: number
+  /** 额度那一行的分值和给分方式；题目没有这一行时没有它。 */
+  line?: TaskUsageLine
+  /** 自动算出来的分：还没交作业是 null（交了才算），排名模式在截止前是暂定分。 */
+  score?: number | null
+  /** 这个分定下了没有：排名截止前 false（「暂定」）。 */
+  final?: boolean
+  /** 排名模式：在交过作业的人里第几少（并列同名次）。 */
+  rank?: number
+  /** 排名模式：参与排名的份数（交过作业的领题数）。 */
+  ranked?: number
+  /** 按模型分的额度，多的在前（只有单个领题的接口给）。 */
+  models?: { model: string; credits: number }[]
 }
 
 export interface TaskMembership {
@@ -203,6 +364,10 @@ export interface TaskMembership {
   /** 这条报名背后的团队。查不到队（已解散 / 老数据）或按人领取时没有这个字段。 */
   team?: { id: number; name: string }
   teamMembers?: TaskTeamParticipantMemberSummary[]
+  /** 开始做的时刻：这条报名的项目建好的那一下（列表接口给的）。还没开始做是 null。 */
+  startedAt?: number | null
+  /** 这份领题用掉的额度；列表接口给的。 */
+  usage?: TaskUsage | null
 }
 
 export type TaskFormSubmitData = {
@@ -212,13 +377,13 @@ export type TaskFormSubmitData = {
   registrationStartAt?: number | null
   deadline: number | null
   defaultDeadline: number
+  startMode?: TaskStartMode
   resubmittable: boolean
   editable: boolean
   intro: string
   description: string
   // Optional, matching both what TaskForm.vue actually emits and what
-  // PostTaskRequestData accepts: categoryId falls back to undefined, and the
-  // team sizes are only set for submitterType === 'TEAM'. They were declared
+  // PostTaskRequestData accepts: categoryId falls back to undefined. They were declared
   // required, but nothing ever caught it — TaskForm builds this object by
   // spreading vee-validate's untyped `values`, which collapses the whole
   // literal to `any` and switches off checking for every field below.
@@ -243,8 +408,16 @@ export type TaskFormSubmitData = {
   defaultRole?: string
   /** 加入每个领取者项目的导师（#3830）；空 = 没有导师。 */
   mentors?: string[]
+  /**
+   * 这道题归在这块板的哪几个知识点下（§ learning analysis, step 1）。与 `topics`
+   * 同一语义：给了就整份替换，省略不动。只在这块板开着学情分析时那一栏才在。
+   */
+  knowledgePointIds?: number[]
   /** 学生提交时逐项填写的东西。 */
   submissionSchema?: TaskSubmissionSchemaEntry[]
   rubric?: TaskRubricLine[]
   rubricPublic?: boolean
+  /** 各阶段挂的测试点（每个阶段至多一套）。学生读到的隐藏用例没有输入输出。 */
+  testSuite?: TaskTestSuite[]
+  stages?: TaskStage[]
 }

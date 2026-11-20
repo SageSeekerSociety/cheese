@@ -206,6 +206,24 @@ class NotificationRepository:
         # UPDATE returns a CursorResult which has rowcount at runtime.
         return int(result.rowcount or 0)  # type: ignore[attr-defined]
 
+    async def set_read_status_and_get_for_user(
+        self, user_id: int, notification_id: int, read: bool
+    ) -> Notification | None:
+        stmt = (
+            update(Notification)
+            .where(
+                and_(
+                    Notification.receiver_id == user_id,
+                    Notification.id == notification_id,
+                    Notification.deleted_at.is_(None),
+                )
+            )
+            .values(read=read)
+            .returning(Notification)
+            .execution_options(populate_existing=True)
+        )
+        return (await self._session.scalars(stmt)).first()
+
     async def find_all_by_ids_for_user(
         self, user_id: int, ids: Sequence[int]
     ) -> list[Notification]:
@@ -275,6 +293,7 @@ class NotificationRepository:
         body: str = "",
         conversation_id: uuid.UUID | None = None,
         payload: dict | None = None,
+        flush: bool = True,
     ) -> Notification:
         now = datetime.now(UTC)
         row = Notification(
@@ -295,8 +314,8 @@ class NotificationRepository:
             updated_at=now,
         )
         self._session.add(row)
-        await self._session.flush()
-        await self._session.refresh(row)
+        if flush:
+            await self._session.flush()
         return row
 
     async def get(self, notification_id: int) -> Notification | None:
@@ -304,7 +323,6 @@ class NotificationRepository:
 
     async def save(self, notification: Notification) -> Notification:
         await self._session.flush()
-        await self._session.refresh(notification)
         return notification
 
     def _mine_in(self, stmt, project_id: uuid.UUID, recipient_handle: str):

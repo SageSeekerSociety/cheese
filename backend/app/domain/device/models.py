@@ -40,10 +40,12 @@ class DeviceRow(Base):
     cloud_control_private: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="false", nullable=False
     )
-    # The durable device token. TODO(security): store a hash and deliver the raw
-    # token once via poll, so a DB read alone cannot impersonate a device.
-    token: Mapped[str] = mapped_column(
-        String(128), nullable=False, unique=True, index=True
+    # The SHA-256 digest of the durable device token (`user.tokens.digest_token`).
+    # The token itself is handed to the machine once, when it is minted
+    # (`DeviceService.issue_token`), and stored nowhere: a read of this table
+    # cannot act as a device. None until then.
+    token_digest: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, unique=True, index=True
     )
     # Enrollment provenance; device management is authorized by team_id.
     team_id: Mapped[int] = mapped_column(
@@ -245,7 +247,10 @@ class ModelCredentialHost(Base):
 
     __tablename__ = "model_credential_hosts"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    token: Mapped[str] = mapped_column(String(128), unique=True, index=True)
+    # The digest of the token the host connects with, as on ``DeviceRow``.
+    token_digest: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, unique=True, index=True
+    )
     name: Mapped[str] = mapped_column(String(255))
 
 

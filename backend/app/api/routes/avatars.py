@@ -16,8 +16,9 @@ from app.auth.checker import require_auth_user
 from app.auth.core import AuthUserInfo
 from app.core import raster_images
 from app.core.config import settings
+from app.core.content_review import review_image
 from app.core.errors import BadRequestError, NotFoundError, UnprocessableEntityError
-from app.core.sentences import say
+from app.core.sentences import say, size_text
 from app.core.srgb_images import to_srgb
 from app.db.session import get_db
 from app.domain.avatars.repositories import AvatarRepository
@@ -147,7 +148,7 @@ async def create_avatar(
     file_content = await avatar.read(settings.attachment_max_bytes + 1)
     if len(file_content) > settings.attachment_max_bytes:
         raise UnprocessableEntityError(
-            say("fileTooLarge", mb=settings.attachment_max_bytes // (1024 * 1024))
+            say("fileTooLarge", size=size_text(settings.attachment_max_bytes))
         )
     file_name = avatar.filename or "avatar"
     # Stored bytes are served to every screen that shows this avatar. A picture
@@ -155,6 +156,9 @@ async def create_avatar(
     # page in that gamut, and the whole screen shifts colour with it on some
     # phones. Already-sRGB pictures come back untouched.
     file_content = await asyncio.to_thread(to_srgb, file_content)
+    # Served to anyone at /avatars/{id}, whatever ends up using it — a profile,
+    # a team, a space — so the picture is reviewed once, here, before it exists.
+    await review_image(file_content)
 
     await aiofiles.os.makedirs(AVATAR_STORAGE_DIR, exist_ok=True)
 

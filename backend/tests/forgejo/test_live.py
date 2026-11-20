@@ -8,6 +8,7 @@ import shlex
 import subprocess
 import sys
 import threading
+import uuid
 from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -23,13 +24,13 @@ from app.api.topics_file_sources import source_bytes
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.announce import announce
-from app.domain.agent.room_events import _known_commits, _turn_changeset
-from app.domain.agent_instance.adapters import project_team
+from app.domain.project import starter as starter_archive
 from app.domain.project.forge import (
     branch_head,
     ensure_repository_webhook,
     provision_repository,
     reconcile_repository_webhooks,
+    starter_remote,
 )
 from app.domain.project.forgejo_tokens import ForgejoTokens, purge_expired_tokens
 from app.domain.project.models import ForgeToken, Project
@@ -37,14 +38,17 @@ from app.domain.repository.forge_files import ProjectFiles
 from app.domain.review.forgejo_pr import ForgejoPRClient
 from app.domain.review.merge_state import compute_merge_state
 from app.domain.review.models import AcceptCard
-from app.domain.review.services import AcceptService
+from app.domain.room_task.closing import close_task
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic
 from tests.integration.conftest import a_team
 from tests.support.review_ports import (
     pumping,
+    record_seat_instruction,
     record_task_instruction,
     settle_card,
+    task_teammate,
+    uncommitted,
 )
 
 pytestmark = [
@@ -214,12 +218,40 @@ async def test_native_tools_through_platform_transport(
         listener.close()
 
 
+async def _indexed_branch_head(project_id, session, branch):
+    """The branch's head once Forgejo lists it. Forgejo indexes the branches of
+    a git push after the push returns, so its branch API answers 404 for a
+    moment while git already holds the ref."""
+    async with asyncio.timeout(10):
+        while (head := await branch_head(project_id, session, branch)) is None:
+            await asyncio.sleep(0.2)
+    return head
+
+
+async def _push_reached_pr(client, repo, number, sha):
+    """Wait until Forgejo has taken the push of `sha` into PR `number`.
+
+    Forgejo handles a push after it returns: a moment later it queues the PR
+    for its merge check and records the push on the PR's timeline, in that
+    order. Until then the PR can still read `mergeable: true` from the check
+    of its previous head."""
+    async with asyncio.timeout(10):
+        while True:
+            response = await client.get(f"/repos/{repo}/issues/{number}/timeline")
+            response.raise_for_status()
+            if any(
+                sha in json.loads(row.get("body") or "{}").get("commit_ids", [])
+                for row in response.json()
+                if row["type"] == "pull_push"
+            ):
+                return
+            await asyncio.sleep(0.1)
+
+
 async def test_legacy_repository_migration_preserves_all_refs(
     db_factory, monkeypatch, tmp_path
 ):
-    from app.core.storage import LocalStorageBackend
-    from app.domain.project.forge_migration import git, references
-    from app.domain.room_task import snapshots
+    from app.domain.project.forge_migration import references
     from scripts import migrate_forge
     from tests.unit.test_forge_migration import legacy_repository
 
@@ -231,8 +263,6 @@ async def test_legacy_repository_migration_preserves_all_refs(
     root = tmp_path / "workspaces"
     monkeypatch.setattr(settings, "workspace_root", str(root))
     monkeypatch.setattr(migrate_forge, "async_session_factory", db_factory)
-    storage = LocalStorageBackend(str(tmp_path / "private"), "unused-private-url")
-    monkeypatch.setattr(snapshots, "private_storage", lambda: storage)
     async with db_factory() as session:
         project = Project(
             name="Legacy repository migration test", team_id=await a_team(session)
@@ -285,23 +315,17 @@ async def test_legacy_repository_migration_preserves_all_refs(
     assert await migrate_forge.migrate(project.id, backups, apply=True) == "skipped"
     await migrate_forge.main()  # A later release can proceed without stopping writers.
     assert references(source) == before
+    # The task's uncommitted file is kept in the archive, not uploaded.
     assert (task_worktree / "new.txt").read_bytes() == b"untracked\x00bytes"
     async with db_factory() as session:
         assert (
-            await branch_head(project.id, session, "main") == before["refs/heads/main"]
+            await _indexed_branch_head(project.id, session, "main")
+            == before["refs/heads/main"]
         )
         assert (
-            await branch_head(project.id, session, "task") == before["refs/heads/task"]
+            await _indexed_branch_head(project.id, session, "task")
+            == before["refs/heads/task"]
         )
-        snapshot = await snapshots.latest(session, task.id)
-        data = await snapshots.download(snapshot)
-    bundle = tmp_path / "downloaded.bundle"
-    bundle.write_bytes(data)
-    recovered = tmp_path / "recovered"
-    git(tmp_path, "clone", str(source), str(recovered))
-    git(recovered, "fetch", str(bundle), f"refs/cheese/snapshots/{task.id}")
-    git(recovered, "checkout", "--detach", snapshot.snapshot_sha)
-    assert (recovered / "new.txt").read_bytes() == b"untracked\x00bytes"
 
 
 async def test_new_repository_registers_forgejo_events(db_factory, monkeypatch):
@@ -363,8 +387,79 @@ async def test_new_repository_registers_forgejo_events(db_factory, monkeypatch):
         assert set(hook["events"]) <= set(repaired["events"])
 
 
+async def test_a_repository_with_starter_code_begins_with_that_code(
+    db_factory, monkeypatch, tmp_path
+):
+    """#4767: with starter code the repository's main is the unpacked archive as
+    one commit by the platform; without it Forgejo initialises main as before."""
+    import zipfile
+
+    url = "http://127.0.0.1:33086"
+    admin = Path(os.environ["FORGEJO_TEST_TOKEN_FILE"]).read_text().strip()
+    monkeypatch.setattr(settings, "forgejo_url", url)
+    monkeypatch.setattr(settings, "forgejo_api_url", url + "/api/v1")
+    monkeypatch.setattr(settings, "forgejo_admin_token", admin)
+    monkeypatch.setattr(settings, "forge_webhook_url", "")
+    archive = tmp_path / "starter.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("lab1/README.md", "# Lab 1\n")
+        bundle.writestr("lab1/src/main.py", "print('hi')\n")
+        bundle.writestr("__MACOSX/lab1/._README.md", "")
+    async with db_factory() as session:
+        team = await a_team(session)
+        seeded, plain = (
+            Project(name="Starter", team_id=team),
+            Project(name="No starter", team_id=team),
+        )
+        session.add_all([seeded, plain])
+        await session.flush()
+        with_code = await provision_repository(seeded.id, session, initialize=False)
+        without = await provision_repository(plain.id, session)
+        await session.commit()
+    async with db_factory() as session:
+        remote = await starter_remote(seeded.id, session)
+    assert starter_archive.remote_main(remote) is None
+    built = starter_archive.build(
+        archive, "Starter code (version 3)", datetime.now(UTC), tmp_path / "s.git"
+    )
+    starter_archive.push(remote, tmp_path / "s.git", built)
+    assert starter_archive.remote_main(remote) == built
+    headers = {"Authorization": "token " + admin}
+    async with httpx.AsyncClient(base_url=url + "/api/v1", headers=headers) as client:
+        tree = await client.get(
+            f"/repos/{with_code.repo}/git/trees/main", params={"recursive": "true"}
+        )
+        tree.raise_for_status()
+        assert sorted(
+            entry["path"] for entry in tree.json()["tree"] if entry["type"] == "blob"
+        ) == ["README.md", "src/main.py"]
+        # Read through git refs: the commit list answers 409 ("empty") until
+        # Forgejo has processed the push, which it does after the push returns.
+        ref = await client.get(f"/repos/{with_code.repo}/git/refs/heads/main")
+        ref.raise_for_status()
+        (head,) = ref.json()
+        commit = await client.get(
+            f"/repos/{with_code.repo}/git/commits/{head['object']['sha']}"
+        )
+        commit.raise_for_status()
+        assert commit.json()["parents"] == []
+        assert commit.json()["commit"]["message"].strip() == "Starter code (version 3)"
+        assert commit.json()["commit"]["author"]["email"] == "starter@users.invalid"
+        readme = await client.get(f"/repos/{without.repo}/contents/README.md")
+        assert readme.status_code == 200, readme.text
+    assert head["object"]["sha"] == built
+    # The starter commit is still on main once someone builds on it, and a
+    # commit main never had is not.
+    assert starter_archive.holds(remote, built, built)
+    assert not starter_archive.holds(remote, built, "0" * 40)
+
+
 async def test_forgejo_delivery_reaches_outbound_deployment(db_factory, monkeypatch):
-    """Requires host.docker.internal:33087 to reach this test's loopback relay."""
+    """Forgejo, in its container, delivers to this test's relay on the host at
+    host.docker.internal:33087. The relay listens on FORGEJO_TEST_RELAY_HOST:
+    loopback by default, which Colima and Docker Desktop forward to; on Linux
+    the container reaches the host through the Docker bridge, so CI listens on
+    every address."""
     from app import forge_events_app as relay
     from app.domain.review import events, pr_poll
 
@@ -387,7 +482,12 @@ async def test_forgejo_delivery_reaches_outbound_deployment(db_factory, monkeypa
         "ws://127.0.0.1:33087/forge/events/test/connect",
     )
     server = uvicorn.Server(
-        uvicorn.Config(relay.app, host="127.0.0.1", port=33087, log_level="warning")
+        uvicorn.Config(
+            relay.app,
+            host=os.environ.get("FORGEJO_TEST_RELAY_HOST", "127.0.0.1"),
+            port=33087,
+            log_level="warning",
+        )
     )
     serving = asyncio.create_task(server.serve())
     consumer = None
@@ -407,7 +507,10 @@ async def test_forgejo_delivery_reaches_outbound_deployment(db_factory, monkeypa
                 announce,
                 settle_card=settle_card,
                 record_instruction=record_task_instruction,
+                record_seat=record_seat_instruction,
                 dispatch_pending=pumping(chat),
+                task_teammate=task_teammate,
+                uncommitted=uncommitted,
             )
         )
         async with asyncio.timeout(10):
@@ -438,12 +541,12 @@ async def test_forgejo_delivery_reaches_outbound_deployment(db_factory, monkeypa
         async with asyncio.timeout(20):
             while not changed.await_count:
                 await asyncio.sleep(0.05)
-        changed.assert_awaited_with(
-            chat,
-            announce=announce,
-            kind="forgejo",
-            repo=binding.repo,
-            project_id=str(project.id),
+        # The delivery names the repository that moved and its project.
+        delivery = changed.await_args.kwargs
+        assert (delivery["kind"], delivery["repo"], delivery["project_id"]) == (
+            "forgejo",
+            binding.repo,
+            str(project.id),
         )
     finally:
         if consumer is not None:
@@ -536,6 +639,7 @@ def _push_with_cli(binding, token, root, author):
 async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
     db_factory, monkeypatch, tmp_path, owner_credit
 ):
+    from app.api.accept_service import accept_service
     from app.api.routes.accept import _pr_checks_payload
     from app.domain.review import services as review_services
     from app.domain.site.services import (
@@ -574,7 +678,14 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
         )
         session.add(task)
         await session.commit()
-        scoped = mint_scoped_token(project_id=str(project.id), topic_id=str(room.id))
+        # The task's own session opens it: a credential minted in the task's
+        # conversation, naming the agent that works it. Each run names its own
+        # agent, since Forgejo gives one email to one account only.
+        scoped = mint_scoped_token(
+            project_id=str(project.id),
+            topic_id=str(task.id),
+            agent_handle=f"report-agent-{uuid.uuid4().hex[:8]}",
+        )
         metadata = await open_task_workspace(project.id, task.id, session, scoped)
         assert metadata["data"]["coauthors"] == ["requester <requester@zhishi.local>"]
         project.settings = {"commit_credit": "owner" if owner_credit else "agent"}
@@ -592,8 +703,6 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
     owner, repo = binding.repo.split("/", 1)
     publisher = ForgejoPRClient(owner, repo, tokens, api_base=binding.api_url)
     reviewed = await asyncio.to_thread(_push_with_cli, binding, token, tmp_path, author)
-    baseline = await _known_commits(db_factory, binding.project_id, room.id)
-    assert baseline == {reviewed}
     async with db_factory() as session:
         assert await branch_head(binding.project_id, session, "task/report") == reviewed
         files = ProjectFiles(session, binding.project_id, task.id)
@@ -609,7 +718,7 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
         draft = await publisher.open_pr(
             head="task/report",
             base="main",
-            title="WIP: Report",
+            title="Write report",
             body="Report",
             draft=True,
         )
@@ -647,11 +756,6 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
             },
         )
         assert check.status_code == 201, check.text
-        changes = await _turn_changeset(
-            db_factory, binding.project_id, room.id, baseline
-        )
-        assert changes is not None and changes.commits == [latest]
-        assert changes.files == [{"path": "appendix.md", "added": 1, "removed": 0}]
         async with db_factory() as session:
             card = AcceptCard(
                 topic_id=room.id,
@@ -661,6 +765,9 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
                 pr_repo=binding.repo,
                 pr_url=draft["url"],
                 rebase_count=2,
+                reviewer_handle="reviewer",
+                # The line the merge lands: the PR's own title.
+                change_subject="Write report",
             )
             session.add(card)
             await session.commit()
@@ -674,24 +781,24 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
                     "url": check_url,
                 }
             ]
-            refreshed = await AcceptService(
-                session, announce=announce, roster_team=project_team
-            ).push_fix(task.id)
+            refreshed = await accept_service(session).push_fix(task.id)
             assert refreshed["pushed"] is True
+            # The checks read closed its session, so the card is read again.
+            card = await session.get(AcceptCard, card.id)
             assert card.pr_head_sha == latest and card.rebase_count == 0
-            again = await AcceptService(
-                session, announce=announce, roster_team=project_team
-            ).push_fix(task.id)
+            again = await accept_service(session).push_fix(task.id)
             assert again["pushed"] is False
             await session.commit()
         args = dict(owner=owner, repo=repo, number=draft["number"], token=token)
         stale = await publisher.client.merge_pull_request(**args, sha=reviewed)
         assert stale.stale_head and stale.sha is None
-        for _ in range(30):
-            status = await publisher.client.pull_request_status(**args)
-            if status.mergeable:
-                break
-            await asyncio.sleep(0.2)
+        await _push_reached_pr(client, binding.repo, draft["number"], latest)
+        # From here a `true` is Forgejo's check of `latest`, not of the old head.
+        async with asyncio.timeout(10):
+            while not (
+                status := await publisher.client.pull_request_status(**args)
+            ).mergeable:
+                await asyncio.sleep(0.1)
         verdict = compute_merge_state(
             github_mergeable_state=status.mergeable_state,
             github_mergeable=status.mergeable,
@@ -700,16 +807,25 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
         )
         assert verdict.state == "clean"
         async with db_factory() as session:
-            accepted = await AcceptService(
-                session, announce=announce, roster_team=project_team
-            ).accept(card_id=card.id, decided_by="reviewer", head_sha=latest)
+            accepted = await accept_service(session).accept(
+                card_id=card.id, decided_by="reviewer", head_sha=latest
+            )
             await session.commit()
             assert accepted.status.value == "accepted"
             merged_sha = accepted.pr_head_sha
             delivered = await session.get(Task, task.id)
-            assert delivered.status == TaskStatus.closed
+            # The merge landed and the task goes on: it stays open for its
+            # teammate to judge whether it is done, on the next step's own
+            # branch. Neither the write-up window nor the deploy wait is
+            # opened by a merge — both come only when the teammate closes the
+            # task as done (`review.task_landing`).
+            assert delivered.status == TaskStatus.open
+            assert delivered.closing_since is None
+            assert delivered.deploying_since is None
             assert delivered.accepted_by == "reviewer"
             assert delivered.delivered_head == latest
+            assert delivered.branch_name != "task/report"
+            assert delivered.pr_number is None
             assert (await session.get(Topic, room.id)).status.value == "active"
         assert (await publisher.client.pull_request_status(**args)).merged
         merged_commit = await client.get(
@@ -753,11 +869,24 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
                     "assets/sample.bin",
                     None,
                     "committed",
+                    with_task=False,
                 )
                 == raw
             )
             assert "+appendix" in await files.diff("committed")
             assert any(row["hash"] == merged_sha[:12] for row in await files.history())
+        # Its teammate judged what landed to be the whole task, and closed it
+        # (`review.task_landing`: a merge alone leaves the task open). The
+        # branch it came in on is deleted; what it delivered stays readable at
+        # the commit that merge left.
+        async with db_factory() as session:
+            await close_task(
+                session,
+                await session.get(Task, task.id),
+                None,
+                conclusion="写完了",
+            )
+            await session.commit()
         deleted = await client.delete(f"/repos/{binding.repo}/branches/task/report")
         assert deleted.status_code == 204
         async with db_factory() as session:

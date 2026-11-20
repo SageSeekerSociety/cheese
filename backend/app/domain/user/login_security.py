@@ -86,9 +86,10 @@ PASSWORD_RESET_TTL = 30 * 60
 # Failures one client address may make at each credential step, per window.
 # Generous on purpose: a campus puts many of its users behind a few NAT
 # addresses, so this only stops one source spraying guesses across accounts,
-# and the per-account limits above do the fine work.
+# and the per-account limits above do the fine work. 500 in 15 minutes is a
+# whole campus mistyping at the start of term; a spray is tens of thousands.
 CLIENT_FAILURE_PREFIX = "cheese:client_failures:"
-CLIENT_MAX_FAILURES = 100
+CLIENT_MAX_FAILURES = 500
 CLIENT_FAILURE_WINDOW_SECONDS = 15 * 60
 
 # Counted in one script for the reason consume_attempt gives. A refused attempt

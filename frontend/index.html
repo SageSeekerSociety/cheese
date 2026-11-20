@@ -20,6 +20,15 @@
     <!-- Updated at runtime by src/theme.ts when the theme changes; this value
          is the light one, matching META_THEME_COLOR in that file. -->
     <meta name="theme-color" content="#F57F17" />
+    <!-- The oldest build an open page may keep running. A page whose own value is
+         below the one the server now serves asks to be refreshed (src/pwa.ts,
+         promptIfBelowMinBuild); ordinary releases leave it alone and swap in at the
+         next navigation. A pull request that fixes a severe bug raises it to one more
+         than the highest value main has ever carried (`git log -p -S cx-min-build
+         -- frontend/index.html`), not one more than the current value: a revert can
+         lower it, and a build that carried the reverted number must still read as
+         older than the next fix. -->
+    <meta name="cx-min-build" content="1" />
     <!-- What a search engine and a link preview read before any script runs (Baidu's
          spider runs none). The title is the landing page's own one too
          (publicSite.documentTitle); the app retitles every other page at runtime. -->
@@ -86,10 +95,10 @@
     </script>
     <!--
       Boot splash, desktop app only. The app opens on its own page
-      (desktop/shell/index.html) and hands the window over with the rail's home
-      tile in the middle; this paints the same tile as the first frame, so the
-      switch between the two pages does not show. lib/desktopSplash.ts then lands
-      it in the rail. Keep the tile identical to the one in desktop/shell. The
+      (desktop/shell/index.html) and hands the window over with the home tile in
+      the middle; this paints the same tile as the first frame, so the switch
+      between the two pages does not show. lib/desktopSplash.ts then lands it on
+      the sidebar's home mark. Keep the tile identical to the one in desktop/shell. The
       grounds are --canvas of both themes, set before style.css has loaded; the
       tile is brand paint, the same in both.
     -->
@@ -197,12 +206,34 @@
           var side = Number(read('cheesex.sidebarWidth'))
           side = side > 0 ? Math.min(480, Math.max(190, Math.round(side))) : 280
           html.style.setProperty('--sx-side-w', side + 'px')
-          html.dataset.bootRail = String(Math.min(9, Math.max(0, rail === null ? 3 : Number(rail) || 0)))
+          // The sidebar is out of sight when the reader folded it (wide windows,
+          // `cheesex.sidebarFolded`) or, between 960 and 1180, unless they opened its
+          // overlay (`cheesex.sidebarExpanded`): useSidebarToggle.
+          var wide = window.innerWidth > 1180
+          var sideShown = wide ? read('cheesex.sidebarFolded') !== '1' : read('cheesex.sidebarExpanded') === '1'
+          html.dataset.bootSide = sideShown ? '1' : '0'
           // The room's side panel: the reader's own choice, else open when the pane
           // is wide enough (useWorkspaceLayout PANEL_OPEN_MIN).
-          var pane = window.innerWidth - 64 - side
+          var pane = window.innerWidth - (sideShown && wide ? side : 0)
           var panel = typeof layout.panelOpen === 'boolean' ? layout.panelOpen : pane >= 1000
-          if (panel) html.style.setProperty('--sx-chat-w', (Number(layout.chatPct) || 50) + '%')
+          // The conversation's share of the room: the arrangement the layout area keeps for
+          // it (AppShell's `cheesex.area.room`, cells `conversation` and `work`), else the
+          // room's default (TopicView).
+          var chat = window.innerWidth >= 1440 ? 45 : 50
+          var cells = {}
+          var walk = function (node) {
+            if (!node) return
+            if (node.children) node.children.forEach(walk)
+            else if (node.panels)
+              node.panels.forEach(function (id) {
+                cells[id] = node.size
+              })
+          }
+          var area = json('cheesex.area.room')
+          if (area && area.v === 3) walk(area.root)
+          if (cells.conversation > 0 && cells.work > 0)
+            chat = (cells.conversation / (cells.conversation + cells.work)) * 100
+          if (panel) html.style.setProperty('--sx-chat-w', chat + '%')
         } catch (e) {
           // Whatever went wrong, the generic frame is never wrong for long.
         }
@@ -503,13 +534,15 @@
         width: 84px;
       }
 
-      /* ---- The app's frame (App.vue): title bar, rail, sidebar, content pane. ---- */
+      /* ---- The app's frame (AppShell.vue): top bar, sidebar, content pane. ---- */
       html[data-boot='shell'] #sx-boot-skeleton .sx-app,
       html[data-boot='workspace'] #sx-boot-skeleton .sx-app,
       html[data-boot='room'] #sx-boot-skeleton .sx-app,
       html[data-boot='inbox'] #sx-boot-skeleton .sx-app {
         display: block;
       }
+      /* The top bar (AppBar.vue): 40px, one line under it; 首页 on the left, the search in
+         the middle, help and the avatar on the right. */
       #sx-boot-skeleton .sx-top {
         position: absolute;
         top: 0;
@@ -517,78 +550,48 @@
         right: 0;
         display: flex !important;
         align-items: center;
-        justify-content: center;
-        height: 32px;
+        gap: 12px;
+        height: 40px;
+        padding: 0 12px 0 44px;
+        border-bottom: 1px solid var(--sx-line);
       }
-      #sx-boot-skeleton .sx-top-title {
-        width: 96px;
+      html.title-bar-overlay #sx-boot-skeleton .sx-top {
+        padding-left: 108px;
+      }
+      #sx-boot-skeleton .sx-top-home {
+        width: 52px;
+      }
+      #sx-boot-skeleton .sx-top-search {
+        width: clamp(200px, 28vw, 360px);
+        height: 28px;
+        margin: 0 auto;
       }
       #sx-boot-skeleton .sx-top-help {
-        position: absolute;
-        right: 16px;
         width: 72px;
       }
-      #sx-boot-skeleton .sx-rail {
-        position: absolute;
-        top: 32px;
-        left: 0;
-        bottom: 0;
-        display: flex !important;
-        flex-direction: column;
-        align-items: center;
-        width: 64px;
-        padding-top: 4px;
-      }
-      #sx-boot-skeleton .sx-tile {
-        display: block;
-        flex: none;
-        width: 48px;
-        height: 48px;
-        margin-bottom: 8px;
-        border-radius: 8px;
-        background: var(--sx-bone-rail);
-      }
-      html[data-boot='inbox'] #sx-boot-skeleton .sx-tile--home {
-        background: var(--sx-accent);
-        opacity: 0.85;
-      }
-      #sx-boot-skeleton .sx-rail-rule {
-        display: block;
+      #sx-boot-skeleton .sx-top-me {
         width: 24px;
-        height: 2px;
-        margin: 6px 0 14px;
-        border-radius: 1px;
-        background: var(--sx-bone-rail);
-      }
-      #sx-boot-skeleton .sx-tile--add {
-        border: 1px dashed var(--sx-bone-rail);
-        background: none;
-      }
-      #sx-boot-skeleton .sx-rail-me {
-        position: absolute;
-        bottom: 24px;
-        width: 32px;
-        height: 32px;
+        height: 24px;
         border-radius: 50%;
-        background: var(--sx-bone-rail);
       }
       #sx-boot-skeleton .sx-body {
         position: absolute;
-        top: 32px;
-        left: 64px;
+        top: 40px;
+        left: 0;
         right: 0;
         bottom: 0;
         display: flex !important;
         overflow: hidden;
-        border-top: 1px solid var(--sx-line);
-        border-left: 1px solid var(--sx-line);
-        border-top-left-radius: 12px;
       }
       #sx-boot-skeleton .sx-side {
         flex: none;
-        width: calc(var(--sx-side-w, 280px) - 1px);
+        /* The cell is the sidebar's whole width; the line right of it is the main
+           pane's left border, where the app's divider sits. */
+        width: var(--sx-side-w, 280px);
+        padding-top: 8px;
       }
-      html[data-boot='shell'] #sx-boot-skeleton .sx-side {
+      html[data-boot='shell'] #sx-boot-skeleton .sx-side,
+      html[data-boot-side='0'] #sx-boot-skeleton .sx-side {
         display: none;
       }
       html[data-boot='workspace'] #sx-boot-skeleton .sx-side-ws,
@@ -608,30 +611,6 @@
       html[data-boot='room'] #sx-boot-skeleton .sx-side-ws .sx-row--room .sx-bone {
         background: var(--sx-bone);
       }
-      #sx-boot-skeleton .sx-side-head {
-        position: relative;
-        height: 48px;
-        padding: 6px 12px 0;
-      }
-      #sx-boot-skeleton .sx-side-head .sx-bone + .sx-bone {
-        width: 120px;
-        height: 16px;
-        margin-top: 8px;
-      }
-      #sx-boot-skeleton .sx-side-head .sx-bone.sx-search {
-        position: absolute;
-        top: 10px;
-        right: 16px;
-        width: 16px;
-        height: 16px;
-        margin: 0;
-      }
-      #sx-boot-skeleton .sx-side-home .sx-side-head {
-        padding-top: 16px;
-      }
-      #sx-boot-skeleton .sx-side-home .sx-list {
-        padding-top: 8px;
-      }
       #sx-boot-skeleton .sx-side-home .sx-sub {
         height: 32px;
         padding: 0 16px;
@@ -645,7 +624,8 @@
         border-left: 1px solid var(--sx-line);
         background: var(--sx-surface);
       }
-      html[data-boot='shell'] #sx-boot-skeleton .sx-main {
+      html[data-boot='shell'] #sx-boot-skeleton .sx-main,
+      html[data-boot-side='0'] #sx-boot-skeleton .sx-main {
         border-left: 0;
       }
       #sx-boot-skeleton .sx-head {
@@ -817,7 +797,6 @@
       /* ---- Phones and narrow windows: one top bar, bottom tabs, no rail. ---- */
       @media (max-width: 959.98px) {
         #sx-boot-skeleton .sx-top,
-        #sx-boot-skeleton .sx-rail,
         #sx-boot-skeleton .sx-side,
         #sx-boot-skeleton .sx-head,
         #sx-boot-skeleton .sx-panel {
@@ -1023,14 +1002,8 @@
       </div>
       <div class="sx-app">
         <div class="sx-top sx-on-canvas">
-          <span class="sx-bone sx-top-title"></span><span class="sx-bone sx-top-help"></span>
-        </div>
-        <div class="sx-rail">
-          <span class="sx-tile sx-tile--home"></span>
-          <span class="sx-rail-rule"></span>
-          <span id="sx-rail-projects"></span>
-          <span class="sx-tile sx-tile--add"></span>
-          <span class="sx-rail-me"></span>
+          <span class="sx-bone sx-top-home"></span><span class="sx-bone sx-top-search"></span
+          ><span class="sx-bone sx-top-help"></span><span class="sx-bone sx-top-me"></span>
         </div>
         <div class="sx-ptop sx-on-canvas">
           <span class="sx-bone sx-back"></span>
@@ -1041,10 +1014,6 @@
         <div class="sx-body">
           <div class="sx-side sx-on-canvas">
             <div class="sx-side-ws">
-              <div class="sx-side-head">
-                <span class="sx-bone" style="width: 88px; height: 10px"></span><span class="sx-bone"></span
-                ><span class="sx-bone sx-search"></span>
-              </div>
               <div class="sx-row sx-row--on">
                 <span class="sx-bone sx-ico"></span><span class="sx-bone" style="width: 28px"></span>
               </div>
@@ -1063,7 +1032,6 @@
               </div>
             </div>
             <div class="sx-side-home">
-              <div class="sx-side-head"><span class="sx-bone" style="width: 30px; height: 16px"></span></div>
               <div class="sx-list">
                 <div class="sx-row sx-row--on">
                   <span class="sx-bone sx-ico"></span><span class="sx-bone" style="width: 28px"></span>
@@ -1191,19 +1159,6 @@
         </div>
       </div>
     </div>
-    <script>
-      // As many project tiles in the rail as the app last drew (App.vue keeps the count).
-      ;(function () {
-        var slot = document.getElementById('sx-rail-projects')
-        var n = Number(document.documentElement.dataset.bootRail) || 0
-        for (var i = 0; i < n; i++) {
-          var tile = document.createElement('span')
-          tile.className = 'sx-tile'
-          slot.parentNode.insertBefore(tile, slot)
-        }
-        slot.remove()
-      })()
-    </script>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

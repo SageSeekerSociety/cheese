@@ -182,6 +182,10 @@ class _Db:
     async def commit(self):
         self.commits += 1
 
+    async def scalar(self, *args, **kwargs):
+        # Whether the session's sandbox is to be thawed first: it is not.
+        return None
+
 
 class _Row:
     def __init__(self):
@@ -262,6 +266,7 @@ def _install_case(
     monkeypatch.setattr(session_work.holders, "lock_for_work", _lock_for_work)
     monkeypatch.setattr(session_work, "publish_line", AsyncMock())
     monkeypatch.setattr(holders, "bind_resource_token", lambda *a, **k: "scoped-token")
+    monkeypatch.setattr(session_work, "for_a_machine", lambda token: token)
     monkeypatch.setattr(lease_claim, "kept", _kept)
 
     if call_exc is not None:

@@ -114,6 +114,8 @@ INTERRUPTED = "interrupted"
 STUCK = "stuck"
 #: The agent process ended in the middle of the work.
 EXITED_MIDWAY = "exited"
+#: The runner could no longer read what the session wrote, and ended it.
+READER_FAILED = "reader_failed"
 
 #: The clocks a runner ends stuck work by (``Watchdog``).
 NO_PROGRESS = "no_progress"

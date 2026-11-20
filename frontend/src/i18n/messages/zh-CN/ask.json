@@ -19,6 +19,17 @@
     "failed": "提交没成功，再试一次",
     "listSeparator": "、"
   },
+  "fold": {
+    "whoNamed": "{asker} 问 {people}",
+    "whoBare": "问 {people}",
+    "everyone": "所有人",
+    "anyone": "频道里的人",
+    "waiting": "还没有回答",
+    "closed": "已结束",
+    "questions": "{n} 个问题",
+    "multi": "多选",
+    "answered": "{name}：{text}"
+  },
   "replies": {
     "label": "快捷回复",
     "recommended": "推荐",
@@ -27,6 +38,8 @@
     "otherPlaceholder": "其他回答",
     "otherSend": "发送",
     "closed": "已结束，不再等回答",
+    "withdrawn": "芝士收回了这道题",
+    "expired": "这道题过期了，仍可以回答",
     "withdraw": "撤回",
     "withdrawAria": "撤回你对「{text}」的回答",
     "withdrawTitle": "撤回这条回答？",

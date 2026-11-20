@@ -321,9 +321,10 @@ class Harness:
     # Do its sessions keep memory as files the platform can reconcile? The
     # system prompt's memory section is given only to a harness that does: it
     # says 「写进这里，平台下一轮就有一份」, which is a lie for a harness whose
-    # files never come back. Claude Code's are files under the session host's
-    # `~/.cheese/memory/` (`remote_execution/proxy.js`'s `memoryPath`), and its
-    # runner answers the reconciliation.
+    # files never come back. Claude Code's are files the agent names
+    # `~/.cheese/memory/`, kept in its seat's own directory on the session host
+    # (`remote_execution/proxy.js`'s `memoryPath`, `runner.memory_root`), and
+    # its runner answers the reconciliation.
     keeps_memory: bool = False
     # What a room may ask its session, by subtype, and which of those the
     # room's executor answers rather than the session: the files and commands

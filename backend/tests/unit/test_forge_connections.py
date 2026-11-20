@@ -65,6 +65,42 @@ async def test_successive_forge_calls_share_one_connection(monkeypatch):
     assert len(accepted) == 1
 
 
+def test_the_forge_client_verifies_against_the_process_wide_context():
+    """Building a client's own trust store is tens of milliseconds of the loop, paid
+    inside request handlers; one context serves every client that does not ask
+    for its own."""
+    from app.core.forge_http import forge_client
+    from app.core.tls_context import OUTBOUND_TLS
+
+    client = forge_client()
+    assert client._transport._pool._ssl_context is OUTBOUND_TLS
+
+
+async def test_the_shared_pool_the_application_uses_has_the_same_context():
+    """The application's forge traffic goes through the borrowed pool, and
+    httpx ignores `verify` on a client that was handed a transport. So the pool
+    is where the shared context has to be, or the busiest path keeps building
+    its own."""
+    from app.core.forge_http import forge_client, reuse_forge_connections
+    from app.core.tls_context import OUTBOUND_TLS
+
+    async with reuse_forge_connections():
+        client = forge_client()
+        pool_client = client._transport._pool
+        assert pool_client._transport._pool._ssl_context is OUTBOUND_TLS
+        await client.aclose()
+
+
+def test_a_caller_that_passes_its_own_verify_keeps_it():
+    import ssl
+
+    from app.core.forge_http import forge_client
+
+    mine = ssl.create_default_context()
+    client = forge_client(verify=mine)
+    assert client._transport._pool._ssl_context is mine
+
+
 async def test_outside_the_application_the_forge_is_still_reached(monkeypatch):
     # A script or a job run outside the app's lifespan has no shared pool.
     server, api_url, _accepted = await _forge_counting_connections()

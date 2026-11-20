@@ -5,7 +5,7 @@ import type { MentionPoolEntry } from './useRoomMentionPicker'
 
 import { computed } from 'vue'
 
-import { memberName } from '../lib/agentNames'
+import { agentNames, memberName, memberOriginalName } from '../lib/agentNames'
 import { isExternalMember } from '../lib/externalMembers'
 import { getAvatarUrl } from '../utils/materials'
 
@@ -24,6 +24,8 @@ export function useDocPeople(source: {
       .map((m) => ({
         handle: m.user_handle,
         label: memberName(m) || m.user_handle,
+        // 设了备注时原名还要能搜到：有人记住的是原名，不是备注。
+        originalName: m.remark ? memberOriginalName(m) || null : null,
         agent: false,
         external: isExternalMember(m),
         // 名册这一行就带着他挑过的头像；没挑过是 null，交给首字母。
@@ -39,5 +41,15 @@ export function useDocPeople(source: {
     Object.fromEntries(people.value.flatMap((p) => (p.avatar ? [[p.handle, p.avatar] as const] : [])))
   )
 
-  return { people, names, avatars }
+  // A shareable printout must not inherit the viewer's private aliases. Keep
+  // public names separate from screen labels, including both AI handle forms.
+  const originalNames = computed<Record<string, string>>(() => {
+    const rows = source.members().map((m) => ({ ...m, remark: null }))
+    return {
+      ...Object.fromEntries(rows.map((m) => [m.user_handle, memberOriginalName(m) || m.user_handle])),
+      ...Object.fromEntries(agentNames([], rows)),
+    }
+  })
+
+  return { people, names, originalNames, avatars }
 }

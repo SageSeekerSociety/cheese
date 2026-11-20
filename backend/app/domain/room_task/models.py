@@ -111,19 +111,6 @@ class TaskTitle(UuidPk, Base):
     )
 
 
-class TaskSnapshot(UuidPk, Timestamps, Base):
-    """An immutable backup of uncommitted work, separate from the review branch."""
-
-    __tablename__ = "task_snapshots"
-    task_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("tasks.id", ondelete="CASCADE"), index=True
-    )
-    head_sha: Mapped[str] = mapped_column(String(64))
-    snapshot_sha: Mapped[str] = mapped_column(String(64))
-    digest: Mapped[str] = mapped_column(String(64))
-    storage_key: Mapped[str] = mapped_column(String(1024))
-
-
 def people_of(
     owner_handle: str | None, contributor_handles: Iterable[str] | None
 ) -> tuple[str, ...]:
@@ -221,6 +208,12 @@ class Task(UuidPk, Timestamps, Base):
     reporter_handle: Mapped[str | None] = mapped_column(String(64), nullable=True)
     contributor_handles: Mapped[list[str]] = mapped_column(
         JSON, default=list, server_default="[]", nullable=False
+    )
+    # The members a request was passed on to this task for, besides whoever
+    # proposed it (`cheese_task(action=tell)`'s asker): each is told when the
+    # task is handed in or ends.
+    asker_handles: Mapped[list[str]] = mapped_column(
+        JSONB, default=list, server_default=text("'[]'::jsonb"), nullable=False
     )
     created_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     # ``created_by``'s own 芝士 opened it for them (`Actor.by_assistant`): the
@@ -341,11 +334,31 @@ class Task(UuidPk, Timestamps, Base):
     closing_since: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Its last delivery merged in a project whose deploy reports back
+    # (`review.deploy_wait`): the task waits, open, until a deploy that
+    # contains the merge reaches dev, and only then is it written up
+    # (`closing_since`), or closed with the main line's conclusion
+    # (`held_conclusion`). No deadline: a main that stays red keeps it waiting.
+    deploying_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # While it waits: the run of main's Required CI that failed after the
+    # merge and holds the deploy back; NULL when nothing red is known.
+    deploy_blocked_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    # While it waits, closed by the channel's main line that opened it: the
+    # conclusion it closes with once its merge is live
+    # (`review.task_landing.deploy_landed`). Kept apart from `conclusion`,
+    # which every reader shows as how the task ended.
+    held_conclusion: Mapped[str | None] = mapped_column(Text, nullable=True)
     # When the thread was collapsed. `status == closed` is the flag; this is
     # when — kept apart so "closed" needs no timestamp to be true.
     closed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Why the platform closed it, when a person did not: `neglect` = nobody
+    # touched it for long enough (`room_task.presentation.neglect`). NULL for
+    # every task a person or its teammate closed. Cleared when it is reopened.
+    closed_reason: Mapped[str | None] = mapped_column(String(32), nullable=True)
     # The main-line message this task was made from, or whose 支线 it was made
     # in: the task shows under it. A message can have any number of tasks.
     # use_alter: tasks↔blocks is a circular FK; add this one via ALTER.

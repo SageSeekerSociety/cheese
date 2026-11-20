@@ -55,7 +55,7 @@ covers:
 
 四格（提问、待办、提醒、自动同步）今天长这样：
 
-| | Claude Code 2.1.299 | Codex 0.154.0 | pi 1.0.0 |
+| | Claude Code 2.1.316 | Codex 0.154.0 | pi 1.0.0 |
 | --- | --- | --- | --- |
 | 提问 | 自己带，两侧都拒（`DISALLOWED_TOOLS` + `settings.json` 的 deny），平台用 `cheese_ask` | 自己带；同步那个关得掉，异步那个这个 build 关不掉（#1880） | 不自带（工具联合八个里没有，内建扩展四个里也没有），平台用 `cheese_ask` |
 | 待办 | 自己带，`TodoWrite`/`Task*` 两侧都拒，平台用 `todo_write` | 自己带，`tools.update_plan.enabled=False`，平台用 `todo_write` | 不自带，清单由平台建 |
@@ -82,7 +82,7 @@ Codex 和 pi 没有 Claude Code 的 `Monitor`，平台照 Claude Code 2.1.282 �
 
 | 骨架 | pin | 在哪 | 谁管 |
 | --- | --- | --- | --- |
-| Claude Code | `2.1.299` | `claude_code/device_launch.py` 的 `CLAUDE_PINNED_VERSION` | `backend/scripts/test_harness_contracts.py` |
+| Claude Code | `2.1.316` | `claude_code/device_launch.py` 的 `CLAUDE_PINNED_VERSION` | `backend/scripts/test_harness_contracts.py` |
 | Codex | `0.154.0` | `codex/host.py` 的 `VERSION` | 同上；不在注册表也照样被它管着 |
 | pi | `1.0.0` | `pi/launch.py` 的 `VERSION` | 不走那份脚本：它是按平台分的 tarball（`app/domain/machine/pi_dist.py`），契约由 `backend/tests/fixtures/harness-contract/` 那套夹具核 |
 
@@ -92,4 +92,4 @@ pin 的版本号只写一处：那份脚本从每份 `Declaration.pinned_version
 
 `Harness` 的字段：`name`、`label`、`capabilities`、`speaks_gateway`、`carries_subscription`、`keeps_memory`、`controls` / `executor_controls`。这几个事实写在骨架上而不是模型上——以前是反过来的（每个模型带一张「允许哪些骨架驱动我」的名单），方向错得付出过代价：加一个骨架要改模型目录，拒绝一个组合时报的错还是关于模型的，而模型对这件事什么意见都没有。`speaks_gateway` 说它说不说平台网关自己那套形状（能，就所有模型都能驱动它）；`carries_subscription` 说它能不能承载 Anthropic 订阅凭据——那份凭据只为**一个**骨架铸造。`capabilities` 是可选能力（`Capability`），答不出不妨碍注册，只是要它的地方用不了这个骨架；每一项写一句「怎么做到的」，声明了却说不出的，`Harness.__post_init__` 根本造不出来。今天只有一项「远端执行」，Claude Code 和 pi 声明了，Codex 没注册。
 
-一条活具体用哪个模型由 `backend/app/domain/room_task/binding.py` 的 `resolve()` 定：显式绑在这条活上的 → 队友的 → 调用方给的默认 → 项目主模型，逐个往下；一个都没有就报「当前项目没有可用的默认模型」。各个骨架怎么把平台工具交到模型手里，见[平台工具与会话侧 MCP](/dev/mcp)。
+一条活具体用哪个模型由 `backend/app/domain/agent/model_catalog.py` 的 `pick()` 按场合（对话、任务、分身）定：队友这个场合的设置 → 队友的模型 → 项目主模型 → 平台这个场合的角色，逐个往下（[平台模型角色](/dev/gateway#roles)）；`room_task/binding.py` 的 `resolve()` 只把选出的 id 绑成供给和上游名，目录里没有就拒绝，不换模型。各个骨架怎么把平台工具交到模型手里，见[平台工具与会话侧 MCP](/dev/mcp)。

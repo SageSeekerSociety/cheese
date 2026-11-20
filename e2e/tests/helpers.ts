@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 
 // Seeded by backend/alembic/versions/219831eb75a3_seed_demo_data.py — every demo
 // user (alice, bobby, ...) shares this bcrypt-hashed password. alice additionally
@@ -105,8 +105,11 @@ export async function apiLogin(page: Page, language: "zh-CN" | "en" = "zh-CN") {
     { accessToken: loginData.accessToken, user: loginData.user, language },
   );
   await page.goto("/inbox");
+  // The app shell is up when the top bar's 首页 is there (desktop); on a phone
+  // there is no top bar, so the bottom tabs' 待办 is what to wait on.
   await page
-    .locator(".app-rail-item:not(.app-rail-item--add)")
+    .getByTestId("bar-home")
+    .or(page.locator(".v-bottom-navigation"))
     .first()
     .waitFor();
 }
@@ -151,13 +154,53 @@ export async function projectIdOf(page: Page): Promise<string> {
   return (await api(page, "get", `/addresses/projects/${ref}`)).id as string;
 }
 
-// Opens the first project from the rail and waits for its topic sidebar to
+// The project list behind the sidebar head's switcher (the left rail of
+// project tiles went away on 2026-11-16 — frontend/src/components/common/
+// Navigation/appNav.ts). Opens it if it is not open yet.
+export async function openProjectSwitcher(page: Page) {
+  const rows = page.getByTestId("project-switcher-row");
+  if (await rows.first().isVisible().catch(() => false)) return rows;
+  // The place switcher is in the top bar only inside a project or a space; from
+  // the home area, step into the first project of its sidebar first.
+  const switcher = page.getByTestId("project-switcher");
+  // Right after a load neither is drawn yet: wait for one of them before choosing.
+  await switcher.or(page.getByTestId("home-nav-project")).first().waitFor();
+  if (!(await switcher.isVisible())) await clickFirstProject(page);
+  await switcher.click();
+  await rows.first().waitFor();
+  return rows;
+}
+
+// Opens the first project in the home area's sidebar (the page apiLogin lands
+// on). Retries the click: the list is drawn from the cached project list first
+// and redrawn when the server's copy lands, and a click landing between the two
+// hits a node that is gone.
+export async function clickFirstProject(page: Page) {
+  const first = page.getByTestId("home-nav-project").first();
+  const switcher = page.getByTestId("project-switcher");
+  // Right after a load neither is drawn yet: wait for one of them before choosing.
+  await first.or(switcher).first().waitFor();
+  if (!(await first.isVisible())) {
+    // Inside a project or a space the home sidebar is not on screen: the same
+    // list, in the same order, is behind the bar's place switcher.
+    const rows = page.getByTestId("project-switcher-row");
+    await expect(async () => {
+      if (!(await rows.first().isVisible())) await switcher.click({ timeout: 2_000 });
+      await rows.first().click({ timeout: 2_000 });
+      await rows.first().waitFor({ state: "hidden", timeout: 2_000 });
+    }).toPass({ timeout: 30_000 });
+    return;
+  }
+  await expect(async () => {
+    await first.click({ timeout: 2_000 });
+    await switcher.waitFor({ timeout: 2_000 });
+  }).toPass({ timeout: 30_000 });
+}
+
+// Opens the first project from the switcher and waits for its topic sidebar to
 // finish loading, returning the count of visible (non-archived) topic rows.
 export async function openFirstProject(page: Page) {
-  // Project tiles carry `--tile` (they render an avatar image); the bare
-  // `.app-rail-item:not(--add)` also matches the 首页/cheese home icon, which
-  // sits first in the rail — clicking it lands on the inbox, not a project.
-  await page.locator(".app-rail-item--tile").first().click();
+  await clickFirstProject(page);
   const rows = page.locator(".topic-row");
   // Wait for the rows themselves: a caller that counts before the seeded ones
   // arrive would see zero, and a later `toHaveCount(before + 1)` would pass

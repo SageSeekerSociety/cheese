@@ -14,7 +14,7 @@ import { reading } from '@/query/project'
 export { lastOpenedProjectId, lastPlaceOf } from './workspace/layout'
 export type { RememberedPlace } from './workspace/types'
 
-// 当前打开的是哪个项目，和围着它的界面状态（栏宽、上次待的房间、为什么打不开）。
+// 当前打开的是哪个项目，和围着它的界面状态（右侧面板开不开、上次待的房间、为什么打不开）。
 //
 // 项目的数据（频道清单、成员、未读、通知档位）不存在这里：它们在 query 缓存里
 // （`query/project.ts`），这里只是按当前项目把那几份接出来，写操作改的也是那几份。
@@ -48,17 +48,8 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
   // 进了项目、或者哪一页要了（`refreshProjects`）才读：没打开任何项目时 store 不替谁去问。
   const projectsWanted = ref(false)
 
-  const {
-    chatPct,
-    panelPref,
-    lastPlaceByProject,
-    persistLayout,
-    setChatPct,
-    setPanelPref,
-    rememberPlace,
-    placeFor,
-    forgetPlace,
-  } = useLayout(projectId)
+  const { panelPref, lastPlaceByProject, persistLayout, setPanelPref, rememberPlace, placeFor, forgetPlace } =
+    useLayout(projectId)
 
   const {
     topicsRead,
@@ -164,17 +155,16 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     setJoined: actions.setJoined,
     describe: actions.describe,
     setMembersOnly: actions.setMembersOnly,
+    setSpeakers: actions.setSpeakers,
     markAllRead: actions.markAllRead,
     privateUnreadMap,
     activeTopicId,
     activeDmPeer,
-    chatPct,
     panelPref,
     error,
     topicsError,
     rootTopic,
     projectName,
-    setChatPct,
     setPanelPref,
     reportError,
     refreshProjects: refreshProjectList,

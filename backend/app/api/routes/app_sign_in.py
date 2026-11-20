@@ -7,6 +7,12 @@ asks for a code bound to that hash (``POST /users/auth/app-sign-in``) and sends
 it back through a ``cheese://`` link; the app trades code and verifier for a
 session of its own (``.../finish``). A code intercepted on the way is useless
 without the verifier, which never left the app.
+
+The same hand-off brings a sign-in back to another origin of this deployment
+(``app.core.origins``): a provider whose callback is registered on one origin
+signs people in there, and the page that started the sign-in elsewhere kept
+the verifier. The start then names that origin as ``returnTo``, and only this
+deployment's own origins are accepted, so the code lands on a page of ours.
 """
 
 import base64
@@ -14,7 +20,7 @@ import hashlib
 import hmac
 
 from fastapi import APIRouter, Depends, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_user_auth_service
@@ -28,6 +34,7 @@ from app.common.auth import (
     create_app_sign_in_code,
     verify_app_sign_in_code,
 )
+from app.core import origins
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, InternalServerError
 from app.core.sentences import say
@@ -40,7 +47,20 @@ _SCOPE = "app_sign_in"
 
 
 class AppSignInStart(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     challenge: str = Field(min_length=43, max_length=43, pattern=r"^[A-Za-z0-9_-]+$")
+    #: The origin the code is carried back to, when that is a web page of this
+    #: deployment rather than the desktop app.
+    return_to: str | None = Field(default=None, alias="returnTo", max_length=512)
+
+    @field_validator("return_to")
+    @classmethod
+    def _ours(cls, value: str | None) -> str | None:
+        if value is not None and not origins.is_ours(value):
+            # i18n-exempt: only a hand-made link sends one; no page shows it
+            raise ValueError("returnTo is not an origin of this deployment")
+        return value
 
 
 class AppSignInFinish(BaseModel):

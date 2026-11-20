@@ -30,13 +30,13 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import Row, select
+from sqlalchemy import Row, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.domain.review import archive
 from app.domain.review.merge_state import checks_running
-from app.domain.review.models import AcceptCard, AcceptStatus
+from app.domain.review.models import AcceptCard, AcceptCardReviewer, AcceptStatus
 from app.domain.review.notes import NoteCode
 from app.domain.review.repositories import AcceptCardRepository
 
@@ -268,13 +268,30 @@ async def accepted_by_task(
 
 async def has_accepted(db: AsyncSession, handle: str) -> bool:
     """Whether ``handle`` has ever accepted a delivery, in any project."""
+    reviewed = (
+        select(AcceptCardReviewer.id)
+        .where(
+            AcceptCardReviewer.card_id == AcceptCard.id,
+            AcceptCardReviewer.handle == handle,
+        )
+        .exists()
+    )
+    sole_reviewer = (
+        select(func.count(AcceptCardReviewer.id))
+        .where(AcceptCardReviewer.card_id == AcceptCard.id)
+        .scalar_subquery()
+        == 1
+    )
     return bool(
         await db.scalar(
             select(
                 select(AcceptCard.id)
                 .where(
-                    AcceptCard.decided_by == handle,
                     AcceptCard.status == AcceptStatus.accepted,
+                    or_(
+                        AcceptCard.decided_by == handle,
+                        AcceptCard.decided_by.is_(None) & reviewed & sole_reviewer,
+                    ),
                 )
                 .exists()
             )

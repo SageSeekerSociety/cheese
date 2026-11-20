@@ -1,4 +1,5 @@
-"""A 支线's session keeps nothing; a task's keeps its work.
+"""A session in a channel — its main line or a 支线 — keeps nothing; a task's
+keeps its work.
 
 On a machine that is its own it reads, runs and changes files like any session:
 that is how it finds out what is wrong. What it does there never reaches the
@@ -46,7 +47,8 @@ pytestmark = pytest.mark.anyio
 
 
 async def _session(client, place: str, *, own: bool | None = True) -> dict:
-    """An agent session in a 支线 (``place="thread"``) or a task, holding a
+    """An agent session in a channel's main line (``place="channel"``), a 支线
+    (``place="thread"``) or a task, holding a
     machine of the project's; ``own`` is what its lease says about the
     machine, None for a lease recorded before it said anything."""
     project = post_project(client, json={"name": "Scratch"}, owner="alice").json()[
@@ -67,6 +69,8 @@ async def _session(client, place: str, *, own: bool | None = True) -> dict:
                 f"/blocks/{root}/upgrade", headers=session_auth_headers("alice")
             )
             assert made.json()["data"]["id"] == conversation, made.text
+    elif place == "channel":
+        conversation = room["id"]
     else:
         conversation = open_task(client, room["id"], "Task", owner="alice")["id"]
     project_id, room_id = uuid.UUID(project["id"]), uuid.UUID(room["id"])
@@ -150,7 +154,7 @@ def _execute(client, monkeypatch, held: dict, method: str, params: dict):
     monkeypatch.setattr(execution, "call", remote)
     response = client.post(
         f"/topics/{held['conversation']}/execution/session-{held['resource']}",
-        headers={"X-Cheese-Token": held["turn"]},
+        headers={"Authorization": f"Bearer {held['turn']}"},
         json={"method": method, "params": params},
     )
     return response, remote
@@ -167,7 +171,7 @@ MCP = ("mcp", {"server": "tracker", "method": "tools/call"})
 MCP_TOOL = ("invoke", {"id": "4", "tool": "create_issue", "server": "tracker"})
 
 
-@pytest.mark.parametrize("place", ["thread"])
+@pytest.mark.parametrize("place", ["thread", "channel"])
 @pytest.mark.parametrize("call", [BASH, SHELL, WRITE, EDIT, READ])
 async def test_on_its_own_machine_it_reads_runs_and_changes_files(
     client, monkeypatch, place, call
@@ -178,7 +182,7 @@ async def test_on_its_own_machine_it_reads_runs_and_changes_files(
     remote.assert_awaited()
 
 
-@pytest.mark.parametrize("place", ["thread"])
+@pytest.mark.parametrize("place", ["thread", "channel"])
 @pytest.mark.parametrize("call", [SYNC, MCP, MCP_TOOL])
 async def test_nothing_it_does_is_carried_off_the_machine(
     client, monkeypatch, place, call
@@ -266,13 +270,13 @@ def _forge_token(client, monkeypatch, held: dict) -> dict:
         AsyncMock(return_value=_Forge()),
     )
     response = client.get(
-        "/sandbox/forge-token", headers={"X-Cheese-Token": held["machine"]}
+        "/sandbox/forge-token", headers={"Authorization": f"Bearer {held['machine']}"}
     )
     assert response.status_code == 200, response.text
     return response.json()["data"]
 
 
-@pytest.mark.parametrize("place", ["thread"])
+@pytest.mark.parametrize("place", ["thread", "channel"])
 async def test_its_forge_token_reads_and_never_pushes(client, monkeypatch, place):
     held = await _session(client, place)
     data = _forge_token(client, monkeypatch, held)
@@ -342,7 +346,7 @@ def _github_minted(client, monkeypatch, tmp_path, held: dict) -> tuple[dict, dic
         AsyncMock(return_value=minter),
     )
     response = client.get(
-        "/sandbox/forge-token", headers={"X-Cheese-Token": held["machine"]}
+        "/sandbox/forge-token", headers={"Authorization": f"Bearer {held['machine']}"}
     )
     assert response.status_code == 200, response.text
     [permissions] = asked
@@ -386,7 +390,7 @@ async def _move(client, monkeypatch, held: dict) -> dict:
     monkeypatch.setattr(execution, "call", AsyncMock(return_value={}))
     response = client.put(
         f"/topics/{held['conversation']}/sessions/{held['session']}/environment",
-        headers={"X-Cheese-Token": held["turn"]},
+        headers={"Authorization": f"Bearer {held['turn']}"},
         json={"environment": {"kind": "sandbox", "spec": "team_devices"}},
     )
     assert response.status_code == 200, response.text

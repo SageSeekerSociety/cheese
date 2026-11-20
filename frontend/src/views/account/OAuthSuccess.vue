@@ -11,7 +11,6 @@
 <script lang="ts" setup>
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { toast } from 'vuetify-sonner'
 
 import { rememberSignIn } from './lastSignIn'
 import { oauthProviderName } from './oauthProvider'
@@ -19,6 +18,7 @@ import OAuthSuccessView from './OAuthSuccessView.vue'
 
 import { t } from '@/i18n'
 import { storageRemove } from '@/lib/browserStorage'
+import { toast } from '@/lib/toast'
 import { takeOAuthRedirect } from '@/router/loginRedirect'
 import AccountService from '@/services/account'
 

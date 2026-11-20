@@ -307,6 +307,12 @@ def fixture_env(home, root, port):
         "DISABLE_ERROR_REPORTING": "1",
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
         "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+        # What a room's session sets (`remote_execution/client.py`). From
+        # 2.1.304 tool search is on by default behind a custom
+        # ANTHROPIC_BASE_URL, which the fixture is: left unset, all but a
+        # dozen tools go behind ToolSearch and the first request names
+        # neither SendMessage nor TaskStop.
+        "ENABLE_TOOL_SEARCH": "false",
     }
 
 
@@ -832,7 +838,10 @@ def stopping(binary, root):
         mark = session.user(
             do(
                 "Bash",
-                command="sleep 30; echo NOT_INTERRUPTED",
+                # Not `sleep 30`: from 2.1.310 a build offering Monitor
+                # refuses a long foreground sleep before it starts, and so
+                # does the fixture's, which disables nonessential traffic.
+                command="python3 -c 'import time; time.sleep(30)'; echo NOT_INTERRUPTED",
                 description="to interrupt",
             )
         )

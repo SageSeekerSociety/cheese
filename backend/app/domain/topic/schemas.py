@@ -58,6 +58,9 @@ class TopicOut(BaseModel):
     status: TopicStatus
     # 私密频道: listed, searched and read only by the people in it.
     members_only: bool = False
+    # Who may speak in the main line: project role keys, None for everyone.
+    speaker_roles: list[str] | None = None
+    thread_replies_open: bool = True
     created_at: datetime
     # The topics ROW's mtime: it moves when the topic's own fields change
     # (title, status, session id), NOT when a block lands in it. For "was there
@@ -173,6 +176,12 @@ class ConclusionIn(BaseModel):
     conclusion: str = ""
     reporter_handle: str | None = Field(default=None, max_length=64)
     contributor_handles: list[str] | None = None
+    # What a task's own session closing it names as its grounds
+    # (`review.close_grounds`): the owner's message saying it is over, or why
+    # the checklist items left are not being done. People closing it give
+    # neither.
+    owner_message_id: uuid.UUID | None = None
+    unchecked_reason: str | None = Field(default=None, max_length=2000)
 
 
 class DocEditIn(BaseModel):

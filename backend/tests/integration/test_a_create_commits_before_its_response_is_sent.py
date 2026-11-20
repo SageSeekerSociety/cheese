@@ -38,14 +38,13 @@ import json
 import uuid
 
 import pytest
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.common.auth import create_access_token
 from app.core import db as core_db
 from app.core.config import settings
-from app.domain.space.models import Space, SpaceInviteCode
+from app.domain.space.models import Space
 from tests.integration.conftest import registered
 
 _COMMIT = "commit"
@@ -584,15 +583,13 @@ def test_a_members_claim_approval_and_submission_commit_before_answering(
     member = create_access_token(member_id, handle=member_handle)
     space_id = _an_approved_board(asgi, db_session, _portal, owner)
 
-    async def _invite_code() -> str:
-        return (
-            await db_session.execute(
-                select(SpaceInviteCode.code).where(SpaceInviteCode.space_id == space_id)
-            )
-        ).scalar_one()
+    # The board's link, as its owner hands it out.
+    asgi.post(f"/spaces/{space_id}/join-link/reset", {}, token=owner)
+    assert asgi.status == 200, asgi.body
+    link = json.loads(asgi.body)["data"]["token"]
 
     # Joining the board: the member opens it next, and it is closed to outsiders.
-    asgi.post("/spaces/join", {"code": _portal.call(_invite_code)}, token=member)
+    asgi.post(f"/space-invites/{link}/join", {}, token=member)
     assert asgi.status == 200, asgi.body
     _assert_committed_before_responding(asgi)
 

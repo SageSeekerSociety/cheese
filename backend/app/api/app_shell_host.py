@@ -25,6 +25,7 @@ from fastapi import FastAPI
 from starlette.responses import Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+from app.core import origins
 from app.core.config import settings
 from app.core.errors import BaseError
 from app.domain.site.hosting import DEVICE_FEATURES_OFF, content_host
@@ -55,8 +56,7 @@ def shell_url(shell: int) -> str | None:
 
 
 def _policy() -> str:
-    parts = urlsplit(settings.frontend_url)
-    platform = f"{parts.scheme}://{parts.netloc}"
+    platform = " ".join(origins.all_origins())
     return (
         "sandbox allow-scripts; default-src 'none'; "
         # 'unsafe-eval': the shell compiles the app's code in the frame and

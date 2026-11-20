@@ -124,7 +124,7 @@ describe('task pages in English', () => {
       },
       global: { plugins: plugins() },
     })
-    expect(document.body.textContent).toContain('No activity since claiming')
+    expect(document.body.textContent).toContain(i18n.global.t('tasks.insights.stalled'))
     expect(cjkIn(pageText())).toEqual([])
   })
 
@@ -179,7 +179,7 @@ describe('task pages in English', () => {
       global: { plugins: plugins() },
     })
     expect(document.body.textContent).toContain('Real name required')
-    expect(document.body.textContent).toContain('Locked on approval')
+    expect(document.body.textContent).toContain('Locked once the team starts')
     expect(cjkIn(pageText())).toEqual([])
   })
 

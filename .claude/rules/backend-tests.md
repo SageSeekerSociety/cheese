@@ -5,20 +5,6 @@ paths:
 
 # Backend tests — pitfalls, by the symptom you will see
 
-## 症状：路由返回 `401 {"message": "Login required"}`，同一个 Authorization 头在别的路由上却能用
-
-**容易误判成**：token 过期、签名密钥不对、fixture 没带 header。
-
-**真因**：token 分两种，外表一样。`create_access_token(user_id, handle=...)` 签出的
-token 带数字用户 id，所有路由都认；`create_access_token(None, handle=...)` 签出的只带
-handle，只有按 handle 认人的路由（accept / split / connector / project，走
-`caller_handle()`）认它，`Depends(require_auth_user)` 的路由把它当访客，于是 401。
-`create_access_token` 的 docstring 讲了两层各认什么。
-
-**做法**：先看目标路由的依赖。要数字 id 的，用 `seed_user()` 或
-`authenticated_user` / `auth_headers` fixture；只按 handle 认人的，用
-`session_auth_headers()` / `session_token()`。
-
 ## 症状：contract 测试一登录就报 Redis 连不上，或者一片 401
 
 **容易误判成**：contract harness 的鉴权坏了，照 integration 的写法补一个登录。
@@ -72,7 +58,7 @@ POST `/users/auth/login` 必然失败。
 | 目录 | 用什么 | 定义在 |
 |---|---|---|
 | `tests/integration/` | `auth_headers` fixture（真用户、真登录）；要裸 token 用 `seed_user` | `integration/conftest.py` |
-| `tests/integration/`，只按 handle 认人的路由 | `session_auth_headers()` / `session_token()` | `integration/conftest.py` |
+| `tests/integration/`，只要一个 handle | `session_auth_headers()` / `session_token()`（只带 handle 的 token：按 handle 认人的路由都认它；要求登录用户的路由还要库里真有这个用户） | `integration/conftest.py` |
 | `tests/contract/` | `authed_client` fixture | `contract/conftest.py` |
 
-不要自己手写这三种机制，原因见上面第一条。
+不要自己手写这三种机制。

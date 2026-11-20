@@ -1,6 +1,6 @@
 // 支线：主线上一条消息下面的回复，自成一段对话。它的 id 和房间、任务的一样用：
 // 消息、连接、已读都走 `/topics/{支线}/…`。这里只有支线自己才有的几件事。
-import type { Thread, ThreadRow } from '../types/threads'
+import type { Thread, ThreadLists } from '../types/threads'
 
 import { request } from './http'
 
@@ -17,9 +17,19 @@ export function getThread(threadId: string): Promise<Thread> {
   return request<Thread>(`/topics/${encodeURIComponent(threadId)}/thread`)
 }
 
-/** 频道里有回复的支线，最近有回复的在前。 */
-export function listThreads(roomId: string, limit = 50): Promise<ThreadRow[]> {
-  return request<ThreadRow[]>(`/topics/${encodeURIComponent(roomId)}/threads?limit=${limit}`)
+/** 频道里的支线，两栏：开着的（最近有回复的在前），和收起来的（最近收的在前）。
+ *  收起来的是报错满三天、没人回来的那条（`thread/recycle.py`）；它不来默认这一栏，
+ *  但读得到，所以两栏一起回来。 */
+export function listThreads(roomId: string, limit = 50): Promise<ThreadLists> {
+  return request<ThreadLists>(`/topics/${encodeURIComponent(roomId)}/threads?limit=${limit}`)
+}
+
+/** 把一条收起来的支线放回默认那一栏。只有开这条支线的人和频道管理员点得动。 */
+export function restoreThread(threadId: string): Promise<Thread> {
+  return request<Thread>(`/topics/${encodeURIComponent(threadId)}/thread/restore`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  })
 }
 
 /** 在频道下直接开一条支线，不必先有话说（清单第 4 条）。开的人由会话认，不由请求体

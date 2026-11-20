@@ -56,7 +56,7 @@ const CARD = {
   status: 'received',
 } as unknown as FeedbackCard
 
-const COUNTS = { all: 1, hot: 0, active: 0, resolved: 0, unread: 0 }
+const COUNTS = { all: 1, hot: 0, resolved: 0, unread: 0 }
 
 let pinia: ReturnType<typeof createPinia>
 

@@ -90,7 +90,7 @@ function probe(ui: ReturnType<typeof render>) {
   const pane = ui.container.querySelector('.design-image__pane') as HTMLElement | null
   const image = pane?.querySelector('img') as HTMLImageElement | null
   return [
-    `文字工具=${pressed('文字')} 选择工具=${pressed('选择图片区域')}`,
+    `文字工具=${pressed('文字')} 选择工具=${pressed('标一处')}`,
     `画布层=${ui.container.querySelectorAll('[role="application"]').length} 屏上文字=${ui.container.querySelectorAll('.sketch-overlay text').length}`,
     `img=${image?.isConnected ? `complete=${image.complete} rect=${image.getBoundingClientRect().width}` : '不在屏上'} paneWidth=${pane?.clientWidth}`,
   ].join(' | ')
@@ -162,7 +162,7 @@ it('画完一个非自由笔的图形就自动选中它、工具回到 select', 
   const ui = mount()
   await painted(ui)
   await drawRect(ui)
-  expect(ui.getByRole('button', { name: '选择图片区域' }).getAttribute('aria-pressed')).toBe('true')
+  expect(ui.getByRole('button', { name: '标一处' }).getAttribute('aria-pressed')).toBe('true')
   expect(handleCount(ui)).toBe(8)
 })
 
@@ -173,7 +173,7 @@ it('点中已画好的矩形就选中它（出现把手）', async () => {
   // 先切到别的工具放下选中，再回来点它。
   await pickTool(ui, '椭圆')
   expect(handleCount(ui)).toBe(0)
-  await pickTool(ui, '选择图片区域')
+  await pickTool(ui, '标一处')
   // 矩形屏上外框 (50,50)-(300,200)，点上边 (110,50)。
   await fireEvent.pointerDown(sheet(ui), { button: 0, pointerId: 21, clientX: 120, clientY: 70 })
   expect(handleCount(ui)).toBe(8)
@@ -428,7 +428,7 @@ it('文字的角只挪不改大小：文字没有缩放这一档', async () => {
   await placeText(ui)
   // 放完文字，选中的是它，但工具还停在「文字」上（再点一下是接着放，不是拖动）。
   // 切回选择会放下选中，所以还要点它一下把选中找回来。
-  await pickTool(ui, '选择图片区域')
+  await pickTool(ui, '标一处')
   const layer = sheet(ui)
   await fireEvent.pointerDown(layer, { button: 0, pointerId: 80, clientX: 110, clientY: 120 })
   await fireEvent.pointerUp(layer, { button: 0, pointerId: 80, clientX: 110, clientY: 120 })

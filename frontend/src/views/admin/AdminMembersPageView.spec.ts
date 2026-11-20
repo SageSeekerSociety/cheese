@@ -34,6 +34,8 @@ const base: AdminMembersPageViewProps = {
   error: null,
   candidates: [],
   searching: false,
+  searchError: null,
+  addError: null,
   adding: false,
   removing: null,
   dialogOpen: false,
@@ -166,6 +168,21 @@ describe('成员管理', () => {
 
     await fireEvent.click(within(dialog).getByRole('button', { name: '移出' }))
     expect(view.emitted().remove).toHaveLength(1)
+  })
+
+  it('加人被拒的原话画在框里：框开着时页面上那条横条在遮罩后面', () => {
+    const view = mount({
+      ...base,
+      dialogOpen: true,
+      candidates: MEMBERS_CANDIDATES,
+      selected: [MEMBERS_CANDIDATES[0]!],
+      addError: 'david：平台里没有 handle 是 david 的账号',
+      notice: '已添加：carol',
+    })
+    const dialog = view.getByRole('dialog')
+    expect(within(dialog).queryByText('david：平台里没有 handle 是 david 的账号')).not.toBeNull()
+    // 同一次里加成了的人也在框里说一声，被拒的那条不把它盖掉。
+    expect(within(dialog).queryByText('已添加：carol')).not.toBeNull()
   })
 
   it('加删成功的提示画在名单上方', () => {

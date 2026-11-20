@@ -35,17 +35,6 @@ def test_garbage_token_rejected():
     assert not sa.verify_scoped_token("a.b.c", project_id="P")
 
 
-def test_is_valid_accepts_scoped_or_global():
-    scoped = sa.mint_scoped_token(project_id="P", topic_id="T")
-    assert sa.is_valid_cheese_token(scoped, topic_id="T")
-    # a scoped token for another topic is NOT valid for this topic
-    assert not sa.is_valid_cheese_token(scoped, topic_id="OTHER")
-    # the global secret is accepted (dev / trusted-single-host override)
-    assert sa.is_valid_cheese_token(sa.SANDBOX_TOKEN, topic_id="anything")
-    # nothing matches with no scope
-    assert not sa.is_valid_cheese_token(scoped)
-
-
 def test_token_payload_has_no_secret():
     """项目、地点、谁在做、何时签发、到期——名单是封闭的，而这五个里没有一个是卡。
 
@@ -55,10 +44,10 @@ def test_token_payload_has_no_secret():
     西撤不回来，所以这里多一个键的那一天，就是「请求归卡」回来的那一天。
     """
     tok = sa.mint_scoped_token(project_id="P", topic_id="T", agent_handle="cheese-1")
-    body = tok.split(".", 1)[0]
+    body = tok.split(".")[1]
     payload = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
     assert set(payload) == {"p", "t", "iat", "exp", "a"}
-    assert sa.SANDBOX_TOKEN not in body  # the signing secret never ships in the token
+    assert sa.SANDBOX_TOKEN not in tok  # the signing secret never ships in the token
 
 
 # --- an agent signs with its own handle: a token says WHO acts, not just where -
@@ -147,11 +136,11 @@ def test_expired_or_garbage_token_names_nobody():
     assert sa.token_agent_handle("not-a-token") is None
 
 
-def test_session_capability_cannot_be_downgraded_to_legacy_owner():
+def test_a_session_binding_cannot_be_taken_off_its_credential():
+    """A credential bound to one session reaches that session's machine and
+    no other: rewriting its claims to drop the session voids it."""
     import base64
     import json
-
-    import pytest
 
     from app.core.sandbox_auth import (
         bind_resource_token,
@@ -160,15 +149,13 @@ def test_session_capability_cannot_be_downgraded_to_legacy_owner():
         verify_scoped_token,
     )
 
-    legacy = mint_scoped_token(project_id="project", topic_id="room")
-    token = bind_resource_token(legacy, "room", session_id="session")
-    assert token.startswith("cxss_")
+    launch = mint_scoped_token(project_id="project", topic_id="room")
+    token = bind_resource_token(launch, "room", session_id="session")
     assert verify_scoped_token(token, project_id="project", topic_id="room")
     assert scoped_token_claims(token)["session"] == "session"
-    # The old reader decodes the complete signed body as base64 JSON. It
-    # cannot interpret the versioned envelope, even on its legacy HTTP path.
-    body, _ = token.split(".", 1)
-    with pytest.raises((ValueError, UnicodeDecodeError)):
-        json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
-    assert scoped_token_claims(token.removeprefix("cxss_")) is None
-    assert verify_scoped_token(legacy, topic_id="room")
+    head, body, signature = token.split(".")
+    claims = json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+    del claims["session"]
+    unbound = base64.urlsafe_b64encode(json.dumps(claims).encode()).decode()
+    assert scoped_token_claims(f"{head}.{unbound.rstrip('=')}.{signature}") is None
+    assert verify_scoped_token(launch, topic_id="room")

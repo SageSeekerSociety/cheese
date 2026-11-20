@@ -227,7 +227,12 @@ def test_same_name_at_the_same_time_loses_neither(client):
     async def put(data: bytes) -> str:
         async with client.test_factory() as session:
             name = await library_records.add(
-                session, Shelf.of_project(project_id), "同名.txt", data, "user-1", None
+                session,
+                Shelf.of_project(project_id, with_task=False),
+                "同名.txt",
+                data,
+                "user-1",
+                None,
             )
             await session.commit()
             return name

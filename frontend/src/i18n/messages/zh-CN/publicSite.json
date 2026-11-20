@@ -56,7 +56,7 @@
   "teachersTitle": "在项目中育人",
   "teachersBody": "发布课题、评审提交，并告诉 AI 队友课上到哪了。各组的讨论、判断与成果留存在项目中，指导有据可依。",
   "teachersStep1": "在空间里发布课题",
-  "teachersStep2": "批准学生领取",
+  "teachersStep2": "批准学生的申请",
   "teachersStep3": "批改与点评",
   "companies": "企业",
   "companiesTitle": "以课题连接高校",
@@ -122,7 +122,7 @@
       "label": "高校与机构",
       "title": "把课堂延伸到真实项目",
       "body": "面向学院、书院与创新创业中心，用真实课题组织实践项目。教师发布课题、评审成果，学生组队攻关，AI 全程参与，过程与成果完整留存。",
-      "include1": "课题发布与领取审批",
+      "include1": "课题发布与申请审批",
       "include2": "提交评审与打分",
       "include3": "小组项目空间",
       "include4": "模型与云端资源",
@@ -185,9 +185,9 @@
       "label": "老师与助教",
       "title": "出题、批准、评审，都在一个空间里",
       "item1Title": "发布题目",
-      "item1Body": "写清要求，设好报名截止日期和领取后几天内完成",
-      "item2Title": "批准领取",
-      "item2Body": "学生领取题目后，在「领取者」里批准或拒绝",
+      "item1Body": "写清要求，设好申请截止日期和限时天数",
+      "item2Title": "通过申请",
+      "item2Body": "学生申请做题目后，在「参与者」里通过或拒绝",
       "item3Title": "评审提交",
       "item3Body": "逐份查看，判定是否通过，打分并写评语",
       "item4Title": "设好 AI 队友怎么帮学生",
@@ -197,10 +197,10 @@
     "students": {
       "label": "学生",
       "title": "和 AI 队友芝士一起把作业做完",
-      "item1Title": "领取题目",
+      "item1Title": "申请做题目",
       "item1Body": "在老师的空间里找到题目，老师批准后就能开始",
       "item2Title": "和芝士一起做",
-      "item2Body": "领取后有自己的项目，芝士在里面查资料、写代码、写报告",
+      "item2Body": "开始做后有自己的项目，芝士在里面查资料、写代码、写报告",
       "item3Title": "问到弄懂为止",
       "item3Body": "在频道里问芝士，没懂就在支线里接着追问",
       "item4Title": "提交作业",
@@ -234,17 +234,17 @@
       "docs": "交付与采纳"
     },
     "scene": {
-      "roster": "领取者",
+      "roster": "参与者",
       "challenge": "题目",
       "topic": "任务",
       "board": "看板",
       "assignment": "第 3 周作业：成绩统计",
-      "assignmentMeta": "领取后 14 天内完成 · 可多次提交",
+      "assignmentMeta": "限时 14 天 · 可多次提交",
       "wang": "王同学",
       "chen": "陈同学",
       "zhou": "周同学",
       "zhao": "赵晴",
-      "claimPending": "待批准领取",
+      "claimPending": "申请中",
       "reviewPending": "待评审",
       "passed": "已通过",
       "reject": "拒绝",
@@ -329,7 +329,9 @@
     "loadFailed": "文档加载失败",
     "colophon": {
       "brand": "知是 · 人与 AI 队友的协作工作台",
-      "seats": "{name} 附赠的受邀席位余 {n} · 凭此链接进入"
+      "by": "由 {name} 与 AI 队友芝士在「知是」协作完成",
+      "byWithApp": "文中交互模型与正文由 {name} 与芝士在「知是」构建",
+      "enter": "认识知是"
     }
   }
 }

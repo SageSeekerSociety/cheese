@@ -65,6 +65,9 @@ class _Session:
     async def get(self, _model, _ident, **_kwargs):
         return self.task
 
+    async def run_sync(self, _fn, *_args):
+        return ()
+
     async def scalar(self, _query):
         return getattr(self.task, "pending_card", None)
 
@@ -111,6 +114,7 @@ def said(monkeypatch):
         pr_url="https://github.com/acme/widgets/pull/1542",
         status=TaskStatus.open,
         closing_since=None,
+        deploying_since=None,
         pr_checks_head=None,
         pr_checks_state=None,
     )

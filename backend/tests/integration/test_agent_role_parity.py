@@ -36,13 +36,15 @@ def _agent(client, project, origin, *, scope="project", ttl=3600, as_handle=None
     的那一刻必须说清是谁在用它。
     """
     return {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=project["id"],
-            topic_id=origin,
-            access_scope=scope,
-            ttl_s=ttl,
-            agent_handle=as_handle or _seated_agent(client, origin),
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(
+                project_id=project['id'],
+                topic_id=origin,
+                access_scope=scope,
+                ttl_s=ttl,
+                agent_handle=as_handle or _seated_agent(client, origin),
+            )
+        }"
     }
 
 
@@ -165,13 +167,16 @@ def test_project_access_cannot_cross_projects(client):
 
 def test_expired_or_forged_agent_credentials_never_become_anonymous(client):
     project, origin, _ = _rooms(client)
-    for auth in (_agent(client, project, origin, ttl=-1), {"X-Cheese-Token": "forged"}):
+    for auth in (
+        _agent(client, project, origin, ttl=-1),
+        {"Authorization": f"Bearer {'forged'}"},
+    ):
         assert client.get(f"/topics/{origin}/blocks", headers=auth).status_code == 401
 
 
 def test_removing_all_credentials_cannot_bypass_membership(client):
     project, origin, _ = _rooms(client)
-    client.headers.pop("X-Cheese-Token", None)
+    client.headers.pop("Authorization", None)
     assert client.get(f"/topics/{origin}/blocks").status_code == 401
     assert client.get(f"/topics?project_id={project['id']}").status_code == 401
 
@@ -255,7 +260,7 @@ def test_project_credential_has_one_identity_and_needs_a_grant(client):
     assert issued.status_code == 200, issued.text
     handle = _seated_agent(client, origin)
     assert issued.json()["data"]["agent_handle"] == handle
-    auth = {"X-Cheese-Token": issued.json()["data"]["token"]}
+    auth = {"Authorization": f"Bearer {issued.json()['data']['token']}"}
     # 这位芝士本来就坐在项目的每一间房里，所以先把它从这一间撤下来——「席位即授权」
     # 这一问，只有在没有席位的房间里才问得出来。
     assert (
@@ -301,7 +306,7 @@ def test_project_membership_never_opens_someone_elses_private_chat(
         issued = client.post(
             f"/projects/{project['id']}/agent-credential", json={}, headers=owner
         )
-        auth = {"X-Cheese-Token": issued.json()["data"]["token"]}
+        auth = {"Authorization": f"Bearer {issued.json()['data']['token']}"}
     assert (
         client.get(f"/topics?project_id={project['id']}", headers=auth).status_code
         == 200
@@ -358,7 +363,7 @@ def test_an_agent_never_issues_credentials_and_revocation_retires_them_all(clien
     assert refused.status_code == 403, refused.text
     issued = client.post(endpoint, json={}, headers=owner)
     assert issued.status_code == 200, issued.text
-    auth = {"X-Cheese-Token": issued.json()["data"]["token"]}
+    auth = {"Authorization": f"Bearer {issued.json()['data']['token']}"}
     assert client.post(endpoint, json={}, headers=auth).status_code == 403
     second = client.post(endpoint, json={}, headers=owner)
     assert second.status_code == 200, second.text
@@ -366,7 +371,7 @@ def test_an_agent_never_issues_credentials_and_revocation_retires_them_all(clien
     for token in (issued.json()["data"]["token"], second.json()["data"]["token"]):
         assert (
             client.post(
-                endpoint, json={}, headers={"X-Cheese-Token": token}
+                endpoint, json={}, headers={"Authorization": f"Bearer {token}"}
             ).status_code
             == 401
         )
@@ -394,7 +399,7 @@ def test_people_and_agents_record_weeklies_but_only_agents_create_questions(
     client, stub_hooks, monkeypatch
 ):
     project, origin, _ = _rooms(client)
-    setup_token = client.headers.pop("X-Cheese-Token", None)
+    setup_token = client.headers.pop("Authorization", None)
     for handle, auth in (
         ("alice", session_auth_headers("alice")),
         (_seated_agent(client, origin), _agent(client, project, origin)),
@@ -421,7 +426,7 @@ def test_people_and_agents_record_weeklies_but_only_agents_create_questions(
         ).status_code == (403 if handle == "alice" else 200)
     seat = _seated_agent(client, origin)
     if setup_token is not None:
-        client.headers["X-Cheese-Token"] = setup_token
+        client.headers["Authorization"] = setup_token
     thread = in_thread(client, origin, "alice")
     with active_ask(client, stub_hooks, monkeypatch, thread, actor="alice", seat=seat):
         response = client.post(
@@ -497,12 +502,14 @@ def test_an_agent_reads_the_project_from_where_it_works(client, path, where):
     project, origin, _ = _rooms(client)
     place = origin if where == "room" else in_thread(client, origin, "alice")
     auth = {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=project["id"],
-            topic_id=place,
-            access_scope="project",
-            agent_handle=_seated_agent(client, origin),
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(
+                project_id=project['id'],
+                topic_id=place,
+                access_scope='project',
+                agent_handle=_seated_agent(client, origin),
+            )
+        }"
     }
     response = client.get(path.format(pid=project["id"]), headers=auth)
     assert response.status_code == 200, response.text
@@ -548,9 +555,14 @@ def test_an_agent_does_not_read_the_project_into_a_room_an_outsider_reads(client
         if row["agent"]
     )
     in_chat = {
-        "X-Cheese-Token": mint_scoped_token(
-            project_id=pid, topic_id=chat_id, access_scope="project", agent_handle=seat
-        )
+        "Authorization": f"Bearer {
+            mint_scoped_token(
+                project_id=pid,
+                topic_id=chat_id,
+                access_scope='project',
+                agent_handle=seat,
+            )
+        }"
     }
     assert client.get(f"/projects/{pid}", headers=in_chat).status_code == 200
     left = client.delete(

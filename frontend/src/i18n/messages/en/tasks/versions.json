@@ -1,0 +1,8 @@
+{
+  "numbered": "Version {n}",
+  "current": "Current",
+  "filesUnknown": "This version is from before files were recorded",
+  "removed": "Deleted",
+  "empty": "No versions yet",
+  "loadError": "Couldn't load the version history"
+}

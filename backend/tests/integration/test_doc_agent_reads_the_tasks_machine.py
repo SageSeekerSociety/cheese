@@ -171,7 +171,7 @@ async def test_the_lent_machine_is_only_read(
     monkeypatch.setattr(execution, "call", remote)
     response = client.post(
         f"/topics/{task_id}/execution/session-{resource}",
-        headers={"X-Cheese-Token": lent["execution_token"]},
+        headers={"Authorization": f"Bearer {lent['execution_token']}"},
         json={"method": method, "params": params},
     )
     if admitted:

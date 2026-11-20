@@ -22,7 +22,7 @@ from sqlalchemy import func, select, update
 
 from app.core.config import settings
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
-from app.domain.agent import execution
+from app.domain.agent import execution, sandbox_image
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply
@@ -75,6 +75,8 @@ def cloud(client, monkeypatch):
     # A pool host is kept this long once empty; a VM is not.
     monkeypatch.setattr(settings, "cloud_host_idle_hold_s", 3600)
     monkeypatch.setattr(settings, "cloud_pool_max_hosts", 20)
+    # The pool here is sized by demand; the VMs take the room the cap leaves.
+    monkeypatch.setattr(settings, "cloud_pool_fixed_hosts", 0)
     provider = FakeMicroCloud(offerings=[LXC, VM])
     monkeypatch.setattr(
         "app.domain.machine.services.MicroCloudClient", lambda: provider
@@ -159,7 +161,7 @@ def _room(case, environment: dict, title: str = "Room"):
 def _lease(case, seat, timeout=660):
     return case.client.post(
         f"/topics/{seat.room}/sessions/{seat.session}/work-lease",
-        headers={"X-Cheese-Token": seat.token},
+        headers={"Authorization": f"Bearer {seat.token}"},
         json={"env": {}, "timeout": timeout},
     )
 
@@ -216,8 +218,10 @@ def _up(case, seat) -> str:
                 host,
                 device_id=device.device_id,
                 when=datetime.now(UTC),
-                sandbox_disk_gb=None,
+                sandbox_disk_gb=None if host.whole_machine else 64,
             )
+            if not host.whole_machine:
+                host.sandbox_image = sandbox_image.default_image()["reference"]
             await db.commit()
             return device.device_id
 

@@ -26,7 +26,7 @@ OWNER_ENV_DEFAULTS = {
 
 
 class WireOwner:
-    def __init__(self, claude, *, exec_env=None):
+    def __init__(self, claude, *, exec_env=None, origin=None):
         options = SimpleNamespace(
             owner_image=os.environ.get(
                 "ACCEPTANCE_OWNER_IMAGE", OWNER_ENV_DEFAULTS["ACCEPTANCE_OWNER_IMAGE"]
@@ -42,7 +42,9 @@ class WireOwner:
             ),
             claude=Path(claude),
         )
-        self.context = image_owner(options, ROOT, start_runtime=False)
+        self.context = image_owner(
+            options, ROOT, start_runtime=False, origin=origin
+        )
         self.owner = self.context.__enter__()
         self.exec_env = exec_env or {}
 

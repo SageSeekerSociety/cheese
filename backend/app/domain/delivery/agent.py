@@ -12,7 +12,18 @@ import contextlib
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import DateTime, Uuid, column, or_, select, table, true, update
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    String,
+    Uuid,
+    column,
+    or_,
+    select,
+    table,
+    true,
+    update,
+)
 from sqlalchemy.dialects.postgresql import insert
 
 from app.core.errors import ValidationError
@@ -24,6 +35,7 @@ from app.domain.delivery.ledger import dedup_key
 from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
 from app.domain.delivery_events import REPLACES, DeliveryEvent
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.notification.models import NotificationType
 from app.domain.project.models import Project
 from app.domain.room_task.closing import CLOSES_TASK
 from app.domain.room_task.models import Task, TaskStatus
@@ -93,6 +105,41 @@ def work_interval_is_over():
     )
 
 
+#: A seat's runner registration, read bare for the same reason as `_TURNS`:
+#: `session_states` is the agent domain's.
+_SEATS = table(
+    "session_states",
+    column("conversation_id", Uuid),
+    column("agent_handle", String),
+    column("harness", String),
+    column("worker_epoch", BigInteger),
+)
+
+
+def seat_epoch_of(conversation_id, recipient_handle, harness):
+    """``seat_epoch_now`` for one seat, as a scalar subquery."""
+    return (
+        select(_SEATS.c.worker_epoch)
+        .where(
+            _SEATS.c.conversation_id == conversation_id,
+            _SEATS.c.agent_handle == recipient_handle,
+            _SEATS.c.harness == harness,
+        )
+        .scalar_subquery()
+    )
+
+
+def receiver_gone():
+    """Whether nothing can read this input any more, as the platform itself
+    recorded it: the one process it was last handed to has exited
+    (``receiver_exited_at``, written when that process's exit is applied and
+    cleared when the input is handed to a newer one). It reads no clock of
+    another host, and no placement of the session's work: a work host given up
+    or replaced leaves the session process, and what it holds, where it is.
+    """
+    return NativeInput.receiver_exited_at.is_not(None)
+
+
 async def instances_for_seats(session, project_id, seats) -> dict[str, AgentInstance]:
     """``seats`` 里每个在这个项目里找得到的席位对应的实例，按 handle 分；只读一次
     实例表。找不到的席位不在结果里。"""
@@ -150,6 +197,84 @@ async def record_agent(
         )
         .on_conflict_do_nothing(index_elements=["dedup_key"])
     )
+
+
+#: What passes between a channel's main line and a task, and no conversation
+#: shows (`exchange_of`): the main line telling the task, the task reporting.
+TASK_TOLD = "task_told"
+TASK_REPORT = "task_report"
+
+
+async def exchange_of(session, task_id: uuid.UUID) -> list[Delivery]:
+    """What a channel's main line told ``task_id`` and what it reported back,
+    oldest first: the deliveries that carried it, one per message."""
+    rows = await session.scalars(
+        select(Delivery)
+        .where(
+            Delivery.payload["taskId"].as_string() == str(task_id),
+            Delivery.payload["eventType"].as_string().in_((TASK_TOLD, TASK_REPORT)),
+        )
+        .order_by(Delivery.recorded_at)
+    )
+    return list(rows)
+
+
+async def record_task_report(
+    session, task, *, seat: str, kind: str, content: str, sender: str, said: str
+) -> None:
+    """A task's own session reports to the AI teammate seated as ``seat`` in
+    its channel's main line (`TASK_REPORT`): a question, or that it cannot go
+    on. ``sender`` is the task's AI teammate and ``said`` its words as it said
+    them, which the task's 现场 shows; ``content`` is how the main line reads
+    them."""
+    await record_seat_instruction(
+        session,
+        DeliveryEvent(
+            id=uuid.uuid4(),
+            type=NotificationType.ROOM_NOTICE,
+            payload={
+                "projectId": str(task.project_id),
+                "topicId": str(task.room_id),
+                "taskId": str(task.id),
+                "eventType": TASK_REPORT,
+                "kind": kind,
+                "from": sender,
+                "said": said,
+            },
+            occurred_at=datetime.now(UTC),
+        ),
+        project_id=task.project_id,
+        conversation_id=task.room_id,
+        seat=seat,
+        content=content,
+    )
+
+
+async def record_seat_instruction(
+    session,
+    event: DeliveryEvent,
+    *,
+    project_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    seat: str,
+    content: str,
+) -> bool:
+    """Keep an instruction for the AI teammate seated as ``seat`` in the
+    conversation ``conversation_id``, like `record_agent`, naming it by its
+    seat. A seat this project has no active teammate for gets nothing: there
+    is nobody to tell, and no other seat is guessed in its place. Says whether
+    the teammate is told (one already told the same event counts)."""
+    agent = await instance_for_seat(session, project_id, seat)
+    if agent is None or not agent.is_active:
+        return False
+    await record_agent(
+        session,
+        event,
+        conversation_id=conversation_id,
+        instance_id=agent.id,
+        content=content,
+    )
+    return True
 
 
 async def record_task_instruction(
@@ -224,8 +349,12 @@ async def record_task_instruction(
     )
 
 
-async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=None):
-    """Claim committed intent; expired sending attempts require reconciliation."""
+async def dispatch_pending(
+    sessions, *, chat, runner, limit=100, delivery_ids=None, asked=False
+):
+    """Claim committed intent; expired sending attempts require reconciliation.
+
+    ``asked`` marks the attempts this claims as a person's (`asked_attempt_id`)."""
     stamp = now()
     claimed = []
     async with sessions() as session:
@@ -248,6 +377,10 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
             )
         )
         for row in rows:
+            if (row.payload or {}).get("held"):
+                # Waits its turn behind the teammate named before it
+                # (`delivery.mention.HELD`), released when that one is done.
+                continue
             if row.state == "sending":
                 row.state = "uncertain"
                 row.last_error = "Sender stopped before recording the receiver result"
@@ -301,6 +434,8 @@ async def dispatch_pending(sessions, *, chat, runner, limit=100, delivery_ids=No
                     continue
             row.state = "claimed"
             row.attempt_id = uuid.uuid4()
+            if asked:
+                row.asked_attempt_id = row.attempt_id
             row.lease_until = stamp + timedelta(seconds=LEASE_SECONDS)
             row.attempts += 1
             content = row.payload["content"]
@@ -344,6 +479,7 @@ async def redispatch_undelivered(
     chat,
     runner,
     recipient_handle: str | None = None,
+    asked: bool = False,
 ) -> int:
     """Send this conversation, now, the inputs the platform still owes it.
 
@@ -366,6 +502,9 @@ async def redispatch_undelivered(
     The other caller is a seat whose work just ended (``recipient_handle``
     names it): an attempt refused because that seat was still holding the
     earlier work was waiting for exactly this, not for its backoff.
+
+    ``asked`` says a person pressed for it, so the attempts it starts are
+    theirs (`dispatch_pending`).
     """
     stamp = now()
     async with sessions() as session:
@@ -397,7 +536,9 @@ async def redispatch_undelivered(
             update(Delivery).where(Delivery.id.in_(owed)).values(retry_at=None)
         )
         await session.commit()
-    return await dispatch_pending(sessions, chat=chat, runner=runner, delivery_ids=owed)
+    return await dispatch_pending(
+        sessions, chat=chat, runner=runner, delivery_ids=owed, asked=asked
+    )
 
 
 async def run_attempt(sessions, delivery_id, attempt_id, work):

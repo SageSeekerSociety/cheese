@@ -235,9 +235,9 @@ def _seed_question(client, tid: str, meta: dict, *, author: str | None = None) -
         f"/topics/{tid}/messages",
         json={"content": "占位：这是一道题", "request_id": str(uuid.uuid4())},
         headers={
-            "X-Cheese-Token": mint_scoped_token(
-                project_id=str(project_id), topic_id=tid
-            )
+            "Authorization": f"Bearer {
+                mint_scoped_token(project_id=str(project_id), topic_id=tid)
+            }"
         },
     )
     assert r.status_code == 200, r.text

@@ -35,6 +35,7 @@ from datetime import UTC, datetime
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.content_review import TextKind, readable_text, review_text
 from app.core.errors import BadRequestError, NotFoundError
 from app.domain.addressing import Event, Hand, address
 from app.domain.avatars.models import Avatar
@@ -74,6 +75,20 @@ def first_line(content: str) -> str:
                 line if len(line) <= _EXCERPT_LENGTH else f"{line[:_EXCERPT_LENGTH]}…"
             )
     return ""
+
+
+async def _review_if_published(
+    space: Space, title: str | None, content: str | None
+) -> None:
+    """An open space's announcements are read by everyone in its scope, so
+    what they say is published (``app.core.content_review``); a members-only
+    space's are not."""
+    if space.open_scope is None:
+        return
+    await review_text(
+        TextKind.PUBLIC_TEXT,
+        [title, readable_text(content) if content is not None else None],
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,6 +197,7 @@ class SpaceAnnouncementService:
         now = datetime.now(UTC)
         if expires_at is not None and expires_at <= now:
             raise BadRequestError("expiresAt must be in the future")
+        await _review_if_published(space, title, content)
         row = SpaceAnnouncement(
             space_id=space_id,
             author_id=author_id,
@@ -210,6 +226,11 @@ class SpaceAnnouncementService:
         set_expires_at: bool = False,
     ) -> AnnouncementView:
         row = await self._row_or_404(space_id, announcement_id)
+        await _review_if_published(
+            await self._space_or_404(space_id),
+            title if title is not None and title.strip() != row.title else None,
+            content if content != row.content else None,
+        )
         said_changed = False
         if title is not None:
             cleaned = _clean_title(title)
@@ -253,14 +274,32 @@ class SpaceAnnouncementService:
 
     @staticmethod
     def _payload(space: Space, view: AnnouncementView) -> dict:
+        """公告发出去时写下的那一份。
+
+        署名三样缺一不可，收件箱、推送和邮件各有各的读法：
+
+        - ``authorName`` 是发布那一刻的公开昵称。推送和邮件拿不到实体解析，只读它。
+        - ``author`` 是发布人的 handle，也是 ``authorName`` 的兄弟键 ——
+          `notification.names` 的 ``with_snapshot_names`` 只认「快照旁边那个键」，
+          读它去名字表里找谁该替换这份快照。
+        - ``authorRef`` 是发布人本人的引用，作用只有一件：把这位的 handle 送进那份
+          名字表。光有 ``author`` 字符串，没人去查它是谁，备注自然换不掉它。
+        """
         row = view.row
+        author = view.author
         return {
             "spaceId": space.id,
             "spaceName": space.name,
             "announcementId": row.id,
             "title": row.title,
             "excerpt": first_line(row.content),
-            "authorName": view.author.nickname if view.author else "",
+            "author": author.username if author else "",
+            "authorName": author.nickname if author else "",
+            **(
+                {"authorRef": {"type": "user", "id": str(author.id)}}
+                if author is not None
+                else {}
+            ),
         }
 
     async def _notify(self, space: Space, view: AnnouncementView) -> None:

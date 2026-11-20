@@ -27,11 +27,17 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.domain.block.asked import (
+    EXPIRED,
+    PENDING,
     SKIPPED,
+    WITHDRAWN,
     answered,
+    closed_by_the_asker,
     may_answer,
+    pending_replies,
     skipped_by,
     skipped_by_all,
+    withdrawn_by_the_asker,
 )
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
@@ -111,11 +117,18 @@ async def post_questions(
     asked: tuple[str, ...],
     asked_all: bool = False,
     request_id=None,
+    deadline: datetime | None = None,
 ) -> list[Block]:
     """Write one message per question in the conversation; flush, never commit.
 
     ``asked`` is the people each question asks (empty: nobody in particular);
     ``asked_all`` says they are everyone in the channel.
+
+    ``deadline`` is when the question stops waiting for an answer if nobody
+    gives one — ``None`` means it waits indefinitely (the default an asking
+    agent gets from `agent.ask`, and what questions written before this
+    existed carry). Stored on the question as ``meta.deadline``; the sweep
+    that acts on it is `expire_question`.
 
     ``request_id`` makes a retry safe, as it does for `chat_send`: the questions
     a call with the same id already wrote are returned instead of asked twice.
@@ -154,6 +167,12 @@ async def post_questions(
                     # 只写「能多选」这一种；缺省就是单选，老题读到的也是缺省。
                     **({"multi_select": True} if question.multi_select else {}),
                     **({"ask_request": request_id} if request_id else {}),
+                    # 没人答就到点失效；不写就是一直等（老题也是这个意思）。
+                    **(
+                        {"deadline": deadline.isoformat()}
+                        if deadline is not None
+                        else {}
+                    ),
                 },
                 # The agent's own words: it waits for a person to answer them,
                 # not for itself to read them back as input.
@@ -165,6 +184,37 @@ async def post_questions(
     for row in rows:
         row.meta = {**(row.meta or {}), "notice_id": str(rows[0].id)}
     return rows
+
+
+#: A main-line message's quick replies (`chat_send`'s ``replies``): at most
+#: this many, each a short answer the person would otherwise type.
+MAX_QUICK_REPLIES = 3
+QUICK_REPLY_CHARS = 40
+#: The key that says a question is a message with quick replies under it, not
+#: a question card (`cheese_ask`): the timeline draws the message as said, and
+#: a row of buttons under it for whoever it asks.
+QUICK_REPLIES = "quick_replies"
+
+
+def quick_replies_meta(
+    replies: list[str], *, asked: tuple[str, ...], deadline: datetime | None
+) -> dict:
+    """What makes an AI teammate's message offer ``replies`` under it.
+
+    Such a message is a question like `post_questions` writes — its options
+    are the replies, it asks ``asked`` (empty: nobody in particular) — so a
+    click is an ordinary message replying to it, recorded on it
+    (`agent.announce.answer_questions`), and once answered or past
+    ``deadline`` its replies are no longer offered. Only how it is drawn
+    differs (`QUICK_REPLIES`)."""
+    return {
+        "options": [{"text": text} for text in replies],
+        "asked": list(asked),
+        "asked_all": False,
+        "answer_log": [],
+        QUICK_REPLIES: True,
+        **({"deadline": deadline.isoformat()} if deadline is not None else {}),
+    }
 
 
 def skip_question(question: Block, *, by: str) -> bool:
@@ -183,6 +233,8 @@ def skip_question(question: Block, *, by: str) -> bool:
     meta = dict(question.meta or {})
     if not meta.get("options"):
         raise UnprocessableEntityError(say("askNotAQuestion"))
+    if closed_by_the_asker(meta):
+        raise ConflictError(say("askAlreadyClosed"))
     if not may_answer(meta, by):
         raise ForbiddenError(say("askSkipNotYours"))
     if answered(meta):
@@ -237,6 +289,108 @@ async def withdraw_answer(session, *, question: Block, by: str) -> Block:
             entry
             for entry in (meta.get("answer_log") or [])
             if (entry or {}).get("by") != by
+        ],
+    }
+    await session.flush()
+    return question
+
+
+def _closed_entry(kind: str, *, by: str, at: datetime | None = None) -> dict:
+    """一条「题不再等人、但没人答」的记录，和跳过的条目同一个形状。"""
+    return {
+        "kind": kind,
+        "option": None,
+        "note": None,
+        "by": by,
+        "at": (at or datetime.now(UTC)).isoformat(),
+        "reply_id": None,
+    }
+
+
+async def withdraw_question(session, *, question: Block, by: str) -> Block:
+    """``by`` 撤回自己问出去的这道题（他是题块作者）。
+
+    只有作者撤得动，而且只撤没人答过的：有人答了就被拒 —— 那条答案是答的人
+    的，他要撤走的是他自己答的那条（`withdraw_answer`）。撤了跳过的人不算答过，题照
+    样收得回来。
+
+    记一条 ``kind=withdrawn`` 在 ``answer_log`` 上（和跳过、回答同一份），题因此
+    `block.asked.settled`，离开「待你回答」与频道黄灯。**不是回答**：
+    `answered` 仍为假，题卡画「芝士撤回了这道题」而不是「谁答了什么」。题那条消息、
+    谁说过的话，一个字不动。
+
+    叫醒谁、房间看到什么，由调用方负责。flush，不 commit。
+    """
+    meta = dict(question.meta or {})
+    if not meta.get("options"):
+        raise UnprocessableEntityError(say("askNotAQuestion"))
+    if meta.get("answer_log") and answered(meta):
+        raise ConflictError(say("askAlreadyAnswered"))
+    if question.author != by:
+        raise ForbiddenError(say("askWithdrawNotYours"))
+    if closed_by_the_asker(meta):
+        raise ConflictError(say("askAlreadyClosed"))
+    question.meta = {
+        **meta,
+        "answer_log": [
+            *(meta.get("answer_log") or []),
+            _closed_entry(WITHDRAWN, by=by),
+        ],
+    }
+    await session.flush()
+    return question
+
+
+async def confirm_pending(session, *, question: Block, by: str) -> Block:
+    """提问的那位确认：人打字回的那几句就是答案，题就此结掉。
+
+    打字回复先以 ``kind=pending`` 记在题上（`announce.answer_questions`），题仍在
+    等回答、黄灯不灭；那句话是答案还是追问、岔话，只有提问的那位读得懂。它判定是
+    答案，就走这一步，把待确认的条目改成 ``kind=note``，题因此 `answered`。判定不是
+    答案时什么都不用做，题保持打开。
+
+    只有题块作者可以确认，没有待确认的回复就拒掉，已经了结的题也不再收。flush，不
+    commit；通知由调用方结。
+    """
+    meta = dict(question.meta or {})
+    if question.author != by:
+        raise ForbiddenError(say("askWithdrawNotYours"))
+    if answered(meta) or withdrawn_by_the_asker(meta):
+        raise ConflictError(say("askAlreadyAnswered"))
+    if not pending_replies(meta):
+        raise UnprocessableEntityError(say("askNothingPending"))
+    question.meta = {
+        **meta,
+        "answer_log": [
+            {**entry, "kind": "note"} if (entry or {}).get("kind") == PENDING else entry
+            for entry in (meta.get("answer_log") or [])
+        ],
+    }
+    await session.flush()
+    return question
+
+
+async def expire_question(
+    session, *, question: Block, at: datetime | None = None
+) -> Block:
+    """到点了还没人答：把这道题收掉（`block.asked.EXPIRED`）。
+
+    和撤回同一套效果——不再等人、离开列表与黄灯、题卡收起选项并说明——只是理由
+    是时钟走到了 ``meta.deadline``。**不封口**：`block.asked.answerable` 对过期的题
+    仍为真，题卡留着输入框，之后有人写了照样记在题上（那一下会把提问的那位叫起来，
+    走的是回答那条路，不由这里负责）。
+
+    每次扫描只对「还没结算、已过 deadline」的题调一次；已经收过的题由调用方筛掉
+    （`settled` 为真）。flush，不 commit。
+    """
+    meta = dict(question.meta or {})
+    if closed_by_the_asker(meta) or answered(meta) or skipped_by_all(meta):
+        return question
+    question.meta = {
+        **meta,
+        "answer_log": [
+            *(meta.get("answer_log") or []),
+            _closed_entry(EXPIRED, by=question.author, at=at),
         ],
     }
     await session.flush()

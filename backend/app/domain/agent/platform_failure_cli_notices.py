@@ -28,6 +28,7 @@ SUBSCRIPTION_ACCOUNTS_COOLING_CODE = "subscription_accounts_cooling"
 MODEL_LIMIT_REACHED_CODE = "model_limit_reached"
 RESPONSE_TRUNCATED_CODE = "response_truncated"
 TOOL_UNAVAILABLE_CODE = "tool_unavailable"
+CONTROL_PLANE_UNAVAILABLE_CODE = "control_plane_unavailable"
 
 #: 一条 CLI 提示最长能有多长。真实样本最长的一条 120 字符出头;留三倍余量,再长
 #: 就不是提示而是内容了。
@@ -42,6 +43,22 @@ _CLI_NOTICES: tuple[tuple[re.Pattern[str], str], ...] = (
     (
         re.compile(r"^API Error:.*\bsubscription egress is offline\b", re.I),
         SUBSCRIPTION_EGRESS_OFFLINE_CODE,
+    ),
+    # The metering proxy's own 503 while its admission check cannot answer
+    # (`deploy/metering-proxy/cheese_billing_core.py`, `billing_addon.py`): the
+    # platform could not say which project and work this call is billed to, so
+    # it made no model call and told the client to retry shortly. Not the
+    # provider being overloaded, and never the platform's account being empty —
+    # the second is what the word "billing" in it used to be read as, which
+    # also stopped the turn from resuming by itself (`resumable_failures`).
+    # Before the 502/503 pattern below, which it also matches.
+    (
+        re.compile(
+            r"^API Error:.*\b(task billing attribution is temporarily"
+            r" unavailable|control plane could not say where this request goes)\b",
+            re.I,
+        ),
+        CONTROL_PLANE_UNAVAILABLE_CODE,
     ),
     # The metering proxy's 429 when every Claude account of the subscription is
     # cooling down after hitting its own limit (`deploy/metering-proxy`,
@@ -131,3 +148,49 @@ def classify_cli_notice(text: str) -> str | None:
         if pattern.search(line):
             return failure
     return None
+
+
+#: A compaction that was refused for size, in the words the build puts on the
+#: turn's ending: `Prompt is too long · automatic compaction failed: …`.
+#:
+#: Anchored at the start, like every other line this module reads: a failure
+#: whose text merely mentions the phrase — a log, a quoted message — is not
+#: this failure, and matching it anywhere would take its conversation's retry
+#: and its resume away for nothing.
+#:
+#: `Prompt is too long` alone is NOT this failure either: the build says it for
+#: an input too long for another reason, and for a turn stopped while its
+#: conversation was being compacted — states a retry does get past (its own
+#: release notes name both as fixes). Only `automatic compaction failed`, at
+#: the start, means the summarising call itself could not be made.
+#:
+#: Never through ``classify_cli_notice``: that one reads a line the build wrote
+#: INSTEAD of answering, and this is a sentence about a different call.
+_COMPACT_REFUSED = re.compile(
+    # The build's own composition: `Prompt is too long · automatic compaction
+    # failed: <why>`. Kept to one line — the prefix and the phrase are the same
+    # sentence, and a whole log is not.
+    r"^(?:Prompt is too long\b[^\n]*?\bautomatic compaction failed\b"
+    r"|automatic compaction failed\b"
+    # The same state at the API: the conversation itself was refused for size
+    # before any compaction could shrink it (`ContextWindowExceededError`, or
+    # its `maximum context length is N tokens` wording). This is the shape that
+    # used to reach a room as an invalid request — 「可能有解不开的图片」 — so
+    # it is read here.
+    r"|API Error:\s*400\b[^\n]*\bContextWindowExceededError\b"
+    r"|API Error:\s*400\b[^\n]*\bmaximum context length is\b)",
+    re.I,
+)
+
+
+def is_compaction_refused(text: str | None) -> bool:
+    """Whether this failure is a conversation whose own compaction could not run.
+
+    A state no retry changes and no wait passes: the request that would shrink
+    the conversation is the one being refused, so every later turn sends the
+    same thing and is refused the same way. It is the one failure whose right
+    advice is not 「再试一次」 (`turn.state.notices`)."""
+    said = (text or "").strip()
+    if not said:
+        return False
+    return bool(_COMPACT_REFUSED.search(said))

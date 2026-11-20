@@ -5,6 +5,7 @@ Taking a warm machine into the host pool is covered with placement
 (``test_cloud_host_pool.py``).
 """
 
+import json
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
@@ -17,10 +18,11 @@ from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
-from app.domain.machine import warm
+from app.domain.machine import sandbox_images, warm
 from app.domain.machine.microcloud import MicroCloudError
 from app.domain.machine.models import WarmMachine
 from app.domain.machine.warm import WarmPoolService
+from app.domain.user.tokens import digest_token
 from tests.microcloud import FakeMicroCloud
 from tests.support.devices import enrollment_team
 
@@ -93,6 +95,8 @@ def warm_case(client, monkeypatch):
     """One ready warm machine, enrolled and connected."""
     monkeypatch.setattr(settings, "microcloud_base_url", "https://example.invalid")
     monkeypatch.setattr(settings, "microcloud_tenant_secret", "test-only")
+    # A warm pool is what a demand-sized pool keeps; a fixed pool keeps hosts.
+    monkeypatch.setattr(settings, "cloud_pool_fixed_hosts", 0)
     monkeypatch.setattr("app.domain.machine.warm.device_hub.is_online", lambda _: True)
 
     async def seed():
@@ -104,7 +108,7 @@ def warm_case(client, monkeypatch):
                 team_id=await enrollment_team(sql_device_service(session), owner.id),
                 device_id="warm-test",
                 name="Unused",
-                token="test-warm-token",
+                token_digest=digest_token("test-warm-token"),
                 owner_user_id=owner.id,
                 supply=Supply.cloud,
                 created_at=datetime.now(UTC),
@@ -118,6 +122,9 @@ def warm_case(client, monkeypatch):
                     enrolled_at=datetime.now(UTC),
                     ip="192.0.2.1",
                     sandbox_disk_gb=64,
+                    sandbox_image=warm.enrollment.sandbox_image.default_image()[
+                        "reference"
+                    ],
                     create_request={
                         "hostname": "warm-test",
                         "offeringId": 1,
@@ -133,6 +140,38 @@ def warm_case(client, monkeypatch):
 
     client.portal.call(lambda: seed())
     return client, FakeMicroCloud()
+
+
+@pytest.mark.parametrize("matches", [False, True])
+def test_a_warm_machine_records_only_the_image_it_finished_preparing(
+    warm_case, monkeypatch, matches
+):
+    client, _ = warm_case
+    reference = warm.enrollment.sandbox_image.default_image()["reference"]
+
+    async def prepared(*args, **kwargs):
+        return {
+            "exit": 0,
+            "stdout": json.dumps({"reference": reference if matches else "wrong"}),
+        }
+
+    monkeypatch.setattr(sandbox_images.device_hub, "exec", prepared)
+
+    async def run():
+        async with client.test_request_factory() as db:
+            row = await db.scalar(
+                select(WarmMachine).where(WarmMachine.state == "ready")
+            )
+            row.sandbox_image = None
+            key = row.id
+            await db.commit()
+        await sandbox_images.sweep(client.test_request_factory)
+        async with client.test_request_factory() as db:
+            assert (await db.get(WarmMachine, key)).sandbox_image == (
+                reference if matches else None
+            )
+
+    client.portal.call(run)
 
 
 async def _taken_by_the_pool(session) -> None:
@@ -199,6 +238,26 @@ def test_background_preparation_waits_for_ai_then_connects_before_ready(
 def test_disabling_pool_deletes_only_unused_capacity(warm_case, monkeypatch):
     client, cloud = warm_case
     monkeypatch.setattr(settings, "microcloud_warm_pool_size", 0)
+
+    async def run():
+        async with client.test_request_factory() as session:
+            await WarmPoolService(session, cloud).sweep()
+            row = await session.scalar(select(WarmMachine))
+            assert row.state == "deleted"
+            assert await session.get(DeviceRow, "warm-test") is None
+
+    client.portal.call(lambda: run())
+    assert cloud.deleted == [200]
+
+
+def test_a_fixed_pool_prepares_no_warm_machine(warm_case, monkeypatch):
+    """A fixed pool keeps its own hosts up, so a warm machine beside it would be
+    one more machine running and billed for nothing: the sweep reads the target
+    as 0 and deletes the unused one already there, as a warm pool of size 0
+    always did."""
+    client, cloud = warm_case
+    monkeypatch.setattr(settings, "microcloud_warm_pool_size", 1)
+    monkeypatch.setattr(settings, "cloud_pool_fixed_hosts", 1)
 
     async def run():
         async with client.test_request_factory() as session:

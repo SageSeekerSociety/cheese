@@ -6,7 +6,16 @@ import { t } from '@/i18n'
 
 type PdfLib = typeof import('pdfjs-dist/legacy/build/pdf.mjs')
 type Paint = { cancel: () => void }
-export type SlidePaintOptions = { width: number; height?: number; text?: boolean }
+/** 文字流里的一段。pdf.js 不对外导出这两个类型，这里只写读到的那两个字段。 */
+type TextChunk = { items: Array<{ str: string; hasEOL: boolean } | { type: string }> }
+export type SlidePaintOptions = {
+  width: number
+  height?: number
+  text?: boolean
+  /** 一页最多放大到原尺寸的几倍（PDF 的点数）。默认 2：缩略图和适合页面用不着更大；读者自己
+   *  放大时由调用方给更高的上限，像素面积另有上限兜着（见下面的 `ratio`）。 */
+  maxScale?: number
+}
 
 let libraryPromise: Promise<PdfLib> | null = null
 function library(): Promise<PdfLib> {
@@ -101,7 +110,11 @@ export function useSlidesPdf(data: WatchSource<ArrayBuffer | null>) {
       const base = page.getViewport({ scale: 1 })
       const scale = Math.max(
         0.05,
-        Math.min(options.width / base.width, options.height ? options.height / base.height : 2, 2)
+        Math.min(
+          options.width / base.width,
+          options.height ? options.height / base.height : options.maxScale ?? 2,
+          options.maxScale ?? 2
+        )
       )
       const viewport = page.getViewport({ scale })
       // Cap both DPR and pixel area: a large slide must not allocate an unbounded bitmap.
@@ -150,18 +163,38 @@ export function useSlidesPdf(data: WatchSource<ArrayBuffer | null>) {
     }
   }
 
+  // 一页的文字：自己按段读这条流，不用 `page.getTextContent()`。
+  //
+  // 那个方法在 pdf.js 内部是 `for await (const chunk of 流)`，要 ReadableStream 有
+  // 异步迭代；WebKit（Safari、以及 mac 桌面端用的同一个内核）到今天都没有它，于是
+  // `getTextContent()` 一调就抛 `undefined is not a function`。卡片上那两行摘要是
+  // 在渲染里取的，抛出去会把整条对话时间线换成「无法显示这块内容」。
+  //
+  // 画文字层（TextLayer）读的就是这条流、也是按段读的，两边读的是同一份内容。
   async function pageText(number: number): Promise<string | null> {
     const pdf = document.value
     const mine = generation
     if (!pdf || number < 1 || number > count.value) return null
     const page = await pdf.getPage(number)
     if (mine !== generation) return null
-    const content = await page.getTextContent()
+    const reader = page.streamTextContent().getReader()
+    let text = ''
+    try {
+      for (;;) {
+        const { done, value } = await reader.read()
+        if (done) break
+        // 取到一半这份文档就被换掉/关掉了：后面那些段不属于现在屏上这份，丢掉。
+        if (mine !== generation) {
+          void reader.cancel().catch(() => {})
+          return null
+        }
+        for (const item of (value as TextChunk).items) if ('str' in item) text += item.str + (item.hasEOL ? '\n' : ' ')
+      }
+    } finally {
+      reader.releaseLock()
+    }
     if (mine !== generation) return null
-    return content.items
-      .map((item) => ('str' in item ? item.str + (item.hasEOL ? '\n' : ' ') : ''))
-      .join('')
-      .trim()
+    return text.trim()
   }
 
   watch(data, (bytes) => void open(bytes), { immediate: true })

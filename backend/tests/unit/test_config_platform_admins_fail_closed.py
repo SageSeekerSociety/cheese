@@ -85,6 +85,9 @@ def test_deployment_with_named_admins_boots() -> None:
         jwt_secret=_REAL_SECRET,
         platform_admin_handles=["alice", "bob"],
         data_encryption_key="QUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUFBQUE=",
+        # A deployment also needs its content review key (test_content_review.py).
+        aliyun_green_access_key_id="key-id",
+        aliyun_green_access_key_secret="key-secret",
     )
     assert settings.platform_admin_handles == ["alice", "bob"]
 

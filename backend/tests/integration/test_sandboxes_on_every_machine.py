@@ -202,9 +202,11 @@ async def test_another_seats_turn_does_not_keep_this_sessions_sandbox(
 
 async def test_a_dead_turn_left_open_does_not_keep_a_sandbox(client, monkeypatch):
     """A process killed inside a turn leaves its row open and nothing closes
-    it: the sandbox must not be held by it for good."""
+    it: the sandbox must not be held by it for good. Once the sandbox has
+    gone unused for `cloud_sandbox_turn_hold_s` (30 minutes), the open row no
+    longer holds it."""
     room = await _on_alices_computers(client, monkeypatch)
-    await _last_used(client, room, timedelta(minutes=11))
+    await _last_used(client, room, timedelta(minutes=40))
     await _open_turn(client, room, seat=room.agent_handle, ago=timedelta(hours=3))
 
     destroyed = await _sweep(client, monkeypatch)

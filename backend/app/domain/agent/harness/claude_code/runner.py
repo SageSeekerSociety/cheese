@@ -34,22 +34,30 @@ Standard library only: this module travels in the runner archive.
 """
 
 import asyncio
+import base64
 import contextlib
+import hashlib
 import json
 import os
+import re
 import shutil
-import signal
 import subprocess
 import sys
 import tempfile
 import time
+import traceback
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from app.domain.agent.harness import CLAUDE_CODE
-from app.domain.agent.harness.claude_code import stuck
+from app.domain.agent.harness.claude_code import compaction, stuck
 from app.domain.agent.harness.claude_code.journal import Journal
+from app.domain.agent.harness.claude_code.processes import (
+    end,
+    end_session,
+    started_by,
+)
 from app.domain.agent.harness.driven import lifecycle, runner
 
 if sys.platform == "win32":
@@ -57,22 +65,30 @@ if sys.platform == "win32":
     import portable
 from app.domain.memory.files import (
     INDEX_NAME,
-    MEMORY_ROOT,
+    PRIVATE_PREFIX,
+    TEAM_PREFIX,
+    MemoryFileError,
     check_scoped_path,
     conflict_path,
+    private_owner,
     rejected_path,
 )
 from app.domain.memory.tree import (
     BULK_DELETE_MIN,
     BULK_DELETE_RATIO,
-    prefixes_of,
     sync_tree,
+    withdrawn_prefixes,
 )
+from app.domain.session_record.privacy import hidden_input
 
 # One stdout line can carry a whole tool result (Claude Code caps those at about
 # 30,000 characters) or an image the session was handed. A line over the limit
-# kills the reader, so the limit is a ceiling nothing legitimate reaches.
+# cannot be read, and the runner ends the session that wrote it (``_read``), so
+# the limit is a ceiling nothing legitimate reaches.
 LINE_LIMIT = 64 * 1024 * 1024
+#: How long the output of a session the runner could not read is still read
+#: after the session is gone, before its pipe is closed (``_read``).
+DRAIN_AFTER_EXIT_S = 1.0
 #: How long a launch must keep running before a greeting takes it as started
 #: (``Runner.starting``). A failing bootstrap or a missing program ends well
 #: inside it; a session that comes up costs a greeting no more than this.
@@ -83,10 +99,6 @@ SETTLE_S = 0.5
 RELEASE_GRACE_S = 5.0
 CONTROL_TIMEOUT_S = 30.0
 COMMAND_TIMEOUT_S = 120.0
-#: How long the runner waits for a compaction it asked the build for to report
-#: its `result`. Summarising a full window takes minutes; this is the outer
-#: bound on believing it will come at all, not an expected duration.
-COMPACT_TIMEOUT_S = 1800.0
 # How long a new turn waits to see the project's context as it is now before it
 # starts on what the session already has.
 CATCH_UP_TIMEOUT_S = 30.0
@@ -115,6 +127,9 @@ LAST_WORDS = 1000
 # up opens with ``ended(launch)``, and a backend waiting on one launch reads
 # only what that launch left.
 LAUNCH = "CHEESE_RUNNER_LAUNCH"
+#: The conversation the platform no longer continues (`SessionStart.retired`):
+#: a start does not take it up, not even from this runner's own record.
+RETIRED_ENV = "CHEESE_RETIRED_SESSION"
 #: The launch whose agent process has not had its ending reported yet: set when
 #: a process starts, cleared once its ``exited`` is in the outbox. Still set
 #: when a runner starts, it names a process that died with its runner.
@@ -122,6 +137,10 @@ LIVE_LAUNCH = "live_launch"
 #: The epoch that process was registered under (``register``); empty until it
 #: is. Its ending, reported for it by the next runner, carries this epoch.
 LIVE_EPOCH = "live_epoch"
+#: The input blocks only one person may read, by the digest of their text:
+#: owner (``Runner._private_texts``).
+PRIVATE_TEXTS = "private_texts"
+PRIVATE_TEXTS_KEPT = 256
 #: The platform inputs written to the agent and not read yet, in the order they
 #: were written: what is dropped when the process goes.
 UNREAD_INPUTS = "unread_inputs"
@@ -234,92 +253,57 @@ def end_left_agent(state: Path) -> None:
     portable.terminate(pids)
 
 
-def end(pids: list[int]) -> None:
-    for number, wait in ((signal.SIGTERM, 5.0), (signal.SIGKILL, 1.0)):
-        for pid in pids:
-            with contextlib.suppress(ProcessLookupError, PermissionError):
-                os.kill(pid, number)
-        deadline = time.monotonic() + wait
-        while pids and time.monotonic() < deadline:
-            time.sleep(0.1)
-            pids = [pid for pid in pids if _alive(pid)]
-        if not pids:
-            return
-
-
-def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True
-
-
-def started_by(session: int) -> list[int]:
-    """What a session started and could still be running: its descendants.
-
-    A session's work is under it — the shell it started a command in, what that
-    shell runs, and the helpers it started for itself — so its descendants are
-    what has to be stopped for it to be let go of work it would otherwise wait
-    out (``Runner.release``). Its own process is not in the list: it is the one
-    being ended, and it should be the one to exit.
-    """
-    if sys.platform == "win32":
-        return [
-            pid
-            for pid in portable.tree([(session, portable.created(session))])
-            if pid != session
-        ]
-    children: dict[int, list[int]] = {}
-    for pid, parent in _processes():
-        children.setdefault(parent, []).append(pid)
-    found: list[int] = []
-    queue = [session]
-    while queue:
-        for child in children.get(queue.pop(), []):
-            found.append(child)
-            queue.append(child)
-    return found
-
-
-def _processes() -> list[tuple[int, int]]:
-    """Every process on this machine as (pid, parent), from /proc where there is
-    one and from ``ps`` where there is not."""
-    proc = Path("/proc")
-    if proc.is_dir():
-        pairs = []
-        for entry in proc.iterdir():
-            if not entry.name.isdigit():
-                continue
-            try:
-                # Past the name, which may itself hold a ')'.
-                _, parent = (entry / "stat").read_bytes().split(b")")[-1].split()[:2]
-            except (OSError, ValueError):
-                continue
-            pairs.append((int(entry.name), int(parent)))
-        return pairs
-    try:
-        listing = subprocess.run(
-            ["ps", "-axo", "pid=,ppid="], capture_output=True, text=True, timeout=10
-        ).stdout
-    except (OSError, subprocess.TimeoutExpired):
-        return []
-    pairs = []
-    for line in listing.splitlines():
-        fields = line.split()
-        if len(fields) == 2 and fields[0].isdigit() and fields[1].isdigit():
-            pairs.append((int(fields[0]), int(fields[1])))
-    return pairs
-
-
 def transcript(config_dir: Path, session_id: str) -> Path | None:
     """Where this session's transcript is, whatever cwd wrote it."""
     for path in config_dir.glob(f"projects/*/{session_id}.jsonl"):
         if path.is_file() and path.stat().st_size:
             return path
     return None
+
+
+#: How many bytes one read of a transcript hands back. The executor's own view
+#: of this file pulls it in pieces of this size (`forwarded_transcript`), and a
+#: piece has to fit the JSON line it travels in.
+TRANSCRIPT_CHUNK_BYTES = 384 * 1024
+
+
+def transcript_chunk(config_dir: Path, session_id: str, offset: int, size: int) -> dict:
+    """One piece of this session's transcript, or that it is not there.
+
+    This is what an executor asks its session for through the platform
+    (`topic_transcript_chunks` route → here), so a file this session holds can
+    be read on the machine its tools run on. The path is not the caller's to
+    name: the piece is looked up by this session's own id under the config dir
+    the runner was launched with, so nothing outside this session's transcript
+    can be reached through it. A transcript that is not there yet is
+    ``{"missing": True}`` rather than an error — a session asked for its
+    transcript before Claude Code has written one is a real state, not a
+    failure.
+
+    ``size`` may be 0, which is how the executor asks where this file is
+    without pulling any of it: the answer then carries ``path``, this host's
+    own spelling of it, which is the name the build puts in front of the model
+    after a compaction and the name the executor mounts its view at.
+    """
+    path = transcript(config_dir, session_id)
+    if path is None:
+        return {"missing": True}
+    if size == 0:
+        return {
+            "size": path.stat().st_size,
+            "offset": offset,
+            "data": "",
+            "path": str(path),
+        }
+    with path.open("rb") as source:
+        source.seek(offset)
+        data = source.read(size)
+    return {
+        "size": path.stat().st_size,
+        "offset": offset,
+        "data": base64.b64encode(data).decode(),
+        "eof": offset + len(data) >= path.stat().st_size,
+    }
 
 
 #: 上一次对账写下去的那一版（路径 → 指纹），**和那棵树放在同一个目录里**。
@@ -338,16 +322,51 @@ MEMORY_BASELINE = ".baseline.json"
 MEMORY_BASES = ".bases.json"
 
 
-def memory_root() -> Path:
-    """会话里那棵记忆树的根。
+#: The tools a session reaches its memory files with: the file tools the
+#: executor's client hands back to this host for a memory path
+#: (`remote_execution/client.NATIVE_TOOLS`, which runs on the other machine
+#: and is not importable here).
+FILE_TOOLS = frozenset({"Read", "Edit", "Write", "NotebookEdit"})
+_PATH_ARGUMENT = re.compile(r'"(?:file_path|notebook_path)"\s*:\s*"((?:[^"\\]|\\.)*)"')
 
-    用的是会话自己的 `$HOME`（`machine_launcher` 把它换成了这一间房的会话家），
-    不是机器主人的家：一个会话一个家，记忆的副本也就一间房一份。
+
+def live_arguments(tool: str, written: str) -> str:
+    """What the room is shown of a tool call's arguments, ``written`` so far.
+
+    The room watches a call being written before any record of it exists, so
+    the call is judged here the way its record will be (`files.private_owner`):
+    one on somebody's private memory shows `privacy.hidden_input` in place of
+    its arguments, to everyone, since the frame goes to the whole room. A file
+    tool shows nothing until its path is written out: the rest of its
+    arguments may come first, and are that person's if the path is."""
+    found = _PATH_ARGUMENT.search(written)
+    if found is None:
+        return "" if tool in FILE_TOOLS else written
+    try:
+        path = json.loads(f'"{found.group(1)}"')
+    except ValueError:
+        return ""
+    owner = private_owner(path)
+    if owner is None:
+        return written
+    return json.dumps(hidden_input(owner), ensure_ascii=False)
+
+
+def memory_root() -> Path:
+    """这个座位的会话那棵记忆树的根：座位自己的目录里，执行配置旁边
+    （`CHEESE_EXECUTION_CONFIG`，启动脚本按座位导出），`remote_execution/client`
+    的 `prepare` 也从同一个文件算出 `central_memory`，agent 写 `~/.cheese/memory/`
+    落到的就是这里。
+
+    不放在房间的家里：一间房的几个座位共用那个家，而两个座位可以同时在替两个人
+    干活，一棵共用的树上就会同时躺着两个人的 private，各自的会话都读得到对方的。
+    一个座位的树上只有它这一轮点了名的那几位的 private，换了答复的人，上一轮的
+    那几棵交回平台（`tree.withdrawn_prefixes`）。
     """
-    home = os.environ.get("HOME") or ""
-    if not home:
-        raise RuntimeError("The session has no home directory to keep memory in")
-    return Path(home) / MEMORY_ROOT
+    config = os.environ.get("CHEESE_EXECUTION_CONFIG") or ""
+    if not config:
+        raise RuntimeError("The session has no seat directory to keep memory in")
+    return Path(config).parent / "memory"
 
 
 def memory_scopes(params: dict) -> dict[str, dict[str, str]]:
@@ -372,6 +391,131 @@ def memory_scopes(params: dict) -> dict[str, dict[str, str]]:
     return out
 
 
+def memory_policy(
+    params: dict, scopes: dict[str, dict[str, str]]
+) -> tuple[frozenset[str], dict[str, str]]:
+    """请求里的收件规矩：哪几棵是多人地方铺下的那一份（``views``，只能是这一次
+    点了名的 private），和项目里的人（``people``，handle → 名字）。比这一版旧的
+    平台不发这两样，那就是什么都不限（平台那一侧照样会拦，`memory.session`）。"""
+    views = frozenset(
+        prefix
+        for prefix in params.get("views") or ()
+        if isinstance(prefix, str)
+        and prefix in scopes
+        and prefix.startswith(f"{PRIVATE_PREFIX}/")
+    )
+    given = params.get("people")
+    people = (
+        {
+            handle: name
+            for handle, name in given.items()
+            if isinstance(handle, str) and isinstance(name, str)
+        }
+        if isinstance(given, dict)
+        else {}
+    )
+    return views, people
+
+
+#: 记忆树根上平台自己的文件：对账的三张表。
+_ROOT_FILES = frozenset({".baseline.json", ".bases.json", ".laid.json"})
+
+
+def _sidecar(name: str) -> bool:
+    """平台在作用域目录里留下的旁路副本（`files.rejected_path` / `conflict_path`）。"""
+    return name.endswith((".rejected.md", ".conflict.md"))
+
+
+def _remove(target: Path) -> None:
+    if target.is_dir() and not target.is_symlink():
+        shutil.rmtree(target, ignore_errors=True)
+    else:
+        with contextlib.suppress(OSError):
+            target.unlink(missing_ok=True)
+
+
+# i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+_OUTSIDE_SCOPES = (
+    "记忆只收 team/ 和 private/<handle>/ 下的 .md，根目录和别的目录里写的不保存"
+)
+# i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+_NOT_LAID = (
+    "这一轮没有铺下这个人的 private 目录：只有这一轮答复的成员的目录收写入，"
+    "写在别人目录里的不保存"
+)
+
+
+def stray_memory(root: Path, managed: set[str]) -> dict[str, str]:
+    """树上平台不会收的东西（路径 → 原因），说完就从树上拿走。
+
+    对账只读受管作用域里名字合格的 `.md`（`read_memory`），别的写入以前悄悄留在
+    磁盘上或被删掉，写它的 agent 以为写成了。这里把它们一一说出来，回答里带回去
+    （``dropped``），平台下一轮告诉它（`platform_notices.memory_dropped_notice`）；
+    说过一次就拿走，不然每一次对账都再说一遍。只说路径和原因，不带正文。
+    """
+    found: dict[str, str] = {}
+    try:
+        top = sorted(root.iterdir())
+    except OSError:
+        return found
+    for entry in top:
+        if entry.name in _ROOT_FILES:
+            continue
+        if entry.name == TEAM_PREFIX and entry.is_dir() and TEAM_PREFIX in managed:
+            found.update(_strays_in(entry, TEAM_PREFIX))
+            continue
+        if entry.name == PRIVATE_PREFIX and entry.is_dir() and not entry.is_symlink():
+            for owner in sorted(entry.iterdir()):
+                prefix = f"{PRIVATE_PREFIX}/{owner.name}"
+                if prefix in managed and owner.is_dir() and not owner.is_symlink():
+                    found.update(_strays_in(owner, prefix))
+                    continue
+                why = _NOT_LAID if owner.is_dir() else _OUTSIDE_SCOPES
+                for path in _files_under(owner, prefix) or [prefix]:
+                    found[path] = why
+                _remove(owner)
+            continue
+        if entry.name == TEAM_PREFIX or entry.name == PRIVATE_PREFIX:
+            found[entry.name] = _OUTSIDE_SCOPES
+        else:
+            for path in _files_under(entry, entry.name) or [entry.name]:
+                found[path] = _OUTSIDE_SCOPES
+        _remove(entry)
+    return found
+
+
+def _files_under(entry: Path, path: str) -> list[str]:
+    if not entry.is_dir() or entry.is_symlink():
+        return [path] if entry.exists() or entry.is_symlink() else []
+    out: list[str] = []
+    with contextlib.suppress(OSError):
+        for child in sorted(entry.iterdir()):
+            out += _files_under(child, f"{path}/{child.name}")
+    return out
+
+
+def _strays_in(directory: Path, prefix: str) -> dict[str, str]:
+    """一个受管作用域目录里，名字不合格或不是一层文件的那几样。"""
+    found: dict[str, str] = {}
+    with contextlib.suppress(OSError):
+        for entry in sorted(directory.iterdir()):
+            path = f"{prefix}/{entry.name}"
+            if entry.is_file() and not entry.is_symlink():
+                if _sidecar(entry.name):
+                    continue
+                try:
+                    check_scoped_path(path)
+                    continue
+                except MemoryFileError as exc:
+                    found[path] = str(exc)
+            else:
+                for inner in _files_under(entry, path) or [path]:
+                    # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+                    found[inner] = f"一条记忆就一个文件，不放在子目录里：{path!r}"
+            _remove(entry)
+    return found
+
+
 def _recall_baseline(root: Path, name: str = MEMORY_BASELINE) -> dict[str, str]:
     """上一次对账留下的那张表（就在记忆树根上）：指纹表（`MEMORY_BASELINE`），
     或者索引底稿（`MEMORY_BASES`）。
@@ -391,6 +535,28 @@ def _recall_baseline(root: Path, name: str = MEMORY_BASELINE) -> dict[str, str]:
         for path, value in baseline.items()
         if isinstance(path, str) and isinstance(value, str)
     }
+
+
+#: 这个座位上一次铺下的 private 作用域（前缀 → ""），和基线放在一起。基线只记得
+#: 有文件的那几棵：铺下一棵空的、会话在里面写了第一条，下一轮换了人，只看基线
+#: 就认不出它要交回去。
+MEMORY_LAID = ".laid.json"
+#: 交接区里一份交接的名字：交出的时刻（纳秒，排序用）加一个随机串。
+_HANDOFF_TOKEN = re.compile(r"[0-9]{20}-[0-9a-f]{32}")
+
+
+def _handoff_root(root: Path) -> Path:
+    """交出去、平台还没回收到的那几棵（`Runner._hand_over`）：在记忆树旁边，不
+    在树里，所以 agent 的文件工具够不着它。"""
+    return root.parent / "memory-handoff"
+
+
+def _remove_tree(root: Path, prefix: str) -> None:
+    """从树上拿走一整个 private 作用域，旁路文件一起。"""
+    owner = prefix.split("/", 1)[1] if "/" in prefix else ""
+    if prefix.startswith(f"{PRIVATE_PREFIX}/") and owner not in ("", ".", ".."):
+        if "/" not in owner:
+            shutil.rmtree(root / prefix, ignore_errors=True)
 
 
 def _write_memory(root: Path, path: str, content: str) -> None:
@@ -433,6 +599,11 @@ WATCH_S = 5.0
 LINGER_S = 30.0
 #: How many finished background tasks the snapshot keeps listing.
 TASKS_KEPT = 50
+
+
+def _digest(text: str) -> str:
+    """What an input block that only one person may read is known by."""
+    return hashlib.sha256(text.encode()).hexdigest()
 
 
 def _text_of(content: object) -> str:
@@ -552,6 +723,22 @@ class Runner(runner.Runner[Journal]):
         # What each tool call in flight was, by its id, for the records that
         # bring its result back (``_stamp_calls``).
         self.calls: dict[str, dict] = {}
+        # The calls on someone's private memory file still waiting for their
+        # result: call id → owner (``_private_calls``).
+        self.private_calls: dict[str, str] = {}
+        # The input blocks only one person may read (a member's
+        # `communication` notes, `PrivateText`): the block's text, by its
+        # digest -> owner. Kept in the journal, so a runner started again
+        # still stamps the transcript's copy of an input the last one wrote
+        # (``_private_texts``).
+        self.private_texts: dict[str, str] = json.loads(
+            self.journal.recall(PRIVATE_TEXTS) or "{}"
+        )
+        # Since the platform last reconciled this tree (`sync_memory`): whether
+        # the session worked, and whose private index it read. The platform
+        # counts the turns that worked for someone without reading theirs.
+        self.worked_since_sync = False
+        self.indexes_read: set[str] = set()
         # Tool calls made on the main thread; an agent started by one of them
         # reports on stdout, any other only in its own file.
         self.main_calls: set[str] = set()
@@ -568,9 +755,18 @@ class Runner(runner.Runner[Journal]):
         self.ran = False
         self.settling: asyncio.Future | None = None
         self.exit_reported = False
+        # The session's stdout could no longer be read, and the runner ended it.
+        self.reader_failed = False
         self.launched_at: float | None = None
         # The index of the content block being shown (``stream``).
         self.streaming: int | None = None
+        # How long each API call waited for its first token, by the message id
+        # it answered with, until the record that call's blocks land in takes
+        # it (``stream`` / ``observe``).
+        self.waits: dict[str, int] = {}
+        # The arguments of the tool call being shown, as written so far; what
+        # the room is shown of them is `live_arguments`'s.
+        self.streaming_arguments = ""
         # The last frame read off the child's stdout, for the readout of what
         # a session is doing (`heartbeat`). None until a frame, and the work is
         # the one in flight when THAT frame arrived — never `last_work`, so a
@@ -583,7 +779,12 @@ class Runner(runner.Runner[Journal]):
         self.last_frame_monotonic: float | None = None
         self.last_frame_work: str | None = None
 
-    capabilities = (runner.LONG_POLL, runner.LIVE)
+    capabilities = (
+        runner.LONG_POLL,
+        runner.LIVE,
+        runner.COMPACT_IF_COLD,
+        runner.PRIVATE_TEXT,
+    )
 
     # --- lifecycle -----------------------------------------------------------
 
@@ -594,7 +795,11 @@ class Runner(runner.Runner[Journal]):
         env: dict[str, str],
         resume: str | None,
         agent_handle: str | None,
+        retired: str | None = None,
     ) -> str:
+        """Start Claude Code on ``resume``, else on the conversation this
+        runner last ran, else on a new one. ``retired``: a conversation the
+        platform no longer continues, never taken up again from here."""
         self.claim()
         self.config_dir = Path(env["CLAUDE_CONFIG_DIR"])
         self.execution = env.get("CHEESE_EXECUTION_CONFIG")
@@ -604,13 +809,15 @@ class Runner(runner.Runner[Journal]):
             end(sessions_on(self.config_dir, agent_handle))
         self._report_left_exit()
         saved = self.journal.recall("session_id")
+        if saved and saved == retired:
+            saved = None
         failed = self.journal.recall("resume_failed")
         resumed = next(
             (
                 candidate
                 for candidate in (resume, saved)
                 if candidate
-                and candidate != failed
+                and candidate not in (failed, retired)
                 and transcript(self.config_dir, candidate) is not None
             ),
             None,
@@ -661,13 +868,24 @@ class Runner(runner.Runner[Journal]):
         )
         if sys.platform == "win32":
             remember_agent(self.state, self.process.pid)
-        self.listener = asyncio.create_task(self._read())
+        self.listener = runner.watched(self._read())
         self.helpers = [
-            asyncio.create_task(self._tail()),
-            asyncio.create_task(self._expire()),
+            runner.watched(self._tail()),
+            runner.watched(self._expire()),
         ]
         await self.listen(LINE_LIMIT)
         return self.session_id
+
+    def agent_env(self, env: dict[str, str]) -> dict[str, str]:
+        """The build asks a model that ends its turn with no visible text to
+        write some ("no visible output"), unless the call just before was one
+        of the tools named here. A reply in the room is how a turn here ends,
+        so the reply tools are those: without this, a session could not stop
+        right after chat_send, and every turn would be made to write closing
+        words only the session sees."""
+        env = super().agent_env(env)
+        terminal = ",".join(f"mcp__native__{tool}" for tool in self.reply_tools)
+        return {**env, "CLAUDE_CODE_TERMINAL_MCP_TOOLS": terminal}
 
     def starting(self) -> bool:
         """Still inside ``SETTLE_S`` of the launch, and not yet answered.
@@ -744,6 +962,7 @@ class Runner(runner.Runner[Journal]):
             process is not None
             and process.returncode not in (None, 0)
             and not self.proven
+            and not self.reader_failed
         )
         # Whatever the process still wrote is read before its ending is told.
         await self.stopped()
@@ -764,11 +983,14 @@ class Runner(runner.Runner[Journal]):
         if self.exit_reported:
             return
         self.exit_reported = True
-        self._drop_unread("exited")
+        kind = (
+            lifecycle.READER_FAILED if self.reader_failed else lifecycle.EXITED_MIDWAY
+        )
+        self._drop_unread(kind)
         if self.working:
             self._finish(
                 failure={
-                    "kind": lifecycle.EXITED_MIDWAY,
+                    "kind": kind,
                     "status": status,
                     "said": said,
                 },
@@ -899,12 +1121,54 @@ class Runner(runner.Runner[Journal]):
             return
         fired = None if self.stuck else self.watchdog.fired(time.monotonic())
         if fired is not None:
-            self.helpers.append(asyncio.ensure_future(stuck.settle(self, fired)))
+            self.helpers.append(runner.watched(stuck.settle(self, fired)))
         self._watching()
 
     # --- stdout --------------------------------------------------------------
 
     async def _read(self) -> None:
+        """Read the session's stdout for as long as it writes, or end it.
+
+        A session this runner can no longer read would go on taking inputs it
+        is never seen to read, its work open with nothing left to close it,
+        while every answer says it is alive. Ending it reports all of that the
+        way any exit does (``_report_exit``), under its own failure.
+        """
+        assert self.process is not None and self.process.stdout is not None
+        try:
+            await self._take_lines()
+        except Exception:
+            print(
+                f"cheese-runner {self.launch}: the session's output can no longer "
+                "be read; ending the session",
+                file=sys.stderr,
+                flush=True,
+            )
+            traceback.print_exc(file=sys.stderr)
+            self.reader_failed = True
+            # ``process.wait`` settles only once stdout is closed, and a pipe
+            # nobody reads stops at a full buffer: what the session still writes
+            # is read and let go while it is ended.
+            drain = asyncio.ensure_future(self._discard_output())
+            await asyncio.to_thread(end_session, self.process.pid)
+            # The session's own exit settles it, not its stdout's end: a process
+            # that escaped being ended can hold the pipe open for good.
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(asyncio.shield(drain), DRAIN_AFTER_EXIT_S)
+            if not drain.done():
+                # asyncio has no public handle on a subprocess's pipes; closing
+                # this one is what lets ``process.wait`` see the exit.
+                pipe = self.process._transport.get_pipe_transport(1)  # type: ignore[attr-defined]
+                if pipe is not None:
+                    pipe.close()
+                await drain
+
+    async def _discard_output(self) -> None:
+        assert self.process is not None and self.process.stdout is not None
+        while await self.process.stdout.read(1 << 16):
+            pass
+
+    async def _take_lines(self) -> None:
         assert self.process is not None and self.process.stdout is not None
         while line := await self.process.stdout.readline():
             text = line.decode("utf-8", "replace").strip()
@@ -1010,6 +1274,17 @@ class Runner(runner.Runner[Journal]):
             return
         event = record.get("event") or {}
         kind = event.get("type")
+        if kind == "message_start":
+            # How long this call waited before its first token. The build says
+            # it here and nowhere else, and a streamed event is never
+            # journaled, so the number waits for the record this call's blocks
+            # land as (``observe``): that record is where a wait belongs, one
+            # per call, with what the wait was for.
+            wait = record.get("ttft_ms")
+            identifier = (event.get("message") or {}).get("id")
+            if isinstance(wait, int) and not isinstance(wait, bool) and identifier:
+                self.waits[str(identifier)] = wait
+            return
         if kind == "content_block_start":
             block = event.get("content_block") or {}
             self.streaming = event.get("index")
@@ -1017,6 +1292,7 @@ class Runner(runner.Runner[Journal]):
             if block.get("type") == "text":
                 self.show([{"type": "text", "text": block.get("text") or ""}], work)
             elif block.get("type") == "tool_use":
+                self.streaming_arguments = ""
                 self.show(
                     [
                         {
@@ -1043,8 +1319,78 @@ class Runner(runner.Runner[Journal]):
                 self.watchdog.output(time.monotonic())
                 self.shown()
             elif delta.get("type") == "input_json_delta" and block["type"] == "tool":
-                block["arguments"] += str(delta.get("partial_json") or "")
+                self.streaming_arguments += str(delta.get("partial_json") or "")
+                block["arguments"] = live_arguments(
+                    str(block.get("name") or ""), self.streaming_arguments
+                )
                 self.shown()
+
+    def command_ran(self, call: str) -> int | None:
+        """How long the command behind one Bash call ran, as the executor
+        timed it and the shell prefix left it here (``shell_prefix``): the
+        part of the call's wall clock the command itself spent."""
+        if not self.execution:
+            return None
+        path = Path(self.execution).parent / "command-timings" / f"{call}.json"
+        try:
+            ran = json.loads(path.read_text()).get("ran_ms")
+        except (OSError, ValueError):
+            return None
+        return ran if isinstance(ran, int) and not isinstance(ran, bool) else None
+
+    def _private_calls(self, message: dict) -> dict[str, str]:
+        """The calls in this record on one person's private memory file, and
+        the results in it that answer such a call: call id → owner, stamped
+        on the record as ``cheese.private``.
+
+        The result says nothing of the file it came from, so the call is what
+        names the owner, and the result is matched to it here, where both
+        pass in order: a page read later can hold either one without the
+        other. Who may read what is stamped is `session_record.privacy`'s."""
+        content = (message.get("message") or {}).get("content")
+        marked: dict[str, str] = {}
+        for block in content if isinstance(content, list) else []:
+            if not isinstance(block, dict):
+                continue
+            if block.get("type") == "tool_use":
+                given = block.get("input")
+                arguments = given if isinstance(given, dict) else {}
+                owner = private_owner(
+                    arguments.get("file_path") or arguments.get("notebook_path")
+                )
+                if owner is not None:
+                    self.private_calls[str(block.get("id"))] = owner
+                    marked[str(block.get("id"))] = owner
+                    path = arguments.get("file_path") or ""
+                    if block.get("name") == "Read" and str(path).endswith(
+                        f"/{INDEX_NAME}"
+                    ):
+                        self.indexes_read.add(owner)
+            elif block.get("type") == "tool_result":
+                call = str(block.get("tool_use_id"))
+                if (owner := self.private_calls.pop(call, None)) is not None:
+                    marked[call] = owner
+        return marked
+
+    def _private_texts(self, message: dict) -> dict[str, str]:
+        """The text blocks of an input in this record that only one person may
+        read: block index -> owner, stamped on the record as
+        ``cheese.private_text``.
+
+        Which blocks they are is what this runner itself wrote into the input
+        (``_put``), matched by the block's whole text: the echo and the
+        transcript's copy of the input carry the blocks as they were sent.
+        Who may read what is stamped is `session_record.privacy`'s."""
+        if message.get("type") != "user" or not self.private_texts:
+            return {}
+        content = (message.get("message") or {}).get("content")
+        marked: dict[str, str] = {}
+        for index, block in enumerate(content if isinstance(content, list) else []):
+            if isinstance(block, dict) and block.get("type") == "text":
+                owner = self.private_texts.get(_digest(str(block.get("text") or "")))
+                if owner is not None:
+                    marked[str(index)] = owner
+        return marked
 
     def _watch_marks(self, message: dict) -> dict:
         """What one transcript-shaped record says to the stuck-work clocks,
@@ -1087,6 +1433,8 @@ class Runner(runner.Runner[Journal]):
             else None
         )
         main = not from_file and record.get("parent_tool_use_id") is None
+        if main:
+            compaction.note(self, record)
         if kind == "system" and record.get("subtype") == "init":
             self.proven = True
             self.ready = {
@@ -1140,6 +1488,13 @@ class Runner(runner.Runner[Journal]):
         stamp: dict = {}
         if isinstance(message, dict):
             if main and message.get("type") == "assistant":
+                # This call's wait, on the first block it landed as: the same
+                # message id is written once per finished block, and the wait
+                # belongs to the call, not to each of them.
+                answer = (message.get("message") or {}).get("id")
+                wait = self.waits.pop(str(answer), None) if answer else None
+                if wait is not None:
+                    stamp["first_token_ms"] = wait
                 if message.get("error"):
                     # The API refused the work; the result that follows says
                     # only that it failed, and this is the one record that says
@@ -1148,8 +1503,23 @@ class Runner(runner.Runner[Journal]):
                 for block in (message.get("message") or {}).get("content") or []:
                     if isinstance(block, dict) and block.get("type") == "tool_use":
                         self.main_calls.add(str(block.get("id")))
+                        name = str(block.get("name") or "")
+                        self.called(
+                            name.removeprefix("mcp__native__"), block.get("input")
+                        )
             if returned := self._watch_marks(message):
+                for call, told in returned.items():
+                    # What the command itself took, where the shell prefix on
+                    # this host left it: the rest of the call's wall clock is
+                    # what the platform spent carrying it to the executor.
+                    ran = self.command_ran(call)
+                    if ran is not None:
+                        told["ran_ms"] = ran
                 stamp["calls"] = returned
+            if private := self._private_calls(message):
+                stamp["private"] = private
+            if private_text := self._private_texts(message):
+                stamp["private_text"] = private_text
         if kind == "system":
             self._track(record)
         work = self.work if self.working else self.last_work
@@ -1240,6 +1610,8 @@ class Runner(runner.Runner[Journal]):
         """The session starts working, on the input that woke it (None: no
         input of ours)."""
         how, work = sent or ("", None)
+        if how != "internal":
+            self.worked_since_sync = True
         if how == "send":
             self.working, self.work, self.unsolicited = True, work, False
         elif how == "internal":
@@ -1307,7 +1679,7 @@ class Runner(runner.Runner[Journal]):
             self.reply_settled()
         if self.compact_when_idle and not self.closing:
             self.compact_when_idle = False
-            self.helpers.append(asyncio.ensure_future(self._compact_now()))
+            self.helpers.append(runner.watched(compaction.now(self)))
 
     def _track(self, record: dict) -> None:
         """What is running, and which agents only their own file reports on."""
@@ -1324,7 +1696,7 @@ class Runner(runner.Runner[Journal]):
             # was not the build's to move yet, and the message would wait for
             # it: move it too, as long as the message is still unread.
             if self.owed is not None and self.owed in self.sent:
-                self.helpers.append(asyncio.create_task(self._yield_again()))
+                self.helpers.append(runner.watched(self._yield_again()))
             if record.get("task_type") == "local_agent":
                 if str(record.get("tool_use_id")) not in self.main_calls:
                     self.tailing.setdefault(task, "agent")
@@ -1398,7 +1770,7 @@ class Runner(runner.Runner[Journal]):
         临时文件都不是这条规矩的一部分，给它们一个身份等于替 agent 认了一条它没
         写过的记忆。
         """
-        root = memory_root()
+        root = self.memory_root()
         found: dict[str, str] = {}
         emptied: set[str] = set()
         for prefix in sorted(managed):
@@ -1421,6 +1793,10 @@ class Runner(runner.Runner[Journal]):
                     found[path] = content
         return found, emptied
 
+    def memory_root(self) -> Path:
+        """This seat's memory tree: where its launch says (`memory_root`)."""
+        return memory_root()
+
     def sync_memory(self, params: dict) -> dict:
         """对一次账：平台这一份铺下来，会话改过的带回去。
 
@@ -1429,17 +1805,39 @@ class Runner(runner.Runner[Journal]):
 
         基线从**记忆树自己的根**上读、也写回那里（`MEMORY_BASELINE`）：它和这棵树
         同生同死，所以「树没了」不会被读成「会话删光了这棵树」。
+
+        这个座位上一次铺下、这一次没点名的 private（`MEMORY_LAID` 记着铺过哪几
+        棵，空的也算；`tree.withdrawn_prefixes`）不在这里合：整棵连同它那一段基线
+        和旁路文件挪进交接区（`_hand_over`），从树上拿走——这棵树这一轮是别人的。
+        交接区不在树里，agent 的文件工具够不着（`remote_execution/client.own_memory`）。
+        每一次的回答都带着交接区里还在的那几份（``withdrawn``），直到平台把它合进
+        数据库、提交、回一句收到（``acked``，`acknowledge`）才删：回答丢了，下一
+        次照样交，那个人写下的东西不会只活在一个丢掉的回答里。
+
+        没铺过、也没点名的 private 目录（会话替别人干活时写进了这个人的目录）既
+        不交也不留：它不是谁的记忆，交回去就是替别人往他的 private 里写了东西。
+        它和树上别的平台不收的写入一起，在回答里说出来（``dropped``，`stray_memory`）。
         """
+        if "scopes" not in params:
+            return self.acknowledge(params)
         scopes = memory_scopes(params)
-        root = memory_root()
+        root = self.memory_root()
         baseline = _recall_baseline(root)
-        managed = prefixes_of(scopes, baseline)
-        disk, emptied = self.read_memory(managed)
+        bases = _recall_baseline(root, MEMORY_BASES)
+        laid = set(_recall_baseline(root, MEMORY_LAID))
+        withdrawn = withdrawn_prefixes(scopes, baseline) | (laid - set(scopes))
+        disk, emptied = self.read_memory(set(scopes) | withdrawn)
+        for prefix in sorted(withdrawn):
+            self._hand_over(root, prefix, disk, baseline, bases)
+        stray = stray_memory(root, set(scopes))
+        views, people = memory_policy(params, scopes)
         outcome = sync_tree(
             scopes=scopes,
             disk=disk,
             baseline=baseline,
-            bases=_recall_baseline(root, MEMORY_BASES),
+            bases=bases,
+            views=views,
+            people=people,
         )
         if outcome.held:
             # 拦下来的是「这一次没照做」：平台上一条都没少，会话里那几个文件下一轮
@@ -1455,13 +1853,16 @@ class Runner(runner.Runner[Journal]):
             )
         # 没收的那几版先留到旁边：新建的那一条马上会被下面的清理删掉。
         for path in outcome.rejected:
-            _write_memory(root, rejected_path(path), disk[path])
+            # 被拒的是一次删除（多人地方里已有的记录只读）时没有正文可留。
+            if path in disk:
+                _write_memory(root, rejected_path(path), disk[path])
         for path, content in outcome.files.items():
             _write_memory(root, path, content)
         # 两方都没有、只有 baseline 里还有的那一条（平台删了，会话也没写回去），
         # 到这里才从磁盘上消失：先算完再删，删的不是「还没看过的东西」。
         # 写空了的那一条也在这里清掉，下一轮的树里就没有一个空壳；批量删除被拦下
-        # 时它在 `outcome.files` 里，上面已经把平台那一版写回去了。
+        # 时它在 `outcome.files` 里，上面已经把平台那一版写回去了。交回去的那几
+        # 棵已经整棵挪走了。
         for path in set(disk) | set(baseline) | emptied:
             if path in outcome.files:
                 continue
@@ -1470,6 +1871,11 @@ class Runner(runner.Runner[Journal]):
         self._keep_refused(root, outcome.refused)
         _write_memory(root, MEMORY_BASES, json.dumps(outcome.bases))
         _write_memory(root, MEMORY_BASELINE, json.dumps(outcome.baseline))
+        _write_memory(
+            root,
+            MEMORY_LAID,
+            json.dumps({prefix: "" for prefix in scopes if prefix != "team"}),
+        )
         # `held` 跟着回去：会话这一侧的兜底挡下的那些删除，平台那一侧看不见
         # （`files` 里它们已经被放回去了）。整理那一轮要知道这件事——「这次删得
         # 太多」是它必须说出来的一句话，而不是只在会话机的 stderr 里响一次。
@@ -1477,9 +1883,83 @@ class Runner(runner.Runner[Journal]):
             "files": outcome.files,
             "refused": outcome.refused,
             "rejected": outcome.rejected,
+            "dropped": stray,
             "unindexed": list(outcome.unindexed),
             "held": list(outcome.held),
+            "withdrawn": self._handed(root),
+            "worked": self._worked(),
+            "indexes_read": self._indexes_read(),
         }
+
+    def _worked(self) -> bool:
+        """Whether the session worked since the platform last asked; asking
+        starts the count again. A runner built without a session has none."""
+        worked = getattr(self, "worked_since_sync", False)
+        self.worked_since_sync = False
+        return worked
+
+    def _indexes_read(self) -> list[str]:
+        """Whose private index the session Read since the platform last asked."""
+        read = sorted(getattr(self, "indexes_read", set()))
+        self.indexes_read = set()
+        return read
+
+    def _hand_over(
+        self,
+        root: Path,
+        prefix: str,
+        disk: dict[str, str],
+        baseline: dict[str, str],
+        bases: dict[str, str],
+    ) -> None:
+        """把 ``prefix`` 那一棵整棵挪进交接区：先写下一份完整的交接（原子写），
+        再从树上删。中间断了，树还在、交接也在，下一次再交一遍；平台按同一条三
+        方规矩合，同样的东西合两次结果一样。"""
+        within = f"{prefix}/"
+        sidecars: dict[str, str] = {}
+        with contextlib.suppress(OSError):
+            for entry in sorted((root / prefix).iterdir()):
+                path = f"{prefix}/{entry.name}"
+                if path in disk or not entry.is_file():
+                    continue
+                with contextlib.suppress(OSError, UnicodeDecodeError):
+                    sidecars[entry.name] = entry.read_text(encoding="utf-8")
+        handover = {
+            "prefix": prefix,
+            "files": {
+                path[len(within) :]: content
+                for path, content in disk.items()
+                if path.startswith(within)
+            },
+            "baseline": {p: m for p, m in baseline.items() if p.startswith(within)},
+            "bases": {p: t for p, t in bases.items() if p.startswith(within)},
+            "sidecars": sidecars,
+        }
+        token = f"{time.time_ns():020d}-{uuid.uuid4().hex}"
+        _write_memory(_handoff_root(root), f"{token}.json", json.dumps(handover))
+        _remove_tree(root, prefix)
+
+    @staticmethod
+    def _handed(root: Path) -> dict[str, dict]:
+        """交接区里平台还没回过收到的那几份，按交出的先后。"""
+        handed: dict[str, dict] = {}
+        with contextlib.suppress(OSError):
+            for entry in sorted(_handoff_root(root).glob("*.json")):
+                with contextlib.suppress(OSError, ValueError):
+                    handed[entry.stem] = json.loads(entry.read_text(encoding="utf-8"))
+        return handed
+
+    def acknowledge(self, params: dict) -> dict:
+        """平台已经把这几份交接合进数据库、提交了（``acked``）：删掉它们，并答
+        上这一次确认已经不在交接区里的那几份（``dropped``）。平台只凭这一句删
+        它那边的记录：没有这一句，就不知道这一侧还会不会再交回来。"""
+        handoff = _handoff_root(self.memory_root())
+        dropped = []
+        for token in params.get("acked") or []:
+            if isinstance(token, str) and _HANDOFF_TOKEN.fullmatch(token):
+                (handoff / f"{token}.json").unlink(missing_ok=True)
+                dropped.append(token)
+        return {"dropped": dropped}
 
     @staticmethod
     def _keep_refused(root: Path, refused: dict[str, str]) -> None:
@@ -1577,10 +2057,28 @@ class Runner(runner.Runner[Journal]):
         text: str,
         images: list[dict],
         how: str,
+        private: list[dict] | None = None,
     ) -> None:
         content: str | list = (
-            [{"type": "text", "text": text}, *images] if images else text
+            [
+                *({"type": "text", "text": p["text"]} for p in private or ()),
+                {"type": "text", "text": text},
+                *images,
+            ]
+            if images or private
+            else text
         )
+        if private:
+            # Remembered before the write, as ``sent`` is: the echo can be read
+            # before the write returns.
+            self.private_texts.update(
+                {_digest(p["text"]): str(p["owner"]) for p in private}
+            )
+            # A note is given once and again only when it changed, so the
+            # newest are the ones a record still to come can carry.
+            for stale in list(self.private_texts)[:-PRIVATE_TEXTS_KEPT]:
+                del self.private_texts[stale]
+            self.journal.remember(PRIVATE_TEXTS, json.dumps(self.private_texts))
         if how in ("send", "steer"):
             if self.session_id is None or work is None:
                 raise ValueError("An input needs its native session and work identity")
@@ -1629,6 +2127,8 @@ class Runner(runner.Runner[Journal]):
         work_id: str | None = None,
         steering: bool = False,
         owes_reply: bool = False,
+        compact_if_cold: dict | None = None,
+        private: list[dict] | None = None,
     ) -> dict:
         """A user message, or words said to a session that is working.
 
@@ -1636,18 +2136,34 @@ class Runner(runner.Runner[Journal]):
         mid-turn at the next tool boundary. They differ only in whose turn a
         message opens when the session happens to be idle by the time it reads
         it — ``steering`` says it was addressed to a turn already running.
+        A new turn on a cold conversation is compacted first
+        (``compaction.when_cold``), and then says ``compact_if_cold['text']``.
+        ``private`` (``{"owner", "text"}``) goes ahead of it, each as a block
+        only its owner may read in the records (``_private_texts``); a
+        compacted conversation is told ``compact_if_cold['private']`` instead.
         """
         how = "steer" if steering else "send"
 
         async def submit() -> dict:
+            said, private_said = text, private
             if not steering and not self.working:
                 await self._catch_up()
-            await self._put(identifier, work_id, text, images or [], how)
+                if await compaction.when_cold(self, compact_if_cold):
+                    said = compact_if_cold["text"]  # type: ignore[index]
+                    told = compact_if_cold.get("private")  # type: ignore[union-attr]
+                    private_said = told or private
+            await self._put(identifier, work_id, said, images or [], how, private_said)
             return {"input_id": identifier}
 
         return await self.accept(
             identifier,
-            {"text": text, "images": images or [], "work_id": work_id, "how": how},
+            {
+                "text": text,
+                "images": images or [],
+                "work_id": work_id,
+                "how": how,
+                **({"private": private} if private else {}),
+            },
             submit,
             owes_reply=owes_reply,
         )
@@ -1728,42 +2244,7 @@ class Runner(runner.Runner[Journal]):
         }
 
     def request_compact(self) -> dict:
-        """The session asked to compact its own context: `/compact`, written
-        once the turn it asked in has ended.
-
-        Written then, and not mid-turn: a tool call in flight is answered at a
-        tool boundary, and the build takes what comes in on stdin at those
-        boundaries, so a slash command written from inside a tool call arrives
-        as part of that turn — where the pinned build's contract says nothing
-        about what a slash command does. A tool call is always inside a turn,
-        so the request always defers.
-
-        Once a turn is the whole rate limit: a request still waiting and one
-        that has already run look the same to the agent that asked, and a
-        second `/compact` would only summarise the first one's output.
-        """
-        if self.compact_when_idle:
-            return {"already": True}
-        self.compact_when_idle = True
-        # A tool call is answered inside a turn, so `_end` is where this
-        # normally goes. A session already idle has no turn coming.
-        if not self.working and not self.closing:
-            self.compact_when_idle = False
-            self.helpers.append(asyncio.ensure_future(self._compact_now()))
-        return {"requested": True, "already": False}
-
-    async def _compact_now(self) -> None:
-        """Write `/compact` the way `/reload-skills` is written, and wait for
-        the command's `result` in the background.
-
-        Not through `dispatch`: the tool call that asked has been answered
-        already, and a compaction of a full window takes minutes to report.
-        What the room shows meanwhile comes from the build's own
-        `system/status` records (`events._compacting`)."""
-        try:
-            await self.command("/compact", COMPACT_TIMEOUT_S)
-        except Exception as error:  # the session goes on without it
-            print(f"compaction not asked: {error!r}", file=sys.stderr, flush=True)
+        return compaction.request(self)
 
     # --- the socket ----------------------------------------------------------
 
@@ -1827,7 +2308,7 @@ class Runner(runner.Runner[Journal]):
             # of its own, and is that work's to answer.
             if self.interrupting or (self.owed is not None and self.owed in self.sent):
                 return {}
-            reason = self.insist()
+            reason = self.insist(str(params.get("last_words") or ""))
             return {"reason": reason} if reason else {}
         if method == "run":
             # The session's own helper making a platform tool call
@@ -1845,6 +2326,24 @@ class Runner(runner.Runner[Journal]):
             # `last_work` once it has ended.
             work = self.work or self.last_work
             return {"work_id": work} if work else {}
+        if method == "transcript_chunk":
+            # The session's own file, asked for by the machine its tools run on
+            # (`topic_transcript_chunks`). Read-only, and only this session's own
+            # transcript: the caller names an offset and a size, never a path.
+            # A size of 0 asks only where the file is, which is the answer the
+            # executor mounts its view by. Before the epoch check below, because
+            # it is the executor asking through the platform, not the platform's
+            # registration. A session asked before its agent has started has no
+            # config dir yet, which is the same answer as a transcript not yet
+            # written.
+            if self.config_dir is None or self.session_id is None:
+                return {"missing": True}
+            return transcript_chunk(
+                self.config_dir,
+                self.session_id,
+                int(params["offset"]),
+                int(params["size"]) if "size" in params else TRANSCRIPT_CHUNK_BYTES,
+            )
         # Everything else is the platform's, and only the registration it
         # holds now may ask it.
         self.outbox.check(params.get("epoch"))
@@ -1858,6 +2357,8 @@ class Runner(runner.Runner[Journal]):
                 work_id=params.get("work_id"),
                 steering=method == "steer",
                 owes_reply=bool(params.get("owes_reply")),
+                compact_if_cold=params.get("compact_if_cold"),
+                private=params.get("private") if method == "send" else None,
             )
         if method == "interrupt":
             self.interrupting = self.working

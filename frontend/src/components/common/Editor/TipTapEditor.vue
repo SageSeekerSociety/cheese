@@ -7,7 +7,6 @@
 import type { JSONContent } from '@tiptap/core'
 
 import { computed, inject, onBeforeUnmount, ref, watch } from 'vue'
-import { toast } from 'vuetify-sonner'
 import { useEditor } from '@tiptap/vue-3'
 
 import { ATTACHMENT_IMAGE_SOURCE } from './attachmentImageSource'
@@ -16,6 +15,7 @@ import RichTextContent from './RichTextContent.vue'
 import RichTextToolbar from './RichTextToolbar.vue'
 
 import { t } from '@/i18n'
+import { toast } from '@/lib/toast'
 
 const props = withDefaults(
   defineProps<{

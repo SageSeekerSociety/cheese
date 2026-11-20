@@ -64,7 +64,12 @@ async def test_a_message_put_to_a_live_session_says_which_step_took_the_time(cap
     # The seat already has its reading; this send must not start another.
     reading = asyncio.create_task(asyncio.Event().wait())
     runtime.tasks[seat] = reading
-    runtime.queues[work] = asyncio.Queue()
+    heard = []
+
+    async def hear(_session, read):
+        heard.append(read)
+
+    runtime.reader = hear  # type: ignore[assignment]
 
     async def register(identity):
         pass

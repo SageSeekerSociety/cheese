@@ -17,6 +17,7 @@ import SiteRecordTree from './SiteRecordTree.vue'
 import SiteTurnHead from './SiteTurnHead.vue'
 
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { t } from '@/i18n'
 
 const props = withDefaults(
@@ -79,7 +80,9 @@ const {
   loading,
   loadingOlder,
   errorMsg,
+  errorForbidden,
   arrived,
+  retry,
   onSiteScroll,
   selectAgent,
   inspector,
@@ -186,7 +189,16 @@ async function switchView(mode: 'overview' | 'raw') {
       <MemberActivity :lines="workingLines" class="site-activity" />
     </div>
     <LoadingSkeleton v-if="loading" :variant="viewMode === 'raw' ? 'siteRaw' : 'site'" :rows="5" />
-    <v-alert v-else-if="errorMsg" type="error" density="compact" class="ma-4">{{ errorMsg }}</v-alert>
+    <!-- 读失败留在它读的那块地方，并摆一条能走的路（docs/design-system.md §3.10）：
+         从前的红条没有按钮，超时一次就只能刷新整页才回得来。 -->
+    <BaseLoadError
+      v-else-if="errorMsg"
+      class="ma-4"
+      :title="t('work.room.site.loadFailed')"
+      :error="errorMsg"
+      :forbidden="errorForbidden"
+      @retry="retry"
+    />
     <template v-else>
       <div v-if="transcript.length === 0" :id="logId" :role="agents.length > 1 ? 'tabpanel' : undefined">
         <BaseEmptyState :title="t('work.room.site.empty')" />

@@ -3,28 +3,37 @@
 真相在 `memory_files`（见 `app/domain/memory/files_store.py`），这里只是把它露
 出来。两条规矩，都是产品决定，不是实现细节：
 
-- **team 是项目里所有人共读共写共删的。** 项目集体的一份状态，谁都得能修；每次
-  改动在总览房间留一条带 diff 的记录（回写那条路发），所以「谁删的」追得回来。
-- **private 是「本人 + 项目管理员」，而且只有本人写得动。** 一个人的偏好是他自己
-  的；管理员看得见是为了在出事时能查（比如说有人把密钥写进去了），但**改不了**
-  ——给他一支笔，这一条记忆就有了两个主人，而「这是谁的判断」正是 private 这一
-  层唯一要保住的东西。越权写一律 403，两种角色同一个码。
+- **team 是项目里读得到它的人共读的，改它要有配置 AI 队友的权限**（#3830）。
+  agent 一轮对账改了 team，会在写它的那段对话的现场里留一条带 diff 的记录，所以
+  「谁删的」追得回来。
+- **private 只有本人看得见、写得动，项目管理员也不例外。** 它多半是芝士从这个人
+  的私聊里记下的，私聊管理员进不去，记忆也不该是后门；「这是谁的判断」正是
+  private 这一层唯一要保住的东西。越权读写一律 403。
 
 冲突这一路（版本对不上）在 `MemoryFileStore` 里是 409，带着当前版本号回来；这里
 不吞它、也不重试——写入方就在现场，重读一次比自动合并两段散文安全。
 """
 
 import uuid
+from datetime import datetime
+from typing import Annotated
 
 from fastapi import APIRouter, Query
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import ActorResolverDep
 from app.api.request_deps import DbSession
-from app.api.response import ok, page
-from app.api.write_access import ROUTE_DECIDES
-from app.core.errors import ForbiddenError, ValidationError
+from app.api.response import ok, page, typed_response
+from app.api.write_access import ROUTE_DECIDES, Can, InProject
+from app.core.errors import (
+    BadRequestError,
+    ForbiddenError,
+    NotFoundError,
+    ValidationError,
+)
 from app.core.sentences import say
+from app.domain.memory import history
 from app.domain.memory.files import (
     INDEX_NAME,
     MemoryFileError,
@@ -35,6 +44,7 @@ from app.domain.memory.files import (
 )
 from app.domain.memory.files_store import MemoryFileMissing, MemoryFileStore
 from app.domain.memory.models import MemoryFileRecord
+from app.domain.memory.writers import MemoryWriter
 from app.domain.project_permissions import Permission
 
 router = APIRouter(prefix="/memory/files", tags=["memory"])
@@ -193,6 +203,7 @@ async def write_memory_file(
             content=content,
             updated_by=actor,
             expected_version=None if expected is None else expected,
+            writer=MemoryWriter.panel,
         )
         _, warning = fit_index(content)
         return ok({"file": _file_out(row), "warning": warning})
@@ -207,6 +218,7 @@ async def write_memory_file(
             content=content,
             updated_by=actor,
             expected_version=expected if expected is not None else None,
+            writer=MemoryWriter.panel,
         )
         return ok({"file": _file_out(row), "warning": str(exc)})
     row = await store.write(
@@ -217,6 +229,7 @@ async def write_memory_file(
         content=content,
         updated_by=actor,
         expected_version=expected,
+        writer=MemoryWriter.panel,
     )
     warning = None
     if memory.description and len(memory.description) > 150:
@@ -262,7 +275,141 @@ async def delete_memory_file(
             owner_handle=owner,
             path=path,
             expected_version=expected,
+            updated_by=actor,
+            writer=MemoryWriter.panel,
         )
     except MemoryFileMissing as exc:
         raise ValidationError(str(exc)) from exc
     return ok({"deleted": path, "deleted_by": actor})
+
+
+class MemoryChangeOut(BaseModel):
+    """一次改动：谁、从哪条路、什么时候、哪一条，和它的 diff。"""
+
+    id: str
+    scope: str
+    owner_handle: str
+    path: str
+    writer: str
+    changed_by: str
+    created_at: str
+    created: bool
+    deleted: bool
+    diff: str
+
+
+class MemoryChangesOut(BaseModel):
+    """一页改动，新的在前；``next`` 是下一页的 ``before``，读到头了为空。"""
+
+    data: list[MemoryChangeOut]
+    next: str | None = None
+
+
+class MemoryFileOut(BaseModel):
+    id: str
+    scope: str
+    owner_handle: str
+    path: str
+    content: str
+    version: int
+    updated_by: str
+    created_at: str
+    updated_at: str
+
+
+class MemoryRestoredOut(BaseModel):
+    """恢复之后那条记忆现在的样子。"""
+
+    file: MemoryFileOut
+
+
+def _change_out(row: history.Change) -> dict:
+    return {
+        "id": str(row.id),
+        "scope": row.scope.value,
+        "owner_handle": row.owner_handle,
+        "path": row.path,
+        "writer": row.writer.value,
+        "changed_by": row.changed_by,
+        "created_at": row.created_at.isoformat(),
+        # 是新建还是删除，面板据此说这一行做了什么、恢复按钮在不在（新建没有
+        # 「改之前」可恢复）。正文不整份给：一个改动很密的索引一个月能有几百版，
+        # 面板要画的只是差在哪。
+        "created": row.before is None,
+        "deleted": row.after is None,
+        "diff": history.diff_of(row),
+    }
+
+
+def _change_cursor(row: history.Change) -> str:
+    return f"{row.created_at.isoformat()}|{row.id}"
+
+
+def _read_change_cursor(cursor: str) -> history.Cursor:
+    try:
+        at, _, of = cursor.partition("|")
+        return datetime.fromisoformat(at), uuid.UUID(of)
+    except ValueError as error:
+        raise BadRequestError(say("listCursorUnreadable")) from error
+
+
+@router.get("/history", **typed_response(MemoryChangesOut))
+async def list_memory_changes(
+    db: DbSession,
+    resolver: ActorResolverDep,
+    project_id: uuid.UUID,
+    scope: str = Query("team"),
+    owner_handle: str | None = None,
+    before: Annotated[str | None, Query(max_length=100)] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = history.PAGE,
+) -> dict:
+    """一个作用域的改动（`history.RETENTION` 之内，新的在前），一页一页地读：
+    ``before`` 是上一页的 ``next``，``next`` 为空就是读到头了。保留期内的每一条
+    都翻得到。
+
+    谁读得到和读记忆文件同一道门（`_readable`）：team 是项目里的人，某个人的
+    private 只有他本人，管理员也一样答 403。
+    """
+    which = _scope_of(scope)
+    owner = _owner_of(which, owner_handle)
+    await _readable(db, resolver, project_id, owner)
+    rows, more = await history.changes(
+        db,
+        project_id,
+        which,
+        owner,
+        before=None if before is None else _read_change_cursor(before),
+        limit=limit,
+    )
+    return ok(
+        {
+            "data": [_change_out(r) for r in rows],
+            "next": _change_cursor(rows[-1]) if more and rows else None,
+        }
+    )
+
+
+@router.post(
+    "/projects/{project_id}/history/{change_id}/restore",
+    **typed_response(MemoryRestoredOut),
+)
+async def restore_memory_change(
+    change_id: uuid.UUID,
+    at: Annotated[InProject, Can(Permission.ask_agent)],
+    db: DbSession,
+    resolver: ActorResolverDep,
+) -> dict:
+    """把一条记忆写回这一次改动之前的样子（`history.restore`）。
+
+    `Can(ask_agent)` 是进门的那一道：能和芝士说话的人才有记忆可恢复。进门之后
+    和写入同一道门（`_writable`）：恢复就是一次写入，team 要能配置 AI 队友，
+    private 只有本人，写不动这个作用域的人也恢复不了它。恢复本身留下一条新的
+    改动记录。
+    """
+    row = await history.change(db, change_id)
+    if row is None or row.project_id != at.project.id:
+        raise NotFoundError(say("memoryChangeNotFound"))
+    owner = row.owner_handle or None
+    actor = await _writable(db, resolver, row.project_id, owner)
+    written = await history.restore(db, row, by=actor)
+    return ok({"file": _file_out(written)})

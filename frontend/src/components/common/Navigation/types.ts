@@ -1,3 +1,4 @@
+import type { ProjectAvatarSpec } from '@/utils/projectAvatar'
 import type { MenuAction } from '../menuAction'
 
 export type NavItem = {
@@ -5,7 +6,8 @@ export type NavItem = {
   type: 'item'
   title: string
   icon?: string
-  img?: string
+  // 项目格子才有：这个项目挑的头像（ProjectAvatar 画）。
+  avatar?: ProjectAvatarSpec | null
   // Router target for navigation items. Omitted for click-action items (e.g. the
   // rail's "+" 新建项目 affordance), which run `action` instead of navigating.
   to?: string

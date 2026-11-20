@@ -64,7 +64,7 @@ def _reply(client, room: str, seat: str, text: str) -> None:
         f"/topics/{room}/messages",
         json={"request_id": str(uuid.uuid4()), "content": text},
         headers={
-            "X-Cheese-Token": token,
+            "Authorization": f"Bearer {token}",
             "X-Cheese-Turn": str(uuid.uuid4()),
         },
     )

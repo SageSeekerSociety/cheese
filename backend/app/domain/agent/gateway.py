@@ -34,10 +34,12 @@ import hashlib
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, timedelta
 
 import httpx
 
+from app.domain.agent.gateway_admin_types import CACHE_LIFETIME
+from app.domain.day_windows import utc_now
 from app.domain.usage.pricing import declared_free
 
 logger = logging.getLogger(__name__)
@@ -78,6 +80,12 @@ class GatewayModel:
     # Where the provider recommends compacting, when that is before the window
     # (``cheese_auto_compact_window``). None: no recommendation.
     compact_window: int | None = None
+    # How long, in seconds, a conversation's cached prefix stays warm on this
+    # model's routes once nothing calls it (``cheese_cache_lifetime_s``): a
+    # measured fact about the provider, not what we ask it for
+    # (``cheese_cache_ttl``). A session idle past it re-reads its whole context
+    # at full price on its next call. None: not known.
+    cache_lifetime_s: int | None = None
 
 
 #: The thinking efforts a teammate can ask for, lowest first. Claude Code
@@ -131,7 +139,8 @@ def _model_info(row: dict) -> dict:
 
 
 def _tokens(value: object) -> int | None:
-    """A token count the gateway declares, or None for anything that is not one."""
+    """A positive count the gateway declares (tokens, seconds), or None for
+    anything that is not one."""
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
         return None
     return value
@@ -197,6 +206,8 @@ class LlmGateway:
           - ``cheese_efforts``: the thinking efforts it honours (``EFFORTS``).
           - ``cheese_auto_compact_window``: where its provider recommends that
             Claude Code compact, when that is earlier than the window.
+          - ``cheese_cache_lifetime_s``: how long its cached prefix stays warm
+            once idle, in seconds (``GatewayModel.cache_lifetime_s``).
 
         One LiteLLM key is read as well: ``supports_mid_conversation_system``
         set to ``false`` marks a route that loses mid-conversation system
@@ -263,12 +274,17 @@ class LlmGateway:
                     overseas=info.get("cheese_overseas") is True,
                     context_window=_tokens(info.get("max_input_tokens")),
                     compact_window=_tokens(info.get("cheese_auto_compact_window")),
+                    cache_lifetime_s=_tokens(info.get(CACHE_LIFETIME)),
                 )
             )
         return out
 
     async def mint_project_key(
-        self, project_id: uuid.UUID, *, purpose: str | None = None
+        self,
+        project_id: uuid.UUID,
+        *,
+        purpose: str | None = None,
+        daily_budget_usd: float | None = None,
     ) -> str | None:
         """Create a project-scoped virtual key (no expiry; attributed via
         ``user_id``). The caller persists it in project.settings — minting is
@@ -276,8 +292,16 @@ class LlmGateway:
 
         ``purpose`` names a second key of the same project (``dream``, its
         memory consolidation), whose spend has to be read apart from the
-        rooms'."""
+        rooms'.
+
+        ``daily_budget_usd`` caps what the key spends a day; the gateway
+        refuses calls past it until the day turns."""
         alias = f"project-{project_id}" + (f"-{purpose}" if purpose else "")
+        budget = (
+            {"max_budget": daily_budget_usd, "budget_duration": "1d"}
+            if daily_budget_usd is not None
+            else {}
+        )
         metadata = {"cheesex_project": str(project_id)}
         if purpose:
             metadata["purpose"] = purpose
@@ -290,6 +314,7 @@ class LlmGateway:
                         "key_alias": alias,
                         "user_id": project_user_id(project_id),
                         "metadata": metadata,
+                        **budget,
                     },
                 )
                 r.raise_for_status()
@@ -469,7 +494,7 @@ def _add_row(by: dict[str, ModelSpend], row: dict) -> None:
 
 
 def utc_today() -> str:
-    return datetime.now(UTC).strftime("%Y-%m-%d")
+    return utc_now().strftime("%Y-%m-%d")
 
 
 def _prior_days(checkpoint_date: str, today: str) -> list[str] | None:

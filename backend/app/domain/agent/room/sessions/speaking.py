@@ -1,11 +1,9 @@
-"""Putting words into a seat's session: a message, a steer, or the platform's own.
+"""Putting words into a seat's session: a message or a steer.
 
 ``send`` opens the work (a message that owes an answer), ``steer`` adds words to a
 turn already running, and both end at ``_submit``, which is the one call that
 hands a prompt to the host and is the one place a lost acknowledgement is told
-apart from an input that never went in. ``reading`` is the same machinery for the
-platform's own work (the memory consolidation): its events are read here instead
-of heard by the room.
+apart from an input that never went in.
 
 ``send`` logs one ``room_send_timing`` line per message, under this module's
 logger — the name is ``app.domain.agent.room.sessions``, the path the module was
@@ -15,21 +13,22 @@ those lines.
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
 import logging
 import uuid
-from collections.abc import AsyncIterator, Callable
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from app.domain.agent.harness import SessionRef
+from app.domain.agent.harness.driven.runner import PRIVATE_TEXT
 from app.domain.agent.harness.driven.subscription import Seat
 from app.domain.agent.room.sessions.records import Live
 from app.domain.agent.room.stopwatch import timed
-from app.domain.agent.service import AgentEvent, AgentResult, AgentSessionInfo
+from app.domain.agent.service import AgentSessionInfo
 from app.domain.agent.session_host.contract import (
+    ColdCompaction,
     Image,
     InputUnconfirmed,
+    PrivateText,
     Prompt,
     SessionError,
 )
@@ -57,6 +56,7 @@ async def send(
     on_mark: Callable[[uuid.UUID], None],
     register_input: InputRegistrar,
     resume_token: str | None = None,
+    retired_token: str | None = None,
     model: str | None = None,
     env: dict[str, str] | None = None,
     acting: str | None = None,
@@ -66,13 +66,26 @@ async def send(
     owes_reply: bool = False,
     session_opening: str = "",
     opening_changes: str = "",
+    cold: ColdCompaction | None = None,
+    private: tuple[PrivateText, ...] = (),
+    on_private: Callable[[], None] | None = None,
 ) -> bool:
     """Put a message into the seat's session, as work ``work_id``, starting
     the session if it has to be. True = the session's runner took it.
 
+    ``cold`` asks the runner to compact a conversation that goes on but has
+    gone cold before it reads the message (`ColdCompaction`). A compacted
+    conversation is told the whole opening again, not what changed, so the
+    runner is handed that message too and says it if it compacts.
+
     ``session_opening`` is the project state a new conversation is handed in
     front of its first message; ``opening_changes`` the part of it that
     changed since a conversation that goes on last heard (`_with_project_state`).
+    ``private`` goes ahead of it as blocks only their owners may read in the
+    session's records (`PrivateText`); one the conversation already ``held``
+    is said again only to a new conversation, which holds nothing. Only a
+    runner that stamps such blocks is handed them (`PRIVATE_TEXT`), and
+    ``on_private`` hears that it was.
 
     An ack, not an answer: what the agent does about it arrives through the
     seat's reading — possibly minutes later, possibly to a different process
@@ -93,6 +106,7 @@ async def send(
             session,
             system_prompt=system_prompt,
             resume_token=resume_token,
+            retired_token=retired_token,
             model=model,
             env=env,
             acting=acting,
@@ -101,9 +115,27 @@ async def send(
             phases=mark.phases,
         )
         mark.lap()
+        said = message
         message = svc._with_project_state(
             seat, live, resume_token, session_opening, opening_changes, message
         )
+        # A new conversation has nothing to compact and is told the whole
+        # opening already.
+        fresh = live.conversation != resume_token
+        cold_text = f"{session_opening}\n\n{said}" if session_opening else said
+        if cold is None or fresh:
+            cold, cold_text = None, ""
+        # A conversation compacted before it reads this (``cold``) keeps only
+        # a summary of what it held, so it is told every note again, as it is
+        # told the whole opening.
+        cold_private = private if cold is not None else ()
+        if private and not svc.host.takes(live.ref, PRIVATE_TEXT):
+            # An earlier release's runner, still at work when this one was
+            # deployed: it would write the notes where everyone reads them.
+            private, cold_private = (), ()
+        elif private and on_private is not None:
+            on_private()
+        private = tuple(p for p in private if fresh or not p.held)
         pictures = tuple(images or ())
         on_mark(work_id)
         await svc._consume(
@@ -125,11 +157,8 @@ async def send(
         # its result and its end all carry the running turn's work, and none
         # ever names this one. Taking the seat over would leave it holding a
         # turn that never ends, and the next time the session goes away (the
-        # runner lets an idle one go) that turn would be failed as a crash. The
-        # platform's own work (``reading``) takes the seat all the same: its
-        # caller waits on its own queue for an ending, and the session going
-        # away is the only one it can get.
-        if seat not in svc.clocks or work_id in svc.queues:
+        # runner lets an idle one go) that turn would be failed as a crash.
+        if seat not in svc.clocks:
             svc.work[seat] = work_id
         # 记忆先落到会话目录里，输入后写进去：agent 这一轮一睁眼读到的应当是平台
         # 现在这一份（别人刚改的也在里面），而不是它上一次看见的那一份。
@@ -150,7 +179,16 @@ async def send(
             await svc._submit(
                 live,
                 identity,
-                Prompt(work_id, message, images=pictures, owes_reply=owes_reply),
+                Prompt(
+                    work_id,
+                    message,
+                    images=pictures,
+                    owes_reply=owes_reply,
+                    cold=cold,
+                    cold_text=cold_text,
+                    private=private,
+                    cold_private=cold_private,
+                ),
                 steer=False,
                 register_input=register_input,
             )
@@ -283,26 +321,3 @@ def _steer_seat(svc: pkg.RoomSessions, topic_id, agent_handle) -> Seat | None:
         return (topic_id, agent_handle)
     working = [seat for seat in svc.work if seat[0] == topic_id]
     return working[0] if len(working) == 1 else None
-
-
-@contextlib.asynccontextmanager
-async def reading(
-    svc: pkg.RoomSessions, work_id: uuid.UUID
-) -> AsyncIterator[AsyncIterator[AgentEvent]]:
-    """The events of the platform's own work ``work_id`` (the memory
-    consolidation), read here rather than heard by the room, until its
-    result. Opened before the work is sent, so nothing it says is missed."""
-    queue: asyncio.Queue[AgentEvent] = asyncio.Queue()
-    svc.queues[work_id] = queue
-
-    async def events() -> AsyncIterator[AgentEvent]:
-        while True:
-            event = await queue.get()
-            yield event
-            if isinstance(event, AgentResult):
-                return
-
-    try:
-        yield events()
-    finally:
-        svc.queues.pop(work_id, None)

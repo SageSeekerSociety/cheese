@@ -694,8 +694,10 @@ class CandidateCI(unittest.TestCase):
         steps = workflow["jobs"]["deploy"]["steps"]
         self.assertNotIn("uses", steps[0], "the repair must not be a checkout")
         self.assertEqual(steps[0]["name"], "Repair a sparse workspace")
-        self.assertTrue(steps[1].get("uses", "").startswith("actions/checkout@"),
-                        "a checkout runs before the workspace is repaired")
+        checkouts = [i for i, step in enumerate(steps)
+                     if step.get("uses", "").startswith("actions/checkout@")
+                     or "git-fetch.sh" in step.get("run", "")]
+        self.assertEqual(checkouts[:1], [1], "a checkout runs before the workspace is repaired")
         body = steps[0]["run"]
         for fragment in ("core.sparseCheckout", "git sparse-checkout disable",
                          "info/sparse-checkout", "::warning::"):
@@ -1276,7 +1278,8 @@ exit 0
                 if "CANDIDATE_SHA" in step.get("env", {}):
                     expressions.add(step["env"]["CANDIDATE_SHA"])
                 if step.get("name", "").startswith("Check out the built commit"):
-                    expressions.add(step["with"]["ref"])
+                    expressions.add(step["env"]["REF"])
+                    self.assertIn('"$REF"', step["run"], "the built commit's checkout fetches a ref other than REF")
         self.assertEqual(expressions, {"${{ inputs.rebuilt || inputs.ref || github.event.workflow_run.head_sha || github.sha }}"})
         inputs = workflow[True]["workflow_dispatch"]["inputs"]
         self.assertIn("rebuilt", inputs)
@@ -1323,6 +1326,43 @@ exit 0
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("check-auto-deploy.py", result.stderr)
             self.assertFalse(output.exists() and output.read_text())
+
+class BackupWriterInstallation(unittest.TestCase):
+    def test_current_and_pre_tiered_releases_install_and_save_previous_scripts(self):
+        workflow = yaml.safe_load((ROOT / ".github/workflows/deploy-dev.yml").read_text())
+        step = next(step for step in workflow["jobs"]["deploy"]["steps"]
+                    if step.get("name") == "Install the dev database backup writer from this release")
+        names = ("r2-common.py", "r2-prune-dumps.py", "r2-upload.py", "db-backup.sh")
+        for missing in ((), ("r2-prune-dumps.py",), ("r2-common.py", "r2-prune-dumps.py")):
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source = root / "deploy"
+                source.mkdir()
+                ops = root / "ops"
+                ops.mkdir()
+                bin_dir = root / "bin"
+                bin_dir.mkdir()
+                git = bin_dir / "git"
+                git.write_text("#!/bin/sh\necho release-sha\n")
+                git.chmod(0o755)
+                for name in names:
+                    (ops / name).write_text(f"previous {name}\n")
+                    if name not in missing:
+                        (source / name).write_text(f"release {name}\n")
+                result = subprocess.run(
+                    ["bash", "-eu", "-c", step["run"]], cwd=root,
+                    env={**os.environ, "HOME": str(root), "PATH": f"{bin_dir}:{os.environ['PATH']}"},
+                    capture_output=True, text=True, timeout=10,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                for name in names:
+                    if name in missing:
+                        self.assertEqual((ops / name).read_text(), f"previous {name}\n")
+                        continue
+                    self.assertEqual((ops / name).read_text(), f"release {name}\n")
+                    self.assertEqual((ops / "backup-rollouts/release-sha" / name).read_text(),
+                                     f"previous {name}\n")
+
 
 class MeteringReleasePolicy(unittest.TestCase):
     def run_release(self, event, rebuilt="", ci_status=0, release_status=0):
