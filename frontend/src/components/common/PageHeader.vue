@@ -6,6 +6,7 @@
     :class="{ 'page-header-mobile': !$vuetify.display.mdAndUp && !showOnMobile }"
     :style="{ '--app-page-header-bg-opacity': props.enableScrollEffect ? bgProgress : props.maxOpacity }"
   >
+    <PageBack />
     <template v-if="$slots.default">
       <slot></slot>
     </template>
@@ -75,6 +76,7 @@ import { clamp } from 'lodash-es'
 import { headerCommands } from '@/commands'
 import BaseButton from '@/components/base/BaseButton.vue'
 import NavLink from '@/components/common/NavLink.vue'
+import PageBack from '@/components/common/PageBack.vue'
 import { EMPTY_PAGE_CHROME, PAGE_CHROME } from '@/lib/pageChrome'
 
 interface Props {

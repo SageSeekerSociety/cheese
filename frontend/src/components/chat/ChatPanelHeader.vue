@@ -6,6 +6,7 @@
 import type { Topic } from '../../cx_types'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import PageBack from '@/components/common/PageBack.vue'
 import { t } from '@/i18n'
 import { topicTitle } from '@/lib/topicState'
 
@@ -31,6 +32,7 @@ const emit = defineEmits<{
            The root topic (本体) and private chat use the plain header below. -->
   <div v-if="!hideHeader && prHeader" class="pr-header px-4 py-3">
     <div class="d-flex align-center ga-2 flex-wrap">
+      <PageBack />
       <span class="t-title">{{ topicTitle(topic) }}</span>
       <span class="pr-num t-meta">#{{ prShortId }}</span>
       <v-spacer />
@@ -46,6 +48,7 @@ const emit = defineEmits<{
   <!-- Plain chat header — normal chat (飞书私聊 / 本体): title + 已连接 -->
   <div v-else-if="!hideHeader" class="pr-header px-4 py-3">
     <div class="d-flex align-center ga-2">
+      <PageBack />
       <BaseButton
         v-if="backLabel"
         kind="ghost"
