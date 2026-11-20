@@ -1,5 +1,6 @@
 <!--
-  内测版本徽标: a small fixed badge showing which backend build is running, so a
+  内测版本徽标: a small badge (fixed top-right on phones, in the
+  desktop top bar) showing which backend build is running, so a
   tester can confirm their version at a glance. Renders nothing unless the box
   opted in (GET /api/version → badge:true), so it's inert in prod. Click to copy
   the full sha. The build arrives as a prop: the shell (App.vue) asks the server,
@@ -10,6 +11,7 @@
     v-if="version?.badge && version.short"
     type="button"
     class="version-badge"
+    :class="{ 'version-badge--inline': inline }"
     :title="t('shell.version.title', { sha: version.sha })"
     @click="copySha"
   >
@@ -25,7 +27,11 @@ import { ref } from 'vue'
 
 import { t } from '@/i18n'
 
-const props = defineProps<{ version: AppVersion | null }>()
+const props = defineProps<{
+  version: AppVersion | null
+  /** 排进一行里（桌面顶栏右边那一簇），不钉在窗口右上角：桌面上那个角是头像。 */
+  inline?: boolean
+}>()
 const copied = ref(false)
 
 async function copySha() {
@@ -65,6 +71,10 @@ async function copySha() {
   cursor: pointer;
   user-select: none;
   pointer-events: auto;
+}
+.version-badge--inline {
+  position: static;
+  flex: none;
 }
 .version-badge__dot {
   width: 6px;

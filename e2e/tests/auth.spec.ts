@@ -18,7 +18,7 @@ test.describe("Login", () => {
 
     await expect(page.getByText("登录成功")).toBeVisible();
     await page
-      .getByTestId("sidebar-frame-top")
+      .getByTestId("bar-home")
       .waitFor();
     const accessToken = await page.evaluate(() =>
       localStorage.getItem("accessToken"),
@@ -102,7 +102,7 @@ test.describe("Login", () => {
     // the assertions around it.
     await expect(page).toHaveURL(/\/projects\//, { timeout: 30_000 });
     await expect(
-      page.getByTestId("sidebar-home"),
+      page.getByTestId("bar-home"),
     ).toBeVisible();
     const current = await page.request.get("/api/users/me/consents", {
       headers: {
@@ -136,7 +136,7 @@ test.describe("English login", () => {
     // what the account keeps from now on.
     await expect(page.getByText("Signed in", { exact: true })).toBeVisible();
     await page
-      .getByTestId("sidebar-frame-top")
+      .getByTestId("bar-home")
       .waitFor();
     const accessToken = await page.evaluate(() =>
       localStorage.getItem("accessToken"),

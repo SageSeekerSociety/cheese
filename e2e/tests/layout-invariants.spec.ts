@@ -835,63 +835,51 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
   });
 });
 
-// 侧栏顶上那一条（桌面上是项目切换器，写你在哪儿，见 ProjectSwitcher.vue；左边那一列
-// 方块栏 2026-11-16 拿掉之前是项目名那一行），和右边内容区的页头是同一条线：一样高、
-// 顶在同一处，两条底线接成一条。这几页以前各画各的大标题，那条线到了这几页就断在半空——从房间切到
-// 成员页，页头一会儿有一会儿没有。量的是渲染出来的盒子，因为这种错 vitest 和类型检
-// 查都看不见。项目设置不在这里：它是盖在整个窗口上的一层，没有这条页头。
-test('项目里每一页的页头都和侧栏项目名那一条对齐', async ({ page }) => {
+// 桌面的框分三层：最上面一条顶栏横贯全宽，侧栏和页面都从它下沿开始（docs/design-system.md
+// §1.4）。项目里每一页的页头都顶在顶栏下沿、和侧栏的上沿同一处——这几页以前各画各的大标题，
+// 线断在半空。顶栏上的东西不随换页、收起侧栏挪位置：「首页」和搜索框在每一页、侧栏收起前后
+// 都在同一处。量的是渲染出来的盒子，这种错 vitest 和类型检查都看不见。项目设置不在这里：它
+// 是盖在整个窗口上的一层，没有这条页头。
+test('项目里每一页的页头都顶在顶栏下沿，顶栏上的东西不随换页和收起侧栏挪动', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await apiLogin(page);
   await openFirstProject(page);
   const projectPath = new URL(page.url()).pathname.match(/^\/projects\/[^/]+/)?.[0];
   expect(projectPath).toBeTruthy();
 
+  const bar = page.locator('.app-system-bar');
+  const home = page.getByTestId('bar-home');
+  const search = page.getByTestId('bar-search');
+  const anchors = async () => {
+    const [h, s] = await Promise.all([home.boundingBox(), search.boundingBox()]);
+    return { home: h!.x, search: s!.x };
+  };
+  const first = await anchors();
+
   for (const sub of ['overview', 'tasks', 'members', 'members/alice', 'docs/charter', 'library']) {
     await page.goto(`${projectPath}/${sub}`);
     const head = page.locator('.app-page__head');
     await expect(head).toBeVisible();
-    const [side, main] = await Promise.all([page.getByTestId('sidebar-frame-top').boundingBox(), head.boundingBox()]);
-    expect(side, sub).not.toBeNull();
-    expect(main, sub).not.toBeNull();
-    expect(main!.y, `${sub} · top`).toBeCloseTo(side!.y, 0);
-    expect(main!.height, `${sub} · height`).toBeCloseTo(side!.height, 0);
+    const [top, main, side] = await Promise.all([
+      bar.boundingBox(),
+      head.boundingBox(),
+      page.locator('#secondary-sidebar').boundingBox(),
+    ]);
+    expect(top!.width, `${sub} · bar spans the window`).toBeCloseTo(1440, 0);
+    expect(main!.y, `${sub} · head under the bar`).toBeCloseTo(top!.y + top!.height, 0);
+    expect(side!.y, `${sub} · sidebar under the bar`).toBeCloseTo(top!.y + top!.height, 0);
+    expect(side!.x, `${sub} · sidebar from the window edge`).toBeCloseTo(0, 0);
+    expect(await anchors(), sub).toEqual(first);
   }
-});
 
-// 侧栏头里团队名那根链接（「知是」那一行）只该占字本身那么宽。这一列是 flex column，
-// 链接默认被 stretch 拉成整列宽，名字右边那一大片空白也成了链接的一部分——点在那儿进
-// 了团队页，报上来是「点空白跳回首页」。这个错只有渲染出来的盒子看得见，vitest 量不到。
-test("侧栏头的团队名链接只盖住字，右侧空白交给切换器", async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 900 });
-  await apiLogin(page);
-  await openFirstProject(page);
-
-  const team = page.getByTestId("project-switcher").locator("a.frame-top__team");
-  await expect(team).toBeVisible();
-  const box = await team.boundingBox();
-  expect(box, "the team link must have a rendered box").not.toBeNull();
-
-  // 链接里那段字自己占多宽：和链接的盒子比，拉成整列就会宽出一大截。
-  const textWidth = await team.evaluate((el) => {
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    return range.getBoundingClientRect().width;
-  });
-  expect(box!.width - textWidth, "链接盒子不该比自己的字宽出一截（拉成整列就是那个 bug）").toBeLessThan(8);
-
-  // 字右边同一行的空白处，指针落在切换器按钮里、而不是那根链接：点它开的是项目列表。
-  const hit = await page.evaluate(
-    ({ right, y }) => {
-      const el = document.elementFromPoint(right, y);
-      if (!el) return "nothing";
-      const inLink = el.closest("a.frame-top__team") ? "team-link" : "other";
-      const inSwitcher = el.closest('[data-testid="project-switcher"]') ? "switcher" : "outside";
-      return `${inLink}/${inSwitcher}`;
-    },
-    { right: box!.x + box!.width + 8, y: box!.y + box!.height / 2 }
-  );
-  expect(hit).toBe("other/switcher");
+  // 收起侧栏：左边什么也不留，页面从窗口左缘开始；顶栏上的东西原地不动。
+  await page.locator('[data-sidebar-toggle]').click();
+  await expect(page.locator('#secondary-sidebar')).toBeHidden();
+  const pane = await page.locator('#app-scrollable').boundingBox();
+  expect(pane!.x).toBeCloseTo(0, 0);
+  expect(await anchors()).toEqual(first);
+  await page.locator('[data-sidebar-toggle]').click();
+  await expect(page.locator('#secondary-sidebar')).toBeVisible();
 });
 
 // 设置是盖在整个窗口上的一层（SettingsOverlay），它里面的下拉菜单和对话框却由 Vuetify
