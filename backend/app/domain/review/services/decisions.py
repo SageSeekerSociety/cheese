@@ -865,10 +865,14 @@ async def void(
 async def _back_to_work(
     self: pkg.AcceptService, card: AcceptCard, *, at: datetime
 ) -> None:
-    """The card was returned or voided: its task is back in its teammate's
-    hands (`room_task.progress.back_to_work`)."""
+    """A returned card awaits actual repair; a voided card resumes construction."""
     if card.task_id is None:
         return
     task = await self._session.get(Task, card.task_id)
     if task is not None and task.status == TaskStatus.open:
-        progress.back_to_work(task, at=at)
+        if card.status == AcceptStatus.rejected:
+            # A return starts a new repair cycle, not a report that work has
+            # begun. The actual teammate run/report supersedes the red marker.
+            progress.clear(task)
+        else:
+            progress.back_to_work(task, at=at)

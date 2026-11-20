@@ -127,10 +127,10 @@ async def inform(session: AsyncSession, task: Task, said: str) -> None:
 
 # —— what it is told ——————————————————————————————————————————————
 
-#: Where a returned or voided card leaves the task: back in its teammate's
-#: hands (`progress.back_to_work`), able to report again.
+#: A returned or voided card lets its teammate report again. The current
+#: marker follows the actual run/report, not the fact that a card was returned.
 BACK_TO_WORK = (
-    "看板上这件任务回到了「进行中」，cheese_task(action=state) 又能报了"
+    "这件任务已交回给你处理，cheese_task(action=state) 又能报了"
     "（你递卡之前报的那一条在递卡时已经清掉）。"
 )
 

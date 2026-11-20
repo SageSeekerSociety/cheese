@@ -18,6 +18,8 @@ def _service_and_card():
         task_id=uuid.uuid4(),
         note="",
         note_code=None,
+        merge_state={},
+        status="pending",
         nudge_state={},
         pr_number=7,
         pr_url="https://github.com/acme/widgets/pull/7",
