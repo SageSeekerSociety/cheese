@@ -17,10 +17,10 @@ from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
 from app.domain.agent import execution
 from app.domain.agent.device_hub import DeviceOffline
 from app.domain.agent.dispatch_log import DispatchRow
-from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
+from app.domain.environment import services as environment_rows
 from app.domain.identity.services import IdentityService
 from app.domain.machine import lease_claim
 from app.domain.machine import session_work as work_lease
@@ -30,7 +30,7 @@ from app.domain.user.models import User
 from tests.executor_release import running
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.support.devices import enrollment_team, place_in_project_team
-from tests.support.environments import change_environment, environment_of
+from tests.support.environments import change_environment, environment_of, works_in
 from tests.support.hang import HANG_S
 
 pytestmark = pytest.mark.anyio
@@ -388,7 +388,7 @@ async def test_each_session_in_a_room_acquires_its_own_environments_device(
     )
     async with client.test_factory() as db:
         # The machine it left keeps its directory for the room's cleanup.
-        left = await attachments.environments_held(
+        left = await environment_rows.environments_held(
             db, room_id=topic_id, device_id=first_device
         )
         assert left
@@ -781,17 +781,16 @@ async def test_an_agent_may_put_itself_in_a_platform_sandbox(client, monkeypatch
         )
         db.add(host)
         await db.flush()
-        db.add(
-            SandboxHome(
-                host_id=host.id,
-                spec="standard",
-                project_id=project_id,
-                topic_id=topic_id,
-                room_resource_id=str(topic_id),
-                resource_id=str(uuid.uuid4()),
-                session_id=session_id,
-            )
+        home = SandboxHome(
+            host_id=host.id,
+            spec="standard",
+            project_id=project_id,
+            topic_id=topic_id,
+            room_resource_id=str(topic_id),
+            resource_id=str(uuid.uuid4()),
         )
+        db.add(home)
+        await works_in(db, session_id, home)
         host_id = host.id
         devices = sql_device_service(db)
         code = await devices.start("Available work computer")

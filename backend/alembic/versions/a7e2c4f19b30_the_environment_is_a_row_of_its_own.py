@@ -53,7 +53,7 @@ def upgrade() -> None:
         sa.Column("id", sa.Uuid(), nullable=False),
         sa.Column("topic_id", sa.Uuid(), nullable=False),
         sa.Column("project_id", sa.Uuid(), nullable=True),
-        sa.Column("device_id", sa.String(64), nullable=False),
+        sa.Column("device_id", sa.String(64), nullable=True),
         sa.Column("host_id", sa.Uuid(), nullable=True),
         sa.Column("sandbox_home_id", sa.Uuid(), nullable=True),
         sa.Column("resource_id", sa.String(36), nullable=False),

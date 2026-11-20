@@ -66,10 +66,11 @@ class Environment(UuidPk, Timestamps, Base):
         index=True,
         nullable=True,
     )
-    # The machine its executor runs on, as its connector is known. Not a key:
-    # an environment outlives the binding of a person's computer, and is then
-    # one nothing can reach again (``session_work._attempt``).
-    device_id: Mapped[str] = mapped_column(String(64), index=True)
+    # The machine its executor runs on, as its connector is known; None until
+    # it is first placed on one. Not a key: an environment outlives the
+    # binding of a person's computer, and is then one nothing can reach again
+    # (``session_work._attempt``).
+    device_id: Mapped[str | None] = mapped_column(String(64), index=True, nullable=True)
     # The platform host it is on, when it is on one.
     host_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey(

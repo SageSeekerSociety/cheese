@@ -204,7 +204,7 @@ class _Attachments:
         return SimpleNamespace(environment={"claim": "claim-1"})
 
     @staticmethod
-    async def attach(db, session_id, described, *, where=None):
+    async def attach(db, session_id, described):
         return None
 
 
@@ -239,11 +239,11 @@ class _Pool:
     def __init__(self, db, hub=None):
         self.db = db
 
-    async def leave_unusable(self, session_id, host_id):
-        type(self).asked.append((session_id, host_id))
+    async def leave_unusable(self, environment_id, host_id):
+        type(self).asked.append((environment_id, host_id))
         return type(self).answered
 
-    async def tell_ready(self, session_id):
+    async def tell_ready(self, environment_id):
         return None
 
 
@@ -326,6 +326,7 @@ def _install_case(
         token="launch-token",
         resource="resource",
         session_id=uuid.uuid4(),
+        environment_id=uuid.uuid4(),
         generation="1",
         env={},
         api="http://localhost:8000",

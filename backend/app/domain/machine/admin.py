@@ -31,7 +31,7 @@ from app.core.config import settings
 from app.core.errors import ValidationError
 from app.domain.agent.environment import spec_of
 from app.domain.machine import enrollment, infra_records, readings
-from app.domain.machine.lifecycle import previewed_sessions
+from app.domain.machine.lifecycle import previewed_homes
 from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
 from app.domain.machine.models import (
     MAX_PROVIDER_ERRORS,
@@ -299,9 +299,7 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
         )
     )
     projects, rooms = await _names(session, homes, hosts)
-    previewed = await previewed_sessions(
-        session, [home.session_id for home in homes if home.session_id is not None]
-    )
+    previewed = await previewed_homes(session, [home.id for home in homes])
     by_host: dict[uuid.UUID, list[SandboxHome]] = defaultdict(list)
     for home in homes:
         assert home.host_id is not None
@@ -395,7 +393,7 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
                         "active_at": _iso(home.active_at),
                         "stopped_at": _iso(home.stopped_at),
                         "idle_deadline": _iso(
-                            _idle_deadline(home, home.session_id in previewed)
+                            _idle_deadline(home, home.id in previewed)
                         ),
                         "usage": sandbox_usage.get(home.id),
                     }

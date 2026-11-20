@@ -15,6 +15,7 @@ from app.domain.machine.models import AiStatus, CloudHost, MachineStatus, Sandbo
 from app.domain.machine.preview_wake import wake_for_files
 from tests.integration.test_app_preview_proxy import _project_topic, _room_agent
 from tests.integration.test_app_preview_proxy import preview_config as preview_config
+from tests.support.environments import works_in
 
 
 def test_a_frozen_sandbox_is_thawed_before_its_files_are_read(
@@ -52,13 +53,13 @@ def test_a_frozen_sandbox_is_thawed_before_its_files_are_read(
                 topic_id=topic_id,
                 room_resource_id=str(topic_id),
                 resource_id=str(uuid.uuid4()),
-                session_id=row.id,
                 device_id=None,
                 spec="standard",
                 active_at=stale,
                 frozen_at=stale,
             )
             db.add(home)
+            await works_in(db, row.id, home)
             await db.commit()
             return home.id, home.resource_id
 

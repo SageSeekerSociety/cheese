@@ -31,13 +31,14 @@ from app.core.sandbox_auth import (
 from app.domain.agent import execution
 from app.domain.agent.device_hub import DeviceCallError
 from app.domain.agent.harness.claude_code.remote_execution import launch
-from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.adapters import platform_line
 from app.domain.delivery.ledger import settle_card
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
+from app.domain.environment import services as environment_rows
 from app.domain.identity.services import IdentityService
+from app.domain.machine import occupants
 from app.domain.machine import session_work as work_lease
 from app.domain.machine.models import CloudHost, MachineStatus, SandboxHome
 from app.domain.machine.session_work import checkpoint_room
@@ -52,7 +53,7 @@ from tests.delivery import delivery_task
 from tests.executor_release import running
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.support.devices import enrollment_team, place_in_project_team
-from tests.support.environments import environment_of, give_environment
+from tests.support.environments import environment_of, give_environment, works_in
 
 pytestmark = pytest.mark.anyio
 
@@ -195,7 +196,7 @@ async def _left_for_cleanup(client, room) -> list[tuple[str, str]]:
     async with client.test_factory() as db:
         return [
             (held.device_id, held.resource_id)
-            for held in await attachments.environments_held(
+            for held in await environment_rows.environments_held(
                 db, room_id=room.topic_id, device_id=room.old_device
             )
         ]
@@ -315,17 +316,16 @@ async def test_a_cloud_sandbox_left_is_left_to_the_idle_sweep_either_way(
         )
         db.add(host)
         await db.flush()
-        db.add(
-            SandboxHome(
-                host_id=host.id,
-                spec="standard",
-                project_id=room.project_id,
-                topic_id=room.topic_id,
-                room_resource_id=room.lease["room_resource_id"],
-                resource_id=room.lease["resource_id"],
-                session_id=room.session_id,
-            )
+        home = SandboxHome(
+            host_id=host.id,
+            spec="standard",
+            project_id=room.project_id,
+            topic_id=room.topic_id,
+            room_resource_id=room.lease["room_resource_id"],
+            resource_id=room.lease["resource_id"],
         )
+        db.add(home)
+        await works_in(db, room.session_id, home)
         host_id = host.id
         await db.commit()
     _machines(monkeypatch, online=reachable)
@@ -338,10 +338,11 @@ async def test_a_cloud_sandbox_left_is_left_to_the_idle_sweep_either_way(
             await db.scalars(select(SandboxHome).where(SandboxHome.host_id == host_id))
         )
         host = await db.get(CloudHost, host_id)
+        working = [await occupants.sessions_of(db, home.id) for home in homes]
     # The host is the pool's: a switch never deletes it. The sandbox left there
-    # is no session's, and the idle sweep destroys it (``lifecycle``).
+    # is nobody's to work in, and the idle sweep destroys it (``lifecycle``).
     assert host.released_at is None
-    assert [home.session_id for home in homes] == [None]
+    assert working == [[]]
     assert await _left_for_cleanup(client, room) == []
 
 
@@ -366,19 +367,18 @@ async def test_a_frozen_sandbox_is_not_checkpointed_on_its_way_out(client, monke
         )
         db.add(host)
         await db.flush()
-        db.add(
-            SandboxHome(
-                host_id=host.id,
-                spec="standard",
-                project_id=room.project_id,
-                topic_id=room.topic_id,
-                room_resource_id=room.lease["room_resource_id"],
-                resource_id=room.lease["resource_id"],
-                session_id=room.session_id,
-                active_at=datetime.now(UTC),
-                frozen_at=datetime.now(UTC),
-            )
+        home = SandboxHome(
+            host_id=host.id,
+            spec="standard",
+            project_id=room.project_id,
+            topic_id=room.topic_id,
+            room_resource_id=room.lease["room_resource_id"],
+            resource_id=room.lease["resource_id"],
+            active_at=datetime.now(UTC),
+            frozen_at=datetime.now(UTC),
         )
+        db.add(home)
+        await works_in(db, room.session_id, home)
         await db.commit()
     remote = _machines(monkeypatch)
 

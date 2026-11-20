@@ -53,7 +53,7 @@ from app.domain.assistant.models import AssistantConversation
 from app.domain.conversation.models import Conversation, ConversationKind
 from app.domain.conversation.services import of_rooms, room_column, room_of
 from app.domain.identity.actor import Actor
-from app.domain.machine.environments import environment_of
+from app.domain.machine.environments import default_for, environment_of
 from app.domain.machine.models import SandboxHome
 from app.domain.membership.roster import roster
 from app.domain.project.services import ProjectService
@@ -128,6 +128,13 @@ class SandboxHolder(Protocol):
         """Where ``session``, working for this holder, does its work."""
         ...
 
+    async def default_environment(
+        self, db: AsyncSession, session: AgentSession
+    ) -> Sandbox | SelfHosted:
+        """The default of the conversation ``session`` works in: what the
+        environment that conversation points to is of."""
+        ...
+
 
 @dataclass(frozen=True, slots=True)
 class Room:
@@ -194,6 +201,19 @@ class Room:
             db, session, topic, await task_of(db, self, session), project
         )
 
+    async def default_environment(
+        self, db: AsyncSession, session: AgentSession
+    ) -> Sandbox | SelfHosted:
+        # Its task's default, else its room's, its project's or the
+        # deployment's (``environments.default_for``).
+        topic = await db.get(Topic, self.id)
+        if topic is None:
+            raise NotFoundError(say("topicNotFound"))
+        project = await ProjectService(db).get_or_404(self.project_id)
+        return default_for(
+            topic, await task_of(db, self, session), project.settings
+        ).environment
+
 
 @dataclass(frozen=True, slots=True)
 class Personal:
@@ -252,6 +272,11 @@ class Personal:
     ) -> Sandbox | SelfHosted:
         # A standard sandbox on the platform's machines, always: nobody's own
         # computer serves a person's 芝士, and a whole VM is a project's.
+        return Sandbox(spec=STANDARD)
+
+    async def default_environment(
+        self, db: AsyncSession, session: AgentSession
+    ) -> Sandbox | SelfHosted:
         return Sandbox(spec=STANDARD)
 
 

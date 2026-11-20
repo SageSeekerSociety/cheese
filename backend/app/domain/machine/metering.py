@@ -28,11 +28,13 @@ With no price set nothing is metered, and no sandbox starts either.
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.machine import holder as holders
+from app.domain.machine import occupants
 from app.domain.machine.models import GONE, CloudHost, SandboxHome
 from app.domain.usage.compute import SANDBOX, VM, ComputeMeter, hourly_price, vm_spec
 from app.domain.usage.ledger import Ledger
@@ -57,7 +59,7 @@ def _running(*, include_frozen: bool = False):
             SandboxHome.id,
             SandboxHome.project_id,
             SandboxHome.topic_id,
-            SandboxHome.session_id,
+            occupants.a_session_in(SandboxHome.id).label("session_id"),
         )
         .join(CloudHost, CloudHost.id == SandboxHome.host_id)
         .where(
@@ -101,12 +103,14 @@ async def _observe_vms(session: AsyncSession, meter: ComputeMeter) -> tuple[int,
         if subject not in runs:
             unopened.append(host)
     # One read for every VM still to open, not one per VM.
-    homes: dict[uuid.UUID, SandboxHome] = {}
+    homes: dict[uuid.UUID, Any] = {}
     if unopened:
-        for home in await session.scalars(
-            select(SandboxHome).where(
-                SandboxHome.host_id.in_([host.id for host in unopened])
-            )
+        for home in await session.execute(
+            select(
+                SandboxHome.host_id,
+                SandboxHome.topic_id,
+                occupants.a_session_in(SandboxHome.id).label("session_id"),
+            ).where(SandboxHome.host_id.in_([host.id for host in unopened]))
         ):
             assert home.host_id is not None
             homes.setdefault(home.host_id, home)

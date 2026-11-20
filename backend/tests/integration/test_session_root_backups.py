@@ -17,7 +17,7 @@ from app.domain.machine import lease_claim, root_snapshots, session_work
 from app.domain.machine.models import CloudHost, SandboxHome, SandboxRootSnapshot
 from tests.executor_release import running
 from tests.integration.test_switch_pushes_first import _machines, _room
-from tests.support.environments import change_environment, environment_of
+from tests.support.environments import change_environment, environment_of, works_in
 from tests.support.files_bucket import files_bucket
 
 pytestmark = pytest.mark.anyio
@@ -37,7 +37,6 @@ async def _source_home(db, room):
     db.add(host)
     await db.flush()
     home = SandboxHome(
-        session_id=room.session_id,
         host_id=host.id,
         sandbox_image="ghcr.io/example/root@sha256:" + "1" * 64,
         project_id=room.project_id,
@@ -48,6 +47,7 @@ async def _source_home(db, room):
         stopped_at=datetime.now(UTC),
     )
     db.add(home)
+    await works_in(db, room.session_id, home)
     await db.commit()
     return home
 

@@ -30,9 +30,8 @@ from sqlalchemy import select
 
 from app.domain.agent.environment import VM, spec_of
 from app.domain.agent_session import attachment as attachments
-from app.domain.agent_session.services import AgentSessionService
 from app.domain.machine import holder as holders
-from app.domain.machine import lease_claim, session_work
+from app.domain.machine import lease_claim, occupants, session_work
 from app.domain.machine.models import CloudHost, SandboxHome
 from app.domain.machine.progress import publish_line, tell_vm_released
 from app.domain.machine.repositories import CloudHostRepository
@@ -57,7 +56,6 @@ async def release_idle(db, lifecycle) -> int:
         await db.execute(
             select(
                 SandboxHome.id,
-                SandboxHome.session_id,
                 SandboxHome.topic_id,
                 SandboxHome.active_at,
                 SandboxHome.spec,
@@ -100,11 +98,8 @@ async def release_idle(db, lifecycle) -> int:
 
 async def _release(db, lifecycle, home, idle_for: timedelta) -> bool:
     now = datetime.now(UTC)
-    row = (
-        None
-        if home.session_id is None
-        else await AgentSessionService(db).by_id(home.session_id)
-    )
+    working = await occupants.sessions_of(db, home.id)
+    row = working[0] if working else None
     held = await attachments.attachment_of(db, row.id) if row is not None else None
     lease = held.environment if held is not None else None
     if lease is not None and lease.get("device_id") != home.device_id:
@@ -112,13 +107,13 @@ async def _release(db, lifecycle, home, idle_for: timedelta) -> bool:
     if lease is not None and lease_claim.still_preparing(lease):
         await db.commit()
         return False
-    # A turn the session itself runs keeps its VM. Asked before the
+    # A turn of a session working in it keeps its VM. Asked before the
     # checkpoint: a session at work must not be restarted and pushed for a
     # release that is not going to happen.
-    if await _at_work(lifecycle, row, now):
+    if await _at_work(lifecycle, working, now):
         await db.commit()
         return False
-    if lease is not None and lease.get("state"):
+    if row is not None and lease is not None and lease.get("state"):
         # No transaction is held while the VM runs the checkpoint.
         start = await session_work.restart_executor(db, row, lease)
         await db.commit()
@@ -129,11 +124,7 @@ async def _release(db, lifecycle, home, idle_for: timedelta) -> bool:
     # own lock, not the one for executions: an archived room takes no tool
     # call, and its VM still goes.
     await holders.lock(db, home.topic_id)
-    row = (
-        None
-        if home.session_id is None
-        else await AgentSessionService(db).by_id(home.session_id, lock=True)
-    )
+    working = await occupants.sessions_of(db, home.id, lock=True)
     current = await db.scalar(
         select(SandboxHome)
         .where(SandboxHome.id == home.id)
@@ -143,32 +134,34 @@ async def _release(db, lifecycle, home, idle_for: timedelta) -> bool:
     if current is None or current.active_at != home.active_at:
         await db.commit()
         return False
-    # Looked at again with the room locked: no turn of its session has started
-    # since, and none is running.
-    if await _at_work(lifecycle, row, now):
+    # Looked at again with the room locked: no turn of a session working in
+    # it has started since, and none is running.
+    if await _at_work(lifecycle, working, now):
         await db.commit()
         return False
-    held = await attachments.attachment_of(db, row.id) if row is not None else None
-    if held is not None and held.device_id == home.device_id:
-        assert row is not None
-        await attachments.unattach(db, row.id)
     minutes = int(idle_for.total_seconds() // 60)
     line = await tell_vm_released(db, current, minutes)
-    if home.session_id is None:
-        # No session to move off it, and so no home without a session on a
-        # whole VM: the home goes, and the machine with it.
+    named = await occupants.environment_named(db, home.id)
+    if named is None:
+        # Nobody to move off it, and so no home nobody works in on a whole
+        # VM: the home goes, and the machine with it.
         await CloudHostRepository(db).delete_home(current)
     else:
-        await HostPool(db).leave(home.session_id)
+        await HostPool(db).leave(named)
+    for row in working:
+        held = await attachments.attachment_of(db, row.id)
+        if held is not None and held.environment_id == named:
+            await attachments.unattach(db, row.id)
     await db.commit()
     await publish_line(home.topic_id, line)
-    logger.info("released the idle cloud vm of session %s", home.session_id)
+    logger.info("released the idle cloud vm of environment %s", named)
     return True
 
 
-async def _at_work(lifecycle, row, now: datetime) -> bool:
-    """Whether the session behind the home is running a turn, which keeps its
-    VM. A home of no session is nobody's work."""
-    if row is None:
-        return False
-    return await lifecycle.at_work(row.conversation_id, row.agent_handle, now)
+async def _at_work(lifecycle, working, now: datetime) -> bool:
+    """Whether a session working in the VM is running a turn, which keeps
+    it. A home nobody works in is nobody's work."""
+    for row in working:
+        if await lifecycle.at_work(row.conversation_id, row.agent_handle, now):
+            return True
+    return False

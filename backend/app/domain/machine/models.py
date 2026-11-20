@@ -284,11 +284,12 @@ class CloudHost(UuidPk, Timestamps, Base):
 
 
 class SandboxHome(UuidPk, Timestamps, Base):
-    """One session's home: its sandbox's directory on a machine, one of the
-    platform's hosts (``host_id``) or a person's computer (``device_id``).
+    """A sandbox's home: its directory on a machine, one of the platform's
+    hosts (``host_id``) or a person's computer (``device_id``), named by the
+    environment it backs (``Environment.sandbox_home_id``).
 
-    Written when the session is placed, before anything is on the disk, so a
-    session waiting for its host keeps its place. On a host it holds one of
+    Written when the environment is placed, before anything is on the disk,
+    so one waiting for its host keeps its place. On a host it holds one of
     the host's slots for as long as it exists.
 
     Every sandbox has the same lifecycle, whoever's machine it is on: it is
@@ -362,7 +363,9 @@ class SandboxHome(UuidPk, Timestamps, Base):
     room_resource_id: Mapped[str] = mapped_column(String(36))
     # The directory's resource on the host (the lease's ``resource_id``).
     resource_id: Mapped[str] = mapped_column(String(36))
-    # NULL only for a room's directory from before session leases.
+    # Written by releases before environments named their homes; nothing
+    # reads it. Who works in a home is the environment that names it
+    # (``machine.occupants``).
     session_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     # When the room was told this session's sandbox is being prepared; cleared
     # once it is told the sandbox is ready.

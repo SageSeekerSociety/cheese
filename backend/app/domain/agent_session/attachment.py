@@ -18,7 +18,6 @@ in one place, `environment_column`.
 
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
@@ -32,13 +31,11 @@ from sqlalchemy import (
     select,
     update,
 )
-from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_session.models import AgentSession, SessionPlace
-from app.domain.conversation.services import of_room
+from app.domain.environment import services as environment_rows
 from app.domain.environment.models import (
-    READY,
     RELEASED,
     ConversationEnvironment,
     Environment,
@@ -52,14 +49,6 @@ __all__ = ["RELEASED"]
 _LOST = "lost"
 _LOST_PROCESSES = "lost_processes"
 _PARKED = "parked"
-
-#: The keys of an environment's dict that are columns of the environment;
-#: every other key but the attachment's is what its install left
-#: (``Environment.executor``).
-_COLUMNS = ("device_id", "resource_id", "room_resource_id", "status")
-_MOMENTS = ("claim_until", "verified_at")
-_ATTACHMENT_KEYS = ("generation", "setup_digest")
-_DERIVED = ("kind", "session_id", "claim")
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,16 +85,17 @@ class Attachment:
     """A session's attachment and the environment it is on, as they stand."""
 
     #: The environment it is attached to: which machine and home, and how far
-    #: its executor is installed there. None while it is attached to none.
+    #: its executor is installed there. None while it is attached to none, or
+    #: to one not yet placed on a machine.
     environment: dict | None
     #: What its agent is owed about it.
     notice: Notice
-
-    @property
-    def generation(self) -> str | None:
-        """This attachment's generation: what a credential minted for it
-        names, and what an install checks it is still installing for."""
-        return (self.environment or {}).get("generation")
+    #: The environment it is attached to, placed or not; None while it is
+    #: attached to none.
+    environment_id: uuid.UUID | None = None
+    #: This attachment's generation: what a credential minted for it names,
+    #: and what an install checks it is still installing for.
+    generation: str | None = None
 
     @property
     def released(self) -> bool:
@@ -162,24 +152,46 @@ def environment_column() -> ColumnElement[Any]:
             EnvironmentAttachment,
             EnvironmentAttachment.environment_id == Environment.id,
         )
-        .where(EnvironmentAttachment.session_id == AgentSession.id)
+        .where(
+            EnvironmentAttachment.session_id == AgentSession.id,
+            # One not yet on a machine names nothing a call could reach.
+            Environment.device_id.is_not(None),
+        )
         .correlate(AgentSession)
         .scalar_subquery()
         .label("environment")
     )
 
 
+def _attached(column: Any, label: str) -> ColumnElement[Any]:
+    return (
+        select(column)
+        .where(EnvironmentAttachment.session_id == AgentSession.id)
+        .correlate(AgentSession)
+        .scalar_subquery()
+        .label(label)
+    )
+
+
 #: The columns `attachment` reads, for a query that selects them instead of
 #: the whole row.
 def attachment_columns() -> tuple[Any, ...]:
-    return (environment_column(), AgentSession.environment_notice)
+    return (
+        environment_column(),
+        AgentSession.environment_notice,
+        _attached(EnvironmentAttachment.environment_id, "attached_to"),
+        _attached(EnvironmentAttachment.generation, "attached_generation"),
+    )
 
 
 def attachment(row: Any) -> Attachment:
     """The attachment a row of `attachment_columns` describes. The one
     construction of an `Attachment`."""
     return Attachment(
-        environment=row.environment, notice=_notice(row.environment_notice)
+        environment=row.environment,
+        notice=_notice(row.environment_notice),
+        environment_id=row.attached_to,
+        generation=row.attached_generation,
     )
 
 
@@ -251,9 +263,13 @@ async def place_of(db: AsyncSession, row: AgentSession) -> SessionPlace | None:
 
 
 def is_attached() -> ColumnElement[bool]:
-    """A session that is attached to an environment, for a query over
-    ``agent_sessions``."""
-    return exists().where(EnvironmentAttachment.session_id == AgentSession.id)
+    """A session that is attached to an environment on a machine, for a query
+    over ``agent_sessions``."""
+    return exists().where(
+        EnvironmentAttachment.session_id == AgentSession.id,
+        Environment.id == EnvironmentAttachment.environment_id,
+        Environment.device_id.is_not(None),
+    )
 
 
 def attached_on(device_id: Any) -> ColumnElement[bool]:
@@ -280,104 +296,111 @@ def environment_device() -> ColumnElement[str]:
     )
 
 
-async def environments_held(
+async def settle(
     db: AsyncSession,
+    row: AgentSession,
     *,
-    room_id: uuid.UUID | None = None,
-    device_id: str | None = None,
-) -> list[Environment]:
-    """Every environment of ``room_id``'s conversations, or on ``device_id``:
-    those sessions are attached to and those they left on people's machines,
-    whose directories a cleanup still removes."""
-    query = select(Environment)
-    if room_id is not None:
-        query = query.where(of_room(Environment.topic_id, room_id))
-    if device_id is not None:
-        query = query.where(Environment.device_id == device_id)
-    return list(await db.scalars(query))
+    choice: dict,
+    default: dict | None,
+    where: environment_rows.Where,
+) -> Environment:
+    """Attach the session to the environment its next call works in, and
+    answer it. The one rule for every attacher:
+
+    - Its ``choice`` is the conversation's ``default`` (compared by value):
+      the environment the conversation points to, when that one is of the
+      default; otherwise a new one of it, which the conversation now points
+      to. So every attacher with the default works in one environment, and
+      a changed default moves only whoever attaches after it.
+    - Its choice is its own (``default`` None: an agent on its owner's
+      computer, which never takes the conversation's): the environment it is
+      attached to while that one is still of its choice, otherwise a new one
+      no pointer names.
+
+    A session moved to another environment is attached there under a new
+    generation, so nothing minted for the one it left acts for it."""
+    current = await db.scalar(
+        select(EnvironmentAttachment)
+        .where(EnvironmentAttachment.session_id == row.id)
+        .with_for_update()
+    )
+    attached = (
+        await db.get(Environment, current.environment_id, populate_existing=True)
+        if current is not None
+        else None
+    )
+    if default is not None and choice == default:
+        pointer = await environment_rows.pointer(db, row.conversation_id)
+        target = (
+            await db.get(Environment, pointer.environment_id)
+            if pointer.environment_id is not None
+            else None
+        )
+        if target is None or not environment_rows.is_of(target, default, where):
+            target = environment_rows.new_environment(db, where)
+            await db.flush()
+            pointer.environment_id = target.id
+    elif attached is not None and environment_rows.is_of(attached, choice, where):
+        target = attached
+    else:
+        target = environment_rows.new_environment(db, where)
+    if attached is not None and attached.id == target.id:
+        return target
+    await db.flush()
+    if current is not None:
+        # One left on a person's machine keeps its directories there for the
+        # cleanup to remove.
+        await _let_go(
+            db,
+            row.id,
+            keep=attached is not None and environment_rows.on_a_persons(attached),
+        )
+        # Owed about the place it left; it works somewhere else now.
+        row.environment_notice = None
+    db.add(
+        EnvironmentAttachment(
+            id=row.id,
+            session_id=row.id,
+            environment_id=target.id,
+            generation=str(uuid.uuid4()),
+        )
+    )
+    await db.flush()
+    return target
 
 
-@dataclass(frozen=True, slots=True)
-class Where:
-    """What a session's environment is when an attach creates it, or moves it
-    to another place: the conversation whose machine it is (its holder), its
-    project, the choice it is for, and the platform host and sandbox home it
-    is on."""
-
-    topic_id: uuid.UUID
-    project_id: uuid.UUID | None
-    choice: dict
-    host_id: uuid.UUID | None = None
-    sandbox_home_id: uuid.UUID | None = None
-
-
-def _moment(value: Any) -> datetime | None:
-    if value is None or isinstance(value, datetime):
-        return value
-    return datetime.fromisoformat(value)
+async def abandon(db: AsyncSession, row: AgentSession) -> None:
+    """The environment the session is attached to is on a machine nothing can
+    reach any more (a person's computer unbound): the session leaves it, and
+    the conversation stops pointing to it, so the next to settle gets a new
+    one."""
+    environment = await _environment_of(db, row.id)
+    if environment is None:
+        return
+    await db.execute(
+        update(ConversationEnvironment)
+        .where(ConversationEnvironment.environment_id == environment.id)
+        .values(environment_id=None)
+    )
+    await _let_go(db, row.id, keep=False)
 
 
-def _write(environment: Environment, described: dict) -> None:
-    environment.device_id = described["device_id"]
-    environment.resource_id = described["resource_id"]
-    environment.room_resource_id = described["room_resource_id"]
-    environment.status = described.get("status", READY)
-    environment.claim = described.get("claim")
-    environment.claim_until = _moment(described.get("claim_until"))
-    environment.verified_at = _moment(described.get("verified_at"))
-    environment.executor = {
-        key: value
-        for key, value in described.items()
-        if key not in (*_COLUMNS, *_MOMENTS, *_ATTACHMENT_KEYS, *_DERIVED)
-    }
-
-
-async def attach(
-    db: AsyncSession,
-    session_id: uuid.UUID,
-    described: dict,
-    *,
-    where: Where | None = None,
-) -> None:
-    """The session's environment is now as ``described`` (the dict
-    `environment_column` reads back), its attachment under the generation it
-    names. A session attached to none is attached to a new environment
-    ``where`` says; ``where`` given for one already attached moves its
-    environment there."""
+async def attach(db: AsyncSession, session_id: uuid.UUID, described: dict) -> None:
+    """The environment the session is attached to is now as ``described``
+    (the dict `environment_column` reads back), and the session's
+    attachment carries the generation and setup digest it names. A session
+    attached to none is `settle`d first; this is a caller's mistake."""
     current = await db.scalar(
         select(EnvironmentAttachment).where(
             EnvironmentAttachment.session_id == session_id
         )
     )
-    environment = (
-        await db.get(Environment, current.environment_id)
-        if current is not None
-        else None
-    )
-    if environment is None:
-        if where is None:
-            # i18n-exempt: developer miswiring, not a refusal a reader can act on
-            raise ValueError("an environment is created only where it is placed")
-        environment = Environment(
-            topic_id=where.topic_id, project_id=where.project_id, choice=where.choice
-        )
-        db.add(environment)
-    if where is not None:
-        environment.topic_id = where.topic_id
-        environment.project_id = where.project_id
-        environment.choice = where.choice
-        environment.host_id = where.host_id
-        environment.sandbox_home_id = where.sandbox_home_id
-    _write(environment, described)
-    await db.flush()
     if current is None:
-        current = EnvironmentAttachment(
-            id=session_id,
-            session_id=session_id,
-            environment_id=environment.id,
-            generation=described["generation"],
-        )
-        db.add(current)
+        # i18n-exempt: developer miswiring, not a refusal a reader can act on
+        raise ValueError("a session is settled in an environment before it is placed")
+    environment = await db.get(Environment, current.environment_id)
+    assert environment is not None  # the attachment's key
+    environment_rows.write(environment, described)
     current.generation = described.get("generation") or current.generation
     current.setup_digest = described.get("setup_digest")
     await db.flush()
@@ -397,9 +420,11 @@ async def _environment_of(
 
 
 async def _let_go(db: AsyncSession, session_id: uuid.UUID, *, keep: bool) -> None:
-    """End the session's attachment. The environment goes with it unless
-    ``keep`` (its directories on a person's machine, which the cleanup still
-    removes) or another session is still attached to it."""
+    """End the session's attachment. The environment goes with it when
+    nobody is left in it and no conversation points to it, unless ``keep``
+    (its directories on a person's machine, which the cleanup still
+    removes). A pointed one stays, with or without a sandbox, for the next
+    to attach to find."""
     environment = await _environment_of(db, session_id)
     await db.execute(
         delete(EnvironmentAttachment).where(
@@ -409,14 +434,7 @@ async def _let_go(db: AsyncSession, session_id: uuid.UUID, *, keep: bool) -> Non
     if environment is None or keep:
         await db.flush()
         return
-    others = await db.scalar(
-        select(EnvironmentAttachment.id)
-        .where(EnvironmentAttachment.environment_id == environment.id)
-        .limit(1)
-    )
-    if others is None:
-        await db.delete(environment)
-    await db.flush()
+    await environment_rows.forget_if_unused(db, environment.id)
 
 
 async def detach(
@@ -425,23 +443,27 @@ async def detach(
     *,
     keep: bool = False,
     left_host: uuid.UUID | None = None,
+    another: bool = False,
 ) -> None:
     """The session leaves its environment for another: nothing minted for its
     attachment acts for it any more; ``keep`` leaves the environment for the
     cleanup to remove its directories on a person's machine; and
-    ``left_host`` is the host its conversation asked to be moved off. Whatever
-    its agent was owed about the environment it left is dropped on purpose:
-    it describes a place the agent no longer works in."""
+    ``left_host`` is the host its conversation asked to be moved off.
+    ``another``: it asked for another environment of the choice it already
+    has — then the conversation stops pointing to the one it is leaving, so
+    the next to attach with the default gets a new one, while whoever else
+    is in the old one stays until their next attach. Whatever its agent was
+    owed about the environment it left is dropped on purpose: it describes a
+    place the agent no longer works in."""
+    if left_host is not None or another:
+        leaving = await _environment_of(db, row.id)
+        pointer = await environment_rows.pointer(db, row.conversation_id)
+        if left_host is not None:
+            pointer.left_host_id = left_host
+        if another and leaving is not None and pointer.environment_id == leaving.id:
+            pointer.environment_id = None
+        await db.flush()
     await _let_go(db, row.id, keep=keep)
-    if left_host is not None:
-        await db.execute(
-            insert(ConversationEnvironment)
-            .values(conversation_id=row.conversation_id, left_host_id=left_host)
-            .on_conflict_do_update(
-                index_elements=[ConversationEnvironment.conversation_id],
-                set_={"left_host_id": left_host},
-            )
-        )
     row.environment_notice = None
 
 
@@ -452,24 +474,43 @@ async def unattach(db: AsyncSession, session_id: uuid.UUID) -> None:
     await _let_go(db, session_id, keep=False)
 
 
-async def left_host_of(db: AsyncSession, conversation_id: uuid.UUID) -> str | None:
-    """The host this conversation asked to be moved off and has not been
-    placed off since."""
-    found = await db.scalar(
-        select(ConversationEnvironment.left_host_id).where(
-            ConversationEnvironment.conversation_id == conversation_id
+def _pointers_of(environment_id: uuid.UUID) -> ColumnElement[bool]:
+    """The pointers of the conversations working in the environment: the one
+    that points to it, and those of the sessions attached to it."""
+    return (ConversationEnvironment.environment_id == environment_id) | (
+        ConversationEnvironment.conversation_id.in_(
+            select(AgentSession.conversation_id)
+            .join(
+                EnvironmentAttachment,
+                EnvironmentAttachment.session_id == AgentSession.id,
+            )
+            .where(EnvironmentAttachment.environment_id == environment_id)
         )
+    )
+
+
+async def left_host_of(db: AsyncSession, environment_id: uuid.UUID) -> str | None:
+    """The host a conversation working in this environment asked to be
+    moved off, and has not been placed off since."""
+    found = await db.scalar(
+        select(ConversationEnvironment.left_host_id)
+        .where(
+            _pointers_of(environment_id),
+            ConversationEnvironment.left_host_id.is_not(None),
+        )
+        .limit(1)
     )
     return str(found) if found else None
 
 
-async def placed_off(db: AsyncSession, conversation_id: uuid.UUID) -> None:
-    """The conversation was placed somewhere again: the host it asked to be
-    moved off no longer matters. Written only when there is one to forget."""
+async def placed_off(db: AsyncSession, environment_id: uuid.UUID) -> None:
+    """The environment was placed somewhere again: the host its
+    conversations asked to be moved off no longer matters. Written only when
+    there is one to forget."""
     await db.execute(
         update(ConversationEnvironment)
         .where(
-            ConversationEnvironment.conversation_id == conversation_id,
+            _pointers_of(environment_id),
             ConversationEnvironment.left_host_id.is_not(None),
         )
         .values(left_host_id=None)
@@ -477,16 +518,9 @@ async def placed_off(db: AsyncSession, conversation_id: uuid.UUID) -> None:
 
 
 async def _release(db: AsyncSession, session_id: uuid.UUID, device_id: str | None):
-    """The session's environment, if on ``device_id``, is released: checked
-    by nobody since, and the claim of an install that was running on it
-    ended with it."""
     environment = await _environment_of(db, session_id)
-    if environment is not None and environment.device_id == device_id:
-        environment.status = RELEASED
-        environment.verified_at = None
-        environment.claim = None
-        environment.claim_until = None
-        await db.flush()
+    if environment is not None:
+        await environment_rows.release(db, environment.id, device_id)
 
 
 async def lose(
@@ -523,39 +557,6 @@ def take_notice(row: AgentSession) -> Notice:
     if owed.owed:
         row.environment_notice = None
     return owed
-
-
-async def unchecked(db: AsyncSession, session_id: uuid.UUID) -> None:
-    """The environment's executor is to be checked whole before it is handed
-    out again (``verified_at`` dropped)."""
-    environment = await _environment_of(db, session_id)
-    if environment is not None and environment.verified_at is not None:
-        environment.verified_at = None
-        await db.flush()
-
-
-async def distrust(
-    db: AsyncSession, session_id: uuid.UUID, generation: str | None
-) -> None:
-    """A call on the session's environment failed on the machine's side: the
-    next request for it checks it whole. Only what says the environment was
-    checked is written, and only while the session is attached under
-    ``generation`` — the execution route calls this, served by the device
-    connection owner."""
-    await db.execute(
-        update(Environment)
-        .where(
-            Environment.id
-            == select(EnvironmentAttachment.environment_id)
-            .where(
-                EnvironmentAttachment.session_id == session_id,
-                EnvironmentAttachment.generation == generation,
-            )
-            .scalar_subquery(),
-            Environment.verified_at.is_not(None),
-        )
-        .values(verified_at=None)
-    )
 
 
 async def environment_of_conversation(

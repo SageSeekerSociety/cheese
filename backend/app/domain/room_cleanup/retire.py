@@ -31,10 +31,10 @@ from app.domain.agent.device_storage import (
     transcripts_upload_url,
 )
 from app.domain.agent.models import AgentTurn
-from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room
 from app.domain.device.wiring import sql_device_service
+from app.domain.environment import services as environment_rows
 from app.domain.machine.services import HostPool
 from app.domain.repository import service as ws
 from app.domain.room_task.services import TaskService
@@ -217,7 +217,7 @@ async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[d
     )
     entries = {}
     devices = sql_device_service(session)
-    for held in await attachments.environments_held(
+    for held in await environment_rows.environments_held(
         session, room_id=operation.topic_id
     ):
         resource_id = held.resource_id

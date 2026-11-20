@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.environment import services as environment_rows
 from app.domain.environment.models import (
     READY,
     ConversationEnvironment,
@@ -22,6 +23,7 @@ from app.domain.environment.models import (
     EnvironmentAttachment,
 )
 from app.domain.machine import holder as holders
+from app.domain.machine.repositories import CloudHostRepository
 from app.domain.topic.models import Topic
 
 #: The lease keys that are a column of the environment or of the attachment,
@@ -84,12 +86,7 @@ async def give_environment(
             host_id=host_id,
             sandbox_home_id=sandbox_home_id,
             resource_id=resource,
-            choice=choice
-            or (
-                {"kind": "sandbox", "spec": "standard"}
-                if lease.get("own")
-                else {"kind": "self_hosted", "device_id": lease.get("device_id", "")}
-            ),
+            choice=choice or await _choice_of(db, session, holder, lease),
             room_resource_id=lease.get("room_resource_id") or generation,
             executor={k: v for k, v in lease.items() if k not in NOT_EXECUTOR},
             status=lease.get("status", READY),
@@ -126,6 +123,44 @@ async def give_environment(
     return attachment
 
 
+async def _choice_of(db: AsyncSession, session: AgentSession, holder, lease) -> dict:
+    """The choice an environment given to ``session`` is of: the session's
+    own, as its next call works it out, so that call finds this one."""
+    if holder is not None:
+        return (await holder.environment(db, session)).model_dump()
+    if lease.get("own"):
+        return {"kind": "sandbox", "spec": "standard"}
+    return {"kind": "self_hosted", "device_id": lease.get("device_id", "")}
+
+
+async def unplaced_environment(
+    db: AsyncSession, session: AgentSession, *, pointed: bool = False
+) -> uuid.UUID:
+    """The environment ``session`` is attached to, made (on no machine yet,
+    of the session's own choice) and attached if it has none: what a test of
+    the pool places. Flushes; the caller commits."""
+    held = await attachments.attachment_of(db, session.id)
+    if held is not None and held.environment_id is not None:
+        return held.environment_id
+    holder_id = await holders.holder_of(db, session.conversation_id)
+    holder = await holders.look(db, holder_id)
+    assert holder is not None
+    choice = (await holder.environment(db, session)).model_dump()
+    environment = await attachments.settle(
+        db,
+        session,
+        choice=choice,
+        default=choice if pointed else None,
+        where=environment_rows.Where(
+            topic_id=holder_id,
+            project_id=holder.project_id,
+            generation=holder.generation,
+            choice=choice,
+        ),
+    )
+    return environment.id
+
+
 async def environment_of(db: AsyncSession, session_id: uuid.UUID) -> dict | None:
     """The environment a session's next call works in, as the platform reads
     it (`attachment.attachment_of`); None while it is attached to none."""
@@ -138,7 +173,17 @@ async def change_environment(
 ) -> None:
     """Make the environment a session is attached to read as ``lease`` (a
     test standing in for what an install or a sweep would have left there).
-    Flushes; the caller commits."""
+    A lease that does not say which directory it is keeps the
+    environment's. Flushes; the caller commits."""
+    held = await attachments.attachment_of(db, session_id)
+    if held is not None and held.environment_id is not None:
+        current = await db.get(Environment, held.environment_id)
+        assert current is not None
+        lease = {
+            "resource_id": current.resource_id,
+            "room_resource_id": current.room_resource_id,
+            **lease,
+        }
     await attachments.attach(db, session_id, lease)
 
 
@@ -172,3 +217,21 @@ async def attach_anew(db: AsyncSession, session: AgentSession, lease: dict, **gi
     the one it was attached to (`give_environment` takes ``given``)."""
     await attachments.unattach(db, session.id)
     return await give_environment(db, session, lease, **given)
+
+
+async def works_in(db: AsyncSession, session_id: uuid.UUID, home) -> uuid.UUID:
+    """Make the sandbox ``home`` (a ``SandboxHome`` just added) the one the
+    session's environment names, as a placement leaves it; an environment
+    of its own is made for a session attached to none. Flushes; the caller
+    commits. Answers the environment."""
+    await db.flush()
+    held = await attachments.attachment_of(db, session_id)
+    if held is not None and held.environment_id is not None:
+        environment_id = held.environment_id
+    else:
+        row = await db.get(AgentSession, session_id)
+        assert row is not None
+        environment_id = await unplaced_environment(db, row)
+    await CloudHostRepository(db).name_home(environment_id, home)
+    await db.flush()
+    return environment_id

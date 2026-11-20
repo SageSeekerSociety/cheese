@@ -51,7 +51,7 @@ from app.core.config import settings
 from app.core.db import SessionFactory
 from app.domain.agent.device_hub import device_hub
 from app.domain.machine import holder as holders
-from app.domain.machine import lifecycle, readings
+from app.domain.machine import lifecycle, occupants, readings
 from app.domain.machine.lifecycle import STOP_HOLD
 from app.domain.machine.models import CloudHost, SandboxHome
 from app.domain.machine.repositories import CloudHostRepository
@@ -152,7 +152,7 @@ class DiskGuard:
                 SandboxHome.id,
                 SandboxHome.project_id,
                 SandboxHome.resource_id,
-                SandboxHome.session_id,
+                occupants.a_session_in(SandboxHome.id).label("session_id"),
                 SandboxHome.topic_id,
                 SandboxHome.stopped_at,
                 SandboxHome.active_at,

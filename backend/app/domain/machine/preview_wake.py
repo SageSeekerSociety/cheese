@@ -35,10 +35,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.redis import get_redis_client
 from app.domain.agent.device_hub import device_hub
+from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.models import AgentSession
-from app.domain.machine import lifecycle
+from app.domain.machine import lifecycle, occupants
 from app.domain.machine.models import SandboxHome
-from app.domain.machine.repositories import CloudHostRepository
 from app.domain.machine.services import ACTIVE_STEP, HostPool
 from app.domain.machine.session_work import _session_author
 from app.domain.project.services import ProjectService
@@ -99,7 +99,7 @@ async def has_sandbox(db: AsyncSession, session_id: uuid.UUID) -> bool:
 
     A home that is on its way out (``stopped_at`` set) counts as gone: what it
     held is already being taken apart, so waking nothing would help."""
-    home = await CloudHostRepository(db).current_home(session_id)
+    home = await occupants.home_of(db, session_id)
     # A parked one runs nothing to wake: its session starts it again.
     return home is not None and home.stopped_at is None and home.parked_at is None
 
@@ -161,7 +161,7 @@ async def touch_preview_activity(
             await db.execute(
                 update(SandboxHome)
                 .where(
-                    SandboxHome.session_id == session_row.id,
+                    SandboxHome.id == occupants.home_of_session_id(session_row.id),
                     SandboxHome.stopped_at.is_(None),
                     or_(
                         SandboxHome.active_at.is_(None),
@@ -191,6 +191,15 @@ async def touch_preview_activity(
         return []
 
 
+async def _mark_awake(db: AsyncSession, hub, session_id: uuid.UUID):
+    """`HostPool.mark_awake` for the environment the session works in; None
+    when it works in none."""
+    held = await attachments.attachment_of(db, session_id)
+    if held is None or held.environment_id is None:
+        return None
+    return await HostPool(db, hub=hub).mark_awake(held.environment_id)
+
+
 def schedule_preview_thaw(
     bind, *, session_id: uuid.UUID, hub=None
 ) -> asyncio.Task[bool]:
@@ -218,7 +227,7 @@ async def thaw_preview_on_machine(bind, *, session_id: uuid.UUID, hub=None) -> b
     hub = hub or device_hub
     try:
         async with AsyncSession(bind, expire_on_commit=False) as db:
-            marked = await HostPool(db, hub=hub).mark_awake(session_id)
+            marked = await _mark_awake(db, hub, session_id)
             await db.commit()
             if marked is None:
                 return False
@@ -257,11 +266,7 @@ async def wake_for_files(bind, conversation_id: uuid.UUID, *, hub=None) -> None:
         await db.execute(
             update(SandboxHome)
             .where(
-                SandboxHome.session_id.in_(
-                    select(AgentSession.id).where(
-                        AgentSession.conversation_id == conversation_id
-                    )
-                ),
+                SandboxHome.id.in_(occupants.homes_in_conversation(conversation_id)),
                 SandboxHome.stopped_at.is_(None),
                 SandboxHome.frozen_at.is_(None),
                 SandboxHome.active_at <= now - ACTIVE_STEP,
@@ -271,8 +276,8 @@ async def wake_for_files(bind, conversation_id: uuid.UUID, *, hub=None) -> None:
         await db.commit()
         frozen = list(
             await db.scalars(
-                select(AgentSession.id)
-                .join(SandboxHome, SandboxHome.session_id == AgentSession.id)
+                occupants.sessions_with_homes()
+                .with_only_columns(AgentSession.id)
                 .where(
                     AgentSession.conversation_id == conversation_id,
                     SandboxHome.frozen_at.is_not(None),
@@ -288,8 +293,8 @@ async def is_frozen(db: AsyncSession, conversation_id: uuid.UUID) -> bool:
     """Whether the sandbox holding a conversation's working copy is frozen: a
     request sent to it would wait out its deadline, and asking costs no thaw."""
     found = await db.scalar(
-        select(AgentSession.id)
-        .join(SandboxHome, SandboxHome.session_id == AgentSession.id)
+        occupants.sessions_with_homes()
+        .with_only_columns(AgentSession.id)
         .where(
             AgentSession.conversation_id == conversation_id,
             SandboxHome.frozen_at.is_not(None),
@@ -313,7 +318,7 @@ async def wake_preview_on_machine(
     hub = hub or device_hub
     try:
         async with AsyncSession(bind, expire_on_commit=False) as db:
-            marked = await HostPool(db, hub=hub).mark_awake(session_id)
+            marked = await _mark_awake(db, hub, session_id)
             await db.commit()
             if marked is None:
                 return False

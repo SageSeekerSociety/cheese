@@ -15,6 +15,7 @@ transaction has committed.
 
 import uuid
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import say
@@ -23,6 +24,7 @@ from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent_session.models import AgentSession
 from app.domain.block.schemas import BlockOut
 from app.domain.conversation.services import room_of
+from app.domain.machine import occupants
 from app.domain.machine.models import SandboxHome
 from app.domain.repository.kept_work import keeps_work
 from app.domain.run_record.service import FRAME as RUN_RECORD_FRAME
@@ -34,8 +36,9 @@ async def _conversation(session: AsyncSession, home: SandboxHome) -> uuid.UUID:
     """The conversation the sandbox is for: its session's. A task's session
     works in the task's own conversation, while ``home.topic_id`` names the
     room its machine belongs to."""
-    if home.session_id is not None:
-        owner = await session.get(AgentSession, home.session_id)
+    owner_id = await session.scalar(select(occupants.a_session_in(home.id)))
+    if owner_id is not None:
+        owner = await session.get(AgentSession, owner_id)
         if owner is not None:
             return owner.conversation_id
     return home.topic_id
