@@ -102,7 +102,7 @@ test.describe("Login", () => {
     // the assertions around it.
     await expect(page).toHaveURL(/\/projects\//, { timeout: 30_000 });
     await expect(
-      page.getByTestId("sidebar-frame-top"),
+      page.getByTestId("sidebar-home"),
     ).toBeVisible();
     const current = await page.request.get("/api/users/me/consents", {
       headers: {

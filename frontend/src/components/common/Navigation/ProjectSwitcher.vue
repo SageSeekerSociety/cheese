@@ -1,7 +1,7 @@
 <template>
   <!-- 侧栏头只写你在哪儿：项目里是这个项目的头像、名字和团队，首页一带是「首页」。点它
-       换项目。侧栏头上原来那一行「首页」2026-11-19 删了（蔡松洋定）：回首页走这一份菜单
-       最上面那一行「首页」，命令面板里也搜得到「待办」。 -->
+       换项目。项目、空间、后台里回首页走侧栏头下面那一行「首页」（SidebarFrameTop）；首页一带
+       不画那一行，待办是目录自己那一行。 -->
   <div class="sidebar-header frame-top" data-testid="sidebar-frame-top">
     <v-menu v-model="open" location="bottom start" :offset="6" :close-on-content-click="false">
       <template #activator="{ props: menuProps }">
@@ -186,7 +186,7 @@ const projectItems = computed(() => projectItemsOf(items.value))
 const path = computed(() => navigation?.route?.path ?? '')
 const current = computed(() => projectItems.value.find((i) => i.match?.(path.value)) ?? null)
 const onHome = computed(() => !!homeItem.value?.match?.(path.value))
-// 只在项目里算：菜单最上面那一行「首页」记的是全部，在首页一带再写一遍是重复。
+// 只在项目里算：首页那一行上的数是全部，在首页一带再写一遍是重复。
 const othersAwaiting = computed(() =>
   current.value ? projectItems.value.filter((i) => i !== current.value).reduce((sum, i) => sum + (i.badge ?? 0), 0) : 0
 )

@@ -1,10 +1,9 @@
 // In the desktop app the page opens behind a boot splash (index.html): the
 // home tile, large, in the middle of the window, where the app's own first page
 // left it. Once the app is on screen the tile shrinks into the home mark in the
-// sidebar (the head's mark on the home pages), and the page shows through
-// around it. Without a home mark to land in (signed out, narrow window, or a
-// project page — the sidebar's 首页 row was removed on 2026-11-19) the splash
-// fades.
+// sidebar (the head on the home page, else the 首页 row; the top bar when there
+// is no sidebar), and the page shows through around it. Without a home mark to
+// land in (signed out, narrow window) the splash fades.
 
 const LAND_MS = 360
 const FADE_MS = 150
