@@ -14,6 +14,7 @@ import TaskJudgeResult from '../TaskJudgeResult.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseField from '@/components/base/BaseField.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
+import { suiteIncomplete } from '@/lib/taskTestSuite'
 import { TEST_TRIAL } from '@/lib/testTrial'
 
 const open = defineModel<boolean>({ default: false })
@@ -62,7 +63,8 @@ watch(open, (shown) => {
 
 const inFlight = (state: string | undefined) => state === 'queued' || state === 'running'
 const ready = computed(
-  () => files.value.some((file) => file.path.trim() && file.content.trim()) && !!props.suite.runCmd.trim()
+  // 三种形态各自缺什么由 `suiteIncomplete` 判：命令判分没有运行命令，要的是命令。
+  () => files.value.some((file) => file.path.trim() && file.content.trim()) && !suiteIncomplete(props.suite)
 )
 const busy = computed(() => starting.value || inFlight(trial.value?.state))
 
@@ -135,7 +137,13 @@ function start() {
       <p v-if="error" class="ttt__error" role="alert" data-testid="task-test-trial-error">{{ error }}</p>
       <section v-if="trial" class="ttt__result" :aria-label="t('tasks.judge.trial.result')">
         <span class="ttt__label">{{ t('tasks.judge.trial.result') }}</span>
-        <TaskJudgeResult :run="trial" teacher :slowest-ms="trial.slowestMs" :time-limit-ms="trial.timeLimitMs" />
+        <TaskJudgeResult
+          :run="trial"
+          teacher
+          :kind="suite.kind"
+          :slowest-ms="suite.kind === 'IO' ? trial.slowestMs : null"
+          :time-limit-ms="suite.kind === 'IO' ? trial.timeLimitMs : null"
+        />
       </section>
     </div>
   </AdaptiveDialog>

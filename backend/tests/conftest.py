@@ -1309,7 +1309,7 @@ def stub_project_forge(monkeypatch, tmp_path):
     """
     from app.domain.project import forge
     from app.domain.project import starter as starter_code
-    from app.domain.repository import forge_files
+    from app.domain.repository import forge_files, kept_work
     from app.domain.review import forge_clients
     from tests.support import git_store
 
@@ -1401,6 +1401,29 @@ def stub_project_forge(monkeypatch, tmp_path):
         if route.startswith("/git/commits/") and route.endswith(".diff"):
             revision = route.removeprefix("/git/commits/").removesuffix(".diff")
             return git_store.git(repo, "show", "--format=", revision)
+        if route.startswith("/git/commits/"):
+            # As Forgejo: one commit by sha or full ref name; 404 (None) when
+            # it names none.
+            found = git_store.run(
+                [
+                    "git",
+                    "show",
+                    "-s",
+                    "--format=%H%n%P%n%cI",
+                    route.removeprefix("/git/commits/") + "^{commit}",
+                ],
+                repo,
+                20,
+                None,
+            )
+            if found.returncode != 0:
+                return None
+            sha, parents, date = found.stdout.splitlines()[:3]
+            return {
+                "sha": sha,
+                "parents": [{"sha": parent} for parent in parents.split()],
+                "commit": {"committer": {"date": date}},
+            }
 
         def commits(revision, *, limit=50, only=None):
             # As GitHub: `path` keeps the commits that changed that file.
@@ -1544,6 +1567,8 @@ def stub_project_forge(monkeypatch, tmp_path):
     monkeypatch.setattr(forge_files, "branch_head", branch_head)
     monkeypatch.setattr(forge_files, "repository_data", repository_data)
     monkeypatch.setattr(forge, "repository_data", repository_data)
+    monkeypatch.setattr(kept_work, "repository_data", repository_data)
+    monkeypatch.setattr(kept_work, "branch_head", branch_head)
     monkeypatch.setattr(forge_clients, "compare_status", compare_status)
 
 

@@ -24,7 +24,6 @@
   "taskFilePathOutside": "文件路径必须在任务工作目录内",
   "taskFileReadBeforeSave": "请先读取文件，再保存修改",
   "taskFinishedFilesReadOnly": "任务已经结束，文件只读",
-  "taskMachineFailed": "任务的环境没能完成这次操作：{error}。可以查看已提交版本",
   "taskMachineNotResponding": "任务的环境暂时无法响应，重新读取文件后再操作；也可以查看已提交版本",
   "taskNoOwnFileVersion": "任务没有独立的文件版本",
   "taskNothingCommitted": "这个任务还没有提交文件",

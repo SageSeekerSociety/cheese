@@ -171,3 +171,39 @@ def test_renaming_the_repository_item_keeps_the_next_merge_on_it(client):
     assert again.status_code == 200, again.text
     assert again.json()["data"]["artifact"]["id"] == aid
     assert _manifest(client, pid) == [("知是平台后端", 1)]
+
+
+def _rename_project(client, project_id: str, name: str):
+    r = client.put(
+        f"/projects/{project_id}/name",
+        json={"name": name},
+        headers=session_auth_headers("owner"),
+    )
+    assert r.status_code == 200, r.text
+
+
+def test_the_repository_line_follows_the_project_when_it_is_renamed(client):
+    """那一项的名字是照项目名起的，没有人起过它：项目改名，它跟着改。"""
+    pid = _project(client, "白川理音的项目")
+    assert _merge_card(client, _room(client, pid)).status_code == 200
+
+    _rename_project(client, pid, "数据结构复习")
+
+    assert _manifest(client, pid) == [("数据结构复习", 0)]
+
+
+def test_a_repository_line_someone_named_keeps_its_name(client):
+    """人给那一项起过名字，项目再改名就不动它。"""
+    pid = _project(client, "白川理音的项目")
+    card = _merge_card(client, _room(client, pid))
+    artifact_id = card.json()["data"]["artifact"]["id"]
+    named = client.patch(
+        f"/projects/{pid}/artifacts/{artifact_id}",
+        json={"name": "课程设计代码"},
+        headers=session_auth_headers("owner"),
+    )
+    assert named.status_code == 200, named.text
+
+    _rename_project(client, pid, "数据结构复习")
+
+    assert _manifest(client, pid) == [("课程设计代码", 0)]

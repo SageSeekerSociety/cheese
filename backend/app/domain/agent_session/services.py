@@ -13,7 +13,12 @@ from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent_session.models import LOST_KEY, AgentSession, SessionPlace
+from app.domain.agent_session.models import (
+    LOST_KEY,
+    PARKED_KEY,
+    AgentSession,
+    SessionPlace,
+)
 from app.domain.agent_session.repositories import (
     AgentReadRepository,
     AgentSessionRepository,
@@ -248,8 +253,10 @@ class AgentSessionService:
         self, conversation_id: uuid.UUID, generation: str
     ) -> tuple[dict, bool] | None:
         """The machine lease holding this task's (or 支线's) working copy on the
-        room's current ``generation``, and whether its cloud sandbox has been
-        destroyed since (``LOST_KEY``).
+        room's current ``generation``, and whether nothing on it answers for
+        that copy now: its cloud sandbox was destroyed (``LOST_KEY``), or
+        parked with its processes stopped (``PARKED_KEY``). Either way the
+        session's next tool call places it again.
 
         Each session works in a home of its own (``SandboxHome``), so a
         task's files are in its own session's home and in no other session's
@@ -277,7 +284,10 @@ class AgentSessionService:
                     or lease.get("home")
                 )
             ):
-                return lease, bool((row.execution_request or {}).get(LOST_KEY))
+                request = row.execution_request or {}
+                return lease, bool(
+                    request.get(LOST_KEY) or request.get(PARKED_KEY) is not None
+                )
         return None
 
     async def harness_in_room(self, room_id: uuid.UUID) -> str | None:

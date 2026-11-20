@@ -19,6 +19,11 @@
 // free zone when it is a room file the preview can draw, a read-only tab of the
 // project's code when no task worktree holds it, the 改动 tab otherwise.
 //
+// 桌面上（`layout` 给了）每一格是外壳布局区里的一块：页签条是布局区画的，一格可以拖到别处、
+// 和对话并排；这里只把每一格的内容传送到布局区给的落点（`WorkPane`），并把每一格的名字、
+// 图标、信号交给页面（`tabMeta`）。手机上、平板的浮层里、频道里打开的一件任务里，这一栏
+// 自己画页签条，一次一格。
+//
 // 页签分两段。固定区（概览 / 现场 / 改动 / 预览 / 例行事务）不能关，位置记忆来自这里。自由区是
 // 读者自己打开的那几份文件，可以关——变化是他自己做的，所以不算「页签自己出现和
 // 消失」。单击打开的那一格是临时的，下一次打开会换掉它；双击就固定下来。不这样的
@@ -32,28 +37,27 @@ import type { NavTarget } from '../lib/navTarget'
 import type { PreviewLocate, SubmitPreviewQuestion } from '../lib/previewQuestion'
 import type { TaskState } from '../lib/taskState'
 import type { CardPhase } from '../lib/topicState'
+import type { LayoutPanelSignal } from './layout-area'
 import type { TabDef, TabKey } from './panels/panelTabList'
 import type PanelDocHostComponent from './work/PanelDocHost.vue'
+import type { WorkLayout, WorkTabMeta } from './work/workLayout'
 
-import { computed, defineAsyncComponent, nextTick, ref, useId, watch } from 'vue'
-import { useElementSize } from '@vueuse/core'
+import { computed, defineAsyncComponent, nextTick, ref, useId, useSlots, watch } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 
 import { provideAcceptCard } from '../composables/useAcceptCard'
-import { usePanelSplit } from '../composables/usePanelSplit'
 import { useRoomFileProbe } from '../composables/useRoomFileProbe'
 import { useTopicMemory } from '../composables/useTopicMemory'
 import { useTopicWorkSummary } from '../composables/useTopicWorkSummary'
-import { previewCanShowInRoom } from '../lib/fileKind'
+import { fileIcon, previewCanShowInRoom } from '../lib/fileKind'
 import { whenIdle } from '../lib/idle'
 import { tabFile } from '../lib/viewingContext'
 import { withViewTransition } from '../lib/viewTransition'
 
 import ErrorBoundary from './common/ErrorBoundary.vue'
 import DocumentActions from './library/DocumentActions.vue'
-// 这一屏有哪几格（共用表 + 只有产品有的「例行事务」）。这个文件里 `panelTabs` 已经
-// 是「页签条要的那份数据」了，所以从 `workPanelTabs` 取。
-import { workPanelTabs } from './panels/panelTabList'
+// 这一屏有哪几格（共用表 + 只有产品有的那几格，按频道 / 任务 / 打开的任务挑）。
+import { roomTabs } from './panels/panelTabList'
 import PanelTabs, { type PanelTab } from './panels/PanelTabs.vue'
 import { confirmAnnotationDiscard } from './panels/preview/annotationDiscard'
 import { usePreviewPointer } from './panels/preview/usePreviewPointer'
@@ -63,11 +67,12 @@ import DeliveryReviewHead from './work/DeliveryReviewHead.vue'
 import PanelChangesHost from './work/PanelChangesHost.vue'
 import PanelPreviewHost from './work/PanelPreviewHost.vue'
 import PanelSiteHost from './work/PanelSiteHost.vue'
+import { workPaneId } from './work/workLayout'
+import WorkPane from './work/WorkPane.vue'
 import ProjectFileTab from './ProjectFileTab.vue'
 import TopicAcceptCard from './TopicAcceptCard.vue'
 
 import { useCommands } from '@/commands'
-import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
@@ -153,6 +158,8 @@ const props = withDefaults(
     // 频道里打开的几件任务：固定区右边一件一格能关的页签，写着任务名，内容由页面从
     // `#delivery` 插槽（带着 `id`）递进来；`dot` 是它的交付到了、还没人点开过。
     deliveries?: { id: string; title: string; dot?: boolean }[]
+    // 桌面：每一格是外壳布局区里的一块（见文件头）。不给就自己排页签。
+    layout?: WorkLayout | null
   }>(),
   {
     taskId: null,
@@ -179,6 +186,7 @@ const props = withDefaults(
     reviewReload: 0,
     askReturn: null,
     deliveries: () => [],
+    layout: null,
   }
 )
 // 审阅时这一栏的采纳卡（见 `review`）。一栏一份，换一件任务就换一栏（页面按任务给 key）。
@@ -217,6 +225,7 @@ const reviewDock = computed(
     (props.reviewHead ? !!reviewCard.pendingCard.value && reviewCard.showRejectInput.value : active.value !== 'chat')
 )
 
+const slots = useSlots()
 const emit = defineEmits<{
   /** `blockId`：要定位到的那条消息（「被引用」里点的一条对话）。 */
   (e: 'open-topic', topicId: string, blockId?: string): void
@@ -335,11 +344,19 @@ function ensureFileFromUrl(key: string | null) {
 async function setTab(key: string, opts: { guard?: boolean; announce?: boolean } = {}): Promise<boolean> {
   if (key !== active.value && opts.guard !== false && !(await confirmAnnotationDiscard())) return false
   settled.value = true
+  // Asked again for the tab already chosen: its cell may be folded, hidden behind a
+  // maximized one or showing another tab, so the layout is asked again. A change of tab
+  // reaches the layout through the watch below.
+  if (key === active.value) props.layout?.show(key)
   active.value = key
   if (key === 'changes') markChangesSeen()
   if (opts.announce !== false) emit('update:tab', key)
   return true
 }
+
+// 桌面上每一格是布局区里的一块：此刻在看哪一格，不管是谁定的（地址、点了页签、关掉一格后
+// 回到来处、规则的链接），布局区都把它翻到它那一格的前面，收着的那一格展开。
+watch(active, (key) => props.layout?.show(key))
 
 // 人点了一格页签：宽屏上内容区淡入淡出一下（lib/viewTransition.ts；窄屏走上面的
 // tabpane-in）。确认「放弃没发的批注」要在过渡之前问完，过渡里不能等人。
@@ -401,6 +418,27 @@ function show(k: string) {
   if (!mounted.value.has(k)) mounted.value = new Set(mounted.value).add(k)
 }
 watch(active, show)
+// 布局区里每一格自己显示：在屏幕上的那几格都挂上。
+watch(
+  () => [...(props.layout?.visible ?? [])],
+  (keys) => keys.forEach(show),
+  { immediate: true }
+)
+
+/** 这一格此刻看得见：布局区里看它那一格，自己排页签时看是不是选中的那一格。 */
+function shown(key: string): boolean {
+  return props.layout ? props.layout.visible.has(key) : active.value === key
+}
+/**
+ * 对话看不见时（它那一格被放大的格子盖住、或收着）采纳那一条贴在哪一格底下：读者此刻在看的那一格。
+ * 页面给 `dock` 插槽才有。
+ */
+const docked = computed(() => (props.layout && slots.dock && shown(active.value) ? active.value : null))
+
+/** 布局区给这一格的落点；自己排页签时没有。 */
+function target(key: string): HTMLElement | undefined {
+  return props.layout?.outlet(key)
+}
 watch(active, (now, before) => {
   if (isDelivery(now) && !isDelivery(before)) deliveryOrigin.value = before
 })
@@ -538,17 +576,7 @@ function hasContent(key: TabKey): boolean {
   return !!previewLatest.value
 }
 
-// 频道是人说话的地方，没有电脑在它名下干活：只有概览、支线、文件、例行事务。任务没有
-// 支线、文件和例行事务，其余几格都有。
-const CHANNEL_TABS: ReadonlySet<string> = new Set(['chat', 'overview', 'threads', 'files', 'routines'])
-const TASK_HIDDEN_TABS: ReadonlySet<string> = new Set(['routines', 'threads', 'files'])
-// 在频道里打开的一件任务：它的对话、改动、预览。
-const REVIEW_TABS: ReadonlySet<string> = new Set(['chat', 'changes', 'preview'])
-const tabs = computed(() =>
-  workPanelTabs(props.withChat || props.review).filter((tab) =>
-    props.review ? REVIEW_TABS.has(tab.key) : props.taskId ? !TASK_HIDDEN_TABS.has(tab.key) : CHANNEL_TABS.has(tab.key)
-  )
-)
+const tabs = computed(() => roomTabs({ withChat: props.withChat, review: props.review, task: !!props.taskId }))
 // 命令面板里「切到总览」这样的操作：页签有哪几格，这里说了算。
 useCommands(() =>
   (props.review ? [] : tabs.value).map((tab) => ({
@@ -592,19 +620,10 @@ function signalFor(key: TabKey): PanelTab['signal'] {
 const tabPanelId = `wp-panel-${useId()}`
 // 内容区在错误边界里面：某一格渲染出错时它会被换成兜底提示，那时页签不再指向它。
 const tabBodyRef = ref<HTMLElement | null>(null)
-const { width: bodyWidth } = useElementSize(tabBodyRef)
 const keyExists = (key: string) =>
   tabs.value.some((tab) => tab.key === key) ||
   (isDelivery(key) && props.deliveries.some((d) => deliveryKey(d.id) === key)) ||
   openFiles.value.some((f) => fileKey(f.path) === key)
-const {
-  split,
-  canSplit,
-  toggle: toggleSplit,
-  shown,
-  sideClass,
-  drop: dropSplit,
-} = usePanelSplit(active, { width: bodyWidth, phone: computed(() => props.withChat), exists: keyExists })
 const activeTabLabel = computed(() => {
   if (isDelivery(active.value)) return props.deliveries.find((d) => deliveryKey(d.id) === active.value)?.title
   return active.value.startsWith('file:')
@@ -625,7 +644,6 @@ const deliveryTabs = computed<PanelTab[]>(() =>
 // 一格任务页签的 ×：页面拿掉它；正看着它就去旁边那一格（右边，没有就左边），一格都不剩时
 // 回到来处（来处已经不在、或者没有来处时回到兜底那一格）。
 async function closeDelivery(key: string) {
-  dropSplit(key)
   const wasActive = active.value === key
   if (wasActive && !(await confirmAnnotationDiscard())) return
   const list = props.deliveries.map((d) => deliveryKey(d.id))
@@ -665,6 +683,57 @@ const panelTabs = computed<PanelTab[]>(() =>
     signal: signalFor(tab.key),
   }))
 )
+
+// ---- 布局区里每一格的页签：名字、图标、有没有东西、信号 ----
+/** 页签上写什么：文件写文件名，资料库文档写它的标题，技能写它的名字。 */
+function fileTabName(f: OpenFileTab): string {
+  if (f.skill) return f.skill.title || t('work.room.workCard.skill')
+  return f.document ? f.document.title || t('work.room.doc.untitled') : f.path.split('/').pop() || f.path
+}
+const asSignal = (signal: PanelTab['signal']): LayoutPanelSignal | undefined =>
+  !signal
+    ? undefined
+    : signal.kind === 'count'
+      ? { kind: 'count', count: signal.count ?? 0, fresh: signal.fresh }
+      : { kind: signal.kind }
+/** 固定区每一格，页面拿去交给布局区。 */
+const fixedMeta = computed<WorkTabMeta[]>(() =>
+  panelTabs.value.map((tab) => ({
+    key: tab.key,
+    title: tab.label,
+    icon: tab.icon,
+    faint: tab.empty,
+    hint: tab.title,
+    signal: asSignal(tab.signal),
+  }))
+)
+/** 自由区每一份：它们随读者打开、关掉而来去。 */
+const fileMeta = computed<WorkTabMeta[]>(() =>
+  openFiles.value.map((f) => ({
+    key: fileKey(f.path),
+    title: fileTabName(f),
+    icon: f.document ? 'mdi-file-document-outline' : f.skill ? 'mdi-lightbulb-outline' : fileIcon(f.path),
+    temporary: !f.pinned,
+  }))
+)
+
+/** 布局区里读者点了一格：它就是此刻在看的那一格（地址跟着走）。 */
+function activated(key: string) {
+  if (!keyExists(key) || key === active.value) return
+  settled.value = true
+  active.value = key
+  if (key === 'changes') markChangesSeen()
+  emit('update:tab', key)
+}
+/** 布局区里一格能关的页签（打开的任务、自由区的文件）被关掉了。 */
+function closeTab(key: string) {
+  if (isDelivery(key)) void closeDelivery(key)
+  else if (key.startsWith(FILE_TAB)) void closeFile(key.slice(FILE_TAB.length))
+}
+/** 自由区那一格被双击：留下来。 */
+function keepTab(key: string) {
+  if (key.startsWith(FILE_TAB)) pinFile(key.slice(FILE_TAB.length))
+}
 
 // Opening the topic: the address decides, 文档 when it says nothing. Baseline the
 // dot against whatever this topic already had, so opening a topic — including
@@ -723,6 +792,20 @@ watch(
     if (want === active.value) settled.value = true
     // 平板横放：挑中的那一格留着当「打开时看哪一格」，但不写地址（于是也不拉开浮层）。
     else setTab(want, { announce: !props.compact })
+  },
+  { immediate: true }
+)
+
+// 进了布局区：地址点名了哪一格就把它翻到前面；没点名就跟着那一格里此刻在前面的那一格走。
+watch(
+  () => !!props.layout,
+  (inLayout) => {
+    if (!inLayout || !props.layout) return
+    if (settled.value) props.layout.show(active.value)
+    else {
+      const front = [...props.layout.visible].find((key) => keyExists(key))
+      if (front) active.value = front
+    }
   },
   { immediate: true }
 )
@@ -870,7 +953,6 @@ async function closeFile(path: string) {
   const at = openFiles.value.findIndex((f) => f.path === path)
   if (at < 0) return
   const key = fileKey(path)
-  dropSplit(key)
   const wasActive = active.value === key
   if (wasActive && !(await confirmAnnotationDiscard())) return
   const next = openFiles.value.filter((f) => f.path !== path)
@@ -938,6 +1020,11 @@ defineExpose({
   siteBlock,
   previewShown,
   activeTab: () => active.value,
+  fixedMeta,
+  fileMeta,
+  activated,
+  closeTab,
+  keepTab,
 })
 </script>
 
@@ -962,199 +1049,225 @@ defineExpose({
         @open-task="taskId && emit('open-card', taskId)"
       />
       <PanelTabs
+        v-if="!layout"
         :tabs="panelTabs"
         :active="active"
         :files="openFiles"
         :phone="withChat"
         :panel-id="tabBodyRef ? tabPanelId : undefined"
-        :side="split"
         :closables="deliveryTabs"
         @select="selectTab"
         @close-tab="closeDelivery"
         @close-file="closeFile"
         @pin-file="pinFile"
       >
-        <template v-if="$slots['tab-actions'] || canSplit || split" #actions>
-          <BaseButton
-            v-if="canSplit || split"
-            size="sm"
-            :icon="split ? 'mdi-rectangle-outline' : 'mdi-view-split-vertical'"
-            data-testid="panel-split"
-            :aria-pressed="!!split"
-            :title="split ? t('work.room.panel.unsplit') : t('work.room.panel.split')"
-            :aria-label="split ? t('work.room.panel.unsplit') : t('work.room.panel.split')"
-            @click="toggleSplit"
-          /><slot name="tab-actions" />
-        </template>
+        <template v-if="$slots['tab-actions']" #actions><slot name="tab-actions" /></template>
       </PanelTabs>
 
       <!-- Panel content (not the tab strip) gets its own boundary: a tab that
            throws shows the fallback here while the strip stays usable.
-           resetKey = topic id, so switching topics recovers on its own. -->
+           resetKey = topic id, so switching topics recovers on its own.
+           桌面上每一格传送进布局区里它自己的那一块（WorkPane）；这里只剩它们的出处。 -->
       <ErrorBoundary variant="compact" :reset-key="topic.id">
         <div
           :id="tabPanelId"
           ref="tabBodyRef"
           class="tabbody"
-          :class="{ 'tabbody--phone': withChat, 'tabbody--review': review }"
-          role="tabpanel"
-          :aria-label="activeTabLabel"
+          :class="{ 'tabbody--phone': withChat, 'tabbody--review': review, 'tabbody--layout': !!layout }"
+          :role="layout ? undefined : 'tabpanel'"
+          :aria-label="layout ? undefined : activeTabLabel"
         >
           <!-- 对话这一格由 TopicView 填（它拿着 ChatPanel 的那一堆接线）。一直挂着
                而不是切走就卸载：卸掉会断掉连接、丢掉滚动位置。 -->
           <div v-if="withChat || review" v-show="active === 'chat'" class="tabpane-chat" :class="enterClass('chat')">
             <slot name="chat" />
           </div>
-          <div v-show="shown('overview')" class="tabpane-slot" :class="[enterClass('overview'), sideClass('overview')]">
+          <WorkPane
+            :target="target('overview')"
+            :pane-id="workPaneId('overview')"
+            :shown="shown('overview')"
+            :pane-class="enterClass('overview')"
+          >
             <slot name="overview" />
-          </div>
-          <div
-            v-if="!taskId"
-            v-show="shown('threads')"
-            class="tabpane-slot"
-            :class="[enterClass('threads'), sideClass('threads')]"
+            <template v-if="docked === 'overview'" #dock><slot name="dock" /></template>
+          </WorkPane>
+          <WorkPane
+            v-if="!taskId && tabs.some((tab) => tab.key === 'threads')"
+            :target="target('threads')"
+            :pane-id="workPaneId('threads')"
+            :shown="shown('threads')"
+            :pane-class="enterClass('threads')"
           >
             <slot name="threads" />
-          </div>
+            <template v-if="docked === 'threads'" #dock><slot name="dock" /></template>
+          </WorkPane>
           <template v-for="d in deliveries" :key="d.id">
-            <div
+            <WorkPane
               v-if="mounted.has(deliveryKey(d.id))"
-              v-show="shown(deliveryKey(d.id))"
-              class="tabpane-slot"
-              :class="[enterClass(deliveryKey(d.id)), sideClass(deliveryKey(d.id))]"
+              :target="target(deliveryKey(d.id))"
+              :pane-id="workPaneId(deliveryKey(d.id))"
+              :shown="shown(deliveryKey(d.id))"
+              :pane-class="enterClass(deliveryKey(d.id))"
             >
               <slot :id="d.id" name="delivery" />
-            </div>
+            </WorkPane>
           </template>
-          <PanelSiteHost
+          <WorkPane
             v-if="mounted.has('site')"
-            v-show="shown('site')"
-            ref="siteRef"
-            :class="[enterClass('site'), sideClass('site')]"
-            :agent-name="agentName"
-            :topic-id="conversationId"
-            :project-id="projectId"
-            :active="shown('site')"
-            :running-turns="siteTurns"
-            :refresh-tick="refreshTick"
-            :member-names="memberNames"
-            :working="working"
-            :activity="activity"
-            :agent-control="agentControl"
-            @open-file="openFile"
-            @open-topic="(id: string, block?: string) => emit('open-topic', id, block)"
-            @mention-click="emit('mention-click', $event)"
-          />
-          <PanelChangesHost
-            v-if="mounted.has('changes')"
-            v-show="shown('changes')"
-            ref="changesRef"
-            :class="[enterClass('changes'), sideClass('changes')]"
-            :topic-id="topicId"
-            :task-id="taskId"
-            :read-only="changesReadOnly"
-            :project-id="projectId"
-            :active="shown('changes')"
-            :refresh-tick="refreshTick"
-          />
-          <PanelPreviewHost
-            v-if="mounted.has('preview')"
-            v-show="shown('preview')"
-            :submit-question="submitQuestion"
-            :ask-personal="askPersonal"
-            :class="[enterClass('preview'), sideClass('preview')]"
-            :topic-id="conversationId"
-            :project-id="projectId"
-            :active="shown('preview')"
-            :refresh-tick="refreshTick"
-            :agent-name="agentName"
-            :members="members"
-            :agent-handle="agentHandle"
-            @loaded="markPreviewSeen"
-            @locate="emit('locate', $event)"
-            @open-file="openFileTab"
-            @mention-click="emit('mention-click', $event)"
-          />
-          <!-- 这个房间的规则：到点或发生某件事时它自己开工。取数在新的一轮结束时跟一次
-             （`refreshTick`）—— 芝士可能刚在房间里起草了一条。规则交回的结果文件点开
-             在这一格里（`openFile` 先认它是不是房间自己的文件，再挑开哪一格）。 -->
-          <RoomFilesPanelHost
-            v-if="mounted.has('files')"
-            v-show="shown('files')"
-            ref="roomFilesRef"
-            :class="[enterClass('files'), sideClass('files')]"
-            :topic-id="taskId ?? topicId"
-            :seats-only="!!topic?.members_only"
-            @open="openConversationFile"
-          />
-          <RoutinePanelHost
-            v-if="mounted.has('routines')"
-            v-show="shown('routines')"
-            :class="[enterClass('routines'), sideClass('routines')]"
-            :topic-id="topicId"
-            :project-id="projectId"
-            :room-title="topic?.title ?? ''"
-            :routine-id="routineId ?? null"
-            :refresh-tick="refreshTick"
-            :agent-name="agentName"
-            @open-file="openFile"
-          />
-          <template v-for="f in openFiles" :key="fileKey(f.path)">
-            <PanelDocHost
-              v-if="f.document && mounted.has(fileKey(f.path))"
-              v-show="shown(fileKey(f.path))"
-              :ref="(el: unknown) => keepDocRef(f.document!.id, el)"
-              :class="[enterClass(fileKey(f.path)), sideClass(fileKey(f.path))]"
-              :topic="null"
-              :document="{ ...f.document, projectId: projectId ?? topic?.project_id ?? '' }"
-              :activity-tick="activityTick"
+            :target="target('site')"
+            :pane-id="workPaneId('site')"
+            :shown="shown('site')"
+            :pane-class="enterClass('site')"
+          >
+            <PanelSiteHost
+              ref="siteRef"
               :agent-name="agentName"
-              :agent-handle="agentHandle"
-              :members="members"
-              :topic-list="topicList"
-              @titled="retitle(f.document!.id, $event)"
-              @share="docActions?.share(f.document!.id)"
-              @move="docActions?.move(f.document!.id)"
-              @delete="docActions?.remove(f.document!)"
+              :topic-id="conversationId"
+              :project-id="projectId"
+              :active="shown('site')"
+              :running-turns="siteTurns"
+              :refresh-tick="refreshTick"
+              :member-names="memberNames"
+              :working="working"
+              :activity="activity"
+              :agent-control="agentControl"
+              @open-file="openFile"
               @open-topic="(id: string, block?: string) => emit('open-topic', id, block)"
               @mention-click="emit('mention-click', $event)"
             />
-            <ProjectFileTab
-              v-else-if="f.project && mounted.has(fileKey(f.path))"
-              v-show="shown(fileKey(f.path))"
-              :class="[enterClass(fileKey(f.path)), sideClass(fileKey(f.path))]"
-              :project-id="projectId ?? topic?.project_id ?? null"
-              :channel-id="topicId"
-              :path="f.path"
-              :lines="f.project.lines"
-              @open-task="emit('open-card', $event)"
-              @navigate="emit('navigate', $event)"
+            <template v-if="docked === 'site'" #dock><slot name="dock" /></template>
+          </WorkPane>
+          <WorkPane
+            v-if="mounted.has('changes')"
+            :target="target('changes')"
+            :pane-id="workPaneId('changes')"
+            :shown="shown('changes')"
+            :pane-class="enterClass('changes')"
+          >
+            <PanelChangesHost
+              ref="changesRef"
+              :topic-id="topicId"
+              :task-id="taskId"
+              :read-only="changesReadOnly"
+              :project-id="projectId"
+              :active="shown('changes')"
+              :refresh-tick="refreshTick"
             />
-            <div
-              v-else-if="f.skill && mounted.has(fileKey(f.path))"
-              v-show="shown(fileKey(f.path))"
-              class="panel-skill"
-              :class="[enterClass(fileKey(f.path)), sideClass(fileKey(f.path))]"
-            >
-              <slot :id="f.skill.id" name="skill" />
-            </div>
+            <template v-if="docked === 'changes'" #dock><slot name="dock" /></template>
+          </WorkPane>
+          <WorkPane
+            v-if="mounted.has('preview')"
+            :target="target('preview')"
+            :pane-id="workPaneId('preview')"
+            :shown="shown('preview')"
+            :pane-class="enterClass('preview')"
+          >
             <PanelPreviewHost
-              v-else-if="mounted.has(fileKey(f.path))"
-              v-show="shown(fileKey(f.path))"
               :submit-question="submitQuestion"
               :ask-personal="askPersonal"
-              :class="[enterClass(fileKey(f.path)), sideClass(fileKey(f.path))]"
               :topic-id="conversationId"
               :project-id="projectId"
-              :path="f.path"
-              :active="shown(fileKey(f.path))"
+              :active="shown('preview')"
               :refresh-tick="refreshTick"
               :agent-name="agentName"
               :members="members"
               :agent-handle="agentHandle"
+              @loaded="markPreviewSeen"
               @locate="emit('locate', $event)"
+              @open-file="openFileTab"
               @mention-click="emit('mention-click', $event)"
             />
+            <template v-if="docked === 'preview'" #dock><slot name="dock" /></template>
+          </WorkPane>
+          <!-- 这个房间的规则：到点或发生某件事时它自己开工。取数在新的一轮结束时跟一次
+             （`refreshTick`）—— 芝士可能刚在房间里起草了一条。规则交回的结果文件点开
+             在这一格里（`openFile` 先认它是不是房间自己的文件，再挑开哪一格）。 -->
+          <WorkPane
+            v-if="mounted.has('files')"
+            :target="target('files')"
+            :pane-id="workPaneId('files')"
+            :shown="shown('files')"
+            :pane-class="enterClass('files')"
+          >
+            <RoomFilesPanelHost
+              ref="roomFilesRef"
+              :topic-id="taskId ?? topicId"
+              :seats-only="!!topic?.members_only"
+              @open="openConversationFile"
+            />
+            <template v-if="docked === 'files'" #dock><slot name="dock" /></template>
+          </WorkPane>
+          <WorkPane
+            v-if="mounted.has('routines')"
+            :target="target('routines')"
+            :pane-id="workPaneId('routines')"
+            :shown="shown('routines')"
+            :pane-class="enterClass('routines')"
+          >
+            <RoutinePanelHost
+              :topic-id="topicId"
+              :project-id="projectId"
+              :room-title="topic?.title ?? ''"
+              :routine-id="routineId ?? null"
+              :refresh-tick="refreshTick"
+              :agent-name="agentName"
+              @open-file="openFile"
+            />
+            <template v-if="docked === 'routines'" #dock><slot name="dock" /></template>
+          </WorkPane>
+          <template v-for="f in openFiles" :key="fileKey(f.path)">
+            <WorkPane
+              v-if="mounted.has(fileKey(f.path))"
+              :target="target(fileKey(f.path))"
+              :pane-id="workPaneId(fileKey(f.path))"
+              :shown="shown(fileKey(f.path))"
+              :pane-class="enterClass(fileKey(f.path))"
+            >
+              <PanelDocHost
+                v-if="f.document"
+                :ref="(el: unknown) => keepDocRef(f.document!.id, el)"
+                :topic="null"
+                :document="{ ...f.document, projectId: projectId ?? topic?.project_id ?? '' }"
+                :activity-tick="activityTick"
+                :agent-name="agentName"
+                :agent-handle="agentHandle"
+                :members="members"
+                :topic-list="topicList"
+                @titled="retitle(f.document!.id, $event)"
+                @share="docActions?.share(f.document!.id)"
+                @move="docActions?.move(f.document!.id)"
+                @delete="docActions?.remove(f.document!)"
+                @open-topic="(id: string, block?: string) => emit('open-topic', id, block)"
+                @mention-click="emit('mention-click', $event)"
+              />
+              <ProjectFileTab
+                v-else-if="f.project"
+                :project-id="projectId ?? topic?.project_id ?? null"
+                :channel-id="topicId"
+                :path="f.path"
+                :lines="f.project.lines"
+                @open-task="emit('open-card', $event)"
+                @navigate="emit('navigate', $event)"
+              />
+              <div v-else-if="f.skill" class="panel-skill">
+                <slot :id="f.skill.id" name="skill" />
+              </div>
+              <PanelPreviewHost
+                v-else
+                :submit-question="submitQuestion"
+                :ask-personal="askPersonal"
+                :topic-id="conversationId"
+                :project-id="projectId"
+                :path="f.path"
+                :active="shown(fileKey(f.path))"
+                :refresh-tick="refreshTick"
+                :agent-name="agentName"
+                :members="members"
+                :agent-handle="agentHandle"
+                @locate="emit('locate', $event)"
+                @mention-click="emit('mention-click', $event)"
+              />
+            </WorkPane>
           </template>
         </div>
       </ErrorBoundary>
@@ -1239,10 +1352,10 @@ defineExpose({
   flex: 1 1 auto;
   min-width: 0;
 }
-/* 并排时右边那一格：排在后面，中间一道分隔线。 */
-.tabbody > .tabpane--side {
-  order: 1;
-  border-left: 1px solid var(--line);
+/* 桌面上各格都传送进了布局区，这里只剩它们的出处，不占地方。 */
+.tabbody--layout {
+  flex: 0 0 auto;
+  view-transition-name: none;
 }
 /* 挪进来的那 20px 不该撑出一条横向滚动。 */
 .tabbody--phone {

@@ -10,8 +10,8 @@ SQLAlchemy dispatches ``SessionEvents.after_commit`` from
 ``SessionTransaction.commit`` whenever the transaction being committed has no
 parent *or* is a savepoint, and releasing a savepoint commits nothing: another
 connection still reads the rows as they were. Something in the request released
-one — ``review.task_landing.tell_origin`` wraps the line it says in a savepoint
-so that a courtesy line cannot take a landing back with it — so the post-close
+one — ``review.task_landing.record_at_origin`` wraps the line it records in a
+savepoint so that a record cannot take a landing back with it — so the post-close
 jobs started a request-frame early, read the task as open on their own
 connection, and gave up. Measured at 8464a1c8: the hook fired 70 ms before the
 commit landed. ``test_a_closed_task_closes_its_pr`` raced it and lost every

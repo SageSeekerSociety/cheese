@@ -17,6 +17,7 @@ from app.domain.review import (
     archive,
     commit_message,
     credit,
+    forge_words,
     notes,
     pr_publish,
     pr_text,
@@ -710,9 +711,11 @@ async def _override_github_checks(
         await self._record_queue_entry(card, decided_by)
         return card
     if result.sha is None:
+        kind = (await self._resolve_forge(topic.project_id, card=card)).kind
         raise ValidationError(
-            say(
-                "githubMergeRefused",
+            forge_words.said(
+                kind,
+                "prMergeRefused",
                 pr=number,
                 reason=result.blocked_reason or say("reasonUnstated"),
             )

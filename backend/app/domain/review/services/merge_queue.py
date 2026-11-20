@@ -11,6 +11,7 @@ from app.core.errors import ForbiddenError, ValidationError
 from app.core.sentences import say
 from app.domain.review import (
     credit,
+    forge_words,
     merge_state,
     notes,
     pr_text,
@@ -80,6 +81,7 @@ async def arm_auto_merge(
         await self._seen_head_or_refresh(card, topic, head_sha, say("verbArmAutoMerge"))
         card.auto_merge_armed_by = decided_by
         card.auto_merge_armed_at = datetime.now(UTC)
+        card.auto_merge_adopts = False
     else:
         card.auto_merge_armed_by = None
         card.auto_merge_armed_at = None
@@ -120,6 +122,7 @@ async def adopt_when_ready(
         raise ValidationError(say("prNewCommitsAfterView", number=card.pr_number))
     card.auto_merge_armed_by = decided_by
     card.auto_merge_armed_at = datetime.now(UTC)
+    card.auto_merge_adopts = True
     await self._session.flush()
     await self._session.refresh(card)
     return card
@@ -228,6 +231,7 @@ async def _merge_pr_for_accept(
     if status.merged:
         # 有人已经在 GitHub 上合了这个 PR —— 同一件事，照单收下。
         card.pr_merged_at = status.merged_at or datetime.now(UTC)
+        card.decided_by = decided_by
         await self._mark_task_merged(card, delivered_head=status.head_sha)
         if status.merge_commit_sha:
             card.pr_head_sha = status.merge_commit_sha
@@ -354,19 +358,22 @@ async def _merge_pr_for_accept(
     if result.sha is None:
         # A faithful 405: GitHub (or its enforced protection) said no.
         reason = result.blocked_reason or say("reasonUnstated")
+        kind = (await self._resolve_forge(topic.project_id, card=card)).kind
         self._notify_merge_result(
             topic,
-            say("mergeRefusedOnAccept", pr=number),
+            forge_words.said(kind, "mergeRefusedOnAcceptPlatform", pr=number),
             task_id=card.task_id,
             meta=notice(
                 EVENT_MERGE_REFUSED,
                 severity=SEVERITY_ERROR,
                 who=WHO_HUMAN,
                 detail=say("mergeRefusedDetail", reason=reason, url=card.pr_url or ""),
-                detail_label=say("labelGithubReply"),
+                detail_label=forge_words.said(kind, "labelRefusalReply"),
             ),
         )
-        raise ValidationError(say("githubMergeRefused", pr=number, reason=reason))
+        raise ValidationError(
+            forge_words.said(kind, "prMergeRefused", pr=number, reason=reason)
+        )
 
     card.pr_merged_at = datetime.now(UTC)
     # Who adopted it is on the card before the task hears it landed: the line
@@ -516,13 +523,16 @@ async def _merge_armed_card(
         await self._session.flush()
         return
     card.pr_merged_at = datetime.now(UTC)
-    await self._mark_task_merged(card, delivered_head=card.pr_head_sha)
-    card.pr_head_sha = result.sha
-    await self._repo.add_approval(card.id, armer)
+    # Who adopted it is on the card before the task hears it landed: the line
+    # its discussion hears, and what the main line is told, name them
+    # (`task_landing.delivery_landed`).
     card.decided_by = armer
     card.decided_by_assistant = False
     card.decided_by_seat = None
     card.decided_at = datetime.now(UTC)
+    await self._mark_task_merged(card, delivered_head=card.pr_head_sha)
+    card.pr_head_sha = result.sha
+    await self._repo.add_approval(card.id, armer)
     await self._finish_pr_accept(card=card, topic=topic)
 
 

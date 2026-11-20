@@ -10,8 +10,13 @@
  * is loaded back in its reconciled form. It never renders panel content: each panel's
  * cell holds an empty host element that the area teleports the instance into.
  *
- * Collapse, pinning, the lock and per-cell minimum widths are policies applied on top of
- * dockview's groups; the tabs and cell actions are ours, styled with the product tokens.
+ * Collapse, pinning, the lock, bare and hidden cells and per-cell sizes are policies
+ * applied on top of dockview's groups; the tabs and cell actions are ours, styled with
+ * the product tokens.
+ *
+ * Space is not shared in proportion when the area resizes (`proportional-layout` off): a
+ * cell with a width of its own is a low-priority view in dockview's terms and keeps that
+ * width, and the other cells absorb the change, as a code editor's side bar does.
  */
 import 'dockview-vue/dist/styles/dockview.css'
 
@@ -26,10 +31,11 @@ import type {
   IDockviewPanelHeaderProps,
   IDockviewPanelProps,
 } from 'dockview-vue'
-import type { LayoutArrangement } from './arrangement'
+import type { LayoutArrangement, LayoutCell, SplitDirection } from './arrangement'
+import type { CellSizing } from './dockviewJson'
 import type { LayoutPanelInfo } from './types'
 
-import { computed, markRaw, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
+import { computed, markRaw, nextTick, onBeforeUnmount, reactive, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { DockviewVue } from 'dockview-vue'
 
@@ -38,15 +44,22 @@ import {
   canCollapse,
   cellOfPanel,
   cellsOf,
+  defaultWeights,
   hasPlacementFault,
+  hidesTabs,
+  homeCell,
   parentDirection,
+  placedPanels,
   placePanel,
   reconcile,
+  resetSizes,
   setCollapsed,
   withCellIds,
 } from './arrangement'
 import { fromDockview, STRIP_SIZE, toDockview } from './dockviewJson'
 import LayoutAddMenu from './LayoutAddMenu.vue'
+import LayoutSignal from './LayoutSignal.vue'
+import { clampWidth } from './widths'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 
@@ -62,6 +75,18 @@ const props = defineProps<{
   unplaced: LayoutPanelInfo[]
   locked: boolean
   resizable: boolean
+  /** Fixed sizes and hidden cells, as the area decides them. */
+  sizing: (cell: LayoutCell, along: SplitDirection) => CellSizing
+  /** The measured content height of each `fitHeight` panel. */
+  fitHeights: Record<string, number>
+  /** The panel whose cell fills the area, or null. */
+  maximized: string | null
+  /** The width each panel with a width of its own should have now. */
+  fixedWidths: Record<string, number>
+  /** The page's default: double-clicking a divider gives its split these sizes back. */
+  defaultArrangement: LayoutArrangement
+  /** Show this panel (and open its cell), or fold or open its cell; acted on once per `n`. */
+  request: { id: string; fold?: boolean; n: number } | null
 }>()
 
 const emit = defineEmits<{
@@ -69,6 +94,20 @@ const emit = defineEmits<{
   host: [id: string, element: HTMLElement, attached: boolean]
   /** A panel's content was attached again after dockview hid its tab. */
   shown: [id: string]
+  /** The first arrangement is laid out; its hosts follow. */
+  ready: []
+  /** The reader dragged the divider of a cell with a width of its own. */
+  resized: [id: string, width: number]
+  /** dockview maximized a cell, or let it go (also when something else ended it). */
+  maximized: [id: string | null]
+  /** The reader picked this panel's tab. */
+  activated: [id: string]
+  /** The panels on screen now: the visible tab of every cell in sight. */
+  visible: [ids: string[]]
+  /** The reader closed the tab of a transient panel. */
+  close: [id: string]
+  /** The reader double-clicked the tab of a temporary panel. */
+  keep: [id: string]
 }>()
 
 const { t } = useI18n()
@@ -80,6 +119,9 @@ const api = shallowRef<DockviewApi>()
 const info = computed(() => new Map(props.panels.map((panel) => [panel.id, panel])))
 const declared = computed(() => props.panels.map((panel) => panel.id))
 const pinned = (id: string) => info.value.get(id)?.pinned === true
+/** Bare cells (the page head, the sidebar) take no dropped tab; a lone pinned panel's cell does. */
+const bareGroup = (group: DockviewGroupPanel) =>
+  group.panels.length > 0 && group.panels.every((panel) => info.value.get(panel.id)?.bare)
 
 /** The arrangement as dockview shows it now; what the cell chrome reads. */
 const model = shallowRef<LayoutArrangement>({ root: null })
@@ -87,8 +129,14 @@ const model = shallowRef<LayoutArrangement>({ root: null })
 let collapsed = new Set<string>()
 /** For each collapsed group, the size it opens back to. */
 let expanded = new Map<string, number>()
-const maximized = ref<string | null>(null)
+/** The group dockview has maximized, if any. */
+const maximizedGroup = ref<string | null>(null)
 let loading = false
+
+const panelInfo = (id: string) => info.value.get(id)
+/** The panels of a group, as the area declared them. */
+const infosOf = (group: DockviewGroupPanel) =>
+  group.panels.map((panel) => panelInfo(panel.id)).filter((p): p is LayoutPanelInfo => !!p)
 
 function panelState(id: string): GroupviewPanelState {
   const panel = info.value.get(id)
@@ -113,12 +161,14 @@ function load(arrangement: LayoutArrangement) {
     const next = withCellIds(reconcile(arrangement, declared.value))
     stripped.clear()
     constrained.clear()
+    fitted.clear()
+    held.clear()
     if (!next.root) {
       dock.clear()
       collapsed = new Set()
       expanded = new Map()
     } else {
-      const { layout, expandedSizes } = toDockview({ root: next.root }, box(), panelState)
+      const { layout, expandedSizes } = toDockview({ root: next.root }, box(), panelState, props.sizing)
       dock.fromJSON(layout)
       collapsed = new Set(
         cellsOf(next)
@@ -132,6 +182,8 @@ function load(arrangement: LayoutArrangement) {
   }
   dock.panels.forEach(watchVisibility)
   sync()
+  if (props.maximized) maximize(props.maximized)
+  for (const group of dock.groups) if (group.activePanel) revealTab(group.activePanel.id)
 }
 
 let pending = false
@@ -162,33 +214,99 @@ function sync() {
   )
   model.value = next
   applyPolicies()
+  refreshActives()
   emit('change', next)
+}
+
+// ---------------------------------------------------------------- what is on screen
+
+/** Each group's visible tab, kept reactive for the header the page's actions go in. */
+const activeOf = reactive<Record<string, string | undefined>>({})
+let shownBefore = ''
+function refreshActives() {
+  const dock = api.value
+  if (!dock) return
+  const maximized = dock.hasMaximizedGroup()
+  const shown: string[] = []
+  for (const group of dock.groups) {
+    const id = group.activePanel?.id
+    if (activeOf[group.id] !== id) activeOf[group.id] = id
+    const inSight = group.api.isVisible && !collapsed.has(group.id) && (!maximized || group.api.isMaximized())
+    if (id && inSight) shown.push(id)
+  }
+  const key = shown.join('\n')
+  if (key !== shownBefore) {
+    shownBefore = key
+    emit('visible', shown)
+  }
 }
 
 /** Groups currently held to a strip, and the constraints last given to each group. */
 const stripped = new Set<string>()
 const constrained = new Map<string, string>()
 
+/** Groups currently held to their content's height, at that height. */
+const fitted = new Map<string, number>()
+/** Groups with a width of their own, and the width last given to each. */
+const held = new Map<string, number>()
+
 function applyPolicies() {
   const dock = api.value
   if (!dock) return
+  // The page hid the panels of the maximized cell: the maximize ends with them.
+  const big = dock.groups.find((group) => group.api.isMaximized())
+  if (big && infosOf(big).length && infosOf(big).every((panel) => panel.hidden)) dock.exitMaximizedGroup()
+  /** A cell appeared, disappeared or changed its limits: the room the others had changed. */
+  let reshaped = false
   for (const group of dock.groups) {
     const id = group.id
+    const panels = infosOf(group)
     const folded = collapsed.has(id)
-    if (group.header.hidden !== folded) group.header.hidden = folded
+    const headerHidden = folded || hidesTabs(panels)
+    if (group.header.hidden !== headerHidden) group.header.hidden = headerHidden
     const lock = folded ? 'no-drop-target' : false
     if (group.locked !== lock) group.locked = lock
     const column = parentDirection(model.value, id) === 'column'
-    const min = Math.max(MIN_CELL, ...group.panels.map((panel) => info.value.get(panel.id)?.minWidth ?? 0))
+    const width = panels.find((panel) => panel.width)?.width
+    const fitPanel = column ? panels.find((panel) => panel.fitHeight) : undefined
+    const fitHeight = fitPanel ? props.fitHeights[fitPanel.id] ?? 0 : undefined
+    group.element.classList.toggle('layout-dock__fit', fitPanel !== undefined)
+    const min = Math.max(width?.min ?? MIN_CELL, ...panels.map((panel) => panel.minWidth ?? 0))
     const constraints = folded
       ? column
         ? { minimumWidth: min, maximumWidth: UNBOUNDED, minimumHeight: STRIP_SIZE, maximumHeight: STRIP_SIZE }
         : { minimumWidth: STRIP_SIZE, maximumWidth: STRIP_SIZE, minimumHeight: 0, maximumHeight: UNBOUNDED }
-      : { minimumWidth: min, maximumWidth: UNBOUNDED, minimumHeight: 0, maximumHeight: UNBOUNDED }
+      : {
+          minimumWidth: min,
+          maximumWidth: width?.max ?? UNBOUNDED,
+          minimumHeight: fitHeight ?? 0,
+          maximumHeight: fitHeight ?? UNBOUNDED,
+        }
     const key = JSON.stringify(constraints)
     if (constrained.get(id) !== key) {
       constrained.set(id, key)
       group.api.setConstraints(constraints)
+      reshaped = true
+    }
+    if (fitHeight !== undefined && fitted.get(id) !== fitHeight) {
+      fitted.set(id, fitHeight)
+      group.api.setSize({ height: fitHeight })
+    }
+    const hidden = panels.length > 0 && panels.every((panel) => panel.hidden)
+    // dockview hides the other cells while one is maximized, and shows them again itself.
+    if (!dock.hasMaximizedGroup() && group.api.isVisible === hidden) {
+      group.api.setVisible(!hidden)
+      // Shown again at the size it had when hidden: its own width may have changed since.
+      held.delete(id)
+      reshaped = true
+    }
+    // A width of its own changed elsewhere (another place showing the same panel): follow
+    // it, once per new value, never in the middle of a drag.
+    const fixed = panels.find((panel) => panel.width)
+    const wanted = fixed && !column ? props.fixedWidths[fixed.id] : undefined
+    if (wanted !== undefined && !dragging && group.api.isVisible && held.get(id) !== wanted) {
+      held.set(id, wanted)
+      if (Math.abs(group.api.width - wanted) > 1) group.api.setSize({ width: wanted })
     }
     if (folded && !stripped.has(id)) {
       stripped.add(id)
@@ -199,6 +317,19 @@ function applyPolicies() {
       expanded.delete(id)
       if (size) group.api.setSize(column ? { height: size } : { width: size })
     }
+  }
+  // Neighbours whose minimum did not fit squeezed a cell below its own width (the sidebar
+  // while the page still showed more cells than the window holds). With the room back, it
+  // returns to the width the reader gave it.
+  if (reshaped && !dragging) restoreHeldWidths(dock)
+}
+
+function restoreHeldWidths(dock: DockviewApi) {
+  for (const group of dock.groups) {
+    const fixed = infosOf(group).find((panel) => panel.width)
+    if (!fixed || !group.api.isVisible || parentDirection(model.value, group.id) === 'column') continue
+    const wanted = props.fixedWidths[fixed.id]
+    if (wanted !== undefined && Math.abs(group.api.width - wanted) > 1) group.api.setSize({ width: wanted })
   }
 }
 
@@ -233,6 +364,24 @@ function toggleMaximize(group: DockviewGroupPanel) {
   else if (group.activePanel) dock.maximizeGroup(group.activePanel)
 }
 
+/** Fills the area with the cell of this panel; null gives the others their space back. */
+function maximize(id: string | null) {
+  const dock = api.value
+  if (!dock) return
+  const panel = id ? dock.getPanel(id) : undefined
+  if (!panel) {
+    if (dock.hasMaximizedGroup()) dock.exitMaximizedGroup()
+    return
+  }
+  if (panel.group.api.isMaximized() || !panel.group.api.isVisible) return
+  dock.maximizeGroup(panel)
+}
+
+watch(
+  () => props.maximized,
+  (id) => maximize(id)
+)
+
 function addTo(group: DockviewGroupPanel | null, id: string) {
   const dock = api.value
   if (!dock) return
@@ -251,6 +400,30 @@ function addTo(group: DockviewGroupPanel | null, id: string) {
 }
 
 const cellCount = computed(() => cellsOf(model.value).length)
+
+const groupOf = (id: string) => info.value.get(id)?.group
+/**
+ * The page's buttons for a cell: those its visible tab declares, in its group's home cell
+ * only. A cell split off from the home offers collapse instead.
+ */
+function actionsOf(cellId: string) {
+  const active = info.value.get(activeOf[cellId] ?? '')
+  if (!active?.actions?.length) return []
+  return homeCell(model.value, active.group, groupOf)?.id === cellId ? active.actions : []
+}
+
+/** While a cell is maximized: does a panel out of sight carry a mark (a reply, a change)? */
+const signalledOutOfSight = computed(() => {
+  if (!maximizedGroup.value) return false
+  const inSight = new Set(cellsOf(model.value).find((cell) => cell.id === maximizedGroup.value)?.panels ?? [])
+  return props.panels.some((panel) => panel.signal && !inSight.has(panel.id))
+})
+
+/** A transient panel's tab closes by asking the page to drop it; the others go under "+". */
+function closeTab(id: string, close: () => void) {
+  if (info.value.get(id)?.transient) emit('close', id)
+  else close()
+}
 
 // ---------------------------------------------------------------- hosts
 
@@ -310,20 +483,26 @@ function onReady(event: DockviewReadyEvent) {
       if (e.group.panels.some((panel) => pinned(panel.id))) e.nativeEvent.preventDefault()
     }),
     dock.onWillShowOverlay((e) => {
-      if (e.group && !acceptsDrop(model.value, e.group.id)) e.preventDefault()
+      // Nothing lands around the whole area, in a folded cell or in a cell without tabs.
+      if (e.kind === 'edge') return void e.preventDefault()
+      if (e.group && (!acceptsDrop(model.value, e.group.id) || bareGroup(e.group))) e.preventDefault()
     }),
+    dock.onDidActivePanelChange(() => refreshActives()),
     dock.onDidAddPanel(watchVisibility),
     dock.onDidRemovePanel((panel) => {
       visibility.get(panel.id)?.dispose()
       visibility.delete(panel.id)
     }),
     dock.onDidMaximizedGroupChange((e) => {
-      maximized.value = e.isMaximized ? e.group.id : null
+      maximizedGroup.value = e.isMaximized ? e.group.id : null
+      emit('maximized', e.isMaximized ? e.group.activePanel?.id ?? null : null)
+      refreshActives()
       if (!e.isMaximized) schedule()
     }),
     dock.onDidLayoutChange(schedule)
   )
   load(props.arrangement)
+  void nextTick(() => emit('ready'))
 }
 
 watch(
@@ -331,7 +510,143 @@ watch(
   () => load(props.arrangement)
 )
 
+// Panels the page added or dropped while the rest stays where it is: add each new one to the
+// cell the area placed it in, remove what the page no longer declares. A new cell means a
+// reload.
+watch(
+  () => props.arrangement,
+  (arrangement) => {
+    const dock = api.value
+    if (!dock || loading) return
+    const wanted = new Set(placedPanels(arrangement))
+    const present = new Set(dock.panels.map((panel) => panel.id))
+    for (const panel of [...dock.panels]) if (!wanted.has(panel.id)) dock.removePanel(panel)
+    for (const id of wanted) {
+      if (present.has(id)) continue
+      const cell = cellOfPanel(arrangement, id)
+      const group = cell?.id ? dock.groups.find((g) => g.id === cell.id) : undefined
+      if (!group) return void load(arrangement)
+      const state = panelState(id)
+      dock.addPanel({
+        id,
+        title: state.title,
+        renderer: state.renderer,
+        component: 'host',
+        position: { referenceGroup: group },
+        inactive: true,
+      })
+    }
+  }
+)
+
+// The area asks for a panel to be shown, or a cell folded or opened.
+watch(
+  () => props.request,
+  (request) => {
+    const dock = api.value
+    if (!dock || !request) return
+    const panel = dock.getPanel(request.id)
+    if (!panel) return
+    const group = panel.group
+    if (request.fold === true) return void collapse(group)
+    if (request.fold === false || collapsed.has(group.id)) expand(group.id)
+    if (request.fold !== undefined) return
+    if (dock.hasMaximizedGroup() && !group.api.isMaximized()) dock.exitMaximizedGroup()
+    panel.api.setActive()
+    refreshActives()
+    revealTab(request.id)
+  }
+)
+
+/** A tab strip too narrow for its tabs scrolls: bring the tab just shown into view. */
+function revealTab(id: string) {
+  requestAnimationFrame(() =>
+    root.value
+      ?.querySelector(`[data-layout-tab="${CSS.escape(id)}"]`)
+      ?.closest('.dv-tab')
+      ?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  )
+}
+
+// What the area decides about each panel (hidden, bare, sizes) can change at any time.
+watch(
+  () => [props.panels, props.fitHeights, props.fixedWidths],
+  () => applyPolicies(),
+  { deep: true }
+)
+
+// ---------------------------------------------------------------- dragging a fixed width
+
+/** A divider is being dragged: the widths cells keep on their own may change now. */
+let dragging = false
+function onPointerDown(event: PointerEvent) {
+  if (!(event.target instanceof Element) || !event.target.closest('.dv-sash')) return
+  dragging = true
+  window.addEventListener('pointerup', endDrag)
+  window.addEventListener('pointercancel', endDrag)
+}
+function endDrag() {
+  window.removeEventListener('pointerup', endDrag)
+  window.removeEventListener('pointercancel', endDrag)
+  if (!dragging) return
+  dragging = false
+  const dock = api.value
+  if (!dock) return
+  for (const group of dock.groups) {
+    const fixed = infosOf(group).find((panel) => panel.width)
+    if (fixed && group.api.isVisible && parentDirection(model.value, group.id) !== 'column') {
+      emit('resized', fixed.id, Math.round(group.api.width))
+    }
+  }
+}
+
+// ---------------------------------------------------------------- double-click: default sizes
+
+/**
+ * Double-clicking a divider gives its split back the sizes the page's default gives it:
+ * a cell with a width of its own goes back to its initial width, the others share the
+ * rest by their default weights. A split the default has no counterpart for stays as is.
+ */
+function onDoubleClick(event: MouseEvent) {
+  const dock = api.value
+  const sash = event.target instanceof Element ? event.target.closest('.dv-sash') : null
+  const container = sash?.closest('.dv-split-view-container')
+  if (!dock || !container || dock.hasMaximizedGroup()) return
+  const horizontal = container.classList.contains('dv-horizontal')
+  const children = [...container.querySelectorAll(':scope > .dv-view-container > .dv-view')]
+    .filter((view) => view.classList.contains('visible'))
+    .map((view) => {
+      const groups = dock.groups.filter((group) => view.contains(group.element))
+      return { view, groups, panels: groups.flatMap((group) => group.panels.map((panel) => panel.id)) }
+    })
+  if (children.length < 2 || children.some((child) => !child.groups.length)) return
+  const weights = defaultWeights(
+    props.defaultArrangement,
+    children.map((child) => child.panels)
+  )
+  if (!weights) return
+  const fixedOf = (panels: string[]) =>
+    horizontal && panels.length ? panels.map((id) => info.value.get(id)?.width).find((width) => width) : undefined
+  const fixed = children.map((child) => {
+    const width = child.groups.length === 1 ? fixedOf(child.panels) : undefined
+    return width ? clampWidth(width, width.initial) : undefined
+  })
+  const extent = (view: Element) =>
+    horizontal ? view.getBoundingClientRect().width : view.getBoundingClientRect().height
+  const total = children.reduce((sum, child) => sum + extent(child.view), 0)
+  const sizes = resetSizes(total, weights, fixed)
+  // dockview gives each change to the last cell of the split: set all but that one, in order.
+  children.slice(0, -1).forEach((child, i) => {
+    child.groups[0].api.setSize(horizontal ? { width: sizes[i] } : { height: sizes[i] })
+  })
+  children.forEach((child) => {
+    const own = fixedOf(child.panels)
+    if (own) emit('resized', child.panels.find((id) => info.value.get(id)?.width)!, clampWidth(own, own.initial))
+  })
+}
+
 onBeforeUnmount(() => {
+  endDrag()
   disposables.forEach((d) => d.dispose())
   visibility.forEach((d) => d.dispose())
 })
@@ -340,12 +655,20 @@ const noContextMenu = () => []
 </script>
 
 <template>
-  <div ref="root" class="layout-dock" :class="{ 'layout-dock--fixed': !resizable }">
+  <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- listens for drags and double-clicks on dockview's dividers inside, not a control of its own -->
+  <div
+    ref="root"
+    class="layout-dock"
+    :class="{ 'layout-dock--fixed': !resizable }"
+    @pointerdown.capture="onPointerDown"
+    @dblclick.capture="onDoubleClick"
+  >
     <DockviewVue
       class="layout-dock__view"
       :theme="theme"
       :disable-floating-groups="true"
       :disable-dnd="locked"
+      :proportional-layout="false"
       :get-tab-context-menu-items="noContextMenu"
       @ready="onReady"
     >
@@ -373,7 +696,18 @@ const noContextMenu = () => []
       </template>
 
       <template #defaultTab="scope: IDockviewPanelHeaderProps">
-        <div class="layout-tab" :data-layout-tab="scope.api.id">
+        <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions, vuejs-accessibility/click-events-have-key-events -- dockview's own tab element takes the click and the keyboard; this only hears which tab the reader picked -->
+        <div
+          class="layout-tab"
+          :class="{
+            'layout-tab--faint': info.get(scope.api.id)?.faint,
+            'layout-tab--temporary': info.get(scope.api.id)?.temporary,
+          }"
+          :data-layout-tab="scope.api.id"
+          :title="info.get(scope.api.id)?.hint ?? info.get(scope.api.id)?.title"
+          @click="emit('activated', scope.api.id)"
+          @dblclick="info.get(scope.api.id)?.temporary && emit('keep', scope.api.id)"
+        >
           <v-icon
             v-if="info.get(scope.api.id)?.icon"
             class="layout-tab__icon"
@@ -381,6 +715,7 @@ const noContextMenu = () => []
             :icon="info.get(scope.api.id)!.icon"
           />
           <span class="layout-tab__title">{{ info.get(scope.api.id)?.title ?? scope.api.id }}</span>
+          <LayoutSignal :signal="info.get(scope.api.id)?.signal" />
           <button
             v-if="info.get(scope.api.id)?.closable && !pinned(scope.api.id) && !locked"
             type="button"
@@ -390,7 +725,7 @@ const noContextMenu = () => []
             :data-layout-close="scope.api.id"
             @pointerdown.stop
             @mousedown.stop
-            @click.stop="scope.api.close()"
+            @click.stop="closeTab(scope.api.id, () => scope.api.close())"
           >
             <v-icon size="14" icon="mdi-close" />
           </button>
@@ -401,17 +736,7 @@ const noContextMenu = () => []
         <div class="layout-actions">
           <LayoutAddMenu v-if="unplaced.length && !locked" :panels="unplaced" @pick="addTo(scope.group, $event)" />
           <BaseButton
-            v-if="cellCount > 1"
-            kind="ghost"
-            size="sm"
-            :icon="maximized === scope.group.id ? 'mdi-arrow-collapse' : 'mdi-arrow-expand'"
-            :aria-label="maximized === scope.group.id ? t('shell.layout.restore') : t('shell.layout.maximize')"
-            :title="maximized === scope.group.id ? t('shell.layout.restore') : t('shell.layout.maximize')"
-            data-layout-maximize
-            @click="toggleMaximize(scope.group)"
-          />
-          <BaseButton
-            v-if="!maximized && canCollapse(model, scope.group.id)"
+            v-if="!maximizedGroup && !actionsOf(scope.group.id).length && canCollapse(model, scope.group.id)"
             kind="ghost"
             size="sm"
             :icon="
@@ -423,6 +748,32 @@ const noContextMenu = () => []
             :title="t('shell.layout.collapse')"
             data-layout-collapse
             @click="collapse(scope.group)"
+          />
+          <span v-if="cellCount > 1" class="layout-actions__signalled">
+            <BaseButton
+              kind="ghost"
+              size="sm"
+              :icon="maximizedGroup === scope.group.id ? 'mdi-arrow-collapse' : 'mdi-arrow-expand'"
+              :aria-label="maximizedGroup === scope.group.id ? t('shell.layout.restore') : t('shell.layout.maximize')"
+              :title="maximizedGroup === scope.group.id ? t('shell.layout.restore') : t('shell.layout.maximize')"
+              data-layout-maximize
+              @click="toggleMaximize(scope.group)"
+            />
+            <span
+              v-if="maximizedGroup === scope.group.id && signalledOutOfSight"
+              class="layout-actions__dot"
+              aria-hidden="true"
+            />
+          </span>
+          <BaseButton
+            v-for="action in actionsOf(scope.group.id)"
+            :key="action.label"
+            kind="ghost"
+            size="sm"
+            :icon="action.icon"
+            :aria-label="action.label"
+            :title="action.label"
+            @click="action.run()"
           />
         </div>
       </template>
@@ -483,6 +834,31 @@ const noContextMenu = () => []
   color: var(--faint);
 }
 
+.layout-tab--faint .layout-tab__title {
+  color: var(--muted);
+}
+
+.layout-tab--temporary .layout-tab__title {
+  font-style: italic;
+}
+
+.layout-actions__signalled {
+  display: inline-flex;
+  position: relative;
+}
+
+/* Something out of sight while this cell is maximized: an unread mark (amber is for unread, §1.6). */
+.layout-actions__dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  pointer-events: none;
+  background: var(--accent);
+  border-radius: var(--radius-pill);
+}
+
 .layout-tab__close {
   display: inline-flex;
   align-items: center;
@@ -522,7 +898,7 @@ const noContextMenu = () => []
  */
 .layout-dock-theme {
   --dv-tabs-and-actions-container-font-size: 13px;
-  --dv-tabs-and-actions-container-height: 40px;
+  --dv-tabs-and-actions-container-height: var(--layout-tab-strip-height, 40px);
   --dv-tab-font-size: 13px;
   --dv-drag-over-background-color: var(--fill-2);
   --dv-drag-over-border-color: var(--line-2);
@@ -597,6 +973,43 @@ const noContextMenu = () => []
   > .dv-view-container
   > .dv-view:not(:first-child)::before {
   background-color: var(--line);
+}
+
+/* A hidden cell (hidden by the page, or while another is maximized) is out of layout, not
+   squeezed to nothing: content laid out at zero width reflows and loses its scroll place. */
+.layout-dock-theme .dv-view:not(.visible) > .dv-groupview {
+  display: none;
+}
+
+/* A divider that cannot move (beside a hidden cell, or a cell held at one size) is inert:
+   dockview marks it .dv-disabled but its hover colour checks a .disabled class it never
+   sets. */
+.layout-dock-theme .dv-sash.dv-disabled {
+  pointer-events: none;
+}
+
+/* A divider takes a pixel of its own: the cell's content starts after it, never under it. */
+.layout-dock-theme .dv-split-view-container.dv-horizontal > .dv-view-container > .dv-view:not(:first-child) {
+  padding-left: 1px;
+}
+.layout-dock-theme .dv-split-view-container.dv-vertical > .dv-view-container > .dv-view:not(:first-child) {
+  padding-top: 1px;
+}
+
+/* No divider where there is nothing to divide: after a hidden cell (also while another
+   cell is maximized), and on either side of a cell as tall as its content, which draws
+   its own edge and cannot be dragged. */
+.layout-dock-theme .dv-view:not(.visible)::before,
+.layout-dock-theme .dv-view:not(.visible) + .dv-view::before,
+.layout-dock-theme .dv-view:has(> .layout-dock__fit)::before,
+.layout-dock-theme .dv-view:has(> .layout-dock__fit) + .dv-view::before {
+  display: none;
+}
+.layout-dock-theme .dv-split-view-container > .dv-view-container > .dv-view:not(.visible),
+.layout-dock-theme .dv-split-view-container > .dv-view-container > .dv-view:not(.visible) + .dv-view,
+.layout-dock-theme .dv-split-view-container > .dv-view-container > .dv-view:has(> .layout-dock__fit),
+.layout-dock-theme .dv-split-view-container > .dv-view-container > .dv-view:has(> .layout-dock__fit) + .dv-view {
+  padding: 0;
 }
 
 .layout-dock-theme .dv-groupview:focus,

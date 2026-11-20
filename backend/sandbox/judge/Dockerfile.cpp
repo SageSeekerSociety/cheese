@@ -8,6 +8,8 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends time \
     && rm -rf /var/lib/apt/lists/* \
     && (getent passwd 1000 >/dev/null || useradd --uid 1000 --user-group --create-home --shell /bin/sh judge)
+# Test scripts (kind SCRIPT) in C++ bring their own harness: the setter's test
+# program writes the JUnit XML report to "$JUDGE_REPORT" itself.
 ENV LANG=C.UTF-8
 USER 1000:1000
 WORKDIR /code

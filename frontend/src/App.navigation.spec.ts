@@ -156,23 +156,19 @@ it('keeps the room header usable when the app changes between desktop and mobile
   }
 })
 
-it('desktop sidebar head opens 待办 from the 首页 tile, with no separate 待办 tile', async () => {
+it('desktop sidebar reaches 待办 from its 首页 row, with no separate 待办 row', async () => {
   const app = await mountApp('/', 1280)
   try {
     expect(app.failures).toEqual([])
-    // 左边那一列方块栏拿掉了（Navigation/appNav.ts）：首页那一格住进侧栏头，侧栏看不见时住在顶栏。
-    expect(app.container.querySelector('.app-rail')).toBeNull()
-    const rail =
-      app.container.querySelector('[data-testid="sidebar-frame-top"]') ?? app.container.querySelector('.app-system-bar')
-    expect(rail).not.toBeNull()
-    // 首页那一格点开就是待办：桌面上到得了 /inbox，而且只有这一条路，不再多一格。
-    const labels = Array.from(rail!.querySelectorAll('a[aria-label]')).map((a) => a.getAttribute('aria-label'))
-    expect(labels[0]).toBe('首页')
+    // 首页是侧栏头下面那一行（Navigation/SidebarFrameTop.vue），侧栏看不见时住在顶栏。
+    const side = app.container.querySelector('.page-sidebar') ?? app.container.querySelector('.app-system-bar')
+    expect(side).not.toBeNull()
+    // 首页那一行点开就是待办：桌面上到得了 /inbox，而且只有这一条路，不再多一行「待办」。
+    const toInbox = Array.from(side!.querySelectorAll('a[href="/inbox"]'))
+    expect(toInbox).toHaveLength(1)
+    expect(toInbox[0].getAttribute('aria-label')).toMatch(/^首页/)
+    const labels = Array.from(side!.querySelectorAll('a')).map((a) => a.textContent?.trim())
     expect(labels).not.toContain('待办')
-    expect(rail!.querySelectorAll('a[href="/inbox"]')).toHaveLength(1)
-    // 点这一格走的是和项目格同一套 Vuetify 链接，所以这里只证明它到得了：
-    // 这套测试的假路由只要从 /projects/:id 出栈就崩（与本改动
-    // 无关——换成去 /spaces 同样崩），点进去的路由跳转留给真环境验证。
   } finally {
     app.dispose()
   }

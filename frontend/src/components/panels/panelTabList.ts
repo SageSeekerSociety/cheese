@@ -62,3 +62,19 @@ export function workPanelTabs(withChat: boolean): TabDef[] {
   const at = shared.findIndex((tabDef) => tabDef.key === 'overview') + 1
   return [...shared.slice(0, at), THREADS_TAB, FILES_TAB, ...shared.slice(at), ROUTINES_TAB]
 }
+
+// 频道是人说话的地方，没有电脑在它名下干活：只有概览、支线、文件、例行事务。任务没有
+// 支线、文件和例行事务，其余几格都有。在频道里打开的一件任务：它的对话、改动、预览。
+const CHANNEL_TABS: ReadonlySet<string> = new Set(['chat', 'overview', 'threads', 'files', 'routines'])
+const TASK_HIDDEN_TABS: ReadonlySet<string> = new Set(['routines', 'threads', 'files'])
+const REVIEW_TABS: ReadonlySet<string> = new Set(['chat', 'changes', 'preview'])
+
+/**
+ * 一个房间的工作面板有哪几格：频道、任务页、在频道里打开的一件任务（`review`）各不同。
+ * `withChat`：对话是这一排里的一格（手机上，和打开的任务里）。
+ */
+export function roomTabs(opts: { withChat: boolean; review: boolean; task: boolean }): TabDef[] {
+  return workPanelTabs(opts.withChat || opts.review).filter((tab) =>
+    opts.review ? REVIEW_TABS.has(tab.key) : opts.task ? !TASK_HIDDEN_TABS.has(tab.key) : CHANNEL_TABS.has(tab.key)
+  )
+}

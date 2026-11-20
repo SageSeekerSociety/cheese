@@ -1,5 +1,5 @@
-// 侧栏头：老鼠图标 + 当前项目。左边那一列方块栏拿掉后（appNav.ts），首页和项目都从这
-// 一行进：项目名写全，别的项目里等你的件数汇总在旁边，点开是项目列表。
+// 侧栏最上面：侧栏头写你在哪儿（项目里是这个项目，首页一带是「首页」），点开是项目列表；
+// 下面「首页」一行带等你处理的总件数，从哪儿都由它回首页。
 import type { Project } from '@/cx_types'
 import type { NavGenericItem } from './types'
 
@@ -12,7 +12,7 @@ import { cleanup, fireEvent, render, screen } from '@testing-library/vue'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { provideAppNav } from './appNav'
-import ProjectSwitcher from './ProjectSwitcher.vue'
+import SidebarFrameTop from './SidebarFrameTop.vue'
 
 import { t } from '@/i18n'
 
@@ -24,6 +24,7 @@ const router = createRouter({
   routes: [
     { path: '/teams/:handle', name: 'TeamsDetailDefault', component: { template: '<div />' } },
     { path: '/my/archived-projects', name: 'my-archived-projects', component: { template: '<div />' } },
+    { path: '/inbox', component: { template: '<div />' } },
     { path: '/:rest(.*)', component: { template: '<div />' } },
   ],
 })
@@ -60,7 +61,16 @@ const projects = [
 
 function railOf(): NavGenericItem[] {
   return [
-    { key: 'Home', type: 'item', title: '首页', icon: 'cheese', to: '/inbox', badge: 5, shortcut: 1 },
+    {
+      key: 'Home',
+      type: 'item',
+      title: '首页',
+      icon: 'cheese',
+      to: '/inbox',
+      match: (path: string) => path === '/inbox' || path.startsWith('/teams'),
+      badge: 5,
+      shortcut: 1,
+    },
     { key: 'cx-divider', type: 'divider' },
     ...projects.map((p, i) => ({
       key: `cx-${p.id}`,
@@ -86,29 +96,33 @@ async function mount(path: string, reorder = vi.fn()) {
         projects: computed(() => projects),
         reorder,
         loggedIn: computed(() => true),
-        frame: { top: ProjectSwitcher, foot: ProjectSwitcher },
+        frame: { top: SidebarFrameTop, foot: SidebarFrameTop },
+        foldSidebar: computed(() => null),
       })
-      return () => h(ProjectSwitcher)
+      return () => h(SidebarFrameTop)
     },
   })
   return render(Host, { global: { plugins: [vuetify, router] } })
 }
 
-describe('侧栏头的项目切换器', () => {
-  it('写当前项目的全名和团队，别的项目里等你的件数汇总在旁边', async () => {
+describe('侧栏头写你在哪儿', () => {
+  it('项目里写当前项目的全名和团队，别的项目里等你的件数汇总在旁边', async () => {
     const view = await mount('/projects/p1/topics/t1')
     const button = view.getByTestId('project-switcher')
     expect(button.textContent).toContain('CS 课程助教')
     expect(button.textContent).toContain('人大课程')
     // 机器学习导论 3 件 + Agent 评测 1 件；当前项目自己的不算。
     expect(button.textContent).toContain('4')
-    // 首页那一格（老鼠图标）就在它左边。
-    expect(view.container.querySelector('a[aria-label="首页（5）"], a[aria-label^="首页"]')).not.toBeNull()
+    // 侧栏头里只有你在哪儿，回首页的链接不在头里。
+    expect(button.querySelector('a[href="/inbox"]')).toBeNull()
   })
 
-  it('在首页时写「选择项目」', async () => {
-    const view = await mount('/inbox')
-    expect(view.getByTestId('project-switcher').textContent).toContain(t('work.sidebar.chooseProject'))
+  it('首页一带写「首页」，别处写「选择项目」', async () => {
+    const home = await mount('/teams/ruc')
+    expect(home.getByTestId('project-switcher').textContent?.trim()).toBe('首页')
+    cleanup()
+    const elsewhere = await mount('/admin')
+    expect(elsewhere.getByTestId('project-switcher').textContent).toContain(t('work.sidebar.chooseProject'))
   })
 
   it('点开是项目列表，能按名字筛', async () => {
@@ -126,5 +140,18 @@ describe('侧栏头的项目切换器', () => {
     const filtered = await screen.findAllByTestId('project-switcher-row')
     expect(filtered).toHaveLength(1)
     expect(filtered[0].textContent).toContain('机器学习导论')
+  })
+})
+
+describe('「首页」那一行', () => {
+  it('带等你处理的总件数，点它回首页', async () => {
+    const view = await mount('/projects/p1/topics/t1')
+    const row = view.getByTestId('sidebar-home')
+    expect(row.textContent).toContain('首页')
+    expect(row.textContent).toContain('5')
+    expect(row.getAttribute('aria-current')).toBeNull()
+    await fireEvent.click(row)
+    await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/inbox'))
+    expect(view.getByTestId('sidebar-home').getAttribute('aria-current')).toBe('page')
   })
 })

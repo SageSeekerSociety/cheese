@@ -522,6 +522,39 @@ describe('绿了自动合', () => {
   })
 })
 
+describe('提交并采纳之后', () => {
+  // The person adopted the version they handed in; nobody turned auto-merge on,
+  // even on a project that does not allow it.
+  const adopted = (state: 'clean' | 'blocked') =>
+    githubCard({
+      auto_merge: { allowed: false, armed_by: 'bob', armed_at: '2026-11-18T00:00:00Z', adopting: true },
+      merge_state: mergeState(
+        state === 'blocked'
+          ? { state, who: 'ci', reasons: [{ kind: 'ci_running', checks: ['test'], detail: '检查在跑' }] }
+          : { state, who: 'human', reasons: [{ kind: 'no_obstacle', checks: [], detail: '可以合并' }] }
+      ),
+    })
+
+  it('只等托管方答复的那几秒，不说任何话', async () => {
+    const { container } = await mountWith([adopted('clean')])
+
+    expect(container.textContent).not.toContain('自动合并')
+    expect(container.textContent).not.toContain('检查通过后由')
+  })
+
+  it('检查还在跑时说检查通过后由谁采纳，并且可以取消', async () => {
+    const card = adopted('blocked')
+    setAutoMerge.mockResolvedValue(card)
+    const { container } = await mountWith([card])
+
+    expect(container.textContent).toContain('检查通过后由 bob 采纳')
+    expect(container.textContent).not.toContain('已开启检查通过后自动合并')
+
+    await chooseMore(container, '取消采纳')
+    expect(setAutoMerge).toHaveBeenCalledWith(card.id, false, card.merge_state.head_sha)
+  })
+})
+
 describe('人工放行的入口', () => {
   it('GitHub lane 非 clean 时收在「更多操作」里', async () => {
     const { container } = await mountWith([

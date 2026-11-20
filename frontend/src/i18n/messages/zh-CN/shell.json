@@ -76,6 +76,7 @@
     "expand": "展开{title}",
     "maximize": "放大",
     "restore": "还原",
+    "reset": "恢复默认摆法",
     "tabs": "页签"
   }
 }

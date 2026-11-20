@@ -17,6 +17,7 @@
     "tasks": "全部任务",
     "more": "更多"
   },
+  "projects": "项目",
   "spaces": "空间",
   "teams": "团队",
   "term": {
@@ -142,6 +143,7 @@
   },
   "sidebar": {
     "resize": "拖动调整宽度",
+    "title": "侧栏",
     "expand": "展开侧栏",
     "collapse": "收起侧栏"
   },

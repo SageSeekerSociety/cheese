@@ -22,9 +22,15 @@
   口里展开隐藏用例看。只给能批改的人（``Can(teach)``）。
 * ``POST /spaces/{spaceId}/test-trials`` 与 ``GET /tasks/test-trials/{runId}`` —— 出题人用参考
   答案试跑一套测试点（题目不必已经发布），只有能在那个空间出题的人能排，只有发起的人
-  能读（``app.domain.judge.trials``）。
+  能读（``app.domain.judge.trials``）。三种形态都能试跑。
+* ``POST .../participants/{participantId}/self-tests`` 与 ``GET .../self-tests/latest``
+  —— 学生自测：拿默认分支现在的代码只跑这一阶段的样例用例，不计分，每人每天有次数
+  （``judge_queue.enqueue_self_test``）。这一步只有输入/输出用例能自测。
+* ``POST /tasks/{taskId}/judge/rejudge`` —— 老师改了测试点以后，把每个参与者最新的那一
+  版提交按现在这一版测试再评一次（``judge_queue.rejudge_stage``）。
 """
 
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Path, Query
@@ -55,6 +61,8 @@ from app.domain.task.services import (
     TaskMembershipService,
     TaskService,
 )
+from app.domain.task.stages import open_stage, stage_index
+from app.domain.task.submission_state import past_deadline
 
 router = APIRouter(prefix="/tasks")
 #: 试跑是空间里的事：谁能排看的是空间，所以它挂在空间下面。
@@ -98,10 +106,28 @@ class TaskJudgeCase(BaseModel):
     actual: str | None = None
     #: 运行出错时程序打到标准错误的前 4 KB；隐藏用例只给能批改的人。
     stderr: str | None = None
+    #: 测试脚本：报告里的测试名（``classname::name``）。
+    testId: str | None = None
+    #: 测试脚本：这个测试的失败信息；老师都看得到，学生只看得到样例那几条。
+    message: str | None = None
+    #: 命令判分：这一项的得分与满分（可以是小数）；``points`` 是满分取整。
+    score: float | None = None
+    maxScore: float | None = None
+    #: 测试脚本：这个测试被跳过了（算没过，``status`` 是 ``wrong``）。
+    skipped: bool | None = None
+    #: 测试脚本：报告里有、出题人没给它配分的测试（0 分，只列出来）。
+    unscored: bool | None = None
+    #: 命令判分：score.json 里 ``visible: false`` 的那一项；只有老师读得到这一行。
+    private: bool | None = None
 
 
 class TaskJudgeRun(BaseModel):
-    """一次评测的结果。``cases`` 在跑完（done/failed）之前是空表。"""
+    """一次评测的结果。``cases`` 在跑完（done/failed）之前是空表。
+
+    ``state`` 是 ``done`` 而 ``scoreFailed`` 为真：判分失败（测试脚本没写出报告、判分
+    命令没给出分或分不在范围里），``error`` 说是哪一种，两个分数是 0 但不算数 —— 评分
+    要点里那一行按「待定」处理，老师看 ``compileOutput``（程序输出前 200 行）手动给分。
+    """
 
     state: str
     purpose: str
@@ -115,6 +141,9 @@ class TaskJudgeRun(BaseModel):
     machineMs: int | None
     error: dict | None = None
     compileOutput: str | None = None
+    #: 出题人允许学生看的程序输出（前 ``studentLogLines`` 行）；没有就不出现。
+    studentOutput: str | None = None
+    scoreFailed: bool = False
     cases: list[TaskJudgeCase] = []
     passedCases: int = 0
     caseCount: int = 0
@@ -398,3 +427,195 @@ async def get_task_test_trial(
     if run is None:
         raise NotFoundError.for_resource("test_trial", run_id)
     return ok({"trial": trials.trial_to_api(run)})
+
+
+class TaskSelfTestOut(BaseModel):
+    """最近一次自测和今天的次数。
+
+    ``selfTest`` 还没自测过时是 null；``dailyLimit`` 是出题人给的每天次数（没开自测是
+    null），``usedToday`` 是今天（UTC）已经用掉的，``resetsAt``（毫秒）是下一次清零。
+    """
+
+    selfTest: TaskJudgeRun | None
+    dailyLimit: int | None
+    usedToday: int
+    resetsAt: int
+
+
+async def _self_test_view(db, *, task_id: int, membership_id: int, stage: int) -> dict:
+    suite = await test_suite.suite_of_stage(db, task_id, stage)
+    if suite is None:
+        raise NotFoundError.for_resource("test_suite", stage)
+    run = await judge_queue.latest_self_test(
+        db, task_id=task_id, membership_id=membership_id, suite_id=suite.id
+    )
+    used = await judge_queue.self_tests_today(
+        db, task_id=task_id, membership_id=membership_id, suite_id=suite.id
+    )
+    return {
+        # 自测只跑样例用例，输入输出本来就公开，编译输出也该让学生看见：按老师那一份给。
+        "selfTest": judge_queue.run_to_api(run, teacher=True),
+        "dailyLimit": suite.self_test_daily,
+        "usedToday": used,
+        "resetsAt": int(judge_queue.next_reset().timestamp() * 1000),
+    }
+
+
+@router.post(
+    "/{taskId}/participants/{participantId}/self-tests",
+    summary="Self-Test the Sample Cases",
+    **typed_response(TaskSelfTestOut),
+    dependencies=[Can(TaskPermission.view)],
+)
+async def post_task_self_test(
+    task_id: Annotated[int, Path(ge=1, alias="taskId")],
+    participant_id: Annotated[int, Path(ge=1, alias="participantId")],
+    stage: str | None = Query(default=None, max_length=16),
+    task_service: TaskService = Depends(get_task_service),
+    membership_service: TaskMembershipService = Depends(get_task_membership_service),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
+) -> dict:
+    """排一次自测（方案 §自测样例）：默认分支现在指着的那一版代码，只跑这一阶段的
+    样例用例，不计分、不挂在哪一版提交上。
+
+    和交作业同一道门：能替这份领题交作业的人（``claim.hand_in``），领题已通过、题目
+    没结束、没过领题的截止时间、这一阶段没过截止日期。另有：这一阶段的测试点是输入/
+    输出用例、出题人开了自测（``selfTestDaily``）、今天（UTC）的次数还没用完。返回刚排
+    上的这一次和今天的次数，之后用 ``GET .../self-tests/latest`` 读结果。
+    """
+    task = await task_service.get_task(task_id=task_id)
+    if task is None:
+        raise NotFoundError.for_resource("task", task_id)
+    membership = await membership_service.get_membership_by_id(participant_id)
+    if membership is None or membership.task_id != task_id:
+        raise NotFoundError.for_resource("participant", participant_id)
+    await can.require(db, auth_user.user_id, ClaimPermission.hand_in, membership)
+    if membership.approved != 0:
+        raise BadRequestError(say("submissionClaimNotApproved"))
+    now = datetime.now(UTC)
+    if task.ended_at is not None:
+        raise BadRequestError(say("submissionChallengeEnded"))
+    if past_deadline(membership.deadline, now):
+        raise BadRequestError(say("submissionPastDeadline"))
+    stage_at = stage_index(stage, await task_service.stage_keys(task_id))
+    await open_stage(db, task_id, stage_at, now)
+
+    project = await project_of_claim(
+        db, task=task, membership=membership, user_id=auth_user.user_id
+    )
+    version = (
+        await code_version.for_project(db, project.id) if project is not None else None
+    )
+    await judge_queue.enqueue_self_test(
+        db,
+        task_id=task_id,
+        stage=stage_at,
+        membership_id=membership.id,
+        project_id=project.id if project is not None else None,
+        code_sha=version.sha if version is not None else "",
+        requested_by=auth_user.user_id,
+    )
+    view = await _self_test_view(
+        db, task_id=task_id, membership_id=membership.id, stage=stage_at
+    )
+    await db.commit()
+    return ok(view)
+
+
+@router.get(
+    "/{taskId}/participants/{participantId}/self-tests/latest",
+    summary="The Latest Self-Test",
+    **typed_response(TaskSelfTestOut),
+    dependencies=[Can(TaskPermission.view)],
+)
+async def get_task_self_test(
+    task_id: Annotated[int, Path(ge=1, alias="taskId")],
+    participant_id: Annotated[int, Path(ge=1, alias="participantId")],
+    stage: str | None = Query(default=None, max_length=16),
+    task_service: TaskService = Depends(get_task_service),
+    membership_service: TaskMembershipService = Depends(get_task_membership_service),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
+) -> dict:
+    """这个参与者在这一阶段最近一次自测和今天的次数。读者和读这份领题的提交的人一样
+    （``claim.read``）。这一阶段没有测试点时 404。"""
+    task = await task_service.get_task(task_id=task_id)
+    if task is None:
+        raise NotFoundError.for_resource("task", task_id)
+    membership = await membership_service.get_membership_by_id(participant_id)
+    if membership is None or membership.task_id != task_id:
+        raise NotFoundError.for_resource("participant", participant_id)
+    await can.require(db, auth_user.user_id, ClaimPermission.read, membership)
+    stage_at = stage_index(stage, await task_service.stage_keys(task_id))
+    return ok(
+        await _self_test_view(
+            db, task_id=task_id, membership_id=membership.id, stage=stage_at
+        )
+    )
+
+
+class TaskRejudgeOut(BaseModel):
+    """重新评测排了多少：``queued`` 新排上的，``reused`` 同一份代码在这一版测试上
+    已经评过、直接拿结果的，``unchanged`` 已经在这一版上评过或正在评的，``skipped``
+    没记下代码版本或找不到项目的。"""
+
+    queued: int
+    reused: int
+    unchanged: int
+    skipped: int
+
+
+@router.post(
+    "/{taskId}/judge/rejudge",
+    summary="Re-Judge Every Latest Submission",
+    **typed_response(TaskRejudgeOut),
+    dependencies=[Can(TaskPermission.teach)],
+)
+async def post_task_rejudge(
+    task_id: Annotated[int, Path(ge=1, alias="taskId")],
+    stage: str | None = Query(default=None, max_length=16),
+    task_service: TaskService = Depends(get_task_service),
+    membership_service: TaskMembershipService = Depends(get_task_membership_service),
+    auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
+) -> dict:
+    """重新评测全部最新提交（方案 §改题后重新评测）：每个参与者在这一阶段最新的那一版，
+    按现在这一版测试套再排一次。
+
+    只给能批改的人（``Can(teach)``）。不给 ``stage`` 就是挂着测试点的每个阶段。评审不
+    动：已经批过的那一版，分数照旧是评审里记的那个；没批过的那一版，老师批改时读到的
+    就是新的评测结果。评测扣的算力照常记在空间所有者头上 —— 同一份代码在这一版测试上
+    已经评过的不再跑。
+    """
+    task = await task_service.get_task(task_id=task_id)
+    if task is None:
+        raise NotFoundError.for_resource("task", task_id)
+    if stage is None:
+        stages = await test_suite.suite_stages(db, task_id)
+    else:
+        stages = [stage_index(stage, await task_service.stage_keys(task_id))]
+
+    async def project_for(submission):
+        # 之前没评测过的那一版（测试点是后来才加的）：按领题找回它的项目。
+        membership = await membership_service.get_membership_by_id(
+            submission.membership_id
+        )
+        project = await project_of_claim(
+            db, task=task, membership=membership, user_id=submission.submitter_id
+        )
+        return project.id if project is not None else None
+
+    totals = {"queued": 0, "reused": 0, "unchanged": 0, "skipped": 0}
+    for stage_at in stages:
+        counts = await judge_queue.rejudge_stage(
+            db,
+            task_id=task_id,
+            stage=stage_at,
+            requested_by=auth_user.user_id,
+            project_for=project_for,
+        )
+        for key, value in counts.items():
+            totals[key] += value
+    await db.commit()
+    return ok(totals)

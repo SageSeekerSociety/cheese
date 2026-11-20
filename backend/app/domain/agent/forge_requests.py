@@ -1,9 +1,11 @@
 """What a forge request would do to pull requests and branches, read the way the
 forge reads it.
 
-The forge proxy (`forge_proxy.py`) refuses an agent two things: merging a pull
-request, and closing one that is a delivery waiting on a person (deleting its
-branch, or leaving it with nothing over its base, closes it too). Matching
+The forge proxy (`forge_proxy.py`) refuses an agent three things: merging a
+pull request, writing the project's default branch (a change enters it only as
+a delivery a reviewer adopts), and closing a pull request that is a delivery
+waiting on a person (deleting its branch, or leaving it with nothing over its
+base, closes it too). Matching
 request bytes against patterns misses every request that says the same thing
 differently — a path under the forge's own base (`/forge/api/v1/repos/…`), a
 doubled slash, the `/repositories/{id}` alias, a form-encoded body, a JSON
@@ -46,7 +48,25 @@ CLOSING_FIELDS = frozenset(
 )
 #: The two that only close when asked to (`state: CLOSED`).
 UPDATE_FIELDS = frozenset({"updatePullRequest", "updateIssue"})
-MERGE_FIELDS = frozenset({"mergePullRequest", "enablePullRequestAutoMerge"})
+MERGE_FIELDS = frozenset(
+    {"mergePullRequest", "enablePullRequestAutoMerge", "mergeBranch"}
+)
+#: Mutations that create, move or delete a branch, or commit onto one; the
+#: branch is named in their arguments, or by a ref's or pull request's node id
+#: (`updatePullRequestBranch` moves the pull request's head).
+BRANCH_FIELDS = frozenset(
+    {
+        "createCommitOnBranch",
+        "createRef",
+        "updateRef",
+        "updateRefs",
+        "deleteRef",
+        "updatePullRequestBranch",
+    }
+)
+_BRANCH_FIELD_RE = re.compile(
+    r"\b(?:" + "|".join(sorted(BRANCH_FIELDS | MERGE_FIELDS)) + r")\b"
+)
 #: A GitHub global node id: `PR_kwDO…` / `I_kwDO…` / `REF_kwDO…`, or the
 #: legacy base64 form.
 NODE_ID_RE = re.compile(
@@ -77,6 +97,19 @@ class ForgeWrite:
     #: (branch, new sha) of each branch a push updates; an all-zero sha
     #: deletes it.
     pushes: tuple[tuple[str, str], ...] = ()
+    #: Branches it would create, commit onto, move, delete or rename to, read
+    #: from a REST body or a GraphQL mutation's arguments (`refs/heads/`
+    #: stripped).
+    branches: frozenset[str] = frozenset()
+    #: It writes the default branch whatever that is named (a commit API
+    #: naming no branch, a change of the repository's default branch), or it
+    #: writes some branch and which one could not be read.
+    default_branch: bool = False
+    #: GitHub node ids (refs, pull requests) whose branch a GraphQL mutation
+    #: writes, to resolve.
+    branch_node_ids: frozenset[str] = frozenset()
+    #: Pull requests whose head branch it updates from their base.
+    updated_pulls: frozenset[int] = frozenset()
     #: It merges a pull request, or branches outside a pull request.
     merge: bool = False
     #: It deletes the repository.
@@ -91,6 +124,10 @@ class ForgeWrite:
             or self.names
             or self.node_ids
             or self.pushes
+            or self.branches
+            or self.default_branch
+            or self.branch_node_ids
+            or self.updated_pulls
             or self.merge
             or self.deletes_repository
             or self.unreadable
@@ -111,14 +148,45 @@ def read(method: str, path: str, headers: Mapping[str, str], body: bytes) -> For
         return _read_graphql(body) if method == "POST" else ForgeWrite()
     if method not in WRITES:
         return ForgeWrite()
-    if method == "DELETE" and _REPO_ROOT_RE.search(clean):
-        return ForgeWrite(deletes_repository=True)
+    content_type = lower.get("content-type", "")
+    if _REPO_ROOT_RE.search(clean):
+        if method == "DELETE":
+            return ForgeWrite(deletes_repository=True)
+        # Editing the repository may make another branch its default.
+        pairs = _fields(content_type, body)
+        if pairs is None or _has_field(pairs, "default_branch"):
+            return ForgeWrite(default_branch=True)
+        return ForgeWrite()
     match = _REPO_RE.search(clean)
     if not match:
         return ForgeWrite()
     rest = match.group(1)
     if rest.startswith(("git/refs/", "branches/")):
-        return ForgeWrite(ref_paths=frozenset({rest}))
+        # A rename names the branch it becomes in its body: `new_name` on
+        # GitHub (`POST branches/{b}/rename`), `name` on Forgejo
+        # (`PATCH branches/{b}`).
+        renamed = _named_branches(content_type, body, "new_name", "name")
+        if renamed is None:
+            return ForgeWrite(ref_paths=frozenset({rest}), default_branch=True)
+        return ForgeWrite(ref_paths=frozenset({rest}), branches=renamed)
+    if rest in ("git/refs", "branches") and method == "POST":
+        # Creating a branch: GitHub's `ref`, Forgejo's `new_branch_name`.
+        created = _named_branches(content_type, body, "ref", "new_branch_name")
+        if created is None:
+            return ForgeWrite(default_branch=True)
+        return ForgeWrite(branches=created)
+    if rest == "contents" or rest.startswith("contents/") or rest == "diffpatch":
+        # A commit the forge makes: onto `new_branch` when one is named, else
+        # onto `branch`, else onto the default branch.
+        return _commit_target(content_type, body)
+    if rest == "merge-upstream" and method == "POST":
+        synced = _named_branches(content_type, body, "branch")
+        if synced is None:
+            return ForgeWrite(default_branch=True)
+        return ForgeWrite(branches=synced)
+    updated = re.fullmatch(r"pulls/(\d+)/update(?:-branch)?", rest)
+    if updated and method in ("POST", "PUT"):
+        return ForgeWrite(updated_pulls=frozenset({int(updated.group(1))}))
     number = re.fullmatch(r"(?:pulls|issues)/(\d+)", rest)
     if number and method == "DELETE":
         return ForgeWrite(numbers=frozenset({int(number.group(1))}))
@@ -186,6 +254,39 @@ class _Pairs(list):
     """A JSON object kept as its (key, value) pairs, duplicates included."""
 
 
+def _has_field(pairs: list[tuple[str, object]], name: str) -> bool:
+    return any(key.casefold() == name.casefold() for key, _value in pairs)
+
+
+def _branch_name(value: object) -> str | None:
+    if not isinstance(value, str) or not value:
+        return None
+    return value.removeprefix(_HEADS)
+
+
+def _named_branches(
+    content_type: str, body: bytes, *names: str
+) -> frozenset[str] | None:
+    """The branches the body's fields `names` name; None when the body cannot
+    be read."""
+    pairs = _fields(content_type, body)
+    if pairs is None:
+        return None
+    found = (_branch_name(_decoded_field(pairs, name)) for name in names)
+    return frozenset(branch for branch in found if branch)
+
+
+def _commit_target(content_type: str, body: bytes) -> ForgeWrite:
+    pairs = _fields(content_type, body)
+    if pairs is None:
+        return ForgeWrite(default_branch=True)
+    for name in ("new_branch", "branch"):
+        branch = _branch_name(_decoded_field(pairs, name))
+        if branch:
+            return ForgeWrite(branches=frozenset({branch}))
+    return ForgeWrite(default_branch=True)
+
+
 def _decoded_field(pairs: list[tuple[str, object]], name: str) -> object:
     """The value a forge's decoder gives field `name`: Go's encoding/json
     matches keys case-insensitively (with Unicode folding, so `ſtate` is
@@ -230,22 +331,23 @@ def _read_push(headers: Mapping[str, str], body: bytes) -> ForgeWrite:
     """The branches a push updates. Its command list is the pkt-lines up to
     the first flush; a signed push puts the commands inside its certificate,
     which is read the same way."""
+    unread = ForgeWrite(unreadable=True, default_branch=True)
     data = _decompressed(headers.get("content-encoding", ""), body)
     if data is None:
-        return ForgeWrite(unreadable=True)
+        return unread
     pushes: list[tuple[str, str]] = []
     at = 0
     while True:
         if at + 4 > len(data):
-            return ForgeWrite(unreadable=True)
+            return unread
         try:
             size = int(data[at : at + 4], 16)
         except ValueError:
-            return ForgeWrite(unreadable=True)
+            return unread
         if size == 0:
             break
         if size < 4 or at + size > len(data):
-            return ForgeWrite(unreadable=True)
+            return unread
         line = data[at + 4 : at + size].split(b"\0", 1)[0].rstrip(b"\n")
         at += size
         parts = line.decode("utf-8", "replace").split(" ")
@@ -254,6 +356,55 @@ def _read_push(headers: Mapping[str, str], body: bytes) -> ForgeWrite:
             if ref.startswith(_HEADS):
                 pushes.append((ref[len(_HEADS) :], parts[1]))
     return ForgeWrite(pushes=tuple(pushes))
+
+
+def _pkt(data: bytes) -> bytes:
+    return f"{len(data) + 4:04x}".encode() + data
+
+
+def refused_push(headers: Mapping[str, str], body: bytes, message: str) -> bytes | None:
+    """The answer a forge's pre-receive hook gives a push it refuses, for
+    `git-receive-pack`: every ref it updates rejected with `message`, which
+    git prints (`! [remote rejected] … (message)`, and `remote: message` when
+    the client takes a side band). None when the push cannot be read: an HTTP
+    error is all such a client gets."""
+    lower = {k.lower(): v for k, v in headers.items()}
+    data = _decompressed(lower.get("content-encoding", ""), body)
+    if data is None:
+        return None
+    refs: list[str] = []
+    capabilities: set[str] = set()
+    at = 0
+    while True:
+        try:
+            size = int(data[at : at + 4], 16)
+        except ValueError:
+            return None
+        if size == 0:
+            break
+        if size < 4 or at + size > len(data):
+            return None
+        line, _, caps = data[at + 4 : at + size].rstrip(b"\n").partition(b"\0")
+        at += size
+        if not refs:
+            capabilities = set(caps.decode("utf-8", "replace").split())
+        parts = line.decode("utf-8", "replace").split(" ")
+        if len(parts) == 3:
+            refs.append(parts[2])
+    if not refs:
+        return None
+    reason = " ".join(message.split())
+    report = _pkt(b"unpack ok\n")
+    for ref in refs:
+        report += _pkt(f"ng {ref} {reason}\n".encode())
+    report += b"0000"
+    if not capabilities & {"side-band", "side-band-64k"}:
+        return report
+    limit = 65515 if "side-band-64k" in capabilities else 995
+    out = _pkt(b"\x02" + f"{reason}\n".encode())
+    for start in range(0, len(report), limit):
+        out += _pkt(b"\x01" + report[start : start + limit])
+    return out + b"0000"
 
 
 def is_deletion(sha: str) -> bool:
@@ -273,7 +424,10 @@ def _read_graphql(body: bytes) -> ForgeWrite:
     try:
         operations = parse_operations(request["query"])
     except GraphQLSyntaxError:
-        return ForgeWrite(unreadable=True)
+        return ForgeWrite(
+            unreadable=True,
+            default_branch=bool(_BRANCH_FIELD_RE.search(request["query"])),
+        )
     wanted = request.get("operationName")
     mutations = [
         op
@@ -290,15 +444,27 @@ def _read_graphql(body: bytes) -> ForgeWrite:
     variables = _strings(provided)
     merge = False
     unreadable = False
+    default_branch = False
     node_ids: set[str] = set()
     names: set[str] = set()
+    branch_node_ids: set[str] = set()
+    branches: set[str] = set()
     for op in mutations:
         unreadable = unreadable or op.spreads
+        default_branch = default_branch or op.spreads
         # A variable's value is what was sent, or else its declared default.
         known = variables + op.defaults
         for name, args in op.fields:
             if name in MERGE_FIELDS:
                 merge = True
+            if name in BRANCH_FIELDS:
+                values = args + known
+                if not values:
+                    default_branch = True
+                for value in values:
+                    if NODE_ID_RE.match(value):
+                        branch_node_ids.add(value)
+                    branches.add(value.removeprefix(_HEADS))
             if name not in CLOSING_FIELDS:
                 continue
             values = args + known
@@ -313,6 +479,9 @@ def _read_graphql(body: bytes) -> ForgeWrite:
     return ForgeWrite(
         node_ids=frozenset(node_ids),
         names=frozenset(names),
+        branches=frozenset(branches),
+        default_branch=default_branch,
+        branch_node_ids=frozenset(branch_node_ids),
         merge=merge,
         unreadable=unreadable,
     )

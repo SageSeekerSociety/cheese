@@ -57,7 +57,16 @@ const samples = computed(() => props.suite.cases.filter((entry) => entry.visibil
       />
     </div>
     <p class="tcv__meta t-meta-read">
-      {{
+      <template v-if="suite.kind !== 'IO'">{{
+        lineName && linePoints != null
+          ? t('tasks.judge.submit.suiteOtherLine', {
+              kind: t(`tasks.judge.kind.${suite.kind}`),
+              name: lineName,
+              points: linePoints,
+            })
+          : t('tasks.judge.submit.suiteOther', { kind: t(`tasks.judge.kind.${suite.kind}`) })
+      }}</template>
+      <template v-else>{{
         lineName && linePoints != null
           ? t('tasks.judge.submit.suiteLine', {
               n: suite.caseCount ?? suite.cases.length,
@@ -66,7 +75,7 @@ const samples = computed(() => props.suite.cases.filter((entry) => entry.visibil
               points: linePoints,
             })
           : t('tasks.judge.submit.suite', { n: suite.caseCount ?? suite.cases.length, samples })
-      }}
+      }}</template>
     </p>
     <template v-if="version">
       <div class="tcv__version">

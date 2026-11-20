@@ -79,6 +79,20 @@
           </v-card>
         </template>
 
+        <!-- 出题人开了自测的输入/输出用例：交之前拿现在的代码只跑样例。过了截止照样显示，
+             只是点不了 —— 学生要知道为什么不能再自测。 -->
+        <TaskSelfTestCard
+          v-if="selfTestOn && currentIdentity"
+          class="mb-6"
+          :view="selfTest.view.value"
+          :starting="selfTest.starting.value"
+          :error="selfTest.error.value"
+          :closed="selfTestClosed"
+          :samples="stageSuite?.cases ?? []"
+          :suite-revision="stageSuite?.revision ?? null"
+          @run="selfTest.run"
+        />
+
         <v-form v-if="canSubmit" ref="formRef" @submit.prevent="submitTask">
           <div class="form-container">
             <!-- 这个阶段挂了测试点：交的那一刻平台记下项目默认分支的这一版去评测。 -->
@@ -256,12 +270,13 @@ import { TaskBoardApi } from '@/api/taskBoard'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { DIALOG_WIDTH } from '@/components/base/dialogSize'
 import TaskCodeVersionCard from '@/components/tasks/TaskCodeVersionCard.vue'
+import TaskSelfTestCard from '@/components/tasks/TaskSelfTestCard.vue'
 import TaskStageTimeline from '@/components/tasks/TaskStageTimeline.vue'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { settledStage } from '@/lib/taskStages'
 import { toast } from '@/lib/toast'
 import { fmtFileSize } from '@/lib/usageFormat'
-import { readCodeVersion } from '@/views/tasks/composables/useTaskJudge'
+import { readCodeVersion, useSelfTest } from '@/views/tasks/composables/useTaskJudge'
 import { useEvents } from '@/views/tasks/events'
 
 const { t } = useI18n()
@@ -354,6 +369,29 @@ watch(
   () => [props.taskData?.id, currentIdentity.value?.id, !!stageSuite.value] as const,
   () => void loadCodeVersion(),
   { immediate: true }
+)
+
+// 自测样例：这一阶段是开了自测的输入/输出用例才有。换了阶段、换了身份重新读。
+const selfTestOn = computed(() => stageSuite.value?.kind === 'IO' && !!stageSuite.value.selfTestDaily)
+const selfTest = useSelfTest({
+  taskId: () => props.taskData?.id ?? 0,
+  participantId: () => currentIdentity.value?.id ?? 0,
+  stage: () => stageId.value,
+})
+watch(
+  () => [props.taskData?.id, currentIdentity.value?.id, stageId.value, selfTestOn.value] as const,
+  () => {
+    if (selfTestOn.value && currentIdentity.value) selfTest.load()
+    else selfTest.stop()
+  },
+  { immediate: true }
+)
+/** 过了这一阶段或这份领题的截止、题目不再收：不能自测（服务端也这样拒）。 */
+const selfTestClosed = computed(
+  () =>
+    !props.taskData?.submittable ||
+    stagePastDue.value ||
+    (userDeadline.value != null && userDeadline.value < Date.now())
 )
 
 const canSubmit = computed(() => {

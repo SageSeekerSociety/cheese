@@ -30,9 +30,11 @@ import uuid
 from dataclasses import dataclass
 from typing import Protocol
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import release_read_session
+from app.core.device_failures import DeviceCallError, DeviceOffline
 from app.core.errors import (
     ConflictError,
     GatewayUnavailableError,
@@ -57,10 +59,9 @@ from app.domain.repository import identity
 from app.domain.repository.forge_files import ProjectFiles
 from app.domain.repository.kept_work import has_kept, kept_work
 from app.domain.repository.ports import WakeWorkingCopy as Wake
-from app.domain.review import commit_message
+from app.domain.review import commit_message, task_landing
 from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.services import AcceptService, ReviewerAdmission
-from app.domain.review.task_landing import record_at_origin
 from app.domain.room_task import heard
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.services import said_title
@@ -297,6 +298,11 @@ async def _commit_on_sandbox(
             commit_command(task.id, author=author, message=message),
             seconds=HAND_IN_S,
         )
+    except (DeviceCallError, DeviceOffline, TimeoutError) as exc:
+        # The machine's own words name its sockets and paths: they go to the
+        # log, and the person is told what they can act on.
+        logger.warning("hand-in of task %s on its sandbox failed: %s", task.id, exc)
+        raise GatewayUnavailableError(say("handInMachineNotResponding")) from exc
     except Exception as exc:
         raise GatewayUnavailableError(
             say("handInFailed", error=exception_text(exc) or type(exc).__name__)
@@ -462,16 +468,52 @@ async def _again(
                 detail_label=say("labelChanges"),
             ),
         )
-    await record_at_origin(
+    card.handed_in_by = who
+    await db.flush()
+    await db.refresh(card)
+    return card
+
+
+async def record_at_origin(
+    db: AsyncSession, service: AcceptService, task: Task, handed: HandedIn
+) -> None:
+    """Record where the task came from that a member handed a version in for
+    review: who, the version's title, and whom it waits on. The AI teammate
+    that opened the task from the channel's main line reads it in its next
+    input (`task_landing.task_handed_in_opener_note`) and is not woken: the
+    member did it where people see it.
+
+    Not for a version they adopt in the same go (「提交并采纳」): that is one
+    thing, recorded once, when it lands (`task_landing.delivery_landed`)."""
+    card = handed.card
+    reviewers = (await service.reviewer_handles_for_cards([card.id])).get(card.id, [])
+    refers: dict = {"card_id": str(card.id)}
+    if not handed.again:
+        refers["version"] = await db.scalar(
+            select(func.count())
+            .select_from(AcceptCard)
+            .where(AcceptCard.task_id == task.id)
+        )
+    await task_landing.record_at_origin(
         db,
         task,
         EVENT_TASK_FILED,
-        say("taskHandedInBy", who=f"<@{who}>", title=said_title(task)),
+        say(
+            "cardHandedIn",
+            who=f"<@{card.handed_in_by}>",
+            title=card.change_subject or said_title(task),
+            reviewer="、".join(f"<@{h}>" for h in reviewers),
+        ),
         announce=announce,
-        refers={"delivery": {"card_id": str(card.id)}},
+        refers={"delivery": refers},
+        informs=(
+            await task_landing.task_handed_in_opener_note(
+                db, task, card, reviewers=reviewers
+            )
+            if await task_landing.main_line_opener(db, task) is not None
+            else None
+        ),
     )
-    await db.refresh(card)
-    return card
 
 
 @dataclass(frozen=True)

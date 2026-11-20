@@ -63,9 +63,13 @@ const props = withDefaults(
     unhanded?: boolean
     /** 给哪颗提交按钮（「提交审阅」「再提交一版」）；null 不给。 */
     handIn?: HandInAction
+    /** 读者挪过这一页的摆法时给：⋯ 里多一项「恢复默认摆法」。 */
+    resetLayout?: () => void
+    /** 「概览」开合的那几块的 id（见 PanelToggle）。 */
+    panelControls?: string
   }>(),
   // 不给就是连着的：Vue 会把没传的布尔 prop 当成 false，那样每个页头都会写「未连接」。
-  { connected: true, handIn: null }
+  { connected: true, handIn: null, resetLayout: undefined, panelControls: undefined }
 )
 
 const emit = defineEmits<{
@@ -244,11 +248,19 @@ const menuActions = computed<MenuCommand[]>(() =>
           copyLink: props.copyLink ?? null,
           worksTasks: props.worksTasks,
         }
+      ).concat(
+        props.resetLayout
+          ? [{ id: 'room.resetLayout', title: t('shell.layout.reset'), icon: 'mdi-restore', run: props.resetLayout }]
+          : []
       )
     : []
 )
 // ⋯ 给参加这件活的人，和能重新打开这件关了的任务的人；只剩「复制链接」时不摆。
-const showsMenu = computed(() => takesPart.value || menuActions.value.some((action) => action.id === 'task.reopen'))
+const showsMenu = computed(
+  () =>
+    takesPart.value ||
+    menuActions.value.some((action) => action.id === 'task.reopen' || action.id === 'room.resetLayout')
+)
 // 两条既有用例按这两个 test id 找按钮：其余项不必有。
 function actionTestId(id: string): string | undefined {
   if (id === 'task.rename') return 'task-rename'
@@ -475,7 +487,7 @@ function actionTestId(id: string): string | undefined {
     <BaseButton v-if="handIn" kind="primary" size="sm" data-testid="task-hand-in" @click="emit('hand-in')">
       {{ handIn === 'resubmit' ? t('work.room.accept.handIn.resubmit') : t('work.room.accept.handIn.submit') }}
     </BaseButton>
-    <PanelToggle v-if="mdAndUp" :open="!!panelOpen" @toggle="emit('toggle-panel')" />
+    <PanelToggle v-if="mdAndUp" :open="!!panelOpen" :controls="panelControls" @toggle="emit('toggle-panel')" />
     <v-menu v-if="task && showsMenu" location="bottom end">
       <template #activator="{ props: menuProps }">
         <BaseButton

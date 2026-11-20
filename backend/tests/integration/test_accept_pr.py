@@ -1714,6 +1714,20 @@ def test_click_405_surfaces_githubs_reason_and_stops(client, app_world):
     assert _topic(client, tid)["accepted_at"] is None
 
 
+def test_a_merge_github_refuses_is_said_to_be_refused_by_github(client, app_world):
+    """On a project bound to GitHub the refusal names GitHub, which is where
+    the person goes to see why."""
+    fake = app_world["fake"]
+    pid, tid, cid, number, head_sha = _ready_card(client, app_world)
+    fake.check_state_by_sha[head_sha] = ("success", "全绿")
+    fake.merge_blocked_by_number[number] = "HTTP 405：Base branch was modified"
+
+    r = _accept(client, cid)
+
+    assert r.status_code == 422, r.text
+    assert "GitHub" in r.json()["message"]
+
+
 def _github_enforces(monkeypatch) -> None:
     """这个项目的仓库自己开着分支保护/合并队列：平台不再自己判，直接调 GitHub
     的合并 API（`_pr_verdict` 返回的 `enforces`）。真实实现要打 HTTP，`app_world`

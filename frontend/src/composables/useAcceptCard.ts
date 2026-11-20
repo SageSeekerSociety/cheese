@@ -243,7 +243,7 @@ export type AcceptCardState = ReturnType<typeof useAcceptCard>
 
 const ACCEPT_CARD: InjectionKey<AcceptCardState> = Symbol('acceptCard')
 
-// 一个页面上同一张卡有好几处要读：对话栏的横条、「改动」页顶部，以及专注模式里面板
+// 一个页面上同一张卡有好几处要读：对话栏的横条、「改动」页顶部，以及对话看不见时工作面板
 // 底部那一条。各自取一份的话，在一处点了采纳，另一处还停在点之前的样子，两份轮询
 // 也各打一遍。所以页面取一份、往下发，几处读的是同一份。
 export function provideAcceptCard(host: AcceptCardHost): AcceptCardState {

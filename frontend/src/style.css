@@ -42,10 +42,6 @@
   --text: #36383c; /* body */
   --muted: #5a5e66; /* secondary */
   --faint: #747a82; /* decoration — icons, dividers, placeholder shapes */
-  /* The rail's you-are-here bar sits flush against the screen edge, and on a
-     maximised window that edge is the monitor's black bezel. --text (1.8:1 on
-     black) merges into it; --faint holds 4.1:1 on the rail and 4.8:1 on black. */
-  --rail-mark: var(--faint);
 
   --line: #ecedef; /* hairlines */
   --line-2: #e2e3e6; /* dividers AND the selected row's fill — see above */
@@ -488,7 +484,6 @@
   --text: #d3d6db;
   --muted: #aeb4bd;
   --faint: #888ea0; /* decoration — icons, dividers, placeholder shapes */
-  --rail-mark: var(--text);
 
   --line: #2b2e33;
   --line-2: #3a3e45; /* dividers AND the selected row's fill */
@@ -1745,18 +1740,18 @@ button:not(.v-btn) {
   background: var(--selection-bg);
 }
 
-/* 富文本正文里的下划线与删除线：浏览器默认会躲开字母的下伸部分（g j p q y 的尾
-   巴），每躲一次断一截——汉字和数字没有下伸，所以中英数混排时线看起来断断续续。
-   关掉它，线是一整条；代价是线会压过那几笔尾巴。三个容器各是一套正文：富文本编辑
-   器与只读（.rt-content）、Markdown 阅读（.md-reader）、实况文档（.doc-prose，含
-   只读的 .doc-reading）。只管编辑器画出来的 <u>/<s>：版本对比里的 <del>/<ins> 另有
-   样式，不在这三套正文里。 */
-.rt-content u,
-.rt-content s,
-.md-reader u,
-.md-reader s,
-.doc-prose u,
-.doc-prose s {
+/* 正文里的下划线与删除线：浏览器默认会躲开字母的下伸部分（g j p q y 的尾巴），
+   每躲一次断一截——汉字和数字没有下伸，所以中英数混排时线看起来断断续续。关掉它，
+   线是一整条；代价是线会压过那几笔尾巴。
+   写在正文的容器上，不写在标记上：这条属性会往下继承，正文里每一处画线的东西都跟着
+   走——<u>/<s> 的格式、链接的下划线、修改建议和「查看改动」里划掉的字（那是 <del> 和
+   <span>）。按标签逐个列会漏掉后三样。正文出现的每一层容器都在这里：富文本编辑器与
+   只读（.rt-content）、Markdown 阅读（.md-reader）、实况文档（.doc-prose），以及只读
+   的那一份本身（.doc-reading——编辑器只读时、阅读器、导出的 PDF 页都只有它）。 */
+.rt-content,
+.md-reader,
+.doc-prose,
+.doc-reading {
   text-decoration-skip-ink: none;
 }
 

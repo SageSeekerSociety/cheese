@@ -30,6 +30,11 @@ PIDS_LIMIT = 64
 #: user and system CPU seconds, peak resident memory in KB.
 TIME_MARK = "__cheese_judge_time__"
 TIME_FORMAT = TIME_MARK + " %e %U %S %M"
+#: Where a test script writes its JUnit XML report: a directory of the host
+#: bound in writable, empty when the run starts, read by the runner after the
+#: container is gone. ``$JUDGE_REPORT`` names the file inside it.
+REPORT_DIR = "/judge-report"
+REPORT_FILE = REPORT_DIR + "/junit.xml"
 
 
 def cpu_seconds(time_limit_ms: int) -> int:
@@ -50,13 +55,25 @@ def run_args(
     memory_mb: int,
     cpu_limit_s: int,
     code_writable: bool = False,
+    mounts: tuple = (),
+    env: tuple = (),
 ) -> list[str]:
     """``docker run`` for one compile or one test case: a brand-new container
     that reads stdin, runs ``command`` under ``sh -c`` in ``workdir`` (inside
-    the code mount) and is gone after it."""
+    the code mount) and is gone after it.
+
+    ``mounts`` are more writable binds ``(host dir, container dir)`` — the
+    test scripts' report directory (``REPORT_DIR``) — and ``env`` more
+    ``(name, value)`` variables. Neither loosens anything else: no network,
+    the same uid, the same limits."""
     mount = f"type=bind,source={code_dir},target={CODE}"
     if not code_writable:
         mount += ",readonly"
+    extra = []
+    for key, value in env:
+        extra += ["--env", f"{key}={value}"]
+    for source, target in mounts:
+        extra += ["--mount", f"type=bind,source={source},target={target}"]
     return [
         "docker",
         "run",
@@ -99,6 +116,7 @@ def run_args(
         "HOME=/tmp",
         "--env",
         "LANG=C.UTF-8",
+        *extra,
         "--mount",
         mount,
         "--workdir",

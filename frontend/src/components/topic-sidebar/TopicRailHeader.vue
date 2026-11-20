@@ -43,9 +43,6 @@ const props = defineProps<{
   projectSelected: boolean
   canTransfer: boolean
   canLeave: boolean
-  /** 桌面上侧栏头已经是老鼠图标和项目切换器（SecondaryNavigation）：这一行只剩一整条
-   *  搜索，项目菜单挪到总览、资料库下面的「更多」（TopicRailPinnedRows）。 */
-  framed?: boolean
 }>()
 
 // 开着的是菜单里的一页（技能、成员、设置、项目文档……）：侧栏上别的行都不是它，
@@ -54,9 +51,6 @@ const onMenuPage = computed(
   () =>
     props.docsActive || props.routeName === 'project-settings' || props.menuPages.some((p) => p.key === props.routeName)
 )
-
-// 搜索条右边写快捷键：title 里那句「搜索和跳转（⌘K）」括号里的那一截。
-const searchKey = computed(() => props.searchTitle.match(/[（(]([^）)]+)[）)]\s*$/)?.[1] ?? '')
 
 const emit = defineEmits<{
   (e: 'open-page', key: string): void
@@ -69,25 +63,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <!-- 桌面：一整条搜索（2026-11-16 蔡松洋要的「更多和搜索换一个更好的布局」）。原来是
-       项目名右边一颗小放大镜，和「⋯」挤在一起不好找。 -->
-  <div v-if="framed" class="rail-search-row">
-    <button
-      type="button"
-      class="rail-search"
-      data-testid="sidebar-search"
-      :title="searchTitle"
-      :aria-label="t('navigation.palette.open')"
-      aria-haspopup="dialog"
-      @click="emit('open-palette')"
-    >
-      <v-icon size="16" icon="mdi-magnify" />
-      <span class="rail-search__label">{{ t('navigation.palette.open') }}</span>
-      <kbd v-if="searchKey" class="rail-search__kbd">{{ searchKey }}</kbd>
-    </button>
-  </div>
   <div
-    v-else
     class="sidebar-header rail-header"
     :class="{
       'rail-header--bar': page && !column,
@@ -172,48 +148,6 @@ const emit = defineEmits<{
 </template>
 
 <style scoped>
-.rail-search-row {
-  flex: none;
-  padding: 8px 8px 4px;
-}
-
-.rail-search {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  width: 100%;
-  height: 32px;
-  padding: 0 10px;
-  font: inherit;
-  font-size: 13px;
-  color: var(--muted);
-  cursor: pointer;
-  background: var(--surface);
-  border: 1px solid var(--line-2);
-  border-radius: var(--radius-md);
-  transition: border-color var(--dur-quick) var(--ease-standard);
-}
-
-.rail-search:hover {
-  color: var(--text);
-  border-color: var(--faint);
-}
-
-.rail-search__label {
-  flex: 1;
-  text-align: left;
-}
-
-.rail-search__kbd {
-  padding: 0 4px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  line-height: 16px;
-  color: var(--muted);
-  border: 1px solid var(--line-2);
-  border-radius: 4px;
-}
-
 /* 项目头：高度和内边距来自全局 .sidebar-header（48px 基线），三条标题线才落在
    同一水平上。
  *
