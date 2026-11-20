@@ -147,7 +147,7 @@ describe('「首页」那一行', () => {
   // 项目、空间、后台的侧栏头写的是你在哪儿，回首页要一下就够得着，等你处理的总件数也得一直看得见。
   it('项目里：一下回首页，带等你处理的总件数', async () => {
     const view = await mount('/projects/p1/topics/t1')
-    const row = within(view.container).getByRole('link', { name: /^首页/ })
+    const row = within(view.container as HTMLElement).getByRole('link', { name: /^首页/ })
     expect(row.getAttribute('href')).toBe('/inbox')
     expect(row.textContent).toContain('5')
     await fireEvent.click(row)
@@ -157,7 +157,12 @@ describe('「首页」那一行', () => {
   it('空间、后台的侧栏也有', async () => {
     for (const path of ['/spaces/s1/announcements', '/admin']) {
       const view = await mount(path)
-      expect(within(view.container).getByRole('link', { name: /^首页/ }).getAttribute('href'), path).toBe('/inbox')
+      expect(
+        within(view.container as HTMLElement)
+          .getByRole('link', { name: /^首页/ })
+          .getAttribute('href'),
+        path
+      ).toBe('/inbox')
       cleanup()
     }
   })
