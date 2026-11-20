@@ -314,7 +314,6 @@ def _install_case(
         host_api="http://localhost:8000",
         holder=holders.Room(id=uuid.uuid4(), project_id=uuid.uuid4(), generation="1"),
         topic_id=uuid.uuid4(),
-        actor_handle="someone",
         work_resource=str(uuid.uuid4()),
         hub=hub,
         lease={"device_id": "dev-1"} if lease is None else lease,
