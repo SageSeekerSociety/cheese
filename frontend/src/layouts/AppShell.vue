@@ -619,11 +619,15 @@ const currentSpace = computed<NavSpace | null>(() => {
     : null
 })
 
+// 管理后台也是一处去处，顶栏照样写出它的名字。
+const currentArea = computed(() => (currentRoute.path.startsWith('/admin') ? t('navigation.feedback.admin') : null))
+
 provideAppNav({
   items: rail,
   projects: railProjects,
   spaces: navSpaces,
   currentSpace,
+  currentArea,
   reorder: reorderRail,
   loggedIn,
   sidebar: computed(() =>

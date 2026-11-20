@@ -1,5 +1,5 @@
 <template>
-  <!-- The place you are in, in the top bar after 首页: a project or a space. Clicking it lists
+  <!-- The place you are in, in the top bar after 首页: a project, a space or the admin area. Clicking it lists
        the other places to go (projects first, then spaces). Outside a place there is nothing
        here: 首页 is the way to everything else. -->
   <span v-if="place" class="place-sep" aria-hidden="true">/</span>
@@ -22,7 +22,15 @@
           :avatar="place.avatar"
           :size="20"
         />
-        <UserAvatar v-else kind="org" size="20" :avatar="place.avatar" :name="place.title" :seed="place.id" />
+        <UserAvatar
+          v-else-if="place.kind === 'space'"
+          kind="org"
+          size="20"
+          :avatar="place.avatar"
+          :name="place.title"
+          :seed="place.id"
+        />
+        <v-icon v-else class="place__icon" size="18" icon="mdi-shield-account-outline" />
         <span class="place__name" data-user-content>{{ place.title }}</span>
         <v-icon class="place__caret" size="16" icon="mdi-chevron-down" />
       </button>
@@ -155,11 +163,14 @@ const currentSpace = computed(() => nav?.currentSpace.value ?? null)
 type Place =
   | { kind: 'project'; id: string; title: string; avatar: ProjectAvatarSpec | null | undefined }
   | { kind: 'space'; id: string; title: string; avatar: string }
+  | { kind: 'area'; id: string; title: string }
 const place = computed<Place | null>(() => {
   const project = current.value
   if (project) return { kind: 'project', id: project.projectId ?? '', title: project.title, avatar: project.avatar }
   const space = currentSpace.value
   if (space) return { kind: 'space', id: String(space.id), title: space.title, avatar: space.avatar }
+  const area = nav?.currentArea.value
+  if (area) return { kind: 'area', id: 'area', title: area }
   return null
 })
 
@@ -288,6 +299,11 @@ function clearDrag() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.place__icon {
+  flex: none;
+  color: var(--muted);
 }
 
 .place__caret {

@@ -1,7 +1,7 @@
 // 桌面上「首页 + 项目 + 空间」这一份导航，从外壳交给顶栏和侧栏。
 //
 // 桌面的框分三层（docs/design-system.md §1.4）：最上面一条顶栏，左起是侧栏开关、「首页」
-// 和你所在的去处（项目或空间，点开换去处），中间是搜索和问芝士，右边是帮助、头像；下面
+// 和你所在的去处（项目、空间或管理后台，点开换去处），中间是搜索和问芝士，右边是帮助、头像；下面
 // 是侧栏，只放当前去处自己的导航；再往右是页面。顶栏上的东西不随换页、收起侧栏挪位置。
 // 格子怎么来（顺序、件数、落点、快捷键）还是 destinations.ts 算，外壳算一次、在这里交
 // 出去，顶栏和侧栏只画。
@@ -38,6 +38,8 @@ export interface AppNav {
   spaces: ComputedRef<NavSpace[]>
   /** 地址落在哪个空间里；不在空间里是 null。 */
   currentSpace: ComputedRef<NavSpace | null>
+  /** 既不是项目也不是空间的去处（管理后台）的名字；不在那里是 null。 */
+  currentArea: ComputedRef<string | null>
   /** 把 movedId 放到 targetId 的这一边。顺序归外壳保管，这里只报告动作。 */
   reorder: (movedId: string, targetId: string, edge: DropEdge) => void
   loggedIn: ComputedRef<boolean>

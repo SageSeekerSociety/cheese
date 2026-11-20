@@ -111,9 +111,13 @@ interface MountOptions {
   loggedIn?: boolean
   sidebar?: NavSidebar | null
   inSpace?: boolean
+  area?: string | null
 }
 
-async function mount(path: string, { loggedIn = true, sidebar = null, inSpace = false }: MountOptions = {}) {
+async function mount(
+  path: string,
+  { loggedIn = true, sidebar = null, inSpace = false, area = null }: MountOptions = {}
+) {
   // 首帧那道门关着：这一组用例看的是顶栏画什么，不需要它去问任何东西。
   closeFirstPaint()
   await router.push(path)
@@ -125,6 +129,7 @@ async function mount(path: string, { loggedIn = true, sidebar = null, inSpace = 
         projects: computed(() => projects),
         spaces: computed(() => spaces),
         currentSpace: computed(() => (inSpace ? spaces[0] : null)),
+        currentArea: computed(() => area),
         reorder: vi.fn(),
         loggedIn: computed(() => loggedIn),
         sidebar: computed(() => sidebar),
@@ -180,8 +185,16 @@ describe('顶栏上你所在的去处', () => {
     expect(view.getByTestId('project-switcher').textContent).toContain('ICS 2026')
   })
 
-  it('不在项目或空间里时，首页后面什么也不写', async () => {
-    for (const path of ['/inbox', '/admin/queue']) {
+  it('管理后台里写「管理后台」，点开是同一份项目和空间列表', async () => {
+    const view = await mount('/admin/queue', { area: '管理后台' })
+    const place = view.getByTestId('project-switcher')
+    expect(place.textContent).toContain('管理后台')
+    await fireEvent.click(place)
+    expect(await screen.findAllByTestId('project-switcher-row')).toHaveLength(3)
+  })
+
+  it('不在项目、空间或后台里时，首页后面什么也不写', async () => {
+    for (const path of ['/inbox', '/teams/ruc']) {
       const view = await mount(path)
       expect(view.queryByTestId('project-switcher'), path).toBeNull()
       cleanup()
