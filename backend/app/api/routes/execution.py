@@ -206,7 +206,7 @@ async def execute(
     # Its sandbox was destroyed or parked since (`RELEASED`): the lease is
     # still this session's, and nothing on it answers.
     released = lease_released(lease)
-    if (
+    current = not (
         owned is None
         or not lease
         or lease.get("kind") != "device"
@@ -219,14 +219,13 @@ async def execute(
         or owned.runtime_location.get("resource_id") != str(resource_id)
         or claims.get("r") != str(resource_id)
         or place_resource != resource_id
-    ):
-        raise ConflictError("Execution generation is no longer current")
-    if released:
-        if _checkpoints(payload.method, payload.params):
-            # The turn ended after its sandbox went while idle: there is
-            # nothing on a machine to push, and what it held was pushed by the
-            # checkpoint of the turn that last used it, or kept.
-            return {}
+    )
+    if current and released and _checkpoints(payload.method, payload.params):
+        # The turn ended after its sandbox went while idle: there is nothing on
+        # a machine to push, and what it held was pushed by the checkpoint of
+        # the turn that last used it, or kept.
+        return {}
+    if not current or released:
         raise ConflictError("Execution generation is no longer current")
     if payload.method not in {
         "ping",

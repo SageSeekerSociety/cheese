@@ -205,14 +205,7 @@ def task_fs(self, params):
             and not any((root / name).iterdir())
         ]
         return {"files": files, "dirs": dirs}
-    name = params.get("path", "")
-    relative = Path(name)
-    if (
-        not name
-        or relative.is_absolute()
-        or any(p in ("..", ".git") for p in relative.parts)
-    ):
-        raise ValueError("Invalid task file path")
+    relative = _relative(params.get("path", ""))
     if operation in ("create", "mkdir", "move", "delete"):
         answer = _arrange(root, relative, operation, params)
         if "error" not in answer and not params.get("in_workspace"):
@@ -282,17 +275,23 @@ def task_fs(self, params):
     raise ValueError("Unknown task filesystem operation")
 
 
-def _entry(root, name):
-    """The entry ``name`` names in the copy, itself (a link is not followed),
-    under a directory that is inside the copy."""
+def _relative(name):
+    """``name`` as a path inside a task's copy: relative, not climbing out of
+    it, and not into its ``.git``."""
     relative = Path(name)
     if (
         not name
         or relative.is_absolute()
-        or any(p in ("", ".", "..", ".git") for p in relative.parts)
+        or any(p in ("..", ".git") for p in relative.parts)
     ):
         raise ValueError("Invalid task file path")
-    entry = root / relative
+    return relative
+
+
+def _entry(root, name):
+    """The entry ``name`` names in the copy, itself (a link is not followed),
+    under a directory that is inside the copy."""
+    entry = root / _relative(name)
     entry.parent.resolve().relative_to(root)
     return entry
 
@@ -325,9 +324,8 @@ def _arrange(root, relative, operation, params):
         else:
             path.unlink()
         return {"path": relative.as_posix()}
+    # A folder moved into itself is refused by the rename itself (EINVAL).
     target = _entry(root, params.get("to", ""))
-    if target.parent.resolve().is_relative_to(path.resolve()) and not path.is_symlink():
-        raise ValueError("Invalid task file path")
     if target.exists() or target.is_symlink():
         return {"error": "exists"}
     target.parent.mkdir(parents=True, exist_ok=True)
