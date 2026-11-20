@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { WorkTabMeta } from '@/components/work/workLayout'
 import type { RoomTask } from '@/cx_types'
+import type { PreviewLocate } from '@/lib/previewQuestion'
 import type { TaskSource } from '@/types/taskOrigin'
 import type { TaskOverviewHandle } from './topicView/actions'
 import type { ChatColumnHandle, WorkPanelHandle } from './topicView/shared'
@@ -23,6 +24,7 @@ import { useDeliveryTab } from './topicView/delivery'
 import { useTopicHeader } from './topicView/header'
 import { useTopicLive } from './topicView/live'
 import { useTopicPanelState } from './topicView/panel'
+import { useReviewChat } from './topicView/reviewChat'
 import { useSkillProposals } from './useSkillProposals'
 
 import HandInDialog from '@/components/accept/HandInDialog.vue'
@@ -121,6 +123,8 @@ const {
 const panesRef = ref<HTMLElement | null>(null)
 const panelRef = ref<WorkPanelHandle | null>(null)
 const chatColumn = ref<ChatColumnHandle | null>(null)
+// 审阅那一栏的对话栏：按任务 id 各记一份，预览里指出的一处发进那一件任务自己的对话。
+const reviewChat = useReviewChat()
 const taskOverviewRef = ref<TaskOverviewHandle | null>(null)
 
 // ---- 右侧面板的收 / 开（三档见 useTopicPanel）----
@@ -442,6 +446,13 @@ function reviewPanel(taskId: string) {
     topicList: store.topics,
     tab: reviewView.value?.taskId === taskId ? reviewView.value.view : undefined,
     askReturn: returnAsk.value?.taskId === taskId ? returnAsk.value.token : null,
+    // 预览里指一处、画完标注发出去：进这件任务自己的对话，不进频道主对话。指一处走
+    // `@locate`（下面模板里接），结构化提问走这几个 props；两样都落在同一份对话
+    // 句柄上（见 `topicView/reviewChat.ts`）——频道的发送口是另一个实例，两者不能混。
+    submitQuestion: reviewChat.submit(taskId),
+    // `v-bind` 摊开的对象不 unref，`askPersonal` 是 computed：这里取它此刻的值，
+    // 不然面板拿到的是一只 ref，按下去不是调用而是「ref 不可调用」。
+    askPersonal: askPersonal.value,
   }
 }
 // 支线左上角的返回：回到「支线」那一格的列表。
@@ -651,10 +662,12 @@ void openPlace()
         @mention-click="handleMentionClick"
         @navigate="router.push($event)"
         @update:tab="(key: string) => (reviewView = { taskId: reviewTaskId!, view: key })"
+        @locate="(payload: PreviewLocate) => reviewChat.say(reviewTaskId!, payload)"
         @return-asked="returnAsk = null"
       >
         <template #chat>
           <TopicChatColumn
+            :ref="(handle: unknown) => reviewChat.hold(reviewTaskId!, handle)"
             class="col col-chat flex-grow-1"
             beside
             :topic="selectedTopic"
@@ -862,12 +875,14 @@ void openPlace()
                   @mention-click="handleMentionClick"
                   @navigate="router.push($event)"
                   @update:tab="(key: string) => (reviewView = { taskId: id, view: key })"
+                  @locate="(payload: PreviewLocate) => reviewChat.say(id, payload)"
                   @return-asked="returnAsk = null"
                 >
                   <!-- The task is a thread: its own conversation, the request it came from on top. The
                      decision is in the head above, so the conversation does not carry a second one. -->
                   <template #chat>
                     <TopicChatColumn
+                      :ref="(handle: unknown) => reviewChat.hold(id, handle)"
                       class="col col-chat flex-grow-1"
                       beside
                       accept-elsewhere
