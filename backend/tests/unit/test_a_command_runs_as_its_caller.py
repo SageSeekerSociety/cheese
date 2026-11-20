@@ -8,7 +8,9 @@ The rules, as a person would state them:
   one's, never the first's;
 - a command still running keeps the name it was started with;
 - a request a command makes to the platform names the session it was started
-  for.
+  for;
+- the machine's own environment names no session: who is asking comes with
+  each call.
 
 The executor is the shipped runtime, run as a process and asked over its
 socket; the platform socket is a loopback fixture.
@@ -31,6 +33,7 @@ from pathlib import Path
 import pytest
 
 from app.domain.agent.harness.claude_code.remote_execution import runtime
+from app.domain.machine import session_work
 
 RUNTIME = Path(runtime.__file__)
 CLI = Path(__file__).resolve().parents[2] / "sandbox" / "cheese"
@@ -207,3 +210,23 @@ def test_a_request_from_a_command_names_its_caller_to_the_platform(machine):
         {"path": "/api/topics/t-a/files/templates", "attachment": "s-a"},
         {"path": "/api/topics/t-b/files/templates", "attachment": "s-b"},
     ]
+
+
+def test_the_machines_own_environment_names_no_session():
+    """What an executor is installed with says where it is; the session the
+    launch carried is not written into it for every later caller."""
+    env = session_work._executor_env(
+        {
+            "CHEESE_TOPIC": "launching-conversation",
+            "CHEESE_AUTHOR": "launching-teammate",
+            "CHEESE_ENVIRONMENT": "{}",
+        },
+        api="https://example.com/api",
+        token="",
+        project_id="p",
+        work_resource="r",
+    )
+
+    assert {"CHEESE_TOPIC", "CHEESE_AUTHOR", "CHEESE_ATTACHMENT"} & set(env) == set()
+    assert env["CHEESE_ENVIRONMENT"] == "{}"
+    assert env["CHEESE_PROJECT"] == "p"
