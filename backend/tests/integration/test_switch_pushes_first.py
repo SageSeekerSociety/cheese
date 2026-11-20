@@ -438,9 +438,9 @@ async def test_an_idle_sessions_executor_is_started_to_push_before_a_switch(
 async def test_a_tasks_executor_started_to_push_is_told_it_works_the_task(
     client, monkeypatch
 ):
-    """The session working a task is told the task as its conversation at its
-    install; started again only to push before a switch, it is the same
-    session and is told the same, so what it reports lands in the task."""
+    """The push before a switch is the session's own work: the machine is told
+    it is that session's, working the task, as a call the session made would
+    be, so what it reports lands in the task."""
     room = await _room(client, in_task=True)
     machine = _IdleMachine()
     monkeypatch.setattr(work_lease, "device_hub", machine)
@@ -448,9 +448,10 @@ async def test_a_tasks_executor_started_to_push_is_told_it_works_the_task(
     switched = client.put(room.path, headers=room.person, json=_to_new(room))
 
     assert switched.status_code == 200, switched.text
-    [(_, script)] = machine.installs
-    [told] = re.findall(r'"CHEESE_TOPIC": "([^"]+)"', script)
-    assert told == str(room.conversation_id)
+    _, method, params = machine.calls[-1]
+    assert method == "control" and params["subtype"] == "checkpoint"
+    assert params["caller"]["attachment"] == str(room.session_id)
+    assert params["caller"]["conversation"] == str(room.conversation_id)
 
 
 async def test_a_machine_that_cannot_start_the_executor_does_not_hold_the_switch(

@@ -210,6 +210,20 @@ describe('空间资料库页', () => {
     await screen.findByText('第三周讲义.pdf')
   })
 
+  it('上传框一打开，「文件」就已经在边框上，点下去没有东西要飞', async () => {
+    await mount()
+
+    await fireEvent.click(screen.getByText('上传资料'))
+    const field = await waitFor(() => {
+      const el = document.querySelector('[data-testid="slib-file"] .v-field')
+      expect(el).toBeTruthy()
+      return el as HTMLElement
+    })
+
+    // 标签浮上去是 `.v-field--active` 这一挂决定的；挂着它，点进框里就不用再动一次。
+    expect(field.classList.contains('v-field--active')).toBe(true)
+  })
+
   it('传不上去时报错，上传框还开着', async () => {
     uploadMaterial.mockRejectedValue(new Error('boom'))
     await mount()

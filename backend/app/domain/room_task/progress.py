@@ -16,8 +16,8 @@ Two writers, two columns each, and neither touches the other's:
   ``X-Cheese-Run`` header its platform call carries, `RUN_HEADER`). Only while
   no card waits on the task's review (`PUT /topics/{task}/task/progress`
   refuses it then): the card says where the task stands. The platform's own
-  actions write the same columns: a card filed or the task reopened clears the
-  report (`clear`), a card returned or voided puts the task back to work
+  actions write the same columns: filing, reopening or returning a card clears
+  the report (`clear`); voiding a card puts the task back to work
   (`back_to_work`). Each of those tells the teammate (`heard`); filing is its
   own act, and its tool's reply says so;
 - the session ending after that report: `note_agent_left` — the board puts
@@ -63,8 +63,8 @@ def clear(task: Task) -> None:
 
 
 def back_to_work(task: Task, *, at: datetime) -> None:
-    """The card was returned or voided: the task is back in its teammate's
-    hands (在做). Nobody reported it, so nobody is named as having said so and
+    """The card was voided: the task is back in its teammate's hands (在做).
+    Nobody reported it, so nobody is named as having said so and
     nobody's session is being watched (``progress_set_by`` stays empty): the
     mark that sat beside the report the card cleared went with it."""
     task.progress_state = TaskProgress.working

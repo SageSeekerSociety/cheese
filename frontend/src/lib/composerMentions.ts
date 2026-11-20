@@ -9,7 +9,7 @@ export function expandComposerMentions(text: string, seat: AgentSeat, pool: Memb
   return expandMentions(text, seat ? [seat, ...pool] : pool, topics)
 }
 
-export function mentionsAgent(text: string, seat: AgentSeat, pool: Member[]): boolean {
+export function isAgentIn(text: string, seat: AgentSeat, pool: Member[]): boolean {
   if (mentionsHandle(text, seat?.handle)) return true
   if (!seat) return false
   return pool.some((member) => member.agent && mentionsHandle(text, member.handle))
@@ -17,7 +17,7 @@ export function mentionsAgent(text: string, seat: AgentSeat, pool: Member[]): bo
 
 /** The visible @ the composer writes to hand a draft to the teammate: its reference, drawn as a chip. */
 export function withAgentMention(text: string, seat: AgentSeat, pool: Member[], topics: MentionTopic[]): string {
-  if (!seat || mentionsAgent(expandComposerMentions(text, seat, pool, topics), seat, pool)) return text
+  if (!seat || isAgentIn(expandComposerMentions(text, seat, pool, topics), seat, pool)) return text
   return `<@${seat.handle}> ${text}`
 }
 
@@ -76,4 +76,19 @@ export function handToMentions(
   const head = kept.join(' ')
   const joined = head ? head + (dropped && /^\S/.test(body) ? ` ${body}` : body) : body.trimStart()
   return joined ? `<@${seat.handle}> ${joined}` : `<@${seat.handle}>`
+}
+
+/** The teammates this draft would call, for the avatar and the line beside it.
+
+ * `asked` is what the backend answered (`Addressing.teammates`): every teammate the text
+ * @-s, each once, in the order it names them — a message calls all of them, not just the
+ * one whose turn starts first. Until that answer arrives, the handles the draft itself
+ * already shows stand in, so the row does not blink empty between keystrokes.
+ */
+export function receiversOf<T extends { handle: string }>(
+  asked: readonly { handle: string; name: string }[] | undefined,
+  fromDraft: readonly T[],
+  mateOf: (agent: { handle: string; name: string }) => T
+): T[] {
+  return asked ? asked.map(mateOf) : [...fromDraft]
 }

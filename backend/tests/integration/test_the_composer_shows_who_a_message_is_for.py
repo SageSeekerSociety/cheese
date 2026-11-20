@@ -30,8 +30,13 @@ from sqlalchemy import func, select, update
 from app.api.deps import get_work_runner
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.turn.intake import human
+from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.identity.handles import agent_instance_handle
+from app.domain.identity.models import AgentBinding
 from app.domain.room_task.closing import close_after_summary
 from app.domain.room_task.models import Task, TaskStatus
+from app.domain.topic_membership.services import TopicMemberService
+from app.domain.user.repositories import UserRepository
 from tests.integration.conftest import (
     in_thread,
     join_project_team,
@@ -82,6 +87,39 @@ def _task_with_a_turn(client, room: str) -> tuple[str, str]:
     )
     assert made.status_code == 200, made.text
     return thread, seat
+
+
+def _room_with_two_teammates(client) -> tuple[str, str, str]:
+    """A channel holding the project's own agent and a second one. Returns the
+    room and both seats, the project's own first."""
+    data = post_project(client, {"name": "Two seats"}, owner="alice").json()["data"]
+    room = client.post(
+        "/topics",
+        json={"project_id": data["id"], "title": "开发"},
+        headers=session_auth_headers("alice"),
+    ).json()["data"]["id"]
+
+    async def seat() -> str:
+        async with client.test_factory() as session:
+            second = await AgentInstanceService(session).create(
+                project_id=uuid.UUID(data["id"]),
+                handle="second",
+                type_name=None,
+                display_name="Second",
+            )
+            await TopicMemberService(session).ensure_agent_seat(
+                uuid.UUID(room), agent_instance_handle(second.id)
+            )
+            await session.commit()
+            return agent_instance_handle(second.id)
+
+    second = client.portal.call(seat)
+    seats = [
+        member["member_handle"]
+        for member in client.get(f"/topics/{room}/members").json()["data"]["data"]
+        if member["agent"]
+    ]
+    return room, next(seat for seat in seats if seat != second), second
 
 
 def _written(client, conversation: str) -> tuple[int, int]:
@@ -390,6 +428,75 @@ def test_a_send_still_for_the_teammate_goes_through(client, stub_hooks):
     )
 
     assert sent["meta"]["agent_recipient"]["mentioned"] is True
+
+
+def test_a_draft_that_names_two_teammates_lists_both(client, stub_hooks):
+    """一条消息会给正文里点到的每一位队友各记一条投递，所以「这条会交给谁」说的是
+    全部的接收者，不是先收到的那一位。"""
+    room, first, second = _room_with_two_teammates(client)
+
+    drafted = _for_whom(client, room, content=f"<@{first}> 照 <@{second}> 说的改")
+
+    assert [mate["handle"] for mate in drafted["teammates"]] == [first, second]
+    assert {mate["name"] for mate in drafted["teammates"]} == {"芝士", "Second"}
+    # 为它开一轮的那位仍旧是正文里第一位——这一条没变。
+    assert drafted["agent"]["handle"] == first
+
+
+def test_the_same_teammate_named_twice_is_listed_once(client, stub_hooks):
+    room, first, _ = _room_with_two_teammates(client)
+
+    drafted = _for_whom(client, room, content=f"<@{first}> 照 <@{first}> 说的改")
+
+    assert [mate["handle"] for mate in drafted["teammates"]] == [first]
+
+
+def test_a_draft_that_names_nobody_still_lists_the_teammate_it_calls(
+    client, stub_hooks
+):
+    """谁也没 @，而规矩叫起了一位（这里：别人都退出了项目，只剩 alice 在
+    频道主线上说话）：那一位同样算这条会叫到的，名单不能是空的。"""
+    project, _, room = _channel(client)
+    seat = room_agent_seat(client, room)
+
+    drafted = _for_whom(client, room, content="明天几点开会？")
+
+    assert drafted["agent"]["handle"] == seat
+    assert [mate["handle"] for mate in drafted["teammates"]] == [seat]
+
+
+def test_a_seat_without_an_instance_is_not_listed(client, stub_hooks):
+    """名册上坐着、项目里却没有实例的席位叫不起来（`record_mentions` 跳过它），列进
+    名单就是说这条会交给一个不会醒的队友：老房间还挂着共用 `cheese` 席位时就是这样。"""
+    project, _, room = _channel(client)
+    seat = room_agent_seat(client, room)
+
+    async def seat_a_stranger() -> None:
+        async with client.test_factory() as session:
+            user = await UserRepository(session).create_user(
+                username="cheese-legacy", email="legacy@example.com"
+            )
+            session.add(AgentBinding(user_id=user.id))
+            await session.flush()
+            await TopicMemberService(session).ensure_agent_seat(
+                uuid.UUID(room), "cheese-legacy"
+            )
+            await session.commit()
+
+    client.portal.call(seat_a_stranger)
+
+    drafted = _for_whom(client, room, content=f"<@{seat}> 照 <@cheese-legacy> 说的改")
+
+    assert [mate["handle"] for mate in drafted["teammates"]] == [seat]
+
+
+def test_a_draft_naming_only_people_names_no_teammate(client, stub_hooks):
+    project, _, room = _channel(client)
+    join_project_team(client, project, "bob")
+
+    drafted = _for_whom(client, room, content="<@bob> 你来看看")
+
+    assert drafted["teammates"] == []
 
 
 def test_asking_nobody_where_you_are_alone_offers_the_teammate(client, stub_hooks):

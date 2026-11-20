@@ -39,7 +39,9 @@ class PlatformLoopback(unittest.TestCase):
                     while b"\r\n\r\n" not in data:
                         data += conn.recv(65536)
                     self.heard.append(data)
-                    conn.sendall(b"HTTP/1.1 200 OK\r\nconnection: close\r\n\r\n\xe7\xad\x94")
+                    conn.sendall(
+                        b"HTTP/1.1 200 OK\r\nconnection: close\r\n\r\n\xe7\xad\x94"
+                    )
 
         threading.Thread(target=answer, daemon=True).start()
         self.helper = subprocess.Popen(
@@ -48,6 +50,7 @@ class PlatformLoopback(unittest.TestCase):
                 **os.environ,
                 "CHEESE_PLATFORM_SOCKET": self.socket_path,
                 "PLATFORM_LOOPBACK_HEAD_TIMEOUT_S": "1",
+                "CHEESE_ATTACHMENT": "the-session",
             },
             stdout=subprocess.PIPE,
             text=True,
@@ -55,10 +58,10 @@ class PlatformLoopback(unittest.TestCase):
         self.addCleanup(self.helper.kill)
         self.base = self.helper.stdout.readline().strip()
 
-    def _get(self, path):
+    def _get(self, path, headers=""):
         host, port = self.base.split("//")[1].split("/")[0].split(":")
         with socket.create_connection((host, int(port))) as conn:
-            conn.sendall(f"GET {path} HTTP/1.1\r\nhost: x\r\n\r\n".encode())
+            conn.sendall(f"GET {path} HTTP/1.1\r\nhost: x\r\n{headers}\r\n".encode())
             answer = b""
             while chunk := conn.recv(65536):
                 answer += chunk
@@ -69,7 +72,16 @@ class PlatformLoopback(unittest.TestCase):
         answer = self._get(prefix + "/llm/v1/models")
         self.assertTrue(answer.startswith(b"HTTP/1.1 200"), answer)
         self.assertTrue(answer.endswith("答".encode()))
-        self.assertEqual(self.heard[0].split(b"\r\n")[0], b"GET /llm/v1/models HTTP/1.1")
+        self.assertEqual(
+            self.heard[0].split(b"\r\n")[0], b"GET /llm/v1/models HTTP/1.1"
+        )
+
+    def test_a_request_names_the_session_that_started_the_helper(self):
+        prefix = "/" + self.base.split("/", 3)[3]
+        self._get(prefix + "/llm/v1/models", "x-cheese-attachment: someone-else\r\n")
+        fields = self.heard[0].split(b"\r\n\r\n")[0].lower().split(b"\r\n")
+        named = [f for f in fields if f.startswith(b"x-cheese-attachment:")]
+        self.assertEqual(named, [b"x-cheese-attachment: the-session"])
 
     def test_a_request_without_the_prefix_never_reaches_the_socket(self):
         prefix = "/" + self.base.split("/", 3)[3]

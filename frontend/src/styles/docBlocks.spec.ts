@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { DOMSerializer } from '@tiptap/pm/model'
+import { JSDOM } from 'jsdom'
 import { afterEach, beforeEach, expect, it } from 'vitest'
 
 import { parseMarkdown } from '@/lib/docSchema'
@@ -63,26 +64,34 @@ it('a list row that records a status is not drawn as a tag', () => {
   expect(getComputedStyle(row).paddingLeft).not.toBe('6px')
 })
 
+// 这条用例自己造一个 jsdom 来判，不用项目默认的 happy-dom：后者把逗号写在一组的
+// 选择器当成「匹配所有元素」，规则写得再窄它都说命中了，一条回退也测不出来。
+// 只有这条用例需要真级联，别的用例照旧用默认环境。
 it('正文里的下划线和删除线不躲开字母的下伸部分', () => {
-  const appStyle = document.createElement('style')
+  const dom = new JSDOM('<!doctype html><html><head></head><body></body></html>')
+  const appStyle = dom.window.document.createElement('style')
   appStyle.textContent = styleCss
-  document.head.appendChild(appStyle)
-  try {
-    const host = document.createElement('div')
-    // 三套正文各一处：Markdown 阅读、富文本编辑器与只读、实况文档。
-    host.innerHTML =
-      '<div class="md-reader"><p><s>qqq</s><u>qqq</u></p></div>' +
-      '<div class="rt-content"><p><s>qqq</s><u>qqq</u></p></div>' +
-      '<div class="doc-prose"><p><s>qqq</s><u>qqq</u></p></div>'
-    document.body.appendChild(host)
+  dom.window.document.head.appendChild(appStyle)
+  // 正文出现的每一层容器各一处：Markdown 阅读、富文本编辑器与只读、实况文档，以及
+  // 只读的那一份本身——导出的 PDF 页就是这样，只有 doc-reading，不带 doc-prose。
+  // 每个容器里都放上正文里会画线的三种东西：格式标记 <u>/<s>、链接、划掉的字（<del>、
+  // <span class="doc-review-old">，见 DocProse 的修改建议与「查看改动」）。
+  const body =
+    '<p><s>qqq</s><u>qqq</u><a href="#x">qqq</a></p>' +
+    '<p><del class="doc-suggestion">qqq</del><span class="doc-review-old">qqq</span></p>'
+  dom.window.document.body.innerHTML = ['md-reader', 'rt-content', 'doc-prose', 'doc-reading doc-print__body']
+    .map((cls) => `<div class="${cls}">${body}</div>`)
+    .join('')
+  const ink = (el: Element) =>
+    dom.window.getComputedStyle(el as HTMLElement).getPropertyValue('text-decoration-skip-ink')
 
-    for (const el of host.querySelectorAll('u, s')) {
-      // 浏览器默认会躲开 g j p q y 的尾巴，每躲一次断一截；正文里关掉它，线是一整条。
-      expect(getComputedStyle(el).getPropertyValue('text-decoration-skip-ink')).toBe('none')
-    }
-  } finally {
-    appStyle.remove()
+  for (const el of dom.window.document.querySelectorAll('u, s, a, del, .doc-review-old')) {
+    // 浏览器默认会躲开 g j p q y 的尾巴，每躲一次断一截；正文里关掉它，线是一整条。
+    expect(ink(el)).toBe('none')
   }
+  // 正文之外的下划线不归这条规则管。
+  dom.window.document.body.innerHTML = '<div class="vdiff__row"><del>qqq</del></div>'
+  expect(ink(dom.window.document.querySelector('del') as Element)).toBe('auto')
 })
 
 it('a focusable reference chip keeps its colour over Vuetify’s later [role=button] { color: inherit } rule', () => {

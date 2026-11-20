@@ -126,6 +126,7 @@ EXPECTED_RAIL_TASK_KEYS = {
     "reporter_handle",
     "reviewer_handle",
     "room_id",
+    "session_running",
     "source_block_id",
     "stalled",
     "status",
@@ -421,6 +422,8 @@ def test_topic_list_batches_threads_cards_tasks_and_questions_once(client, monke
         assert set(own_row.keys()) == EXPECTED_RAIL_TASK_KEYS
         assert set(borrowed_row.keys()) == EXPECTED_RAIL_TASK_KEYS | {"filling_in"}
         assert borrowed_row["filling_in"] is True
+        assert own_row["session_running"] is False
+        assert borrowed_row["session_running"] is False
         assert own_row["card"] is not None
         assert borrowed_row["card"] is not None
         assert own_row["awaits_me"] is True

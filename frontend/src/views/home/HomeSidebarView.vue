@@ -35,9 +35,8 @@ defineProps<{
   createError?: string
 }>()
 
-// 桌面上有外壳：侧栏头写「首页」、底下「首页」那一行就是待办（SidebarFrameTop），这里不再画
-// 标题和「待办」那一行；项目列在团队上面，各带等你处理的件数——和侧栏头切换列表里同一份格子
-// （destinations.ts 算的件数）。
+// 桌面上有外壳：「首页」和搜索在顶栏上，这里不再画标题；「待办」那一行照画。项目列在团队
+// 上面，各带等你处理的件数——和顶栏去处列表里同一份格子（destinations.ts 算的件数）。
 const appNav = useAppNav()
 const framed = computed(() => !!appNav)
 const projects = computed(() =>
@@ -68,14 +67,15 @@ const emit = defineEmits<{
 
 <template>
   <SecondaryNavigation v-if="mdAndUp">
-    <!-- Desktop draws the head, the search and the 首页 row in the sidebar frame
-         (SidebarFrameTop); without a shell (unit tests, the catalog) the title stays here. -->
+    <!-- Desktop draws 首页 and the search in the top bar; without a shell (unit tests, the
+         catalog) the title stays here. -->
     <div v-if="!framed" class="sidebar-header">
       <span class="t-title">{{ t('navigation.home') }}</span>
       <v-spacer></v-spacer>
     </div>
+    <!-- 「待办」这一行始终画：首页这一格的目录从它开始。 -->
     <HomeNav
-      :inbox="!framed"
+      inbox
       :projects="projects"
       :new-project-label="addProject?.title"
       :teams="teams"

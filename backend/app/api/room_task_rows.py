@@ -163,7 +163,12 @@ def _task_markers(
     )
     return {
         "awaits_me": attention is not None,
-        "needs_my_action": bool(me) and (waiting == me or owner == me),
+        "needs_my_action": bool(me)
+        and (
+            waiting == me
+            or owner == me
+            or (shown.phrase == presentation.NeedsYou.awaiting_review and me in handles)
+        ),
     }
 
 
@@ -487,6 +492,9 @@ async def project_task_rows(
                 # 走在交付链路上（看板那一列是 `delivering`）。
                 "moving": is_running(task.id)
                 or shown.column is presentation.Column.delivering,
+                # Delivery-chain movement is not a live session: the repair
+                # mark must agree with the task page even while a card exists.
+                "session_running": is_running(task.id),
                 "stalled": presentation.is_stalled(
                     shown, last_activity=last_activity, now=now
                 ),

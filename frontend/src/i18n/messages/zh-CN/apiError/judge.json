@@ -1,7 +1,7 @@
 {
   "judgeCodeTooLarge": "代码超过 {mb} MB，没能评测",
   "judgeCodeUnreadable": "这一刻读不到项目里的代码，稍后会再试",
-  "judgeGitHubLater": "连了 GitHub 的项目暂时不能评测，老师可以手动给测试分",
+  "judgeGitHubCommitGone": "评测时在 GitHub 上找不到提交时记下的那一版代码（仓库删了、改了权限，或那次提交被强推覆盖了），老师可以手动给测试分",
   "judgeKindUnsupported": "这种测试点暂不支持评测，老师可以手动给测试分",
   "judgeNoPayer": "这个空间没有所有者，评测的算力没人承担，没能评测",
   "judgeNoRepository": "这个项目没有代码仓库，没能评测",

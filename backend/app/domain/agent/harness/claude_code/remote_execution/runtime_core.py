@@ -135,6 +135,26 @@ BASH_INLINE_CHARS = 30_000
 COMMAND_ID = re.compile(r"[A-Za-z0-9_-]{1,80}")
 
 
+def identity(caller):
+    """The variables that name whose a command is, from the ``caller`` the
+    platform put on the call that started it (`routes/execution.py`): the
+    attached session (``CHEESE_ATTACHMENT``), the conversation it works
+    (``CHEESE_TOPIC``) and the seat it acts under (``CHEESE_AUTHOR``).
+
+    Laid over that one command's environment and nothing else: this executor's
+    own environment says where it is, never who is asking, so the next call's
+    command does not inherit them. A call with no caller is the environment's
+    own operation — a person's save, a probe — and names nobody."""
+    if not isinstance(caller, dict):
+        return {}
+    named = {
+        "CHEESE_ATTACHMENT": caller.get("attachment"),
+        "CHEESE_TOPIC": caller.get("conversation"),
+        "CHEESE_AUTHOR": caller.get("author"),
+    }
+    return {name: str(value) for name, value in named.items() if value}
+
+
 def stamp():
     # This shipped script also runs on hosts with Python 3.9.
     return datetime.now(timezone.utc).isoformat()  # noqa: UP017

@@ -1,7 +1,7 @@
 {
   "judgeCodeTooLarge": "The code is over {mb} MB, so it was not judged",
   "judgeCodeUnreadable": "The project's code couldn't be read just now; it will be tried again",
-  "judgeGitHubLater": "Projects connected to GitHub can't be judged yet; the teacher can score the tests by hand",
+  "judgeGitHubCommitGone": "The version recorded at hand-in can no longer be found on GitHub (the repository was deleted or its access changed, or the commit was force-pushed away); the teacher can score the tests by hand",
   "judgeKindUnsupported": "This kind of test can't be judged yet; the teacher can score the tests by hand",
   "judgeNoPayer": "This space has no owner to pay for judging, so it was not judged",
   "judgeNoRepository": "This project has no code repository, so it was not judged",

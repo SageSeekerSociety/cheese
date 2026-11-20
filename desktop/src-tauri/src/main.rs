@@ -481,14 +481,15 @@ fn main() {
                     let _ = opener2.opener().open_url(url.as_str(), None::<&str>);
                     NewWindowResponse::Deny
                 });
-            // On macOS the window buttons sit in the web app's top bar, centred in
-            // its 32px height above the 64px rail; the bar leaves them that room
-            // (AppBar.vue) and the sign-in pages move their mark below them (Account.vue).
+            // On macOS the window buttons sit at the left end of the web app's top
+            // bar, centred in its 40px height; the bar leaves them that room
+            // (AppBar.vue, `--window-buttons-inset`) and the sign-in pages move their
+            // mark below them (Account.vue).
             #[cfg(target_os = "macos")]
             let window = window
                 .title_bar_style(tauri::TitleBarStyle::Overlay)
                 .hidden_title(true)
-                .traffic_light_position(tauri::LogicalPosition::new(12.0, 16.0));
+                .traffic_light_position(tauri::LogicalPosition::new(12.0, 20.0));
             window.build()?;
             Ok(())
         })

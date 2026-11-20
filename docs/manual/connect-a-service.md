@@ -30,7 +30,7 @@ Notion 通过 MCP 连接。MCP 是一种让 AI 调用外部服务的通用接口
 有「配置 AI 队友」权限的成员能连接。连接属于整个项目，之后芝士以授权人的 Notion 账号读取页面。
 
 :::walk
-1. 点左侧栏顶部的项目名，在项目菜单中点「项目设置」。
+1. 点左侧栏的「更多」，在项目菜单中点「项目设置」。
 2. 点左侧的「MCP 服务器」。notion 在「远程」一组，写着「未连接」。
 3. 点「连接」，在确认框里点「去授权」。浏览器打开 Notion 的授权页 Connect with Notion MCP。
 4. 在授权页上确认工作区，勾选 I recognize and trust this URL，点 Continue。

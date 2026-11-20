@@ -277,11 +277,13 @@
           "turns": "Avg turns",
           "hours": "Avg time",
           "stuck": "Stuck rate",
-          "seekers": "Answer-seeking"
+          "seekers": "Answer-seeking",
+          "tests": "Test pass rate"
         },
         "hours": "{n} h",
         "people": "{n}",
         "seekersHint": "Answer-seeking: people who asked at least twice in the problem with more than half asking for the answer outright. Time runs from claiming to the first submission.",
+        "testsHint": "Test pass rate: for problems with test points, the average test score of each person's latest submission per stage; hidden when fewer than 3 were judged.",
         "empty": "No problems yet"
       },
       "behavior": {

@@ -228,6 +228,20 @@ def test_a_card_waiting_for_review_names_its_reviewers_wherever_it_is_listed(
         assert card["status"] == "pending"
         assert sorted((card["reviewer"] or "").split("、")) == ["bob", "carol"]
 
+    # Both reviewers can act, not just the first name used for the status line.
+    for viewer in ("alice", "bob", "carol"):
+        headers = session_auth_headers(viewer)
+        page = client.get(f"/topics/{task_id}/task", headers=headers).json()["data"]
+        listed = client.get(f"/topics/{room}/tasks", headers=headers).json()["data"][
+            "data"
+        ]
+        rail = client.get(f"/topics/{room}", headers=headers).json()["data"][
+            "my_tasks"
+        ]["shown"]
+        for row in [page, *[r for r in [*listed, *rail] if r["id"] == str(task_id)]]:
+            assert row["presentation"]["phrase"] == "awaiting_review"
+            assert row["needs_my_action"] is (viewer in ("bob", "carol"))
+
 
 def _accepted_last_step(client, app_world) -> tuple[str, uuid.UUID]:
     fake = app_world["fake"]

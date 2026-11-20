@@ -31,7 +31,7 @@ describe('进行中', () => {
     expect(idle.icon).not.toBe(live.icon)
   })
 
-  it('只有 moving 的行（侧栏、项目级列表）照 moving 判', () => {
+  it('缺少运行字段时，进行中可按 moving 判断', () => {
     expect(taskState(task('running', { moving: true }), ctx).live).toBe(true)
     expect(taskState(task('running', { moving: false }), ctx).live).toBe(false)
   })
@@ -155,7 +155,50 @@ describe('待审阅', () => {
   })
 })
 
+describe('退回后的当前交付步骤', () => {
+  it.each(['gate_running', 'awaiting_checks'] as const)('%s 显示等待检查，不保留红箭头', (phrase) => {
+    const state = taskState(task(phrase, { card: { id: 'new', status: 'pending' } }), ctx)
+    expect(state.icon).toBe('mdi-timer-sand')
+    expect(state.tone).toBe('neutral')
+    expect(state.live).toBe(false)
+  })
+
+  it.each(['fixing_checks', 'resolving_conflict', 'updating_branch'] as const)('%s 显示当前修复', (phrase) => {
+    const state = taskState(task(phrase, { session_running: true }), ctx)
+    expect(state.icon).toBe('mdi-timelapse')
+    expect(state.tone).toBe('ok')
+    expect(state.live).toBe(true)
+    expect(taskState(task(phrase, { session_running: false }), ctx).live).toBe(false)
+  })
+
+  it.each(['fixing_checks', 'resolving_conflict', 'updating_branch'] as const)(
+    '%s 不把交付链路误当作正在修复',
+    (phrase) => {
+      for (const session_running of [undefined, false]) {
+        const state = taskState(task(phrase, { moving: true, session_running }), ctx)
+        expect(state.live).toBe(false)
+        expect(state.icon).toBe('mdi-progress-clock')
+      }
+    }
+  )
+
+  it('当前检查失败仍有红色警示', () => {
+    const state = taskState(task('checks_failed'), ctx)
+    expect(state.tone).toBe('danger')
+    expect(state.line).toContain('检查未通过')
+  })
+})
+
 describe('当前行动人和关注人', () => {
+  it.each(['awaiting_answer', 'awaiting_review'] as const)('%s 只向实际行动人显示黄问号', (phrase) => {
+    const mine = taskState(task(phrase, { waiting_on: 'chenmo', needs_my_action: true }), ctx)
+    expect(mine.icon).toBe('mdi-help-circle')
+    expect(mine.tone).toBe('warn')
+    expect(mine.line).toContain('等你')
+    const theirs = taskState(task(phrase, { waiting_on: 'linxiao', awaits_me: true, needs_my_action: false }), ctx)
+    expect(theirs.tone).not.toBe('warn')
+    expect(theirs.line).toContain('等林晓')
+  })
   it.each(['awaiting_answer', 'awaiting_review'] as const)('关注提醒不代表要本人执行：%s', (phrase) => {
     const state = taskState(task(phrase, { waiting_on: 'linxiao', awaits_me: true, needs_my_action: false }), ctx)
     expect(state.line).not.toContain('等你')

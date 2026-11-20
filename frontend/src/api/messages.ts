@@ -39,6 +39,10 @@ export interface Addressing {
   people: string[]
   place: 'channel' | 'task' | 'private'
   task_status: 'open' | 'closed' | null
+  /** 这条会叫起来的全部队友，按正文里点到的先后、同一位只算一次。第一位就是
+   *  `agent`（为它开一轮的那位）；它列的不只是第一位：一条消息会给点到的每一位各
+   *  记一条投递，所以输入框说「会交给谁」得说全。 */
+  teammates: { handle: string; name: string }[]
 }
 
 export interface AddressingDraft {

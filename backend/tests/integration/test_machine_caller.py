@@ -7,7 +7,11 @@ The rules, as a person would state them:
 - only the process that owns the device links can say so, and it proves it
   with the device connection secret; without the secret nobody is anyone;
 - a session whose lease ended, or that holds another state now, is nobody from
-  its next request on.
+  its next request on;
+- a request may name the session it is from: it is answered as that session
+  when that session is attached to the environment the request came from right
+  now, and refused when it is not, whatever else it holds; a request that names
+  nobody is answered as it was before names existed.
 """
 
 import pytest
@@ -25,13 +29,14 @@ def _owner_secret(monkeypatch):
     monkeypatch.setattr(settings, "device_connection_secret", "owner-secret")
 
 
-def _whoami(client, *, device, state, secret="owner-secret"):
+def _whoami(client, *, device, state, secret="owner-secret", attachment=None):
     return client.get(
         "/machine/whoami",
         headers={
             "x-device-connection-secret": secret,
             "x-machine-device": device,
             "x-machine-state": state,
+            **({"x-cheese-attachment": attachment} if attachment else {}),
         },
     )
 
@@ -172,3 +177,92 @@ async def test_a_secret_header_with_any_bytes_is_refused_not_a_crash(client):
         ],
     )
     assert answer.status_code == 401, answer.text
+
+
+async def test_a_request_naming_the_attached_session_is_answered_as_it(client):
+    room = await _room(client)
+    answer = _whoami(
+        client,
+        device=room.old_device,
+        state="/old/state",
+        attachment=str(room.session_id),
+    )
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["session"] == str(room.session_id)
+
+
+async def test_a_request_naming_a_session_attached_elsewhere_is_refused(client):
+    room, other = await _room(client), await _room(client)
+    # Another session on the same machine, in a sandbox of its own.
+    async with client.test_factory() as db:
+        await db.execute(
+            update(AgentSession)
+            .where(AgentSession.id == other.session_id)
+            .values(
+                work_lease={
+                    **other.lease,
+                    "device_id": room.old_device,
+                    "state": "/other/state",
+                }
+            )
+        )
+        await db.commit()
+    for named in (str(other.session_id), "not-a-session", str(room.project_id)):
+        answer = _whoami(
+            client, device=room.old_device, state="/old/state", attachment=named
+        )
+        assert answer.status_code == 403, (named, answer.text)
+    # From its own sandbox it is itself.
+    answer = _whoami(
+        client,
+        device=room.old_device,
+        state="/other/state",
+        attachment=str(other.session_id),
+    )
+    assert answer.json()["session"] == str(other.session_id)
+
+
+async def test_a_name_that_survives_the_relay_still_has_to_be_attached(
+    client, monkeypatch
+):
+    """Through the process that owns the device links: what a sandbox names
+    reaches the backend, and a session the device and state do not hold is
+    refused there."""
+    import httpx
+
+    from app.api import machine_relay
+    from app.domain.agent.device_hub.machine import MachineRequest
+
+    room, other = await _room(client), await _room(client)
+    heard = []
+
+    def through_the_client(request: httpx.Request) -> httpx.Response:
+        answer = client.request(
+            request.method, request.url.path, headers=dict(request.headers)
+        )
+        heard.append(answer.status_code)
+        return httpx.Response(
+            answer.status_code, stream=httpx.ByteStream(answer.content)
+        )
+
+    answer = machine_relay.forwarder(
+        httpx.AsyncClient(transport=httpx.MockTransport(through_the_client)),
+        "http://backend",
+    )
+
+    async def write(_chunk):
+        pass
+
+    for named in (str(room.session_id), str(other.session_id)):
+        await answer(
+            MachineRequest(
+                device_id=room.old_device,
+                state="/old/state",
+                method="GET",
+                target="/whoami",
+                headers=[("host", "cheese"), ("x-cheese-attachment", named)],
+                body=b"",
+            ),
+            write,
+        )
+    assert heard == [200, 403]

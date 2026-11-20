@@ -350,10 +350,16 @@ class AddressedAgentOut(BaseModel):
 
 
 class ChatAddressingOut(BaseModel):
-    """Who a draft would be for if sent now (`preview_addressing`)."""
+    """Who a draft would be for if sent now (`preview_addressing`).
+
+    `teammates` is everyone the message would call, in the order the text names
+    them and each once — not just the one whose turn starts first. A message
+    calls every teammate it @-s, so the composer that says "this goes to whom"
+    has to say all of them or it understates the send."""
 
     agent: AddressedAgentOut | None
     reason: Literal["mention", "reply", "task", "thread", "private", "alone"] | None
     people: list[str]
     place: Literal["channel", "task", "private"]
     task_status: Literal["open", "closed"] | None
+    teammates: list[AddressedAgentOut] = Field(default_factory=list)

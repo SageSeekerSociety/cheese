@@ -187,3 +187,50 @@ export interface TaskRejudgeCounts {
   unchanged: number
   skipped: number
 }
+
+/** 一个用例在最新那几版提交里过了几份（`judge_stats`）。`rate` 是 0–1。 */
+export interface TaskJudgeCaseRate {
+  name: string
+  visibility: TaskTestVisibility | string
+  judged: number
+  passed: number
+  rate: number | null
+  /** 没过的那几份里最常见的状态和份数；全过了是 null。 */
+  topFailure: { status: TaskJudgeCaseStatus | string; count: number } | null
+}
+
+/** 一个阶段的测试点数据：每个参与者在这一阶段最新那一版提交的最近一次评测。 */
+export interface TaskJudgeStageStats {
+  kind: TaskTestSuiteKind | string
+  submissions: number
+  /** 跑完、读得出分的份数；`buckets` 是它们的测试分按 0–9% … 90–100% 分的十档。 */
+  judged: number
+  scoreFailed: number
+  failed: number
+  inFlight: number
+  notJudged: number
+  /** 算进来、却是按旧版测试评的份数（改过测试点还没重评）。 */
+  outdated: number
+  averageRate: number | null
+  buckets: number[]
+  /** 最差的在前。 */
+  cases: TaskJudgeCaseRate[]
+}
+
+/** 这道题评测一共花的额度：学生提交的评测（含重评）与自测；出题人的试跑不在内。 */
+export interface TaskJudgeCredits {
+  total: number
+  submissions: number
+  selfTests: number
+  machineMs: number
+  chargedRuns: number
+}
+
+/** `GET /tasks/{id}/judge/stats`。 */
+export interface TaskJudgeStatsView {
+  /** 挂着测试点的阶段 id；不分阶段的题是 `[null]`，没有测试点是空表。 */
+  stages: (string | null)[]
+  stage: string | null
+  stats: TaskJudgeStageStats | null
+  credits: TaskJudgeCredits
+}

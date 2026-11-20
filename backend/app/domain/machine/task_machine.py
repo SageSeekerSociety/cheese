@@ -211,7 +211,14 @@ async def _bring_up(bind, task_id: uuid.UUID, actor: Actor, *, hub=None) -> None
         answer = await execution.call(
             outcome["target"],
             "invoke",
-            checkout_request(task_id, prefix="person-checkout-"),
+            {
+                **checkout_request(task_id, prefix="person-checkout-"),
+                # Whose the command is: the person, in the task. A person is
+                # no session attached to the machine, so it names no
+                # attachment; what it asks the platform back is answered on
+                # the environment's own authority (`machine.caller`).
+                "caller": {"conversation": str(task_id), "author": actor.handle},
+            },
             timeout=CHECKOUT_TIMEOUT_MS / 1000 + 30,
         )
         checkout_answered(answer)

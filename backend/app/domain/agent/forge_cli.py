@@ -189,8 +189,15 @@ def _ask_socket(path, target, timeout=30):
     """``GET target`` on the sandbox's platform socket, to its JSON: the
     platform knows whose the request is without a token."""
     connection = _UnixConnection(path, timeout)
+    # Which session attached to the sandbox is asking (`cheese`'s socket
+    # handler sends the same).
+    attachment = os.environ.get("CHEESE_ATTACHMENT", "")
     try:
-        connection.request("GET", target)
+        connection.request(
+            "GET",
+            target,
+            headers={"X-Cheese-Attachment": attachment} if attachment else {},
+        )
         response = connection.getresponse()
         body = response.read()
     except _CLIENT_ERRORS as exc:

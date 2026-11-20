@@ -298,7 +298,17 @@ async def _room_is_working(db, topic_id) -> bool:
     return running is not None
 
 
-async def checkpoint(lease: dict, start: Callable[[], Awaitable[dict]]) -> bool:
+@dataclass(frozen=True)
+class Restart:
+    """How to start again a session's executor (`restart_executor`), and
+    whose a command run there for the session is: the session itself, as a
+    call it made would be named (``caller``, `routes/execution.py`)."""
+
+    start: Callable[[], Awaitable[dict]]
+    caller: dict
+
+
+async def checkpoint(lease: dict, restart: Restart) -> bool:
     """One best-effort checkpoint on the machine a session is leaving.
 
     The same command a turn's Stop checkpoint runs there (``cheese sync
@@ -322,11 +332,17 @@ async def checkpoint(lease: dict, start: Callable[[], Awaitable[dict]]) -> bool:
         except DeviceCallError:
             running = None
         if running is None or not launch.can_prepare(running):
-            lease = {**lease, "state": (await start())["state"]}
+            lease = {**lease, "state": (await restart.start())["state"]}
         result = await execution.call(
             lease,
             "control",
-            {"subtype": "checkpoint", "request_id": f"leave-{uuid.uuid4()}"},
+            {
+                "subtype": "checkpoint",
+                "request_id": f"leave-{uuid.uuid4()}",
+                # The session's own work it pushes: a push that fails is said
+                # in the session's conversation, as its turn's would be.
+                "caller": restart.caller,
+            },
             hub=device_hub,
             timeout=PUSH_WAIT_S,
         )
@@ -384,23 +400,32 @@ async def checkpoint_room(session, topic_id: uuid.UUID) -> None:
     await asyncio.gather(*(checkpoint(lease, start) for lease, start in starts))
 
 
-def _executor_env(env, *, api, token, project_id, topic_id, author, work_resource):
+#: What names whose a command is. Never the executor's own environment: each
+#: command is told by the call that started it (`runtime_core.identity`), from
+#: the ``caller`` the execution route verified.
+_CALLERS_OWN = frozenset({"CHEESE_ATTACHMENT", "CHEESE_TOPIC", "CHEESE_AUTHOR"})
+
+
+def _executor_env(env, *, api, token, project_id, work_resource):
     """What a session's executor runs with: the caller's ``CHEESE_*``/``GIT_*``
-    values, then the platform's own for this session."""
+    values, then the platform's own for this environment. Where it is, not who
+    is asking (`_CALLERS_OWN`)."""
     site = site_forward(api)
     return {
         **{
             key: value
             for key, value in env.items()
-            if key.startswith(("CHEESE_", "GIT_"))
+            if key.startswith(("CHEESE_", "GIT_")) and key not in _CALLERS_OWN
         },
         "CHEESE_API": api,
         # The machine's copy, marked as held there (`sandbox_auth.for_a_machine`).
+        # Blanked by the install wherever the machine has a platform socket
+        # (`bootstrap.prepared`). Windows has none, and there this is the one
+        # place an executor still holds a session's identity for all of its
+        # commands: one home, one session, until a call can carry its own.
         "CHEESE_TOKEN": for_a_machine(token) if token else "",
         # Empty for a sandbox in no project (``holder``).
         "CHEESE_PROJECT": str(project_id or ""),
-        "CHEESE_TOPIC": str(topic_id),
-        "CHEESE_AUTHOR": author,
         "CHEESE_PREVIEW_URL": ws_url(api, "/preview/tunnel"),
         "CHEESE_RESOURCE_ID": work_resource,
         # No GIT_AUTHOR_*: a task's checkout sets its own author (`cheese
@@ -640,11 +665,11 @@ async def _never_gone() -> bool:
     return False
 
 
-async def restart_executor(db, row, lease):
+async def restart_executor(db, row, lease) -> Restart:
     """How to start again the executor of the session ``row`` on the machine
     its ``lease`` is on, as a tool call there would: with the credential a
     session launches with, minted now, since the one it last ran with may have
-    expired."""
+    expired; and the session's name for what it runs there for the session."""
     topic = await TopicService(db).get_or_404(await room_of(db, row.conversation_id))
     project = await ProjectService(db).get_or_404(topic.project_id)
     task = (
@@ -667,7 +692,7 @@ async def restart_executor(db, row, lease):
         "generation"
     )
     api = await device_api_base(db, lease["device_id"], settings.connector_public_base)
-    return partial(
+    start = partial(
         _start_executor,
         device_hub,
         lease,
@@ -686,12 +711,16 @@ async def restart_executor(db, row, lease):
             api=api,
             token=token,
             project_id=project.id,
-            # The conversation the session works in, as at its install: a
-            # task's session is told the task, not its channel.
-            topic_id=row.conversation_id,
-            author=author,
             work_resource=work_resource,
         ),
+    )
+    return Restart(
+        start=start,
+        caller={
+            "attachment": str(row.id),
+            "conversation": str(row.conversation_id),
+            "author": author,
+        },
     )
 
 
@@ -1328,10 +1357,8 @@ async def _attempt(
         else reservation
     )
     row.work_lease = holding
-    actor = await user_by_handle(db, claims.get("a", ""))
-    if actor is None:
+    if await user_by_handle(db, claims.get("a", "")) is None:
         raise ForbiddenError("Execution actor no longer exists")
-    actor_handle = actor.username
     await db.commit()
     # The claim is taken; what installs under it runs as this process's own
     # task on its own session, and the request only waits for it. A request
@@ -1355,7 +1382,6 @@ async def _attempt(
             # The executor and its progress lines belong to the conversation;
             # its machine and lock to the holder.
             topic_id=row.conversation_id,
-            actor_handle=actor_handle,
             work_resource=work_resource,
             hub=hub,
             lease=lease,
@@ -1418,7 +1444,6 @@ async def _install(
     host_api,
     holder,
     topic_id,
-    actor_handle,
     work_resource,
     hub,
     lease,
@@ -1452,8 +1477,6 @@ async def _install(
             api=api,
             token=holder.sandbox_token(execution_token),
             project_id=holder.project_id,
-            topic_id=topic_id,
-            author=actor_handle,
             work_resource=work_resource,
         )
         if platform_machine and sandbox:
