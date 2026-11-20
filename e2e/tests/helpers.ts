@@ -177,10 +177,23 @@ export async function openProjectSwitcher(page: Page) {
 // hits a node that is gone.
 export async function clickFirstProject(page: Page) {
   const first = page.getByTestId("home-nav-project").first();
-  await first.waitFor();
+  const switcher = page.getByTestId("project-switcher");
+  // Right after a load neither is drawn yet: wait for one of them before choosing.
+  await first.or(switcher).first().waitFor();
+  if (!(await first.isVisible())) {
+    // Inside a project or a space the home sidebar is not on screen: the same
+    // list, in the same order, is behind the bar's place switcher.
+    const rows = page.getByTestId("project-switcher-row");
+    await expect(async () => {
+      if (!(await rows.first().isVisible())) await switcher.click({ timeout: 2_000 });
+      await rows.first().click({ timeout: 2_000 });
+      await rows.first().waitFor({ state: "hidden", timeout: 2_000 });
+    }).toPass({ timeout: 30_000 });
+    return;
+  }
   await expect(async () => {
     await first.click({ timeout: 2_000 });
-    await page.getByTestId("project-switcher").waitFor({ timeout: 2_000 });
+    await switcher.waitFor({ timeout: 2_000 });
   }).toPass({ timeout: 30_000 });
 }
 
