@@ -845,7 +845,7 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
         assert "Reviewed-by: reviewer <reviewer@zhishi.local>" in message
         async with db_factory() as session:
             files = ProjectFiles(session, binding.project_id, None)
-            listed, source = await files.files("committed")
+            listed, source, _dirs = await files.files("committed")
             assert source == "committed"
             assert {item["path"] for item in listed} >= {
                 "report.md",
