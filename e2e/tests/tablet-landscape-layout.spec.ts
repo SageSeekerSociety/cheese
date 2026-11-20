@@ -32,7 +32,7 @@ async function besideConversation(page: Page) {
 
 // 平板横放那一档：960（Vuetify 的 mdAndUp）到 1180（COMPACT_DESKTOP_MAX_WIDTH）为止。
 //
-// 这一档里常驻的二级侧栏（280px）把正文挤得太窄，所以侧栏默认收起，rail 顶上那颗
+// 这一档里常驻的二级侧栏（280px）把正文挤得太窄，所以侧栏默认收起，顶栏上那颗
 // 开关开合它（记住了人的选择）。
 //
 // 右侧面板按主区（对话加面板）的宽度分三档（`useWorkspaceLayout.ts` 的 `panelMode`）：
@@ -58,13 +58,14 @@ test.describe('平板横放（960–1180）', () => {
     await rows.first().click();
     await page.waitForURL(/\/channels\//);
 
-    // 宽档（1280 > 1180）：侧栏常驻，rail 上没有它的开关。
-    await expect(page.locator('[data-sidebar-toggle]')).toHaveCount(0);
+    // 宽档（1280 > 1180）：侧栏常驻、看得见，顶栏最左那一颗开关管它（只有这一颗）。
+    await expect(page.locator('[data-sidebar-toggle]')).toHaveCount(1);
+    await expect(page.locator('[data-sidebar-toggle]')).toHaveAttribute('aria-expanded', 'true');
 
     // 落到平板横放那一档。
     await page.setViewportSize({ width: 980, height: 900 });
 
-    // 侧栏默认收起：rail 顶上那颗开关在，aria-expanded=false，抽屉不是 active。
+    // 侧栏默认收起：顶栏上那颗开关在，aria-expanded=false，抽屉不是 active。
     const sidebarToggle = page.locator('[data-sidebar-toggle]');
     await expect(sidebarToggle).toBeVisible();
     await expect(sidebarToggle).toHaveAttribute('aria-expanded', 'false');
@@ -102,7 +103,7 @@ test.describe('平板横放（960–1180）', () => {
     await apiLogin(page);
     await openFirstProject(page);
 
-    // 落到平板横放那一档：侧栏默认收起，rail 顶上那颗开关在，话题列表在浮层里。
+    // 落到平板横放那一档：侧栏默认收起，顶栏上那颗开关在，话题列表在浮层里。
     await page.setViewportSize({ width: 1024, height: 900 });
     const sidebarToggle = page.locator('[data-sidebar-toggle]');
     await expect(sidebarToggle).toBeVisible();
@@ -177,8 +178,9 @@ test.describe('平板横放（960–1180）', () => {
     await apiLogin(page);
     const rows = await openFirstProject(page);
 
-    // 侧栏常驻，rail 上不收它。
-    await expect(page.locator('[data-sidebar-toggle]')).toHaveCount(0);
+    // 侧栏常驻，顶栏上那一颗开关说它开着。
+    await expect(page.locator('[data-sidebar-toggle]')).toHaveCount(1);
+    await expect(page.locator('[data-sidebar-toggle]')).toHaveAttribute('aria-expanded', 'true');
 
     await rows.first().click();
     await page.waitForURL(/\/channels\//);

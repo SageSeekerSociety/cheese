@@ -3,8 +3,8 @@ import { apiLogin, openProjectSwitcher } from './helpers';
 
 // 项目拖着换序，真的接通到了顺序上。
 //
-// 左边那一列方块栏 2026-11-16 拿掉了，项目住进侧栏头的项目切换列表（frontend/src/
-// components/common/Navigation/ProjectSwitcher.vue），拖动排序也搬进了列表里。
+// 项目在顶栏去处的切换列表里（frontend/src/components/common/Navigation/ProjectSwitcher.vue，
+// 在项目里点顶栏上的项目名打开），拖动排序也在这份列表里。
 //
 // 两条：拖到第一行上半边成为第一个，拖到最后一行下半边成为最后一个。行的上半/下半决定
 // 插到前面还是插到后面，这两个方向是两条各自独立的路——落点状态 class 分成 --before /
