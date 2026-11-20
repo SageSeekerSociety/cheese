@@ -11,6 +11,7 @@ from app.api.teams_deps import (
     get_team_service,
     load_application_maps,
 )
+from app.api.user_remarks import remarks_for_viewer
 from app.api.write_access import ROUTE_DECIDES, Can
 from app.auth import can
 from app.auth.checker import require_auth_user
@@ -143,6 +144,7 @@ def _team_to_api_model(
     users_map: dict | None = None,
     profiles_map: dict | None = None,
     avatars_map: dict | None = None,
+    remarks_map: dict[str, str] | None = None,
 ) -> dict:
     created_at_ms = (
         int(team.created_at.timestamp() * 1000) if team.created_at is not None else 0
@@ -170,6 +172,7 @@ def _team_to_api_model(
                     profiles_map.get(rel.user_id),
                     fallback_id=rel.user_id,
                     avatar_id=avatars_map.get(rel.user_id),
+                    remarks_map=remarks_map,
                 )
             elif rel.role == TeamMemberRole.ADMIN:
                 admin_relations.append(rel)
@@ -195,6 +198,7 @@ def _team_to_api_model(
                 profiles_map.get(rel.user_id),
                 fallback_id=rel.user_id,
                 avatar_id=avatars_map.get(rel.user_id),
+                remarks_map=remarks_map,
             )
             for rel in ordered
         ]
@@ -247,6 +251,7 @@ def _member_to_api_model(
     users_map: dict | None = None,
     profiles_map: dict | None = None,
     avatars_map: dict | None = None,
+    remarks_map: dict[str, str] | None = None,
 ) -> dict:
     """TeamMember representation with the full User shape the frontend expects."""
     created_at_ms = (
@@ -270,6 +275,7 @@ def _member_to_api_model(
         profiles_map.get(rel.user_id),
         fallback_id=rel.user_id,
         avatar_id=avatars_map.get(rel.user_id),
+        remarks_map=remarks_map,
     )
     return {
         "role": role_name,
@@ -281,8 +287,8 @@ def _member_to_api_model(
 
 
 async def _load_team_user_maps(
-    db, members: Sequence[TeamUserRelation]
-) -> tuple[dict, dict, dict]:
+    db, members: Sequence[TeamUserRelation], *, viewer_id: int | None = None
+) -> tuple[dict, dict, dict, dict]:
     """Bulk-load User + UserProfile records, and the avatars they picked.
 
     ``avatars_map`` 是 ``user_id -> 挑过的头像 id``（``chosen_avatar_ids`` 的答案，
@@ -292,12 +298,13 @@ async def _load_team_user_maps(
     """
     user_ids = list({rel.user_id for rel in members})
     if not user_ids:
-        return {}, {}, {}
+        return {}, {}, {}, {}
     user_repo = UserRepository(session=db)
     profile_repo = UserProfileRepository(session=db)
     users_map = await user_repo.get_by_ids(user_ids)
     profiles_map, avatars_map = await profile_repo.profiles_and_chosen_avatars(user_ids)
-    return users_map, profiles_map, avatars_map
+    remarks_map = await remarks_for_viewer(db, viewer_id, users_map)
+    return users_map, profiles_map, avatars_map, remarks_map
 
 
 _ROLE_NAME_TO_VALUE = {
@@ -341,6 +348,7 @@ async def _emit_team_models(
     teams: Sequence[Team],
     *,
     current_user_id: int | None = None,
+    viewer_id: int | None = None,
 ) -> list[dict]:
     """Batch-load members and user/profile/avatar maps across all teams in one round."""
     if not teams:
@@ -352,7 +360,11 @@ async def _emit_team_models(
             t.id: list(await service.get_team_members(team_id=t.id)) for t in teams
         }
     all_members = [m for rels in members_by_team.values() for m in rels]
-    users_map, profiles_map, avatars_map = await _load_team_user_maps(db, all_members)
+    users_map, profiles_map, avatars_map, remarks_map = await _load_team_user_maps(
+        db,
+        all_members,
+        viewer_id=viewer_id if viewer_id is not None else current_user_id,
+    )
     return [
         _team_to_api_model(
             team,
@@ -361,6 +373,7 @@ async def _emit_team_models(
             users_map=users_map,
             profiles_map=profiles_map,
             avatars_map=avatars_map,
+            remarks_map=remarks_map,
         )
         for team in teams
     ]
@@ -386,7 +399,9 @@ async def get_teams(
     )
     has_more = len(teams) > page_size
     teams_to_emit = teams[:page_size]
-    items = await _emit_team_models(db, service, teams_to_emit)
+    items = await _emit_team_models(
+        db, service, teams_to_emit, viewer_id=auth_user.user_id
+    )
     next_start = str(offset + page_size) if has_more else None
     return ok(
         {
@@ -420,7 +435,11 @@ async def get_my_teams(
     # Personal team first, then the rest by recency (stable for the sidebar).
     teams.sort(key=lambda t: (t.personal_owner_user_id is None, -t.id))
     items = await _emit_team_models(
-        db, service, teams, current_user_id=auth_user.user_id
+        db,
+        service,
+        teams,
+        current_user_id=auth_user.user_id,
+        viewer_id=auth_user.user_id,
     )
     return ok({"teams": items})
 
@@ -445,7 +464,9 @@ async def _team_profile(
 ) -> dict:
     """One team shape, whether it was reached by id or by its join link."""
     members = list(await service.get_team_members(team_id=team.id))
-    users_map, profiles_map, avatars_map = await _load_team_user_maps(db, members)
+    users_map, profiles_map, avatars_map, remarks_map = await _load_team_user_maps(
+        db, members, viewer_id=user_id
+    )
     data = _team_to_api_model(
         team,
         members=members,
@@ -453,6 +474,7 @@ async def _team_profile(
         users_map=users_map,
         profiles_map=profiles_map,
         avatars_map=avatars_map,
+        remarks_map=remarks_map,
     )
     data["viewerPermissions"] = await _viewer_permissions(db, team.id, user_id)
     if not data.get("joined"):
@@ -635,7 +657,9 @@ async def get_team_members(
         overseer = team is not None and await team_seats.TEAM.overseen_by(
             db, team, auth_user.user_id
         )
-    users_map, profiles_map, avatars_map = await _load_team_user_maps(db, relations)
+    users_map, profiles_map, avatars_map, remarks_map = await _load_team_user_maps(
+        db, relations, viewer_id=auth_user.user_id
+    )
     members = [
         {
             **_member_to_api_model(
@@ -643,6 +667,7 @@ async def get_team_members(
                 users_map=users_map,
                 profiles_map=profiles_map,
                 avatars_map=avatars_map,
+                remarks_map=remarks_map,
             ),
             "canRemove": rel.user_id != auth_user.user_id
             and team_seats.may_remove(
@@ -690,7 +715,9 @@ async def create_team(
         handle=payload.handle,
     )
     members = list(await service.get_team_members(team_id=team.id))
-    users_map, profiles_map, avatars_map = await _load_team_user_maps(db, members)
+    users_map, profiles_map, avatars_map, remarks_map = await _load_team_user_maps(
+        db, members, viewer_id=auth_user.user_id
+    )
     return ok(
         {
             "team": _team_to_api_model(
@@ -700,6 +727,7 @@ async def create_team(
                 users_map=users_map,
                 profiles_map=profiles_map,
                 avatars_map=avatars_map,
+                remarks_map=remarks_map,
             )
         },
         "Team created",
@@ -734,7 +762,9 @@ async def patch_team(
         handle=payload.handle,
     )
     members = list(await service.get_team_members(team_id=team_id))
-    users_map, profiles_map, avatars_map = await _load_team_user_maps(db, members)
+    users_map, profiles_map, avatars_map, remarks_map = await _load_team_user_maps(
+        db, members, viewer_id=auth_user.user_id
+    )
     data = _team_to_api_model(
         team,
         members=members,
@@ -742,6 +772,7 @@ async def patch_team(
         users_map=users_map,
         profiles_map=profiles_map,
         avatars_map=avatars_map,
+        remarks_map=remarks_map,
     )
     data["viewerPermissions"] = await _viewer_permissions(
         db, team_id, auth_user.user_id
@@ -836,7 +867,9 @@ async def patch_team_member_role(
             "Resource team not found", data={"type": "team", "id": team_id}
         )
     members = list(await service.get_team_members(team_id=team_id))
-    users_map, profiles_map, avatars_map = await _load_team_user_maps(db, members)
+    users_map, profiles_map, avatars_map, remarks_map = await _load_team_user_maps(
+        db, members, viewer_id=auth_user.user_id
+    )
     data = _team_to_api_model(
         team,
         members=members,
@@ -844,6 +877,7 @@ async def patch_team_member_role(
         users_map=users_map,
         profiles_map=profiles_map,
         avatars_map=avatars_map,
+        remarks_map=remarks_map,
     )
     data["viewerPermissions"] = await _viewer_permissions(
         db, team_id, auth_user.user_id
@@ -880,7 +914,9 @@ async def put_team_owner(
             "Resource team not found", data={"type": "team", "id": team_id}
         )
     members = list(await service.get_team_members(team_id=team_id))
-    users_map, profiles_map, avatars_map = await _load_team_user_maps(db, members)
+    users_map, profiles_map, avatars_map, remarks_map = await _load_team_user_maps(
+        db, members, viewer_id=auth_user.user_id
+    )
     data = _team_to_api_model(
         team,
         members=members,
@@ -888,6 +924,7 @@ async def put_team_owner(
         users_map=users_map,
         profiles_map=profiles_map,
         avatars_map=avatars_map,
+        remarks_map=remarks_map,
     )
     data["viewerPermissions"] = await _viewer_permissions(
         db, team_id, auth_user.user_id
@@ -975,9 +1012,13 @@ async def list_team_join_requests(
         page_start=pageStart,
         page_size=pageSize,
     )
-    users_map, profiles_map, avatars_map, teams_map = await load_application_maps(
-        db, apps
-    )
+    (
+        users_map,
+        profiles_map,
+        avatars_map,
+        teams_map,
+        remarks_map,
+    ) = await load_application_maps(db, apps, viewer_id=auth_user.user_id)
     items = [
         application_to_api_model(
             app,
@@ -985,6 +1026,7 @@ async def list_team_join_requests(
             profiles_map=profiles_map,
             avatars_map=avatars_map,
             teams_map=teams_map,
+            remarks_map=remarks_map,
         )
         for app in apps
     ]
@@ -1056,9 +1098,13 @@ async def list_team_invitations(
         page_start=pageStart,
         page_size=pageSize,
     )
-    users_map, profiles_map, avatars_map, teams_map = await load_application_maps(
-        db, apps
-    )
+    (
+        users_map,
+        profiles_map,
+        avatars_map,
+        teams_map,
+        remarks_map,
+    ) = await load_application_maps(db, apps, viewer_id=auth_user.user_id)
     items = [
         application_to_api_model(
             app,
@@ -1066,6 +1112,7 @@ async def list_team_invitations(
             profiles_map=profiles_map,
             avatars_map=avatars_map,
             teams_map=teams_map,
+            remarks_map=remarks_map,
         )
         for app in apps
     ]
@@ -1107,9 +1154,13 @@ async def create_team_invitation(
         role=role,
         message=payload.message,
     )
-    users_map, profiles_map, avatars_map, teams_map = await load_application_maps(
-        db, [app]
-    )
+    (
+        users_map,
+        profiles_map,
+        avatars_map,
+        teams_map,
+        remarks_map,
+    ) = await load_application_maps(db, [app], viewer_id=auth_user.user_id)
     return ok(
         {
             "invitation": application_to_api_model(
@@ -1118,6 +1169,7 @@ async def create_team_invitation(
                 profiles_map=profiles_map,
                 avatars_map=avatars_map,
                 teams_map=teams_map,
+                remarks_map=remarks_map,
             )
         },
         "Invitation created",

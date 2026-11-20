@@ -97,7 +97,12 @@
       </div>
     </template>
 
-    <BaseEmptyState v-else-if="!loading" size="inline" :title="t('spaces.analytics.participants.empty')" />
+    <BaseEmptyState
+      v-else-if="!loading"
+      size="inline"
+      align="center"
+      :title="t('spaces.analytics.participants.empty')"
+    />
   </div>
 </template>
 

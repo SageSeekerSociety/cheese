@@ -398,6 +398,40 @@ async def get_or_404(
     return row
 
 
+async def follow_project_rename(
+    session: AsyncSession, *, project_id: uuid.UUID, was: str, now: str
+) -> None:
+    """项目改了名，仓库那一项还叫着项目的旧名时，跟着改。
+
+    那一项的名字是第一次合并交付时照项目名起的（`for_repository`），没有人起过它。
+    人给它改过名之后它就不再等于项目名，这里不动它；新名字被清单上另一项占着，或
+    者不是一个能用的产物名时也不动，那一项留着旧名等人自己改。
+    """
+    found = await session.execute(
+        select(ProjectArtifact)
+        .where(
+            ProjectArtifact.project_id == project_id,
+            ProjectArtifact.delivers_repository.is_(True),
+        )
+        .order_by(ProjectArtifact.created_at)
+    )
+    row = found.scalars().first()
+    if row is None:
+        return
+    try:
+        if row.name != clean_name(was):
+            return
+        clean = clean_name(now)
+    except ValidationError:
+        return
+    if clean == row.name:
+        return
+    if await _by_name(session, project_id=project_id, name=clean) is not None:
+        return
+    row.name = clean
+    await session.flush()
+
+
 async def rename(
     session: AsyncSession, artifact: ProjectArtifact, *, name: str
 ) -> ProjectArtifact:

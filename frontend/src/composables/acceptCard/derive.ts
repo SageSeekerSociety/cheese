@@ -92,13 +92,16 @@ export function useAcceptCardDerive(host: AcceptCardDeriveHost) {
   })
 
   // 绿了自动合 (#718)：项目允许、且卡正停在 blocked/behind（规则还没满足）时才有
-  // 这个开关；已布防的开关一直可见，好让人解除。
+  // 这个开关；已布防的开关一直可见，好让人解除——「提交并采纳」布下的也一样，项目
+  // 没开自动合并时也能解除。
   const autoMergeArmedBy = computed(() => pendingCard.value?.auto_merge.armed_by ?? null)
   const autoMergeVisible = computed(() => {
     const card = pendingCard.value
-    if (!card || !card.auto_merge.allowed) return false
+    if (!card) return false
+    if (card.auto_merge.armed_by) return true
+    if (!card.auto_merge.allowed) return false
     const state = card.merge_state.state
-    return state === 'blocked' || state === 'behind' || !!card.auto_merge.armed_by
+    return state === 'blocked' || state === 'behind'
   })
 
   // The bar line is a plain string and cannot hold a UserRef, so the person is named

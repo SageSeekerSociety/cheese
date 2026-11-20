@@ -80,3 +80,28 @@ def machine_commits(
         return _git(work, "rev-parse", "HEAD").stdout.strip()
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+def machine_keeps(
+    project_id: uuid.UUID, place_id: uuid.UUID, files: dict[str, str]
+) -> str:
+    """The place's checkout is kept off its sandbox with `files` changed and
+    not committed, as `cheese keep` keeps it: one commit at its kept ref whose
+    tree is the checkout's files and whose parent is the branch's head."""
+    repo = git_store.ensure_repo(project_id)
+    branch = git_store.branch_for_task(place_id)
+    work = Path(tempfile.mkdtemp(prefix="cheese-machine-"))
+    try:
+        _git(work.parent, "clone", "-q", "-b", branch, str(repo), str(work))
+        _git(work, "config", "user.name", CHEESE_NAME)
+        _git(work, "config", "user.email", CHEESE_EMAIL)
+        for path, content in files.items():
+            target = work / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+        _git(work, "add", "-A")
+        _git(work, "commit", "-q", "-m", "cheese: kept working copy")
+        _git(work, "push", "-q", "origin", f"HEAD:refs/cheese/kept/{place_id}")
+        return _git(work, "rev-parse", "HEAD").stdout.strip()
+    finally:
+        shutil.rmtree(work, ignore_errors=True)

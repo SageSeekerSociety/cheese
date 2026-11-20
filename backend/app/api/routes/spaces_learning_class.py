@@ -151,6 +151,20 @@ class AdviceOut(BaseModel):
     generated_at: int | None = Field(alias="generatedAt")
 
 
+class PracticeOutcomeOut(BaseModel):
+    """做过巩固题的人里几人升了档（§ step 4）；不足 3 人时整格为空。"""
+
+    practiced: int
+    improved: int
+
+
+class LastPushOut(BaseModel):
+    """最近一次「推送巩固题」：什么时候、排上几人（不足 3 人时人数为空）。"""
+
+    at: int | None
+    recipients: int | None
+
+
 class LearningClassPointDetailOut(BaseModel):
     model_config = _C
     enabled: bool
@@ -166,6 +180,8 @@ class LearningClassPointDetailOut(BaseModel):
     misconceptions: list[MisconceptionOut]
     hidden_misconceptions: int = Field(alias="hiddenMisconceptions")
     advice: AdviceOut | None
+    practice: PracticeOutcomeOut | None
+    last_push: LastPushOut | None = Field(alias="lastPush")
 
 
 class ClusterOut(BaseModel):
@@ -259,6 +275,10 @@ class TaskDifficultyOut(BaseModel):
     avg_hours: float | None = Field(alias="avgHours")
     stuck_rate: float | None = Field(alias="stuckRate")
     answer_seekers: int | None = Field(alias="answerSeekers")
+    #: 挂着测试点的题：每人每阶段最新那一版提交的测试平均通过率（0–1），和读得出分的
+    #: 份数；没有测试点、或不足 3 份时为 null。
+    test_pass_rate: float | None = Field(default=None, alias="testPassRate")
+    test_judged: int | None = Field(default=None, alias="testJudged")
 
 
 class LearningClassTasksOut(BaseModel):

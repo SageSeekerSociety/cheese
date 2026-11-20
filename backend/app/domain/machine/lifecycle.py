@@ -49,10 +49,14 @@ person's own computer are not frozen: they keep the lifecycle below.
 **Destroyed**, a sandbox's executor and everything still running in its home
 are stopped and the home is deleted from its machine (``sandbox_home.destroy``);
 then its row goes, and on a host with it the host's slot. A machine that is
-offline is skipped until it is back. Nothing of the sandbox is kept:
-what lasts is the conversation and the commits the session pushed. The session's next tool call places it in a
-new sandbox, which starts like any new one, and that call's result
-tells the agent it is in a new sandbox (``LOST_KEY``).
+offline is skipped until it is back. What lasts is the conversation, the
+commits the session pushed, and — in a repository the platform hosts — what
+its task checkouts had not committed, kept beside their branches by the last
+checkpoint or save (``repository.kept_work``) and laid back when a checkout
+of the task is opened again. Installed tools, running processes and the rest
+of the home are gone. The session's next tool call places it in a new
+sandbox, which starts like any new one, and that call's result tells the
+agent it is in a new sandbox (``LOST_KEY``).
 
 While the host removes the home, the row is marked stopped (``stopped_at``):
 a tool call that arrives meanwhile waits for it to go (``SandboxRemoving``)

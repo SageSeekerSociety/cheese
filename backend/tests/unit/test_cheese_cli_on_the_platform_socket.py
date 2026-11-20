@@ -6,6 +6,8 @@ The rules, as a person would state them:
   `/api`, without the token, and whatever proxy the environment names is not
   used for it;
 - with no credential to name the session, the socket names it;
+- a call down the socket names the session the command was started for
+  (`CHEESE_ATTACHMENT`), and names nobody when the command was told none;
 - the process that loads the CLI keeps its own urllib;
 - a body too large for the socket goes straight to the platform, on a
   credential the socket hands out for it rather than the machine's token.
@@ -37,6 +39,7 @@ def _recording(seen):
                     "method": self.command,
                     "path": self.path,
                     "token": self.headers.get("authorization"),
+                    "attachment": self.headers.get("x-cheese-attachment"),
                     "bytes": len(body),
                 }
             )
@@ -102,7 +105,13 @@ def test_a_platform_call_goes_down_the_socket_without_the_token(machine):
     cheese, on_socket, direct = machine
     cheese._call("GET", "/topics/t")
     assert on_socket == [
-        {"method": "GET", "path": "/api/topics/t", "token": None, "bytes": 0}
+        {
+            "method": "GET",
+            "path": "/api/topics/t",
+            "token": None,
+            "attachment": None,
+            "bytes": 0,
+        }
     ]
     assert direct == []
 
@@ -135,3 +144,17 @@ def test_a_large_body_goes_down_the_socket_without_a_credential(
 def test_loading_the_cli_leaves_the_processs_urllib_as_it_was(machine):
     cheese, _, _ = machine
     assert urllib.request._opener is cheese.opener_before_loading
+
+
+def test_a_call_names_the_session_its_command_was_started_for(machine, monkeypatch):
+    cheese, on_socket, _ = machine
+    monkeypatch.setenv("CHEESE_ATTACHMENT", "session-a")
+    cheese._call("GET", "/topics/t")
+    cheese.LocalHost().request({"method": "GET", "path": "/projects/p"})
+    monkeypatch.setenv("CHEESE_ATTACHMENT", "session-b")
+    cheese._call("GET", "/topics/t")
+    assert [call["attachment"] for call in on_socket] == [
+        "session-a",
+        "session-a",
+        "session-b",
+    ]

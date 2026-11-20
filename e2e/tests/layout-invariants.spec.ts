@@ -835,28 +835,51 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
   });
 });
 
-// 侧栏顶上那一条（桌面上是老鼠图标加项目切换器，见 ProjectSwitcher.vue；左边那一列
-// 方块栏 2026-11-16 拿掉之前是项目名那一行），和右边内容区的页头是同一条线：一样高、
-// 顶在同一处，两条底线接成一条。这几页以前各画各的大标题，那条线到了这几页就断在半空——从房间切到
-// 成员页，页头一会儿有一会儿没有。量的是渲染出来的盒子，因为这种错 vitest 和类型检
-// 查都看不见。项目设置不在这里：它是盖在整个窗口上的一层，没有这条页头。
-test('项目里每一页的页头都和侧栏项目名那一条对齐', async ({ page }) => {
+// 桌面的框分三层：最上面一条顶栏横贯全宽，侧栏和页面都从它下沿开始（docs/design-system.md
+// §1.4）。项目里每一页的页头都顶在顶栏下沿、和侧栏的上沿同一处——这几页以前各画各的大标题，
+// 线断在半空。顶栏上的东西不随换页、收起侧栏挪位置：「首页」和搜索框在每一页、侧栏收起前后
+// 都在同一处。量的是渲染出来的盒子，这种错 vitest 和类型检查都看不见。项目设置不在这里：它
+// 是盖在整个窗口上的一层，没有这条页头。
+test('项目里每一页的页头都顶在顶栏下沿，顶栏上的东西不随换页和收起侧栏挪动', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await apiLogin(page);
   await openFirstProject(page);
   const projectPath = new URL(page.url()).pathname.match(/^\/projects\/[^/]+/)?.[0];
   expect(projectPath).toBeTruthy();
 
+  const bar = page.locator('.app-system-bar');
+  const home = page.getByTestId('bar-home');
+  const search = page.getByTestId('bar-search');
+  const anchors = async () => {
+    const [h, s] = await Promise.all([home.boundingBox(), search.boundingBox()]);
+    return { home: h!.x, search: s!.x };
+  };
+  const first = await anchors();
+
   for (const sub of ['overview', 'tasks', 'members', 'members/alice', 'docs/charter', 'library']) {
     await page.goto(`${projectPath}/${sub}`);
     const head = page.locator('.app-page__head');
     await expect(head).toBeVisible();
-    const [side, main] = await Promise.all([page.getByTestId('sidebar-frame-top').boundingBox(), head.boundingBox()]);
-    expect(side, sub).not.toBeNull();
-    expect(main, sub).not.toBeNull();
-    expect(main!.y, `${sub} · top`).toBeCloseTo(side!.y, 0);
-    expect(main!.height, `${sub} · height`).toBeCloseTo(side!.height, 0);
+    const [top, main, side] = await Promise.all([
+      bar.boundingBox(),
+      head.boundingBox(),
+      page.locator('#secondary-sidebar').boundingBox(),
+    ]);
+    expect(top!.width, `${sub} · bar spans the window`).toBeCloseTo(1440, 0);
+    expect(main!.y, `${sub} · head under the bar`).toBeCloseTo(top!.y + top!.height, 0);
+    expect(side!.y, `${sub} · sidebar under the bar`).toBeCloseTo(top!.y + top!.height, 0);
+    expect(side!.x, `${sub} · sidebar from the window edge`).toBeCloseTo(0, 0);
+    expect(await anchors(), sub).toEqual(first);
   }
+
+  // 收起侧栏：左边什么也不留，页面从窗口左缘开始；顶栏上的东西原地不动。
+  await page.locator('[data-sidebar-toggle]').click();
+  await expect(page.locator('#secondary-sidebar')).toBeHidden();
+  const pane = await page.locator('#app-scrollable').boundingBox();
+  expect(pane!.x).toBeCloseTo(0, 0);
+  expect(await anchors()).toEqual(first);
+  await page.locator('[data-sidebar-toggle]').click();
+  await expect(page.locator('#secondary-sidebar')).toBeVisible();
 });
 
 // 设置是盖在整个窗口上的一层（SettingsOverlay），它里面的下拉菜单和对话框却由 Vuetify
@@ -1381,11 +1404,11 @@ test.describe('设置浮层：目录钉左缘、内容列在剩余空间居中�
   });
 });
 
-// 工作面板的每一格都住在 `tabbody` 里，而 `tabbody` 是一条 flex 行（`WorkPanel.vue`）：
+// 桌面上工作面板的每一格是布局区里的一块（`WorkPane`，`WorkPanel.vue`），里面是一条 flex 行：
 // 没写 `flex` 的那一格会按内容收缩——内容多宽它就多宽，右边空着。规则那一格就是这样：
 // 空状态那两行字多宽，面板就多宽，「新建」右侧的刷新键停在半路。判据因此不是「内容有多
-// 宽」而是**它住的那条 flex 行有多宽**。vitest 量不到坐标，typecheck / stylelint 也不
-// 看这个，只有屏幕上量得出来。
+// 宽」而是**它住的那一格有多宽**。vitest 量不到坐标，typecheck / stylelint 也不看这个，
+// 只有屏幕上量得出来。
 test('房间面板的「例行事务」那一格铺满整条面板', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await apiLogin(page);
@@ -1396,17 +1419,17 @@ test('房间面板的「例行事务」那一格铺满整条面板', async ({ pa
   // 它们会收进溢出菜单——点不到不代表这一格不存在。
   await page.goto(`${new URL(page.url()).pathname}?tab=routines`);
 
-  const pane = page.locator('.tabbody .routine-panel');
+  const pane = page.locator('.work-pane .routine-panel');
   await expect(pane).toBeVisible();
   const widths = await pane.evaluate((el) => {
-    const body = el.closest('.tabbody');
+    const body = el.closest('.work-pane');
     return {
       pane: el.getBoundingClientRect().width,
       body: body ? body.getBoundingClientRect().width : 0,
     };
   });
   // 量不到那条行就是范围选错了：空范围永远返回「没有缺陷」，所以这里炸掉而不是放过。
-  expect(widths.body, '这一格没住在 .tabbody 里，这条断言等于没做').toBeGreaterThan(0);
+  expect(widths.body, '这一格没住在 .work-pane 里，这条断言等于没做').toBeGreaterThan(0);
   expect(widths.pane, '这一格没画出来').toBeGreaterThan(0);
   // 1px 容差：亚像素与取整。
   expect(

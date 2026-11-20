@@ -157,12 +157,12 @@ function railParts(src: NavSources, shell: Shell): Record<string, NavGenericItem
           type: 'item' as const,
           title: p.name,
           projectId: p.id,
+          avatar: p.avatar ?? null,
           // 上次待的地方还在，就直接落回它——每天的主路径是「回到昨天那个房间」，
           // 先落到项目首页等于多加一跳。不在了（或没记过）才落到项目首页。
           to: lastPlace ? placeHref(ref, lastPlace) : `/projects/${ref}`,
-          // 项目里的每一页（频道、看板、设置）都算站在这一格上。选中竖条靠这个画：
-          // RailItem 自己绑着 aria-current，没有 match 的格子绑上去的是 undefined，
-          // 会盖掉链接本来算出的激活态。地址里的项目可能是短名、旧短名或 UUID
+          // 项目里的每一页（频道、看板、设置）都算站在这一格上：侧栏头写哪个项目、切换
+          // 列表里哪一行是选中态，都靠这个认。地址里的项目可能是短名、旧短名或 UUID
           // （旧链接、还没换成短名的那一瞬），三种都要认。
           match: (path: string) => onProject(path, p),
           menu: src.projectMenu?.(p),
@@ -204,7 +204,7 @@ export function railItems(src: NavSources, shell: Shell): NavGenericItem[] {
 }
 
 /**
- * 第 N 格的快捷键，按「在哪儿跑」分两种（App.vue 登记、RailItem 浮层显示，同一个出处）：
+ * 第 N 格的快捷键，按「在哪儿跑」分两种（App.vue 登记、项目切换列表里显示，同一个出处）：
  *
  * - 浏览器里是序列键 `G` 然后 `N`。⌘1–9 是浏览器切标签页的键，抢过来会让人切不回自己
  *   的第 N 个标签页；后台的 `G Q / G D` 是同一个约定。

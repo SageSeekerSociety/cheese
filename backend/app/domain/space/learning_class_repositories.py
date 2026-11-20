@@ -38,6 +38,7 @@ from app.domain.space.models import (
     SpaceLearningWeek,
     SpaceMember,
 )
+from app.domain.task import judge_stats
 from app.domain.task.models import (
     Task,
     TaskKnowledgePoint,
@@ -344,6 +345,13 @@ class LearningClassReads:
             )
         )
         return [str(d or "") for d in rows.all()]
+
+    async def test_pass_rates(
+        self, task_ids: Sequence[int]
+    ) -> dict[int, tuple[float, int]]:
+        """几道题各自的测试平均通过率和读得出分的份数（``judge_stats`` 那一份口径，
+        只有全班的数）。"""
+        return await judge_stats.pass_rates_of_tasks(self._session, task_ids)
 
     async def task_points(self, space_id: int) -> dict[int, set[int]]:
         """每道题挂的 live 知识点。"""

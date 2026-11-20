@@ -15,7 +15,12 @@ import uuid
 from datetime import UTC, datetime
 
 from app.domain.agent.models import AgentTurn
+from app.domain.block.repositories import BlockRepository
+from app.domain.event_author import AuthorType
+from app.domain.identity.actor import acted_by
 from app.domain.review.models import AcceptCard, AcceptStatus, DeliverableKind
+from app.domain.review.task_landing import _adopted_by
+from app.domain.room_task.models import Task
 from tests.integration.conftest import (
     join_project_team,
     mint_scoped_token,
@@ -166,3 +171,69 @@ def test_a_version_handed_in_after_the_word_is_not_adopted(client, stub_project_
     assert refused.status_code == 409, refused.text
     assert refused.json()["error"]["i18n"]["key"] == "coordinateAcceptNewerDelivery"
     assert _card(client, task["card"]).status == AcceptStatus.pending
+
+
+def test_where_it_came_from_says_the_teammate_adopted_it_for_the_reviewer(
+    client, stub_project_forge
+):
+    """When what it adopted lands, the main line's line about it names the
+    reviewer and the teammate that adopted it for them, by the teammate's own
+    name in the project, with no PR number in it."""
+    project, room, seat = _channel(client)
+    task = _task_with_delivery(client, project, room, seat)
+    asked = post_message(client, room, "alice", {"content": "首页加个报名表"})
+
+    async def hang_under_the_request():
+        async with client.test_factory() as db:
+            row = await db.get(Task, uuid.UUID(task["id"]))
+            row.upgraded_from_block_id = row.source_block_id = uuid.UUID(asked["id"])
+            await db.commit()
+
+    client.portal.call(hang_under_the_request)
+
+    async def teammate_reports():
+        async with client.test_factory() as db:
+            await BlockRepository(db).add(
+                project_id=uuid.UUID(project),
+                conversation_id=uuid.UUID(room),
+                author=seat,
+                author_type=AuthorType.participant,
+                content="报名表做好了",
+                meta={"task_tag": task["id"]},
+                own_output=True,
+            )
+            await db.commit()
+
+    client.portal.call(teammate_reports)
+    _say_then_wake(client, room, seat, "alice", "可以了 合并吧")
+    assert _accept(client, project, room, seat, task).status_code == 200
+
+    lines = client.get(
+        f"/topics/{room}/blocks", headers=session_auth_headers("alice")
+    ).json()["data"]["data"]
+    [landed] = [
+        b for b in lines if (b.get("meta") or {}).get("event_type") == "task_landed"
+    ]
+    assert landed["content"] == f"<@{seat}>代 <@alice> 采纳了「{task['title']}」"
+
+
+def test_a_card_that_kept_no_seat_names_no_teammate(client, stub_project_forge):
+    """A card adopted for its reviewer by their own personal assistant, or
+    before the adopting seat was kept, names no project teammate: the line
+    says it the way such a decision was always said."""
+    project, room, seat = _channel(client)
+    task = _task_with_delivery(client, project, room, seat)
+
+    async def adopted_without_a_seat():
+        async with client.test_factory() as db:
+            card = await db.get(AcceptCard, task["card"])
+            card.status = AcceptStatus.accepted
+            card.decided_by = "alice"
+            card.decided_by_assistant = True
+            await db.commit()
+            row = await db.get(Task, uuid.UUID(task["id"]))
+            return str(await _adopted_by(db, row, "alice"))
+
+    said = client.portal.call(adopted_without_a_seat)
+    assert said == str(acted_by("alice", by_assistant=True))
+    assert seat not in said

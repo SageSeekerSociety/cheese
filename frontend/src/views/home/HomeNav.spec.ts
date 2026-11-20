@@ -59,6 +59,7 @@ async function mount(overrides: Record<string, unknown> = {}) {
       // 侧栏里那份目录（`HomeNav.vue`）多了一行通往「市场」：名字不在表里，带 `to`
       // 的行会当场抛，整个侧栏就渲染不出来。
       { path: '/market', name: 'market', component: blank },
+      { path: '/projects/:ref', component: blank },
       { path: '/space-applications/:spaceId', name: 'HomeSpaceApplication', component: blank },
       { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: blank },
       { path: '/teams/explore', name: 'HomeTeamsExplore', component: blank },
@@ -123,6 +124,39 @@ function menuLabels() {
 }
 
 describe('首页目录的画面', () => {
+  it('桌面首页列出我的项目，各带等我处理的件数，排在团队上面；新建项目从这里发出', async () => {
+    const { view } = await mount({
+      // 「待办」这一行在桌面首页侧栏上一直画：这一格的侧栏头下面不画「首页」那一行，
+      // 这里是首页桌面上唯一一条去 /inbox 的路。
+      inbox: true,
+      teams: [team('crew', '知是开发组')],
+      projects: [
+        { id: 'p1', name: '开放日官网', to: '/projects/open-day', awaiting: 2 },
+        { id: 'p2', name: '数据课实验', to: '/projects/data-lab' },
+      ],
+      newProjectLabel: '新建项目',
+    })
+    const rows = await screen.findAllByTestId('home-nav-project')
+    expect(rows.map((row) => row.getAttribute('href'))).toEqual(['/projects/open-day', '/projects/data-lab'])
+    expect(rows[0].textContent).toContain('开放日官网')
+    expect(rows[0].textContent).toContain('2')
+    // 读屏听到的名字带件数；没有等你处理的，名字就是项目名。
+    expect(rows[0].getAttribute('aria-label')).toContain('2')
+    expect(rows[1].getAttribute('aria-label')).toBe('数据课实验')
+    // 项目那一段在团队那一段前面。
+    const order = hrefs()
+    expect(order.indexOf('/projects/data-lab')).toBeLessThan(order.indexOf('/teams/explore'))
+    await fireEvent.click(screen.getAllByText('新建项目').at(-1)!)
+    expect(view.emitted('createProject')).toHaveLength(1)
+  })
+
+  it('没给项目时（手机「首页」整页）不画项目那一段', async () => {
+    await mount({ inbox: false, teams: [team('crew', '知是开发组')] })
+    await screen.findByText('知是开发组')
+    expect(screen.queryByTestId('home-nav-project')).toBeNull()
+    expect(screen.queryByText('项目')).toBeNull()
+  })
+
   it('正在看的那个团队展开着，项目和资料库都点得到；别的团队收着', async () => {
     await mount({
       teams: [team('crew', '知是开发组'), team('lab', '数据课第三组')],

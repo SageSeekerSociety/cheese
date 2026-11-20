@@ -47,9 +47,17 @@ const onConfirm = (dialog: DialogInstance) => {
   closeDialog(dialog.id, result)
 }
 
+// 取消是「不做」这个答案，不是一次失败。`confirm()` 早就把答案写好了
+// （`onCancel: () => false`），这里就把它交回去；从前的写法是把它整个丢掉、改成
+// reject 一个 `CancelError`，而绝大多数调用点写的是 `if (!confirmed) return` ——
+// 没人接的那个 reject 一路冒到场景的兜底（`views/spaces/Detail.vue` 外的
+// `ErrorBoundary`），整块内容被换成「无法显示这块内容」：点一下「取消」就得重试才
+// 能接着看这一页。只有没写 `onCancel` 的那几种（`prompt`、`custom`）仍然 reject：
+// 它们要分得出「取消了」和「交上来一个空值」。
 const onCancel = (dialog: DialogInstance) => {
   if (dialog.onCancel) {
-    dialog.onCancel()
+    closeDialog(dialog.id, dialog.onCancel())
+    return
   }
   closeDialog(dialog.id, false, true)
 }

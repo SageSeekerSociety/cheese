@@ -253,3 +253,90 @@ def test_nobody_signed_in_reads_or_joins_through_a_link(
     token = _link(api_client, owner, _space(api_client, owner))["token"]
     assert api_client.get(f"/space-invites/{token}").status_code == 401
     assert api_client.post(f"/space-invites/{token}/join").status_code == 401
+
+
+def test_space_people_remarks_are_private_across_admins_members_and_requests(
+    user_client: UserCreator, api_client: TestClient
+):
+    owner, owner_token = _person(user_client, api_client)
+    viewer, viewer_token = _person(user_client, api_client)
+    other, other_token = _person(user_client, api_client)
+    space_id = _space(api_client, owner_token)
+    link = _link(api_client, owner_token, space_id)
+    for token in (viewer_token, other_token):
+        joined = api_client.post(
+            f"/space-invites/{link['token']}/join", headers=_auth(token)
+        )
+        assert joined.status_code == 200, joined.text
+    for target in (owner, other):
+        saved = api_client.put(
+            f"/users/{target.username}/remark",
+            json={"remark": "Private space label"},
+            headers=_auth(viewer_token),
+        )
+        assert saved.status_code == 200, saved.text
+    baseline = api_client.get(f"/spaces/{space_id}", headers=_auth(owner_token)).json()[
+        "data"
+    ]["space"]["admins"]
+    owner_name = next(
+        row["user"]["nickname"] for row in baseline if row["userId"] == owner.user_id
+    )
+    for token in (viewer_token, owner_token, other_token):
+        expected = "Private space label" if token == viewer_token else None
+        shown = api_client.get(f"/spaces/{space_id}", headers=_auth(token)).json()[
+            "data"
+        ]["space"]
+        admin = next(
+            row["user"] for row in shown["admins"] if row["userId"] == owner.user_id
+        )
+        assert admin["remark"] == expected
+        assert admin["nickname"] == owner_name
+        assert admin["username"] == owner.username
+        members = api_client.get(
+            f"/spaces/{space_id}/members", headers=_auth(token)
+        ).json()["data"]["members"]
+        person = next(row["user"] for row in members if row["userId"] == other.user_id)
+        assert person["remark"] == expected
+        assert person["username"] == other.username
+    assert api_client.get(f"/spaces/{space_id}/members").status_code == 401
+    cleared = api_client.put(
+        f"/users/{owner.username}/remark",
+        json={"remark": ""},
+        headers=_auth(viewer_token),
+    )
+    assert cleared.status_code == 200
+    shown = api_client.get(f"/spaces/{space_id}", headers=_auth(viewer_token)).json()[
+        "data"
+    ]["space"]
+    assert (
+        next(row["user"] for row in shown["admins"] if row["userId"] == owner.user_id)[
+            "remark"
+        ]
+        is None
+    )
+    waiting, waiting_token = _person(user_client, api_client)
+    settings = api_client.patch(
+        f"/spaces/{space_id}/join-link",
+        json={"approval": True},
+        headers=_auth(owner_token),
+    )
+    assert settings.status_code == 200, settings.text
+    joined = api_client.post(
+        f"/space-invites/{link['token']}/join", headers=_auth(waiting_token)
+    )
+    assert joined.status_code == 200, joined.text
+    saved = api_client.put(
+        f"/users/{waiting.username}/remark",
+        json={"remark": "Waiting label"},
+        headers=_auth(owner_token),
+    )
+    assert saved.status_code == 200
+    request = next(
+        row
+        for row in _requests(api_client, owner_token, space_id)
+        if row["userId"] == waiting.user_id
+    )
+    assert request["user"]["remark"] == "Waiting label"
+    assert api_client.get(
+        f"/spaces/{space_id}/join-requests", headers=_auth(viewer_token)
+    ).status_code in (403, 404)

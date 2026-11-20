@@ -217,7 +217,7 @@ async function restoreSelected() {
             <p v-else class="doc-history__wait t-meta">{{ t('work.room.doc.diffLoading') }}</p>
           </template>
           <MarkdownView v-else-if="current" class="md-content" :source="current.content" :names="names" />
-          <BaseEmptyState v-else-if="!loading" size="inline" :title="t('work.room.doc.historyEmpty')" />
+          <BaseEmptyState v-else-if="!loading" size="inline" align="center" :title="t('work.room.doc.historyEmpty')" />
         </div>
       </div>
     </div>

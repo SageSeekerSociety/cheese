@@ -36,6 +36,8 @@ from app.domain.delivery.ledger import deliver, settle_card
 from app.domain.delivery_events import DeliveryEvent, NotificationType
 from app.domain.docs_site import periodic as docs_periodic
 from app.domain.integration import periodic as integration_periodic
+from app.domain.judge import periodic as judge_periodic
+from app.domain.machine import hand_in
 from app.domain.machine import periodic as machine_periodic
 from app.domain.memory import periodic as memory_periodic
 from app.domain.notification import periodic as notification_periodic
@@ -46,6 +48,7 @@ from app.domain.run_record import periodic as run_record_periodic
 from app.domain.session_record import periodic as session_record_periodic
 from app.domain.space import periodic as space_periodic
 from app.domain.task import periodic as task_periodic
+from app.domain.task_notices import notices as task_notices
 from app.domain.task_notices import periodic as task_notices_periodic
 from app.domain.task_quiet import periodic as task_quiet_periodic
 from app.domain.team.repositories import TeamRepository
@@ -104,6 +107,7 @@ PERIODIC_JOB_NAMES = (
     "feishu authorization renewal",
     "task deadline sweep",
     "starter code pushes",
+    "judge runs",
     "memory dream",
     "memory history retention",
     "platform model roles refresh",
@@ -112,6 +116,7 @@ PERIODIC_JOB_NAMES = (
     "credit warnings",
     "ci activity sweep",  # forge_bound: GitHub Actions run/job reads
     "learning analysis nightly",
+    "learning practice queue",
 )
 
 
@@ -240,6 +245,7 @@ def periodic_jobs(
         record_seat=record_seat_instruction,
         dispatch_pending=dispatch_pending,
         task_teammate=task_teammate,
+        uncommitted=hand_in.uncommitted,
         machines=checkout_sweep.sweep,
     )
     machine_periodic.register_periodic_jobs(
@@ -286,6 +292,15 @@ def periodic_jobs(
     task_periodic.register_periodic_jobs(
         jobs, sessions=sessions, starter_settled=starter_settled
     )
+
+    # A judging's result is told by task_notices, a layer above the judge
+    # domain, so the telling is handed in from here.
+    async def judge_settled(run_id: int) -> None:
+        async with sessions() as session:
+            await task_notices.judged(session, run_id=run_id, at=datetime.now(UTC))
+            await session.commit()
+
+    judge_periodic.register_periodic_jobs(jobs, sessions=sessions, judged=judge_settled)
     ci_activity_periodic.register_periodic_jobs(jobs, sessions=sessions)
     thread_periodic.register_periodic_jobs(
         jobs, sessions=sessions, running=running_conversations

@@ -48,6 +48,7 @@ from app.domain.space.learning_class_repositories import (
 )
 from app.domain.space.learning_insight_analysis import LOCAL_ZONE
 from app.domain.space.learning_insight_repositories import LearningConversationReads
+from app.domain.space.learning_practice_service import SpaceLearningPracticeService
 from app.domain.space.learning_privacy import Masker, masker_for, member_code
 from app.domain.space.learning_service import _excerpt
 from app.domain.space.models import SpaceKnowledgePoint
@@ -323,9 +324,17 @@ class SpaceLearningClassService:
             "misconceptions": [],
             "hiddenMisconceptions": 0,
             "advice": None,
+            "practice": None,
+            "lastPush": None,
         }
         if not _enabled(space):
             return empty
+        # 巩固题的整体数与最近一次推送（§ step 4）：不足 3 人时 practice 为空。
+        empty.update(
+            await SpaceLearningPracticeService(self._session).point_outcome(
+                space.id, point.id
+            )
+        )
         board = await self._board(space.id)
         tasks = dict(await self._reads.tasks(space.id))
         task_points = await self._reads.task_points(space.id)
@@ -425,6 +434,8 @@ class SpaceLearningClassService:
                 if advice is not None
                 else None
             ),
+            "practice": empty["practice"],
+            "lastPush": empty["lastPush"],
         }
 
     # --- 高频问题 -----------------------------------------------------------
@@ -721,7 +732,9 @@ class SpaceLearningClassService:
     # --- 题目难度 -----------------------------------------------------------
 
     async def tasks(self, space) -> dict:
-        """每道题：完成率、平均对话轮数、平均用时、卡住率、代写迹象人数。"""
+        """每道题：完成率、平均对话轮数、平均用时、卡住率、代写迹象人数，挂着测试点的题
+        再加测试平均通过率（``testPassRate``：每人每阶段最新那一版提交最近一次读得出分的
+        评测，``passed/total`` 的全班平均；不足 ``MIN_PEOPLE`` 份时不给）。"""
         empty = {"enabled": _enabled(space), "minPeople": MIN_PEOPLE, "tasks": []}
         if not _enabled(space):
             return empty
@@ -731,6 +744,7 @@ class SpaceLearningClassService:
         cursors = await self._reads.cursors_by_task(space.id)
         task_points = await self._reads.task_points(space.id)
         shares = await self._reads.answer_share_by_person(space.id)
+        test_rates = await self._reads.test_pass_rates([tid for tid, _ in tasks])
         stuck_on: dict[int, set[int]] = {}
         for row in board.judgments:
             if row.level in STUCK_LEVELS and not row.disputed:
@@ -759,9 +773,12 @@ class SpaceLearningClassService:
                         "avgHours": None,
                         "stuckRate": None,
                         "answerSeekers": None,
+                        "testPassRate": None,
+                        "testJudged": None,
                     }
                 )
                 continue
+            test_rate, test_judged = test_rates.get(task_id, (None, 0))
             pids = task_points.get(task_id, set())
             stuck = {
                 uid for pid in pids for uid in stuck_on.get(pid, set()) if uid in people
@@ -793,6 +810,9 @@ class SpaceLearningClassService:
                         else None
                     ),
                     "answerSeekers": seekers.get(task_id, 0),
+                    # 不足 3 份不给：和别的几列一样，一组人太少就不分析。
+                    "testPassRate": (test_rate if test_judged >= MIN_PEOPLE else None),
+                    "testJudged": test_judged or None,
                 }
             )
         return {**empty, "tasks": rows}

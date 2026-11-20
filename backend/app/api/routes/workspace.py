@@ -3,6 +3,7 @@
 import asyncio
 import mimetypes
 import uuid
+from functools import partial
 from typing import Annotated, Literal
 from urllib.parse import quote
 
@@ -33,6 +34,7 @@ from app.domain.agent import execution
 from app.domain.agent.chat import ChatService
 from app.domain.agent.file_edits import announce_edit
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.machine.preview_wake import wake_for_files
 from app.domain.project.services import ProjectService
 from app.domain.project_permissions import Permission
 from app.domain.repository.forge_files import ProjectFiles
@@ -151,7 +153,12 @@ async def list_files(
     await ProjectService(db).get_or_404(project_id)
     # A selected task owns its worktree; otherwise show the project base.
     files, actual_source = await ProjectFiles(
-        db, project_id, task, release_session=True, executor=execution.call
+        db,
+        project_id,
+        task,
+        release_session=True,
+        executor=execution.call,
+        wake=partial(wake_for_files, db.bind),
     ).files(source)
     return ok({**page(files, len(files)), "source": actual_source})
 
@@ -175,7 +182,12 @@ async def read_file(
     await ProjectService(db).get_or_404(project_id)
     return ok(
         await ProjectFiles(
-            db, project_id, task, release_session=True, executor=execution.call
+            db,
+            project_id,
+            task,
+            release_session=True,
+            executor=execution.call,
+            wake=partial(wake_for_files, db.bind),
         ).text(path, source)
     )
 
@@ -194,7 +206,12 @@ async def read_file_raw(
     (the text endpoint would mangle binary content)."""
     await ProjectService(db).get_or_404(project_id)
     data, actual_source = await ProjectFiles(
-        db, project_id, task, release_session=True, executor=execution.call
+        db,
+        project_id,
+        task,
+        release_session=True,
+        executor=execution.call,
+        wake=partial(wake_for_files, db.bind),
     ).raw(path, source)
     mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
     # Arbitrary uploads must never execute in the app's origin.
@@ -254,7 +271,12 @@ async def write_file(
         raise ValidationError(say("chooseTaskToEdit"))
     actor = await resolver.resolve(project_id=project_id, topic_id=task)
     saved = await ProjectFiles(
-        db, project_id, task, release_session=True, executor=execution.call
+        db,
+        project_id,
+        task,
+        release_session=True,
+        executor=execution.call,
+        wake=partial(wake_for_files, db.bind),
     ).save(path, content, version, base if isinstance(base, str) else None)
     row = await TaskService(db).get(task)
     if row is not None and actor.authenticated and actor.via != "cheese":
@@ -360,6 +382,7 @@ async def git_diff(
                 task,
                 release_session=True,
                 executor=execution.call,
+                wake=partial(wake_for_files, db.bind),
                 compare_status=forge_clients.compare_status,
             ).diff(source, ref)
         }

@@ -236,6 +236,62 @@ describe('what happens to a task is recorded where it came from', () => {
     ])
   })
 
+  describe('in the channel’s main line', () => {
+    const waiting: TaskLine = {
+      id: 'task-7',
+      title: '报名表',
+      owner: 'me',
+      creator: 'me',
+      state: REVIEW,
+      mine: true,
+      accepted: null,
+      at: '',
+      delivery: { reviewers: ['me'], code: true, preview: false },
+    }
+    const teammate = (id: string): Block =>
+      ({
+        ...said(id, '报名表做好了'),
+        author: 'cheese-0a1b2c3d4e5f',
+        created_at: '2026-11-10T09:01:00Z',
+        meta: { task_tag: 'task-7' },
+      }) as Block
+    const actions = () => screen.queryAllByRole('group', { name: '审阅「报名表」这一版' })
+    const inMainLine = (blocks: Block[]) => {
+      const rows = collapseNotices(blocks)
+      return mount({
+        rows,
+        runEdges: rows.map(() => 'start'),
+        isMine: () => false,
+        mainLine: true,
+        taskOf: (id: string) => (id === 'task-7' ? waiting : null),
+      })
+    }
+
+    it('a version handed in is the platform’s one line, not a card', () => {
+      inMainLine([handedIn('d1', 1)])
+      expect(screen.queryByTestId('delivery-card')).toBeNull()
+      expect(screen.getByText('「报名表」已提交审阅')).toBeTruthy()
+    })
+
+    it('what settles the version hangs under the teammate’s latest word about it', () => {
+      const { container } = inMainLine([handedIn('d1', 1), teammate('m1')])
+      expect(actions()).toHaveLength(1)
+      expect(container.querySelector('[data-mid="m1"]')?.contains(actions()[0]!)).toBe(true)
+    })
+
+    it('with no handed-in line, it hangs under the teammate’s earlier word about the task', () => {
+      const { container } = inMainLine([teammate('m1')])
+      expect(actions()).toHaveLength(1)
+      expect(container.querySelector('[data-mid="m1"]')?.contains(actions()[0]!)).toBe(true)
+    })
+
+    it('when the teammate said nothing after it, it hangs under the handed-in line', () => {
+      const { container } = inMainLine([teammate('m1'), handedIn('d1', 1)])
+      expect(actions()).toHaveLength(1)
+      expect(container.querySelector('[data-mid="m1"]')?.contains(actions()[0]!)).toBe(false)
+    })
+  })
+
   it('a version returned is a line saying who returned it, naming them without an @', () => {
     const returned = recorded(
       'r1',

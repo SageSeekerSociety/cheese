@@ -1,152 +1,148 @@
 <template>
-  <!-- 侧栏头：老鼠图标（回首页）+ 当前项目（点开换项目）。左边那一列方块栏拿掉后
-       （appNav.ts），首页和项目都从这一行进。 -->
-  <div class="sidebar-header frame-top" data-testid="sidebar-frame-top">
-    <RailItem v-if="homeItem" :item="homeItem" class="frame-top__home" />
+  <!-- The place you are in, in the top bar after 首页: a project, a space or the admin area. Clicking it lists
+       the other places to go (projects first, then spaces). Outside a place there is nothing
+       here: 首页 is the way to everything else. -->
+  <span v-if="place" class="place-sep" aria-hidden="true">/</span>
+  <v-menu v-if="place" v-model="open" location="bottom start" :offset="6" :close-on-content-click="false">
+    <template #activator="{ props: menuProps }">
+      <button
+        v-bind="menuProps"
+        type="button"
+        class="place"
+        :class="{ 'place--open': open }"
+        data-testid="project-switcher"
+        :title="t('navigation.switcher.label')"
+        :aria-label="t('global.labelWithAside', { label: place.title, aside: t('navigation.switcher.label') })"
+        aria-haspopup="menu"
+      >
+        <ProjectAvatar
+          v-if="place.kind === 'project'"
+          :id="place.id"
+          :name="place.title"
+          :avatar="place.avatar"
+          :size="20"
+        />
+        <UserAvatar
+          v-else-if="place.kind === 'space'"
+          kind="org"
+          size="20"
+          :avatar="place.avatar"
+          :name="place.title"
+          :seed="place.id"
+        />
+        <v-icon v-else class="place__icon" size="18" icon="mdi-shield-account-outline" />
+        <span class="place__name" data-user-content>{{ place.title }}</span>
+        <v-icon class="place__caret" size="16" icon="mdi-chevron-down" />
+      </button>
+    </template>
 
-    <v-menu v-model="open" location="bottom start" :offset="6" :close-on-content-click="false">
-      <template #activator="{ props: menuProps }">
-        <button
-          v-bind="menuProps"
-          type="button"
-          class="frame-top__switch"
-          :class="{ 'frame-top__switch--open': open }"
-          data-testid="project-switcher"
-          :title="current ? current.title : t('work.sidebar.switchProject')"
-          :aria-label="t('work.sidebar.switchProject')"
-          aria-haspopup="menu"
+    <div class="switcher">
+      <label class="switcher__search">
+        <v-icon size="16" icon="mdi-magnify" />
+        <input
+          ref="searchInput"
+          v-model="query"
+          type="search"
+          data-testid="project-switcher-search"
+          :placeholder="t('navigation.switcher.search')"
+          :aria-label="t('navigation.switcher.search')"
+          autocomplete="off"
+          @keydown.enter.prevent="openFirst"
+        />
+      </label>
+      <div class="switcher__list">
+        <div v-if="rows.length || !query" class="switcher__group">{{ t('navigation.projects') }}</div>
+        <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- drag handlers for reordering with the pointer; keyboard users reorder nothing here, same as the old rail -->
+        <div
+          v-for="row in rows"
+          :key="row.item.key"
+          class="switcher__row-wrap"
+          :class="{
+            'switcher__row-wrap--dragging': draggingId === row.item.projectId,
+            'switcher__row-wrap--before': edgeFor(row.item.projectId) === 'before',
+            'switcher__row-wrap--after': edgeFor(row.item.projectId) === 'after',
+          }"
+          :draggable="!query"
+          :data-project-id="row.item.projectId"
+          @dragstart="onDragStart($event, row.item.projectId!)"
+          @dragover="onDragOver($event, row.item.projectId!)"
+          @drop="onDrop($event, row.item.projectId!)"
+          @dragend="clearDrag"
         >
-          <span class="frame-top__text">
-            <span class="frame-top__name" data-user-content>{{
-              current ? current.title : t('work.sidebar.chooseProject')
-            }}</span>
-            <router-link
-              v-if="team"
-              class="frame-top__team"
-              :to="{ name: 'TeamsDetailDefault', params: { handle: team.handle } }"
-              data-user-content
-              @click.stop
-              >{{ team.label }}</router-link
-            >
-          </span>
-          <TopicRailBadge
-            v-if="othersAwaiting > 0"
-            :count="othersAwaiting"
-            :title="t('navigation.switcher.othersAwaiting', { n: othersAwaiting })"
-          />
-          <v-icon class="frame-top__caret" size="18" icon="mdi-chevron-down" />
-        </button>
-      </template>
-
-      <div class="switcher">
-        <label class="switcher__search">
-          <v-icon size="16" icon="mdi-magnify" />
-          <input
-            ref="searchInput"
-            v-model="query"
-            type="search"
-            data-testid="project-switcher-search"
-            :placeholder="t('navigation.switcher.search')"
-            :aria-label="t('navigation.switcher.search')"
-            autocomplete="off"
-            @keydown.enter.prevent="openFirst"
-          />
-        </label>
-        <div class="switcher__list">
           <router-link
-            v-if="homeItem && !query"
-            :to="homeItem.to ?? '/inbox'"
+            :to="row.item.to ?? '/'"
             class="switcher__row"
-            :aria-current="onHome ? 'page' : undefined"
+            :aria-current="row.current ? 'page' : undefined"
+            data-testid="project-switcher-row"
             @click="open = false"
           >
-            <span class="switcher__home"><CheeseLogo width="14" height="14" /></span>
-            <span class="switcher__label">{{ homeItem.title }}</span>
-            <TopicRailBadge v-if="homeItem.badge" :count="homeItem.badge" />
-            <kbd v-if="homeItem.shortcut" class="switcher__kbd">{{ keyLabel(homeItem.shortcut) }}</kbd>
+            <v-icon v-if="!query" class="switcher__grip" size="14" icon="mdi-drag-vertical" />
+            <ProjectAvatar :id="row.item.projectId ?? ''" :name="row.item.title" :avatar="row.item.avatar" :size="20" />
+            <span class="switcher__label" :title="row.item.title" data-user-content>{{ row.item.title }}</span>
+            <span v-if="row.team" class="switcher__aside" data-user-content>{{ row.team }}</span>
+            <TopicRailBadge v-if="row.item.badge" :count="row.item.badge" />
+            <kbd v-if="row.item.shortcut" class="switcher__kbd">{{ keyLabel(row.item.shortcut) }}</kbd>
           </router-link>
-          <div v-if="homeItem && !query && rows.length" class="switcher__rule" />
-          <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- drag handlers for reordering with the pointer; keyboard users reorder nothing here, same as the old rail -->
-          <div
-            v-for="row in rows"
-            :key="row.item.key"
-            class="switcher__row-wrap"
-            :class="{
-              'switcher__row-wrap--dragging': draggingId === row.item.projectId,
-              'switcher__row-wrap--before': edgeFor(row.item.projectId) === 'before',
-              'switcher__row-wrap--after': edgeFor(row.item.projectId) === 'after',
-            }"
-            :draggable="!query"
-            :data-project-id="row.item.projectId"
-            @dragstart="onDragStart($event, row.item.projectId!)"
-            @dragover="onDragOver($event, row.item.projectId!)"
-            @drop="onDrop($event, row.item.projectId!)"
-            @dragend="clearDrag"
-          >
-            <router-link
-              :to="row.item.to ?? '/'"
-              class="switcher__row"
-              :aria-current="row.current ? 'page' : undefined"
-              data-testid="project-switcher-row"
-              @click="open = false"
-            >
-              <v-icon v-if="!query" class="switcher__grip" size="14" icon="mdi-drag-vertical" />
-              <UserAvatar
-                :avatar="row.item.img ?? ''"
-                :name="row.item.title"
-                :seed="row.item.projectId"
-                kind="org"
-                :size="20"
-              />
-              <span class="switcher__label" :title="row.item.title" data-user-content>{{ row.item.title }}</span>
-              <span v-if="row.team" class="switcher__aside" data-user-content>{{ row.team }}</span>
-              <TopicRailBadge v-if="row.item.badge" :count="row.item.badge" />
-              <kbd v-if="row.item.shortcut" class="switcher__kbd">{{ keyLabel(row.item.shortcut) }}</kbd>
-            </router-link>
-            <AdaptiveMenu v-if="row.item.menu?.length" :actions="row.item.menu" :title="row.item.title">
-              <template #activator="{ props: actProps }">
-                <button
-                  v-bind="actProps"
-                  type="button"
-                  class="switcher__more"
-                  :aria-label="t('navigation.switcher.actions', { name: row.item.title })"
-                >
-                  <v-icon size="16" icon="mdi-dots-horizontal" />
-                </button>
-              </template>
-            </AdaptiveMenu>
-          </div>
-          <div v-if="query && !rows.length" class="switcher__empty">
-            {{ t('navigation.switcher.empty', { q: query }) }}
-          </div>
+          <AdaptiveMenu v-if="row.item.menu?.length" :actions="row.item.menu" :title="row.item.title">
+            <template #activator="{ props: actProps }">
+              <button
+                v-bind="actProps"
+                type="button"
+                class="switcher__more"
+                :aria-label="t('navigation.switcher.actions', { name: row.item.title })"
+              >
+                <v-icon size="16" icon="mdi-dots-horizontal" />
+              </button>
+            </template>
+          </AdaptiveMenu>
         </div>
-        <div class="switcher__rule" />
-        <button v-if="addItem" type="button" class="switcher__row" @click="createProject">
-          <v-icon size="16" icon="mdi-plus" class="switcher__icon" />
-          <span class="switcher__label">{{ addItem.title }}</span>
-        </button>
-        <router-link :to="{ name: 'my-archived-projects' }" class="switcher__row" @click="open = false">
-          <v-icon size="16" icon="mdi-archive-outline" class="switcher__icon" />
-          <span class="switcher__label">{{ t('navigation.userMenu.archivedProjects') }}</span>
-        </router-link>
+        <template v-if="!query">
+          <button v-if="addItem" type="button" class="switcher__row" @click="createProject">
+            <v-icon size="16" icon="mdi-plus" class="switcher__icon" />
+            <span class="switcher__label">{{ addItem.title }}</span>
+          </button>
+          <router-link :to="{ name: 'my-archived-projects' }" class="switcher__row" @click="open = false">
+            <v-icon size="16" icon="mdi-archive-outline" class="switcher__icon" />
+            <span class="switcher__label">{{ t('navigation.userMenu.archivedProjects') }}</span>
+          </router-link>
+        </template>
+        <template v-if="spaceRows.length">
+          <div class="switcher__rule" />
+          <div class="switcher__group">{{ t('navigation.spaces') }}</div>
+          <router-link
+            v-for="space in spaceRows"
+            :key="space.id"
+            :to="space.to"
+            class="switcher__row"
+            :aria-current="space.current ? 'page' : undefined"
+            data-testid="space-switcher-row"
+            @click="open = false"
+          >
+            <UserAvatar kind="org" size="20" :avatar="space.avatar" :name="space.title" :seed="String(space.id)" />
+            <span class="switcher__label" :title="space.title" data-user-content>{{ space.title }}</span>
+          </router-link>
+        </template>
+        <div v-if="query && !rows.length && !spaceRows.length" class="switcher__empty">
+          {{ t('navigation.switcher.empty', { q: query }) }}
+        </div>
       </div>
-    </v-menu>
-  </div>
+    </div>
+  </v-menu>
 </template>
 
 <script setup lang="ts">
 import type { DropEdge } from '@/lib/projectOrder'
+import type { ProjectAvatarSpec } from '@/utils/projectAvatar'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
 import { useNavigation } from '@/composables/useNavigation'
 
-import { addItemOf, homeItemOf, projectItemsOf, useAppNav } from './appNav'
+import { addItemOf, projectItemsOf, useAppNav } from './appNav'
 import { railShortcut } from './destinations'
-import RailItem from './RailItem.vue'
 
-import CheeseLogo from '@/assets/logo-plain.svg?component'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import ProjectAvatar from '@/components/common/ProjectAvatar.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import TopicRailBadge from '@/components/topic-sidebar/TopicRailBadge.vue'
 import { t } from '@/i18n'
@@ -157,28 +153,35 @@ const nav = useAppNav()
 const navigation = useNavigation()
 
 const items = computed(() => nav?.items.value ?? [])
-const homeItem = computed(() => homeItemOf(items.value))
 const addItem = computed(() => addItemOf(items.value))
 const projectItems = computed(() => projectItemsOf(items.value))
 
 const path = computed(() => navigation?.route?.path ?? '')
 const current = computed(() => projectItems.value.find((i) => i.match?.(path.value)) ?? null)
-const onHome = computed(() => !!homeItem.value?.match?.(path.value))
-// 只在项目里算：在首页时老鼠图标上那个数就是全部，这里再写一遍是重复。
-const othersAwaiting = computed(() =>
-  current.value ? projectItems.value.filter((i) => i !== current.value).reduce((sum, i) => sum + (i.badge ?? 0), 0) : 0
-)
+const currentSpace = computed(() => nav?.currentSpace.value ?? null)
 
-// 团队名那一行：和项目侧栏原来那一行同一套规矩（TopicSidebar 的 owningTeam）——个人
-// 项目只对本人写「个人」，被邀请进来的人看不到这一行。
-function teamOf(projectId: string | undefined): { label: string; handle: string } | null {
+type Place =
+  | { kind: 'project'; id: string; title: string; avatar: ProjectAvatarSpec | null | undefined }
+  | { kind: 'space'; id: string; title: string; avatar: string }
+  | { kind: 'area'; id: string; title: string }
+const place = computed<Place | null>(() => {
+  const project = current.value
+  if (project) return { kind: 'project', id: project.projectId ?? '', title: project.title, avatar: project.avatar }
+  const space = currentSpace.value
+  if (space) return { kind: 'space', id: String(space.id), title: space.title, avatar: space.avatar }
+  const area = nav?.currentArea.value
+  if (area) return { kind: 'area', id: 'area', title: area }
+  return null
+})
+
+// 团队名写在每一行右边：个人项目只对本人写「个人」，被邀请进来的人看不到。
+function teamOf(projectId: string | undefined): string {
   const p = nav?.projects.value.find((x) => x.id === projectId)
   const handle = p?.team_handle
-  if (!p || !handle) return null
-  if (handle === p.owner_handle) return handle === myHandle() ? { label: t('work.sidebar.personalTeam'), handle } : null
-  return { label: p.team_name || handle, handle }
+  if (!p || !handle) return ''
+  if (handle === p.owner_handle) return handle === myHandle() ? t('work.sidebar.personalTeam') : ''
+  return p.team_name || handle
 }
-const team = computed(() => teamOf(current.value?.projectId))
 
 const open = ref(false)
 const query = ref('')
@@ -192,23 +195,29 @@ watch(open, async (isOpen) => {
   searchInput.value?.focus()
 })
 
-const rows = computed(() => {
-  const q = query.value.trim().toLowerCase()
-  return projectItems.value
+const needle = computed(() => query.value.trim().toLowerCase())
+const rows = computed(() =>
+  projectItems.value
+    .map((item) => ({ item, current: item === current.value, team: teamOf(item.projectId) }))
     .filter(
-      (i) => !q || i.title.toLowerCase().includes(q) || (teamOf(i.projectId)?.label ?? '').toLowerCase().includes(q)
+      ({ item, team }) =>
+        !needle.value || item.title.toLowerCase().includes(needle.value) || team.toLowerCase().includes(needle.value)
     )
-    .map((item) => ({ item, current: item === current.value, team: teamOf(item.projectId)?.label ?? '' }))
-})
+)
+const spaceRows = computed(() =>
+  (nav?.spaces.value ?? [])
+    .filter((space) => !needle.value || space.title.toLowerCase().includes(needle.value))
+    .map((space) => ({ ...space, current: space.id === currentSpace.value?.id }))
+)
 
 const inApp = inDesktopApp()
 const keyLabel = (n: number) => railShortcut(n, inApp).keys.join(' ')
 
 function openFirst() {
-  const first = rows.value[0]?.item
-  if (!first?.to) return
+  const first = rows.value[0]?.item.to ?? spaceRows.value[0]?.to
+  if (!first) return
   open.value = false
-  void navigation?.navigate(first.to)
+  void navigation?.navigate(first)
 }
 
 function createProject() {
@@ -253,85 +262,51 @@ function clearDrag() {
 </script>
 
 <style scoped>
-.frame-top {
-  /* 高度和底边线来自全局 .sidebar-header（48px 基线），和右边内容区顶栏那条线接成一条。 */
+/* 首页和去处之间那条斜线：只是分隔，读屏不念。 */
+.place-sep {
   flex: none;
-  justify-content: flex-start;
-  gap: 6px;
-  padding: 6px 8px;
+  margin: 0 2px;
+  color: var(--faint);
 }
 
-/* 老鼠图标沿用首页那一格（RailItem），在侧栏头里缩到 36px。 */
-.frame-top__home:deep(.app-rail-item),
-.frame-top :deep(.app-rail-item) {
-  width: 36px !important;
-  height: 36px !important;
-  flex: none;
-}
-
-.frame-top :deep(.app-rail-item-cheese .cheese-icon) {
-  width: 20px !important;
-  height: 20px !important;
-}
-
-/* 选中竖条贴的是屏幕边，侧栏头里没有那条边，不画。 */
-.frame-top :deep(.app-rail-item::before) {
-  display: none;
-}
-
-.frame-top__switch {
-  display: flex;
-  flex: 1;
+/* 顶栏上去处那一格：和顶栏里别的按钮一样高 28、无边、悬停出底色。 */
+.place {
+  display: inline-flex;
+  flex: 0 1 auto;
   gap: 6px;
   align-items: center;
   min-width: 0;
-  padding: 4px 6px;
+  height: 28px;
+  padding: 0 6px 0 8px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
   color: var(--ink);
-  text-align: left;
   cursor: pointer;
   background: none;
   border: 0;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-sm);
   transition: background-color var(--dur-quick) var(--ease-standard);
 }
 
-.frame-top__switch:hover,
-.frame-top__switch--open {
-  background: var(--fill);
+.place:hover,
+.place--open {
+  background: var(--fill-2);
 }
 
-.frame-top__text {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
+.place__name {
   min-width: 0;
-}
-
-.frame-top__name {
   overflow: hidden;
-  font-size: 15px;
-  font-weight: 600;
-  line-height: 1.35;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.frame-top__team {
-  overflow: hidden;
-  font-size: 12px;
-  line-height: 1.3;
+.place__icon {
+  flex: none;
   color: var(--muted);
-  text-decoration: none;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.frame-top__team:hover {
-  color: var(--text);
-  text-decoration: underline;
-}
-
-.frame-top__caret {
+.place__caret {
   flex: none;
   color: var(--faint);
 }
@@ -435,20 +410,6 @@ a.switcher__row:not(.switcher__row-wrap a):hover {
   cursor: grab;
 }
 
-.switcher__home {
-  display: grid;
-  flex: none;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  background: var(--fill-2);
-  border-radius: 5px;
-}
-
-.switcher__home svg {
-  fill: var(--muted);
-}
-
 .switcher__icon {
   color: var(--faint);
 }
@@ -507,6 +468,12 @@ a.switcher__row:not(.switcher__row-wrap a):hover {
 .switcher__more:hover {
   color: var(--text);
   background: var(--line-2);
+}
+
+.switcher__group {
+  padding: 6px 8px 2px;
+  font-size: 13px;
+  color: var(--muted);
 }
 
 .switcher__rule {

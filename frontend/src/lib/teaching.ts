@@ -23,6 +23,9 @@ export type TeachingDraft = {
   documentIds: string[]
   /** 项目里每个 AI 队友都带上的技能名。 */
   skills: string[]
+  /** 「引导为主」时的两项保护：提示阶梯、输出检查。只在方式是 `guide` 时交出去。 */
+  hintLadder: boolean
+  outputCheck: boolean
 }
 
 export function emptyTeachingDraft(): TeachingDraft {
@@ -34,6 +37,8 @@ export function emptyTeachingDraft(): TeachingDraft {
     materialIds: [],
     documentIds: [],
     skills: [],
+    hintLadder: false,
+    outputCheck: false,
   }
 }
 
@@ -55,6 +60,8 @@ export function draftFromConfig(config?: SpaceTeaching | null): TeachingDraft {
     materialIds: [...(config?.materialIds ?? [])],
     documentIds: [...(config?.documentIds ?? [])],
     skills: [...(config?.skills ?? [])],
+    hintLadder: config?.hintLadder === true,
+    outputCheck: config?.outputCheck === true,
   }
 }
 
@@ -68,7 +75,22 @@ export function buildTeaching(draft: TeachingDraft): SpaceTeaching {
     materialIds: [...draft.materialIds],
     documentIds: [...draft.documentIds],
     skills: [...draft.skills],
+    // 两项保护跟着「引导为主」走：换成别的方式，它们就不再生效，也不再存着。
+    hintLadder: draft.mode === 'guide' && draft.hintLadder,
+    outputCheck: draft.mode === 'guide' && draft.outputCheck,
   }
+}
+
+/**
+ * 选一种方式。**新选上**「引导为主」时两项保护默认打开；本来就是引导为主（已有的空间、
+ * 已有的题）不动它们 —— 已有的设置不会自己打开。
+ */
+export function pickTeachingMode(draft: TeachingDraft, mode: TeachingMode | null): void {
+  if (mode === 'guide' && draft.mode !== 'guide') {
+    draft.hintLadder = true
+    draft.outputCheck = true
+  }
+  draft.mode = mode
 }
 
 /**

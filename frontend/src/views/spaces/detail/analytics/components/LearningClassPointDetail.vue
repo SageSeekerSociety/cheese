@@ -78,6 +78,13 @@
             </span>
           </div>
           <p class="an-note lc-gap">{{ t('spaces.analytics.learning.class.detail.noList', { n: detail.stuck }) }}</p>
+          <p class="lc-muted lc-gap" data-testid="lc-practice-line">
+            {{
+              detail.practice
+                ? t('spaces.analytics.learning.class.detail.practiceLine', detail.practice)
+                : t('spaces.analytics.learning.class.detail.practiceFew')
+            }}
+          </p>
         </section>
       </div>
 
@@ -90,6 +97,19 @@
             {{ t('spaces.analytics.learning.class.detail.exportPoint') }}
           </BaseButton>
         </section>
+        <section v-if="detail.enabled" class="an-card" data-testid="lc-push">
+          <BaseButton
+            kind="ghost"
+            size="sm"
+            :loading="pushing"
+            data-testid="lc-push-button"
+            @click="emit('push', detail.knowledgePoint.id)"
+          >
+            {{ t('spaces.analytics.learning.class.detail.pushButton') }}
+          </BaseButton>
+          <p class="an-note lc-gap">{{ t('spaces.analytics.learning.class.detail.pushHint') }}</p>
+          <p v-if="pushLine" class="lc-muted lc-gap" data-testid="lc-push-result">{{ pushLine }}</p>
+        </section>
         <section class="an-card">
           <h4 class="an-card__title">{{ t('spaces.analytics.learning.class.detail.whoTitle') }}</h4>
           <p class="an-note">{{ t('spaces.analytics.learning.class.detail.whoBody') }}</p>
@@ -101,20 +121,53 @@
 
 <script setup lang="ts">
 // 知识点详情：卡住几人、常见误解（按人数）与代号例句、掌握分布、讲课建议。不列名单。
-import type { LearningClassPointDetail } from '@/types/apiSpaces'
+// 第 4 步加了两样：「做过巩固题的人里几人升档」（不足 3 人不报）和「推送巩固题给卡住的成员」
+// （老师只看到人数）。
+import type { LearningClassPointDetail, LearningPushResult } from '@/types/apiSpaces'
 
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import { relTime } from '@/lib/relTime'
 
-const props = defineProps<{ detail: LearningClassPointDetail }>()
+const props = withDefaults(
+  defineProps<{
+    detail: LearningClassPointDetail
+    /** 正在推送；推送刚回来的那一句（推了几人 / 不足 3 人没推）。 */
+    pushing?: boolean
+    pushResult?: LearningPushResult | null
+  }>(),
+  { pushing: false, pushResult: null }
+)
 const emit = defineEmits<{
   back: []
   openExcerpts: [group: { misconception: number }]
   export: [pointId: number]
+  /** 推送巩固题给卡在这个知识点上的成员：系统自己找人，这里不收、不给名单。 */
+  push: [pointId: number]
 }>()
 const { t } = useI18n()
+
+/** 推送那一格底下的一句：刚推过就说这一次，否则说上一次（不足 3 人只说不足）。 */
+const pushLine = computed(() => {
+  const result = props.pushResult
+  if (result) {
+    if (!result.pushed) return t('spaces.analytics.learning.class.detail.pushTooFew')
+    return result.recipients != null
+      ? t('spaces.analytics.learning.class.detail.pushed', { n: result.recipients })
+      : t('spaces.analytics.learning.class.detail.pushedFew')
+  }
+  const last = props.detail.lastPush
+  if (!last) return ''
+  return t('spaces.analytics.learning.class.detail.lastPush', {
+    time: last.at != null ? relTime(new Date(last.at).toISOString()) : '',
+    who:
+      last.recipients != null
+        ? t('spaces.analytics.learning.class.detail.lastPushPeople', { n: last.recipients })
+        : t('spaces.analytics.learning.class.detail.lastPushFew'),
+  })
+})
 
 const LEVELS = ['mastered', 'shaky', 'weak', 'untouched'] as const
 

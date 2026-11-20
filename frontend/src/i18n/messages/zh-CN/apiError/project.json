@@ -154,5 +154,10 @@
   "githubMigrationPushFailed": "把代码推到 GitHub 没有成功，GitHub 上的仓库没被改动，稍后再试",
   "githubMigrationSourceEmpty": "平台仓库里还没有任何分支，没有可迁的内容",
   "githubMigrationStarterPending": "题目的起步代码还在写入平台仓库，等它写完再迁",
-  "githubMigrationTargetNotEmpty": "这个 GitHub 仓库里已经有别的内容。请换一个空仓库，平台不会覆盖已有的提交"
+  "githubMigrationTargetNotEmpty": "这个 GitHub 仓库里已经有别的内容。请换一个空仓库，平台不会覆盖已有的提交",
+  "projectAvatarEmoji": "只能填一个表情",
+  "projectAvatarHue": "颜色无效",
+  "projectAvatarIcon": "图标无效",
+  "projectAvatarImage": "图片无效，重新上传",
+  "projectAvatarText": "文字最多 2 个汉字或 4 个字母、数字"
 }

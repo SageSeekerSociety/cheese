@@ -2,9 +2,15 @@
 
 A sandbox holds no credential: the process that owns the device links names
 the device and the state directory its request came in on
-(``device_hub.machine``), and the caller is the session whose current lease is
-that state on that device. It is looked up on every request, so a session that
-ended, moved or was given another lease is nobody from its next request on.
+(``device_hub.machine``), which is the environment the request came from. The
+sessions attached to that environment are those whose current lease is that
+state on that device. A request may name one of them (``X-Cheese-Attachment``,
+from the environment of the command that sent it): it is answered as that
+session, and a name that is not attached to that environment right now is
+nobody. A request that names nobody is answered on the environment's own
+authority (`_environments_own`). It is looked up on every request, so a
+session that ended, moved or was given another lease is nobody from its next
+request on.
 """
 
 import hashlib
@@ -76,23 +82,29 @@ def _names(state: str, tag: str) -> bool:
     return tag in (state, state.replace(ROOT_PLACEHOLDER, footprint_root()))
 
 
-async def caller_of(db: AsyncSession, device: str, state: str) -> MachineCaller | None:
-    """The session holding ``state`` on ``device`` now, or None."""
+async def caller_of(
+    db: AsyncSession, device: str, state: str, attachment: str | None = None
+) -> MachineCaller | None:
+    """Who a request from ``state`` on ``device`` is answered as: the attached
+    session ``attachment`` names, or, naming nobody, the environment's own
+    (`_environments_own`). None when the name is not attached there now, or
+    nothing is."""
     rows = await db.execute(
         select(AgentSession, Conversation.project_id)
         .join(Conversation, Conversation.id == AgentSession.conversation_id)
         .where(LEASE_DEVICE == device)
     )
-    held = next(
-        (
-            (session, project_id)
-            for session, project_id in rows
-            if (session.work_lease or {}).get("status", "ready") == "ready"
-            and (session.work_lease or {}).get("state")
-            and _names(session.work_lease["state"], state)
-        ),
-        None,
-    )
+    attached = [
+        (session, project_id)
+        for session, project_id in rows
+        if (session.work_lease or {}).get("status", "ready") == "ready"
+        and (session.work_lease or {}).get("state")
+        and _names(session.work_lease["state"], state)
+    ]
+    if attachment:
+        held = next((pair for pair in attached if str(pair[0].id) == attachment), None)
+    else:
+        held = _environments_own(attached)
     if held is None:
         return None
     session, project_id = held
@@ -106,6 +118,12 @@ async def caller_of(db: AsyncSession, device: str, state: str) -> MachineCaller 
         agent_handle=await session_author(db, project, session.agent_handle),
         row=session,
     )
+
+
+def _environments_own(attached: list) -> tuple | None:
+    """Whom a request that names nobody is answered as: the environment's own
+    authority. An environment has one attached session, so that is it."""
+    return attached[0] if attached else None
 
 
 async def credential_of(

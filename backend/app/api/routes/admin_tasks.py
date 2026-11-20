@@ -58,14 +58,20 @@ class ReviewTaskRequest(BaseModel):
     reject_reason: str | None = Field(default=None, alias="rejectReason")
 
 
-async def _task_models(db, tasks) -> list[dict]:
-    """The tasks in the shape a space's queue lists them, each with its space."""
+async def _task_models(db, tasks, *, viewer_handle: str | None = None) -> list[dict]:
+    """The tasks in the shape a space's queue lists them, each with its space.
+
+    ``viewer_handle`` is the admin reading the queue: their own remarks name the
+    people in it, the same rule every page follows.
+    """
     items = [_task_to_api_model(task) for task in tasks]
     by_space: dict[int, list[dict]] = {}
     for item, task in zip(items, tasks, strict=True):
         by_space.setdefault(task.space_id, []).append(item)
     for space_id, group in by_space.items():
-        await _enrich_task_models(db, group, space_id=space_id)
+        await _enrich_task_models(
+            db, group, space_id=space_id, viewer_handle=viewer_handle
+        )
     await _enrich_task_topics(db, items)
     await _enrich_task_knowledge_points(db, items)
     await _enrich_task_submission_schema(db, items)
@@ -81,7 +87,7 @@ async def list_unreviewed_tasks(
 ) -> dict:
     offset = int(pageStart) if pageStart and pageStart.isdigit() else 0
     tasks = await review_queue.unreviewed_tasks(db, limit=pageSize, offset=offset)
-    items = await _task_models(db, tasks)
+    items = await _task_models(db, tasks, viewer_handle=handle)
     total = await review_queue.count_unreviewed(db)
     has_more = offset + len(items) < total
     return ok(
@@ -124,4 +130,4 @@ async def review_unreviewed_task(
     # Commit before answering, for the reason ``update_task`` gives: a client
     # told a task is approved may open its board on the very next request.
     await db.commit()
-    return ok({"task": (await _task_models(db, [task]))[0]})
+    return ok({"task": (await _task_models(db, [task], viewer_handle=handle))[0]})

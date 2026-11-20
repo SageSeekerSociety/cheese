@@ -44,4 +44,10 @@ describe('现场里主线和任务之间的往来', () => {
     expect(screen.getByText(t('work.room.site.exchange.asked', { name: '芝士' }))).toBeTruthy()
     expect(screen.getByText('蓝色用哪一个色号？')).toBeTruthy()
   })
+
+  it('任务报告做完了，不写成提问', () => {
+    mount({ exchange: 'report', kind: 'done' }, '调研结论已写进实况文档')
+    expect(screen.getByText(t('work.room.site.exchange.done', { name: '芝士' }))).toBeTruthy()
+    expect(screen.queryByText(t('work.room.site.exchange.asked', { name: '芝士' }))).toBeNull()
+  })
 })

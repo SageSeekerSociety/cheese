@@ -713,9 +713,7 @@ class StubChannel(SeatChannel):
         self, topic_id: uuid.UUID, message: dict, *, agent: str | None = None
     ) -> None:
         """The session read an input: it is queued, then the turn runs."""
-        content = message["message"]["content"]
-        text = content if isinstance(content, str) else content[0]["text"]
-        self.last_prompt = text
+        self.last_prompt = text = _said(message)
         if self.on_start is not None:
             self.on_start()
         self.record(
@@ -824,6 +822,16 @@ class StubChannel(SeatChannel):
         identifier = self.took(topic_id, prompt, agent=agent)
         if identifier is None:
             return
+        # Its text echoed block for block, as Claude Code echoes it: a block
+        # only one person may read is stamped by which block it is.
+        written = next(
+            m
+            for m in self._session_for(topic_id, agent).written
+            if m.get("uuid") == identifier
+        )
+        content = written["message"]["content"]
+        if not isinstance(content, str):
+            content = [b for b in content if b.get("type") == "text"]
         self.record(
             topic_id,
             agent=agent,
@@ -831,7 +839,7 @@ class StubChannel(SeatChannel):
             uuid=identifier,
             isReplay=True,
             parent_tool_use_id=None,
-            message={"role": "user", "content": prompt},
+            message={"role": "user", "content": content},
         )
 
     def says(
@@ -937,8 +945,11 @@ class StubChannel(SeatChannel):
 
 
 def _said(message: dict) -> str:
+    """Every text block of an input, as the model reads it."""
     content = message["message"]["content"]
-    return content if isinstance(content, str) else content[0]["text"]
+    if isinstance(content, str):
+        return content
+    return "\n\n".join(b["text"] for b in content if b.get("type") == "text")
 
 
 # Captured at import: a test that squeezes a production wait patches
@@ -1298,7 +1309,7 @@ def stub_project_forge(monkeypatch, tmp_path):
     """
     from app.domain.project import forge
     from app.domain.project import starter as starter_code
-    from app.domain.repository import forge_files
+    from app.domain.repository import forge_files, kept_work
     from app.domain.review import forge_clients
     from tests.support import git_store
 
@@ -1390,6 +1401,29 @@ def stub_project_forge(monkeypatch, tmp_path):
         if route.startswith("/git/commits/") and route.endswith(".diff"):
             revision = route.removeprefix("/git/commits/").removesuffix(".diff")
             return git_store.git(repo, "show", "--format=", revision)
+        if route.startswith("/git/commits/"):
+            # As Forgejo: one commit by sha or full ref name; 404 (None) when
+            # it names none.
+            found = git_store.run(
+                [
+                    "git",
+                    "show",
+                    "-s",
+                    "--format=%H%n%P%n%cI",
+                    route.removeprefix("/git/commits/") + "^{commit}",
+                ],
+                repo,
+                20,
+                None,
+            )
+            if found.returncode != 0:
+                return None
+            sha, parents, date = found.stdout.splitlines()[:3]
+            return {
+                "sha": sha,
+                "parents": [{"sha": parent} for parent in parents.split()],
+                "commit": {"committer": {"date": date}},
+            }
 
         def commits(revision, *, limit=50, only=None):
             # As GitHub: `path` keeps the commits that changed that file.
@@ -1533,6 +1567,8 @@ def stub_project_forge(monkeypatch, tmp_path):
     monkeypatch.setattr(forge_files, "branch_head", branch_head)
     monkeypatch.setattr(forge_files, "repository_data", repository_data)
     monkeypatch.setattr(forge, "repository_data", repository_data)
+    monkeypatch.setattr(kept_work, "repository_data", repository_data)
+    monkeypatch.setattr(kept_work, "branch_head", branch_head)
     monkeypatch.setattr(forge_clients, "compare_status", compare_status)
 
 

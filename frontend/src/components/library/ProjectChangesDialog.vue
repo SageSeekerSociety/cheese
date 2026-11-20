@@ -48,6 +48,7 @@ const emit = defineEmits<{
     <BaseEmptyState
       v-else-if="!props.changes.length"
       size="inline"
+      align="center"
       :title="t('work.library.projectFiles.historyEmpty')"
     />
     <ol v-else class="changes__list" :aria-label="props.title">

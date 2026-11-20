@@ -42,6 +42,8 @@ FULL_TEACHING = {
     "materialIds": [],
     "documentIds": [],
     "skills": ["wolfram"],
+    "hintLadder": False,
+    "outputCheck": False,
 }
 
 #: What a level that says nothing reads back as.
@@ -53,6 +55,8 @@ EMPTY_TEACHING = {
     "materialIds": [],
     "documentIds": [],
     "skills": [],
+    "hintLadder": False,
+    "outputCheck": False,
 }
 
 

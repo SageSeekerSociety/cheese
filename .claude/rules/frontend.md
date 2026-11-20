@@ -47,7 +47,7 @@ change, `frontend-design` walks the checklist for the parts no gate can see.
   text colour: it is decoration — icons, dividers, placeholder shapes. It clears the
   3:1 graphics floor but never reaches 4.5:1, so text a reader reads goes to `--muted`
   (§2.6 对比度).
-- The frame (rail, sidebars, top bar) is `--canvas`; the content pane is one
+- The frame (top bar, sidebars) is `--canvas`; the content pane is one
   `--surface`, so content groups by spacing and `--line`, not by white cards on
   grey. Cards get a `--line` border and **no shadow** — `--shadow-1` and
   `--shadow-2` are for menus, dialogs and drawers only (§1.4, §3.4).

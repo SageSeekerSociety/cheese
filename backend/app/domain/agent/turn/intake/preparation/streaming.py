@@ -9,6 +9,8 @@ The body, with its reasoning, moved here verbatim from `preparation`.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import time
 import uuid
@@ -18,9 +20,10 @@ from typing import TYPE_CHECKING
 from app.domain.agent import gateway_catalog
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.mcp_notice import unconnected_mcp
+from app.domain.agent.personal.prompt import now_line
 from app.domain.agent.prompt import _sandbox_limits, _session_opening_lines
 from app.domain.agent.room.system_prompt import session_env, session_system_prompt
-from app.domain.agent.session_host.contract import ColdCompaction
+from app.domain.agent.session_host.contract import ColdCompaction, PrivateText
 from app.domain.agent.session_host.host import keeps_memory
 from app.domain.agent.turn.intake.context import TurnBail
 from app.domain.agent.turn.steps.prepared import PreparedSend
@@ -28,13 +31,14 @@ from app.domain.agent.turn.steps.send import send_prepared
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.prompts import (
     PROFILES,
+    TALK_TOLD,
     NoticeType,
     blocked_report_reminder,
     platform_prompt,
     render_notice,
     render_opening,
     resume_notice,
-    talk_pointer,
+    talk_notes,
     untitled_task,
 )
 from app.domain.prompts.profile import Kind, holds
@@ -191,9 +195,10 @@ async def converse(
     if untitled:
         # 每一轮都提醒，直到起了名：哪一轮才弄清要做什么，事先不知道。
         prompt_text = f"{platform_prompt(untitled_task(TITLE_CHARS), NoticeType.turn)}\n\n{prompt_text}"
-    if prepared.talk_for and keeps_memory(runtime.harness):
-        # 只对这一轮成立：下一轮答的可能是别人。
-        prompt_text = f"{platform_prompt(talk_pointer(prepared.talk_for), NoticeType.turn)}\n\n{prompt_text}"
+    private, talk_told = _talk_notes(prepared.talk_for, told, runtime.harness)
+    # 这一轮按那位成员的钟点说现在几号（`clock_zone`）：会话机的钟在别的时区，
+    # 记忆里写下的日期跟着这一句走（`pieces/memory/types_*.md`）。
+    prompt_text = f"{platform_prompt(now_line(prepared.clock_zone), NoticeType.turn)}\n\n{prompt_text}"
     if is_resume:
         prompt_text = (
             f"{platform_prompt(resume_notice(), NoticeType.turn)}\n\n{prompt_text}"
@@ -270,6 +275,8 @@ async def converse(
             sender=runtime,
             activate=activate,
             cold=_when_cold(prepared.kind, model_kwargs.get("model")),
+            private=private,
+            talk_told=talk_told,
         ),
         topic_id=topic_id,
         turn_id=turn_id,
@@ -288,6 +295,41 @@ async def converse(
         told=told,
     ):
         yield frame
+
+
+def _talk_notes(
+    people: list[dict], told: dict | None, harness: str
+) -> tuple[tuple[PrivateText, ...], tuple[tuple[str, str], ...]]:
+    """The `communication` notes this turn hands the conversation, and what it
+    holds of them once they are given (``talk/<handle>`` -> digest).
+
+    A note is given the first time this conversation answers its person, and
+    again only when it changed since: given, it stays in the conversation's
+    history, and a compaction or a new conversation clears what it was told
+    (`AgentSession.told`), so it is given once more after either. One the
+    conversation holds goes along marked ``held``, said only if the session
+    turns out to be a new conversation (`room.sessions.speaking.send`). Only a
+    harness whose records the platform stamps for privacy carries them: the
+    same one that keeps memory as files."""
+    if not people or not keeps_memory(harness):
+        return (), ()
+    private: list[PrivateText] = []
+    digests: list[tuple[str, str]] = []
+    for person in people:
+        key = f"{TALK_TOLD}{person['handle']}"
+        digest = hashlib.sha256(
+            json.dumps(person["notes"], sort_keys=True, ensure_ascii=False).encode()
+        ).hexdigest()
+        given = (told or {}).get(key)
+        held = given == digest
+        text = talk_notes(person, replaces=given is not None and not held)
+        private.append(
+            PrivateText(
+                person["handle"], platform_prompt(text, NoticeType.state), held=held
+            )
+        )
+        digests.append((key, digest))
+    return tuple(private), tuple(digests)
 
 
 def _when_cold(kind: Kind, model: str | None) -> ColdCompaction | None:

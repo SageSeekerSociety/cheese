@@ -17,6 +17,7 @@
     "tasks": "全部任务",
     "more": "更多"
   },
+  "projects": "项目",
   "spaces": "空间",
   "teams": "团队",
   "term": {
@@ -142,6 +143,7 @@
   },
   "sidebar": {
     "resize": "拖动调整宽度",
+    "title": "侧栏",
     "expand": "展开侧栏",
     "collapse": "收起侧栏"
   },
@@ -202,9 +204,9 @@
     "taskVersions": "历史版本"
   },
   "switcher": {
-    "search": "搜索项目",
-    "empty": "没有叫「{q}」的项目",
-    "othersAwaiting": "别的项目里有 {n} 件等你处理",
+    "label": "切换项目或空间",
+    "search": "搜索项目和空间",
+    "empty": "没有叫「{q}」的项目或空间",
     "actions": "{name} 的操作"
   }
 }

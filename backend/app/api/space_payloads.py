@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped
 
+from app.api.user_remarks import remarks_for_viewer
 from app.domain.space.access_service import SpaceAccessService
 from app.domain.space.permissions import SPACE
 from app.domain.space.permissions import Permission as SpacePermission
@@ -106,6 +107,10 @@ class TeachingRequest(BaseModel):
     skills: list[Annotated[str, Field(min_length=1, max_length=200)]] = Field(
         default_factory=list
     )
+    #: 「引导为主」时的两项保护：提示阶梯、输出检查（`Teaching.hint_ladder` /
+    #: `Teaching.output_check`）。只在 `mode` 是 ``guide`` 时生效；缺省关着。
+    hint_ladder: bool = Field(default=False, alias="hintLadder")
+    output_check: bool = Field(default=False, alias="outputCheck")
 
 
 def teaching_to_api(teaching: Teaching, *, include_private: bool = False) -> dict:
@@ -129,6 +134,8 @@ def teaching_to_api(teaching: Teaching, *, include_private: bool = False) -> dic
         "materialIds": list(teaching.material_ids),
         "documentIds": list(teaching.document_ids),
         "skills": list(teaching.skills),
+        "hintLadder": teaching.hint_ladder,
+        "outputCheck": teaching.output_check,
     }
     if include_private:
         data["privatePrompt"] = teaching.private_prompt
@@ -276,13 +283,15 @@ def _admin_to_api_model(
 
 
 async def people_by_ids(
-    user_ids: Sequence[int], *, db: AsyncSession
+    user_ids: Sequence[int], *, db: AsyncSession, viewer_id: int | None
 ) -> dict[int, dict]:
     """``_hydrate_people`` for a route that holds only the session."""
     return await _hydrate_people(
         user_ids,
         user_repo=UserRepository(session=db),
         profile_repo=UserProfileRepository(session=db),
+        db=db,
+        viewer_id=viewer_id,
     )
 
 
@@ -291,9 +300,12 @@ async def _hydrate_people(
     *,
     user_repo: UserRepository,
     profile_repo: UserProfileRepository,
+    db: AsyncSession,
+    viewer_id: int | None,
 ) -> dict[int, dict]:
-    """user_id → the display fields a roster row carries. Two queries for
-    however many people are asked about.
+    """user_id → display fields, including only the authenticated viewer's remark.
+
+    Users, profiles, avatars and remarks are loaded in batches, not per row.
 
     This used to be a `get_by_id` + `get_profile_by_user_id` pair per person,
     inside the loop that built the list — which made rendering a space cost
@@ -312,6 +324,7 @@ async def _hydrate_people(
     # 直接回它会让所有没挑过头像的人共用同一张脸 —— 而区分人正是头像唯一的活。没挑过
     # 的人不在映射里，这里回 None，前端据此画彩色首字母。档案和头像出自同一次读取。
     profiles, chosen_avatars = await profile_repo.profiles_and_chosen_avatars(ids)
+    remarks = await remarks_for_viewer(db, viewer_id, users)
     people: dict[int, dict] = {}
     for user_id in ids:
         user = users.get(user_id)
@@ -320,12 +333,13 @@ async def _hydrate_people(
             {
                 "id": user.id,
                 "username": user.username,
+                "remark": remarks.get(user.username),
                 "nickname": profile.nickname if profile else user.username,
                 "avatarId": chosen_avatars.get(user_id),
                 "intro": profile.intro if profile else "",
             }
             if user
-            else {"id": user_id, "username": "unknown"}
+            else {"id": user_id, "username": "unknown", "remark": None}
         )
     return people
 
@@ -336,6 +350,8 @@ async def _build_admins_payload(
     service: SpaceService,
     user_repo: UserRepository,
     profile_repo: UserProfileRepository,
+    db: AsyncSession,
+    viewer_id: int | None,
 ) -> list[dict]:
     """Hydrate admin relations with full user objects.
 
@@ -349,6 +365,8 @@ async def _build_admins_payload(
         [rel.user_id for rel in admin_relations],
         user_repo=user_repo,
         profile_repo=profile_repo,
+        db=db,
+        viewer_id=viewer_id,
     )
     return [_admin_to_api_model(rel, people[rel.user_id]) for rel in admin_relations]
 
@@ -381,7 +399,12 @@ async def _build_full_space_payload(
     profile_repo = UserProfileRepository(session=db)
     space_data = _space_to_api_model(space, include_private=include_private)
     space_data["admins"] = await _build_admins_payload(
-        space.id, service=service, user_repo=user_repo, profile_repo=profile_repo
+        space.id,
+        service=service,
+        user_repo=user_repo,
+        profile_repo=profile_repo,
+        db=db,
+        viewer_id=viewer_id,
     )
     topics = await service.list_classification_topics(space.id)
     space_data["classificationTopics"] = [{"id": t.id, "name": t.name} for t in topics]

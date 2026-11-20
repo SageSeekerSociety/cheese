@@ -356,6 +356,9 @@ importers:
       dayjs:
         specifier: ^1.11.13
         version: 1.11.13
+      dockview-vue:
+        specifier: 8.9.0
+        version: 8.9.0(vue@3.5.42(typescript@5.9.3))
       dompurify:
         specifier: 3.4.17
         version: 3.4.17
@@ -471,6 +474,9 @@ importers:
       '@testing-library/vue':
         specifier: ^8.1.0
         version: 8.1.0(@vue/compiler-sfc@3.5.42)(vue@3.5.42(typescript@5.9.3))
+      '@types/jsdom':
+        specifier: ^28.0.3
+        version: 28.0.3
       '@types/lodash-es':
         specifier: ^4.17.12
         version: 4.17.12
@@ -2661,6 +2667,9 @@ packages:
   '@types/hast@3.0.5':
     resolution: {integrity: sha512-rp/ezSWaD1m44dPKICGhiskI13nVr7qTloFwDa/IYkhhf5nzwP+zIQcIJh3WIFSBOy/H1PzB40jPjMDksN4F+g==}
 
+  '@types/jsdom@28.0.3':
+    resolution: {integrity: sha512-/HQ2uFoetFTXuye8vzIcHw2z6Fwi7Hi/qcgC+RoS9NCyewiqxhVGqlG+ViGB6lkax481R6dmhf1I7lIGlzJStQ==}
+
   '@types/json-schema@7.0.15':
     resolution: {integrity: sha512-5+fP8P8MFNC+AyZCDxrB2pkZFPGzqQWUzpSeuuVLvm8VMcorNYavBqoFcxK8bQz4Qsbn4oUEEem4wDLfcysGHA==}
 
@@ -2696,6 +2705,9 @@ packages:
 
   '@types/three@0.186.0':
     resolution: {integrity: sha512-mxYSBpDC+D0pLfSP6sW4WZTcT+nrtmZcimMqnVmy36Hte3XpeYSrvgg4TRdaM1GemGog1AWzI5qL2VoIfMXbJQ==}
+
+  '@types/tough-cookie@4.0.5':
+    resolution: {integrity: sha512-/Ad8+nIOV7Rl++6f1BdKxFSMgmoqEoYbHRpPcx3JEfv8VRsQe9Z4mCXeJBzxs7mbHY/XOZZuXlRNfhpVPbs6ZA==}
 
   '@types/trusted-types@2.0.7':
     resolution: {integrity: sha512-ScaPdn1dQczgbl0QFTeTOmVHFULt394XJgOQNoyVhZ6r2vLnMLJfBPd53SB52T/3G36VI1/g2MZaX0cwDuXsfw==}
@@ -3762,6 +3774,17 @@ packages:
   dir-glob@3.0.1:
     resolution: {integrity: sha512-WkrWp9GR4KXfKGYzOLmTuGVi1UWFfws377n9cc55/tb6DuqyF6pcQ5AbiHEshaDpY9v6oaSr2XCDidGmMwdzIA==}
     engines: {node: '>=8'}
+
+  dockview-core@8.9.0:
+    resolution: {integrity: sha512-qsXM+9wFik5WSEBq8x4KP041v19iM6cgSKVFrQpIgkJSXTM00+zEb66hI1kG3e+O7L4IKUfSziMUyZrofwetlg==}
+
+  dockview-vue@8.9.0:
+    resolution: {integrity: sha512-djwq2UWX3AW4YuuC0ESJQWSO0NfCPHXGB/VQIvRThfynaQaI4k611MLfpX16VwKvwL2tYsei0RMr/PA3LDDszg==}
+    peerDependencies:
+      vue: ^3.4.0
+
+  dockview@8.9.0:
+    resolution: {integrity: sha512-uZYPtKEOb7j8rrSeT1PqfPP9z5OEiM9+NhLgn9lZ3hVhVpmrWoAWckY7MFGsnQINR3on9mza4RlJQ9lYyq0Ivg==}
 
   dom-accessibility-api@0.5.16:
     resolution: {integrity: sha512-X7BJ2yElsnOJ30pZF4uIIDfBEVgF4XEBxL9Bxhy6dnrm5hkzqmsWHGTiHqRiITNhMyFLyAiWndIJP7Z1NTteDg==}
@@ -5955,6 +5978,9 @@ packages:
 
   undici-types@5.26.5:
     resolution: {integrity: sha512-JlCMO+ehdEIKqlFxk6IfVoAUVmgz7cU7zD/h9XZ0qzeosSHmUJVOzSQvvYSYWXkFXC+IfLKSIffhv0sVZup6pA==}
+
+  undici-types@7.30.2:
+    resolution: {integrity: sha512-Vx15rZHtDo7X+sZVzcecz08ooRvEa0cjSs8z85v/jRRf81BT1m9eaoMI4gxvaNwgQg2IgkfjJ45dMpKrSl0zEQ==}
 
   undici@7.28.0:
     resolution: {integrity: sha512-cRZYrTDwWznlnRiPjggAGxZXanty6M8RV1ff8Wm4LWXBp7/IG8v5DnOm74DtUBp9OONpK75YlPnIjQqX0dBDtA==}
@@ -8476,6 +8502,13 @@ snapshots:
     dependencies:
       '@types/unist': 3.0.3
 
+  '@types/jsdom@28.0.3':
+    dependencies:
+      '@types/node': 18.19.121
+      '@types/tough-cookie': 4.0.5
+      parse5: 8.0.1
+      undici-types: 7.30.2
+
   '@types/json-schema@7.0.15': {}
 
   '@types/katex@0.16.7': {}
@@ -8512,6 +8545,8 @@ snapshots:
       '@types/webxr': 0.5.24
       fflate: 0.8.3
       meshoptimizer: 1.1.1
+
+  '@types/tough-cookie@4.0.5': {}
 
   '@types/trusted-types@2.0.7': {}
 
@@ -9672,6 +9707,17 @@ snapshots:
   dir-glob@3.0.1:
     dependencies:
       path-type: 4.0.0
+
+  dockview-core@8.9.0: {}
+
+  dockview-vue@8.9.0(vue@3.5.42(typescript@5.9.3)):
+    dependencies:
+      dockview: 8.9.0
+      vue: 3.5.42(typescript@5.9.3)
+
+  dockview@8.9.0:
+    dependencies:
+      dockview-core: 8.9.0
 
   dom-accessibility-api@0.5.16: {}
 
@@ -12112,6 +12158,8 @@ snapshots:
       which-boxed-primitive: 1.1.1
 
   undici-types@5.26.5: {}
+
+  undici-types@7.30.2: {}
 
   undici@7.28.0: {}
 

@@ -11,7 +11,7 @@ import { computed } from 'vue'
 
 import HomeNav from './HomeNav.vue'
 
-import { useAppNav } from '@/components/common/Navigation/appNav'
+import { addItemOf, projectItemsOf, useAppNav } from '@/components/common/Navigation/appNav'
 import SecondaryNavigation from '@/components/common/Navigation/SecondaryNavigation.vue'
 import { t } from '@/i18n'
 
@@ -35,8 +35,22 @@ defineProps<{
   createError?: string
 }>()
 
+// 桌面上有外壳：「首页」和搜索在顶栏上，这里不再画标题；「待办」那一行照画。项目列在团队
+// 上面，各带等你处理的件数——和顶栏去处列表里同一份格子（destinations.ts 算的件数）。
 const appNav = useAppNav()
 const framed = computed(() => !!appNav)
+const projects = computed(() =>
+  appNav
+    ? projectItemsOf(appNav.items.value).map((item) => ({
+        id: item.projectId ?? item.key,
+        name: item.title,
+        avatar: item.avatar,
+        to: item.to ?? '/',
+        awaiting: item.badge,
+      }))
+    : undefined
+)
+const addProject = computed(() => (appNav ? addItemOf(appNav.items.value) : null))
 
 const emit = defineEmits<{
   openDisband: [team: Team]
@@ -53,14 +67,17 @@ const emit = defineEmits<{
 
 <template>
   <SecondaryNavigation v-if="mdAndUp">
-    <!-- 桌面上侧栏头已经是老鼠图标和项目切换器（SecondaryNavigation），「首页」这行标题
-         就不再重复画；没有外壳时（单测）照旧。 -->
+    <!-- Desktop draws 首页 and the search in the top bar; without a shell (unit tests, the
+         catalog) the title stays here. -->
     <div v-if="!framed" class="sidebar-header">
       <span class="t-title">{{ t('navigation.home') }}</span>
       <v-spacer></v-spacer>
     </div>
+    <!-- 「待办」这一行始终画：首页这一格的目录从它开始。 -->
     <HomeNav
       inbox
+      :projects="projects"
+      :new-project-label="addProject?.title"
       :teams="teams"
       :spaces="spaces"
       :awaiting="awaiting"
@@ -85,6 +102,7 @@ const emit = defineEmits<{
       @leave="(team) => emit('leave', team)"
       @update:create-open="(open) => emit('update:createOpen', open)"
       @create-space="(payload) => emit('createSpace', payload)"
+      @create-project="addProject?.action?.()"
     />
   </SecondaryNavigation>
 </template>

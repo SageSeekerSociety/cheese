@@ -23,7 +23,7 @@ function indent(level: number): string {
 <template>
   <div class="doc-outline">
     <div v-if="headings.length === 0" class="doc-outline__empty">
-      <BaseEmptyState size="inline" :title="t('work.room.doc.outlineEmpty')" />
+      <BaseEmptyState size="inline" align="center" :title="t('work.room.doc.outlineEmpty')" />
     </div>
     <v-list v-else density="compact" class="doc-outline__list" :aria-label="t('work.room.doc.outline')">
       <v-list-item

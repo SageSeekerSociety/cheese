@@ -28,6 +28,11 @@ from app.domain.agent.device_hub.machine import (
 DEVICE_HEADER = "x-machine-device"
 STATE_HEADER = "x-machine-state"
 SECRET_HEADER = "x-device-connection-secret"
+#: Which session attached to the environment a request is from, as the command
+#: that sent it was told (`machine.caller.caller_of`). The sandbox's own to
+#: send, so it passes here as sent: the backend answers it only for a session
+#: attached to the device and state this process names.
+ATTACHMENT_HEADER = "x-cheese-attachment"
 
 # Hop-by-hop, or this relay's to set.
 _DROPPED = {

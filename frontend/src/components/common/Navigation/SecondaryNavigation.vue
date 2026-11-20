@@ -7,31 +7,32 @@
     :class="drawerClass"
     :color="color"
     :border="border"
-    :width="isDesktop ? width : undefined"
+    :width="drawerWidth"
     v-bind="$attrs"
   >
-    <!-- 右边缘拖动改宽度。宽度是四处侧栏共用的一个数（useSidebarWidth）。 -->
+    <!-- 窄档（960–1180）的浮层拖右缘改宽度。宽档里侧栏是布局区的一格，拖的是那一格的分隔线；
+         两处改的是同一个数（sidebarWidth.ts）。 -->
     <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- a drag handle for the pointer; without it the sidebar keeps its width -->
-    <div v-if="isDesktop" class="sidebar-resizer" :title="t('navigation.sidebar.resize')" @pointerdown="startResize" />
-    <!-- 桌面上侧栏头和侧栏底：老鼠图标 + 项目切换器、头像 + 问芝士（appNav.ts）。四处侧栏
-         （项目、首页、空间、后台）都长这两行，左边那一列拿掉后它们住在这里。 -->
-    <template v-if="frame" #prepend><component :is="frame.top" /></template>
+    <div
+      v-if="isDesktop && compactSidebar"
+      class="sidebar-resizer"
+      :title="t('navigation.sidebar.resize')"
+      @pointerdown="startResize"
+    />
+    <!-- 桌面上侧栏只放当前去处自己的导航：首页、去处、搜索、头像都在顶栏上（appNav.ts）。 -->
     <slot></slot>
-    <template v-if="frame" #append><component :is="frame.foot" /></template>
   </v-navigation-drawer>
 </template>
 
 <script setup lang="ts">
-import { computed, onScopeDispose, watch } from 'vue'
+import { computed, inject, onScopeDispose, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
 import { storeToRefs } from 'pinia'
 
+import { setSidebarWidth, SIDEBAR_CELL_WIDTH, sidebarWidth } from '@/composables/sidebarWidth'
 import { useEscapeLayer } from '@/composables/useEscapeStack'
 import { useNavigation } from '@/composables/useNavigation'
 import { focusSidebarToggle, SIDEBAR_DRAWER_ID, useSidebarCollapse } from '@/composables/useSidebarCollapse'
-import { useSidebarWidth } from '@/composables/useSidebarWidth'
-
-import { useAppNav } from './appNav'
 
 import { t } from '@/i18n'
 import { useNavigationStore } from '@/stores/navigation'
@@ -64,11 +65,7 @@ const { closeSecondaryDrawer } = navigationStore
 // 计算是否为桌面端模式
 const isDesktop = computed(() => mdAndUp.value && !props.forceMobile)
 
-// 侧栏头和侧栏底那两行只在桌面画；没有外壳（单测单挂一个侧栏）时不画。
-const appNav = useAppNav()
-const frame = computed(() => (isDesktop.value && appNav ? appNav.frame : null))
-
-// 桌面窄档（960–1180）：这一栏是一只可收起的浮层，rail 顶上那颗开关管它。宽档里它
+// 桌面窄档（960–1180）：这一栏是一只可收起的浮层，顶栏最左那颗开关管它。宽档里它
 // 常驻，手机上是另一套（`isSecondaryDrawerOpen`）。
 const {
   compact: compactSidebar,
@@ -77,22 +74,25 @@ const {
   close: closeSidebar,
 } = useSidebarCollapse()
 
-const { width, setWidth } = useSidebarWidth()
+// 宽档里侧栏是外壳布局区的一格（layouts/AppShell.vue），宽度就是那一格的宽度，拖那一格
+// 的分隔线来改；窄档的浮层按同一个数打开（sidebarWidth.ts）。手机上是另一套。
+const cellWidth = inject(SIDEBAR_CELL_WIDTH, null)
+const width = sidebarWidth()
+const drawerWidth = computed(() => {
+  if (!isDesktop.value) return undefined
+  if (!compactSidebar.value && cellWidth?.value) return cellWidth.value
+  return width.value
+})
 
-// 拖右边缘：宽度 = 指针到抽屉左边缘的距离。抽屉左边还有一级导航那一条，所以不能
-// 直接拿指针的 x 当宽度。
+// 拖浮层的右缘：宽度 = 指针到抽屉左边缘的距离。
 //
-// 拖的这段时间里要关掉过渡（`html.sidebar-resizing`，规则在 styles/common.scss）。
-// 抽屉的宽度和内容区的左内边距各带 Vuetify 的 0.2 秒过渡：改宽度是每收到一次指针
-// 移动就改一次，每次都重新起一段过渡，于是这一栏永远缓在半路上、追不上指针，松手
-// 后还要再滑完剩下那段。Vuetify 自己用手指拖抽屉时也是这么关的。
+// 拖的这段时间里抽屉不走宽度过渡（`page-sidebar--resizing`）：改宽度是每收到一次指针移动
+// 就改一次，每次都重新起一段 0.2 秒的过渡，这一栏就永远缓在半路上、追不上指针。
 //
-// 用指针事件并抓住指针：松手时指针可能已经在窗口外面（拖到屏幕边上、拖出浏览器），
-// 那时 mouseup 不会来，过渡就一直关着——整个应用从此没有动画。抓住指针之后，
-// up / cancel 一定回到这个元素上。窗口失焦那一下也补一条。
-//
-// 拖动中途不写本地存储，只改这一个数：每动一下写一次是同步的磁盘写入，跟着指针
-// 一起卡。松手才把落定的宽度记一次。
+// 用指针事件并抓住指针：松手时指针可能已经在窗口外面，那时 mouseup 不会来。抓住指针之后，
+// up / cancel 一定回到这个元素上；窗口失焦那一下也补一条。拖动中途不写本地存储，只改这一个
+// 数；松手才记一次。
+const resizing = ref(false)
 let stopDrag: (() => void) | null = null
 
 function startResize(e: PointerEvent) {
@@ -106,8 +106,8 @@ function startResize(e: PointerEvent) {
   } catch {
     return
   }
-  document.documentElement.classList.add('sidebar-resizing')
-  const move = (ev: PointerEvent) => setWidth(ev.clientX - left, false)
+  resizing.value = true
+  const move = (ev: PointerEvent) => setSidebarWidth(ev.clientX - left, false)
   const stop = () => {
     window.removeEventListener('pointermove', move)
     window.removeEventListener('pointerup', stop)
@@ -116,9 +116,8 @@ function startResize(e: PointerEvent) {
     if (element.hasPointerCapture(e.pointerId)) element.releasePointerCapture(e.pointerId)
     document.body.style.cursor = ''
     document.body.style.userSelect = ''
-    document.documentElement.classList.remove('sidebar-resizing')
-    // 松手把最后落在的那个宽度记一次；这一下没拖动过就是原来那个，等于没写。
-    setWidth(width.value)
+    resizing.value = false
+    setSidebarWidth(width.value)
     stopDrag = null
   }
   stopDrag = stop
@@ -130,7 +129,7 @@ function startResize(e: PointerEvent) {
   document.body.style.userSelect = 'none'
 }
 
-// 拖到一半这一栏被换掉（换路由、切到手机布局）：别把监听和 html 上那个类留下。
+// 拖到一半这一栏被换掉（换路由、换档）：别把监听留下。
 onScopeDispose(() => stopDrag?.())
 
 // 计算是否使用 permanent 模式：只有宽档的桌面侧栏才常驻。
@@ -149,14 +148,14 @@ const drawerModel = computed({
   set: (value: boolean) => {
     if (permanent.value) return
     // 抽屉自己也会改这个 model —— 点遮罩、换路由，都从这儿走。这些是「这一次」的
-    // 收起，不是人的选择，所以不写进 localStorage：记住的只该是 rail 上那颗开关
+    // 收起，不是人的选择，所以不写进 localStorage：记住的只该是顶栏上那颗开关
     // 按下的那一下（`toggle()` 才 persist）。
     if (isDesktop.value) setSidebarExpanded(value, false)
     else navigationStore.setSecondaryDrawerOpen(value)
   },
 })
 
-// 窄档里这一栏是一只可收起的浮层：它开着的时候，按 Esc 关掉它、焦点回到 rail 上打开
+// 窄档里这一栏是一只可收起的浮层：它开着的时候，按 Esc 关掉它、焦点回到顶栏上打开
 // 它的那颗开关。Vuetify 的抽屉自己不管键盘，而「按 Esc 关掉浮层」这条对键盘和读屏
 // 用户是必须的（宽档常驻、手机上另一套，都不在这里处理）。
 //
@@ -175,13 +174,14 @@ useEscapeLayer(
 // 计算抽屉的 CSS 类
 const drawerClass = computed(() => {
   const classes = ['page-sidebar', 'border-e-0', 'border-b-0']
-  if (!isDesktop.value) {
-    classes.push('rounded-0')
-  }
+  // 手机上抽屉照旧带上沿和左沿；桌面上它从窗口左缘、顶栏那条线下面开始，自己不画线：
+  // 右边那一条是布局区的分隔线（宽档），或抽屉自己的投影（窄档浮层）。
+  if (!isDesktop.value) classes.push('rounded-0')
+  else classes.push('border-t-0', 'border-s-0')
   if (props.customClass) {
     classes.push(props.customClass)
   }
-  if (frame.value) classes.push('page-sidebar--framed')
+  if (resizing.value) classes.push('page-sidebar--resizing')
   return classes.join(' ')
 })
 
@@ -203,18 +203,9 @@ watch(
 </script>
 
 <style>
-/* 有了侧栏头和侧栏底，中间那段要让出它们的高度：Vuetify 给 content 的是 height: 100%，
-   不改的话底下那一行被挤出抽屉。 */
-.page-sidebar .v-navigation-drawer__content {
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-/* 侧栏头那一行（ProjectSwitcher）已经画了 48px 基线和底边线；各侧栏自己的标题行
-   （空间名、后台分区）跟在它下面，不再画第二条线。 */
-.page-sidebar--framed .v-navigation-drawer__content .sidebar-header {
-  border-block-end: 0;
-  border-top-left-radius: 0;
+/* 拖浮层右缘的这段时间里不走宽度过渡（见 startResize）。 */
+.page-sidebar.page-sidebar--resizing {
+  transition: none;
 }
 </style>
 

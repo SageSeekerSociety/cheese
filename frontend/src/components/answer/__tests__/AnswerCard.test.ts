@@ -154,3 +154,18 @@ describe('答案卡片上的动作', () => {
     expect(borrowed.container.querySelector('.v-avatar img')).toBeNull()
   })
 })
+
+describe('答案的作者按查看者的叫法', () => {
+  it('查看者给他设过备注时，卡片标题画的是备注', () => {
+    const { container } = mountCard({
+      answer: makeAnswer({ author: { ...ASKER, remark: '我们叫她小福' } }),
+    })
+    expect(container.textContent).toContain('我们叫她小福')
+    expect(container.textContent).not.toContain('福禄')
+  })
+
+  it('没有备注时仍是公开昵称', () => {
+    const { container } = mountCard()
+    expect(container.textContent).toContain('福禄')
+  })
+})

@@ -78,6 +78,7 @@ from app.domain.project.protection import (
 from app.domain.project.schemas import (
     CommitCredit,
     CommitCreditUpdate,
+    ProjectAvatarOut,
     ProjectCreate,
     ProjectOut,
     StartStepsOut,
@@ -125,6 +126,10 @@ class ProjectRow(Protocol):
     owner_handle: Mapped[str | None]
     team_id: Mapped[int]
     external_task_id: Mapped[int | None]
+    avatar_kind: Mapped[str | None]
+    avatar_glyph: Mapped[str | None]
+    avatar_hue: Mapped[int | None]
+    avatar_image_id: Mapped[int | None]
 
 
 def _shelled(project: ProjectRow, shell: Shell, team: TeamLabel | None) -> dict:
@@ -142,6 +147,7 @@ def _shelled(project: ProjectRow, shell: Shell, team: TeamLabel | None) -> dict:
         .model_copy(
             update={
                 "shell": ShellOut.of(shell),
+                "avatar": ProjectAvatarOut.of(project),
                 "team_handle": team.handle if team else None,
                 "team_name": team.name if team else None,
             }

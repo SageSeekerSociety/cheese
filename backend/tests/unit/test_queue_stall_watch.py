@@ -128,7 +128,9 @@ async def test_card_poll_in_queue_runs_the_stall_watch(monkeypatch):
 
     class Client(_Client):
         async def pull_request_status(self, **_):
-            return SimpleNamespace(merged=False, state="open", head_sha="h")
+            return SimpleNamespace(
+                merged=False, state="open", head_sha="h", mergeable_state="blocked"
+            )
 
         async def merge_queue_entry(self, **_):
             return True

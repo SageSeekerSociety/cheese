@@ -46,8 +46,8 @@ export function useConversationOpening(opts: {
     return opts.router.push(taskPage(taskId))
   }
 
-  // 频道主线上点开一件任务（芝士开的那一行、转成的任务、交上来的那一版、「待你审阅」）：
-  // 在频道右边审阅它，人还在频道里；要和它的 AI 队友说话，从那里「打开任务」。支线里、
+  // 频道主线上点开一件任务（任务标签、转成的任务、交上来的那一版、「待你审阅」）：
+  // 在频道右边打开它，人还在频道里；那一格里有它的对话，能直接在任务里说话。支线里、
   // 任务页上点开的照旧去任务页。
   function openTask(taskId: string) {
     const { projectId, topicId, taskId: onTask, threadId } = opts.place()

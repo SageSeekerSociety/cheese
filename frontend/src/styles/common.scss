@@ -20,30 +20,12 @@ html.app-shell-open #app {
   scrollbar-gutter: auto;
 }
 
-/* 外框和内容区（docs/design-system.md §1.4）：一级导航、侧栏、顶栏是 canvas，内容区
- * 是一整块 surface。侧栏左边那条线和顶栏下面那条线在侧栏左上角拐一个圆角，这就是
- * 「工作区从这里开始」的那个角；没有侧栏的页面，这个角落在内容区自己身上。
- * 几条线都用 --line：Vuetify 的边框色是半透明的，压在 canvas 和 surface 上深浅不
- * 一样，接缝处看得出来。 */
-.page-sidebar {
-  border-top-left-radius: 12px;
-}
-
+/* 外框和内容区（docs/design-system.md §1.4）：顶栏、侧栏是 canvas，内容区是一整块 surface。
+ * 桌面上外框和内容之间只有两条线：顶栏下沿一条（AppBar 画），侧栏右边一条（布局区的分隔
+ * 线），没有圆角。手机上内容区的上沿那条线由它自己画。几条线都用 --line：Vuetify 的边框色
+ * 是半透明的，压在 canvas 和 surface 上深浅不一样，接缝处看得出来。 */
 .page-sidebar.v-navigation-drawer {
   border-color: var(--line);
-}
-
-.page-sidebar.rounded-0 {
-  border-top-left-radius: 0;
-}
-
-/* 拖侧栏右缘的这段时间里不走过渡（这个类由 SecondaryNavigation 的拖拽把手加在
- * <html> 上，松手摘掉）。抽屉的宽度和内容区的左内边距各带 Vuetify 的 0.2 秒过渡：
- * 拖的时候每收到一次鼠标移动就改一次宽度，每次都重新起一段过渡，分界线于是永远追
- * 不上指针，松手后还要再滑完剩下那段。收起、展开那些动画不在拖拽期间，照旧。 */
-html.sidebar-resizing .v-navigation-drawer,
-html.sidebar-resizing .v-main {
-  transition: none;
 }
 
 .app-pane {
@@ -51,17 +33,10 @@ html.sidebar-resizing .v-main {
   background: var(--surface);
 }
 
-@media (min-width: 960px) {
-  .app-pane {
-    border-left: 1px solid var(--line);
-  }
-
-  .app-pane--alone {
-    border-top-left-radius: 12px;
-  }
-}
-
 :root {
+  /* 桌面顶栏（AppBar）的高度；手机上没有这条栏，是 0。贴着窗口上沿的浮层（离线横幅、跳到
+     正文）从它下面开始。 */
+  --app-bar-height: 40px;
   --app-page-header-height: 48px;
   --app-page-header-bg-opacity: 0;
   /* 页头底线。屏幕上侧栏顶栏和内容区页头是并排的，两条底线接成一条横贯全宽的
@@ -76,11 +51,12 @@ html.sidebar-resizing .v-main {
  * 不成立的交互一律不渲染，不靠断点缩。 */
 @media (max-width: 959.98px) {
   :root {
+    --app-bar-height: 0px;
     --app-page-header-height: 56px;
   }
 }
 
-/* 侧栏顶栏 —— 侧边栏最上面那条（空间名 / 用户名 / “首页”）。
+/* 侧栏顶栏 —— 手机抽屉里侧边栏最上面那条（空间名 / 后台）；桌面上这些在顶栏上。
  *
  * 它以前也叫 .page-header，和 components/common/PageHeader.vue 撞名：同一个类名
  * 同时描述两种东西，全局这份的 height 和 justify-content 就顺着级联漏进了组件。
@@ -107,7 +83,6 @@ html.sidebar-resizing .v-main {
 
 .page-sidebar {
   .sidebar-header {
-    border-top-left-radius: 12px;
     transition: background-color var(--dur-quick) var(--ease-standard);
   }
 
