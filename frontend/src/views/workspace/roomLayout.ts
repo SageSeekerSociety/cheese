@@ -79,6 +79,7 @@ export function useRoomLayout(
       signal: tab.signal,
       temporary: tab.temporary,
       transient: tab.transient,
+      beside: tab.beside,
       alwaysRender: tab.alwaysRender,
       group: WORK_GROUP,
       // 固定的几格不能关（挪去哪都行）；能关的是打开的任务和文件，以及任务的「文件」那一格。

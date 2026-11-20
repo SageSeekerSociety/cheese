@@ -1,14 +1,15 @@
 <script setup lang="ts">
 // A task's「文件」panel: the task's working copy — the one its AI teammate
 // works in — as a tree on the left and one file on the right. One file per
-// panel: files side by side are cells of the layout, not tabs in here.
+// panel: files side by side are cells of the layout, not tabs in here. A file
+// opened beside (`single`) is a cell of its own with that file and no tree.
 //
 // It draws what `composables/useTaskFiles` holds and hands the person's
 // actions back to it; nothing here fetches. On a phone the file is shown as
 // text, without loading the editor.
 import type { TaskFilesBundle } from '../../composables/useTaskFiles'
 
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
 import { foldersOf, taskFileRows } from '../../lib/taskFileTree'
 import ConfirmDialog from '../base/ConfirmDialog.vue'
@@ -33,9 +34,16 @@ const props = withDefaults(
     /** A phone: the file is shown as text and not edited. */
     phone?: boolean
     agentName?: string
+    /** A cell holding one file: no tree, and no finding another file here. */
+    single?: boolean
   }>(),
-  { changed: () => [], readOnly: false, phone: false, agentName: '' }
+  { changed: () => [], readOnly: false, phone: false, agentName: '', single: false }
 )
+
+const emit = defineEmits<{
+  /** Open this file in a cell of its own beside this one. */
+  'open-beside': [path: string]
+}>()
 
 const f = props.files
 
@@ -73,9 +81,26 @@ const status = computed(() => {
   return t('global.saveState.saved')
 })
 
+// ---- the lines a file link pointed at, on a phone: scrolled to (the editor reveals them itself) ----
+const textEl = ref<HTMLElement | null>(null)
+watch(
+  () => [props.phone, f.lines.value, f.file.value?.path] as const,
+  ([phone, at]) => {
+    if (!phone || !at) return
+    void nextTick(() => {
+      const el = textEl.value
+      if (!el) return
+      const lineHeight = parseFloat(getComputedStyle(el).lineHeight) || 16
+      el.scrollTop = (at.start - 1) * lineHeight
+    })
+  },
+  { immediate: true }
+)
+
 // ---- find a file by name (Ctrl+P / ⌘P) ----
 const quickOpen = ref(false)
 function onKeydown(event: KeyboardEvent) {
+  if (props.single) return
   if ((event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'p') {
     event.preventDefault()
     quickOpen.value = true
@@ -183,15 +208,21 @@ async function confirmRemove() {
       </BaseButton>
     </div>
 
-    <div class="task-files__body" :class="{ 'task-files__body--phone': props.phone }">
+    <div
+      class="task-files__body"
+      :class="{ 'task-files__body--phone': props.phone, 'task-files__body--single': props.single }"
+    >
       <TaskFileTree
+        v-if="!props.single"
         :rows="rows"
         :open="openDirs"
         :active-path="f.openPath.value"
         :changed="changedSet"
         :editable="treeEditable"
         :reveal-tick="revealTick"
+        :can-split="!props.phone"
         @select="f.open($event)"
+        @open-beside="emit('open-beside', $event)"
         @toggle="toggle"
         @create="askCreate"
         @rename="askRename"
@@ -215,23 +246,24 @@ async function confirmRemove() {
             <p v-if="f.file.value.binary || f.file.value.tooLarge" class="task-files__note">
               {{ f.file.value.tooLarge ? t('work.room.changes.tooLarge') : t('work.room.changes.binary') }}
             </p>
-            <pre v-else-if="props.phone" class="task-files__text">{{ f.file.value.content }}</pre>
+            <pre v-else-if="props.phone" ref="textEl" class="task-files__text">{{ f.file.value.content }}</pre>
             <CodeEditor
               v-else
               class="task-files__editor"
               :model-value="f.file.value.content"
               :filename="f.file.value.path"
               :readonly="!editable"
+              :lines="f.lines.value"
               @update:model-value="f.edit($event)"
               @save="f.saveNow()"
-              @quick-open="quickOpen = true"
+              @quick-open="quickOpen = !props.single"
             />
           </template>
         </template>
       </div>
     </div>
 
-    <ChangesOpenFile v-model="quickOpen" :files="f.files.value" @pick="pickQuick" />
+    <ChangesOpenFile v-if="!props.single" v-model="quickOpen" :files="f.files.value" @pick="pickQuick" />
     <AdaptiveDialog
       v-model="namingOpen"
       :title="namingTitle"
@@ -311,6 +343,9 @@ async function confirmRemove() {
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
+}
+.task-files__body--single {
+  grid-template-columns: minmax(0, 1fr);
 }
 .task-files__body--phone {
   grid-template-columns: minmax(0, 1fr);

@@ -277,6 +277,8 @@ const DOC_TAB = 'doc:'
 // AI 队友提议的一项技能，路径写成 `skill:<编号>`：读完就地决定存不存。内容由页面从插槽
 // 递进来（`#skill`），面板自己不取数。
 const SKILL_TAB = 'skill:'
+// 任务工作副本里的一份文件，在「文件」那一格旁边单开一格，路径写成 `work:<路径>`：一格一份文件。
+const WORK_TAB = 'work:'
 function fileKey(path: string): string {
   return FILE_TAB + path
 }
@@ -511,7 +513,10 @@ const {
 
 // 此刻面板上开着哪一份文件（撰写框上「芝士会看到你在看什么」那一行读它）。
 watch(
-  () => (active.value === 'preview' ? previewPath.value : tabFile(active.value, FILE_TAB, DOC_TAB)),
+  () =>
+    active.value === 'preview'
+      ? previewPath.value
+      : tabFile(active.value, FILE_TAB, DOC_TAB)?.replace(new RegExp(`^${WORK_TAB}`), '') ?? null,
   (path) => emit('viewing', path),
   { immediate: true }
 )
@@ -689,6 +694,7 @@ const panelTabs = computed<PanelTab[]>(() =>
 /** 页签上写什么：文件写文件名，资料库文档写它的标题，技能写它的名字。 */
 function fileTabName(f: OpenFileTab): string {
   if (f.skill) return f.skill.title || t('work.room.workCard.skill')
+  if (f.path.startsWith(WORK_TAB)) return f.path.slice(WORK_TAB.length).split('/').pop() || f.path
   return f.document ? f.document.title || t('work.room.doc.untitled') : f.path.split('/').pop() || f.path
 }
 const asSignal = (signal: PanelTab['signal']): LayoutPanelSignal | undefined =>
@@ -716,6 +722,8 @@ const fileMeta = computed<WorkTabMeta[]>(() =>
     title: fileTabName(f),
     icon: f.document ? 'mdi-file-document-outline' : f.skill ? 'mdi-lightbulb-outline' : fileIcon(f.path),
     temporary: !f.pinned,
+    // 单开的工作文件落在「文件」那一格旁边自己的一格里，不和自由区挤一格。
+    beside: f.path.startsWith(WORK_TAB) ? 'code' : undefined,
   }))
 )
 
@@ -852,9 +860,18 @@ async function openFile(path: string) {
     // 停在原地，再往下走就是一次没有落地、也没人知道的假动作。
     if (!(await setTab('code'))) return
     await nextTick()
-    if (await codeRef.value?.openFile(want)) return
+    if (await codeRef.value?.openFile(want, at ? { start: Number(at[1]), end: Number(at[2] ?? at[1]) } : null)) return
   }
   await openFileTab(want, { lines: at ? { start: Number(at[1]), end: Number(at[2] ?? at[1]) } : null })
+}
+
+/** 「文件」那一格树上的「在旁边打开」：这份文件单开一格，摆在「文件」旁边。 */
+async function openBeside(path: string) {
+  const key = WORK_TAB + path
+  noteFileOrigin()
+  placeFile(key)
+  pinFile(key)
+  await setTab(fileKey(key))
 }
 
 /** 「改动」里的「编辑」：在任务的「文件」那一格打开这份文件。 */
@@ -1183,6 +1200,7 @@ defineExpose({
               :changed="summary.changedFiles"
               :phone="withChat"
               :agent-name="agentName"
+              @open-beside="openBeside"
             />
             <template v-if="docked === 'code'" #dock><slot name="dock" /></template>
           </WorkPane>
@@ -1279,6 +1297,17 @@ defineExpose({
                 :lines="f.project.lines"
                 @open-task="emit('open-card', $event)"
                 @navigate="emit('navigate', $event)"
+              />
+              <TaskFilesHost
+                v-else-if="f.path.startsWith(WORK_TAB)"
+                :project-id="projectId"
+                :task-id="taskId"
+                :read-only="changesReadOnly"
+                :active="shown(fileKey(f.path))"
+                :refresh-tick="refreshTick"
+                :phone="withChat"
+                :agent-name="agentName"
+                :path="f.path.slice(WORK_TAB.length)"
               />
               <div v-else-if="f.skill" class="panel-skill">
                 <slot :id="f.skill.id" name="skill" />

@@ -21,6 +21,8 @@ const props = defineProps<{
   changed: ReadonlySet<string>
   /** The person may change the tree. */
   editable: boolean
+  /** A file can be opened in a cell of its own beside this one. */
+  canSplit?: boolean
   /** Bumped when a file opened from elsewhere should be scrolled into view. */
   revealTick: number
 }>()
@@ -31,6 +33,7 @@ const emit = defineEmits<{
   create: [kind: 'file' | 'dir', folder: string]
   rename: [path: string]
   remove: [path: string]
+  'open-beside': [path: string]
 }>()
 
 const listEl = ref<HTMLElement | null>(null)
@@ -43,6 +46,18 @@ const menuFor = ref<TaskFileRow | null>(null)
 const menuOpen = ref(false)
 const menuPoint = ref<[number, number] | null>(null)
 function actionsOf(row: TaskFileRow): MenuAction[] {
+  const beside: MenuAction[] =
+    row.type === 'file' && props.canSplit
+      ? [
+          {
+            key: 'beside',
+            label: t('work.room.taskFiles.openBeside'),
+            icon: 'mdi-dock-right',
+            onSelect: () => emit('open-beside', row.path),
+          },
+        ]
+      : []
+  if (!props.editable) return beside
   const own: MenuAction[] = [
     {
       key: 'rename',
@@ -59,7 +74,7 @@ function actionsOf(row: TaskFileRow): MenuAction[] {
       onSelect: () => emit('remove', row.path),
     },
   ]
-  if (row.type === 'file') return own
+  if (row.type === 'file') return [...beside, ...own]
   return [
     {
       key: 'file',
@@ -77,7 +92,7 @@ function actionsOf(row: TaskFileRow): MenuAction[] {
   ]
 }
 function showMenu(row: TaskFileRow, event?: MouseEvent) {
-  if (!props.editable) return
+  if (!actionsOf(row).length) return
   menuFor.value = row
   menuPoint.value = event ? [event.clientX, event.clientY] : null
   menuOpen.value = true
@@ -138,7 +153,7 @@ function pick(row: TaskFileRow) {
           />
         </button>
         <BaseButton
-          v-if="props.editable"
+          v-if="props.editable || (props.canSplit && row.type === 'file')"
           kind="ghost"
           size="sm"
           icon="mdi-dots-horizontal"

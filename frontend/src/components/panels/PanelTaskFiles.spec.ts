@@ -28,6 +28,8 @@ const server = {
   prepares: 0,
 }
 let versions = 0
+/** Every save the fake took, in order. */
+const saves: string[] = []
 function put(path: string, content: string) {
   server.files.set(path, { content, version: `v${++versions}` })
 }
@@ -65,6 +67,7 @@ vi.mock('@/api', async () => {
       const f = server.files.get(path)!
       if (f.version !== version) throw new actual.ApiError(409, '文件已有更新，请重新读取后再保存', 'ConflictError')
       put(path, content)
+      saves.push(path)
       return { path, version: server.files.get(path)!.version, merged: false }
     },
     prepareTaskMachine: async () => {
@@ -82,10 +85,10 @@ vi.mock('@/api', async () => {
 vi.mock('../CodeEditor.vue', () => ({
   default: {
     name: 'CodeEditorStub',
-    props: ['modelValue', 'filename', 'readonly'],
+    props: ['modelValue', 'filename', 'readonly', 'lines'],
     emits: ['update:modelValue', 'save', 'quick-open'],
     template:
-      '<textarea data-testid="editor" :value="modelValue" :readonly="readonly" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+      '<textarea data-testid="editor" :value="modelValue" :readonly="readonly" :data-lines="lines ? `${lines.start}-${lines.end}` : undefined" @input="$emit(\'update:modelValue\', $event.target.value)" />',
   },
 }))
 
@@ -104,6 +107,7 @@ beforeEach(() => {
   server.failed = null
   server.prepareFails = false
   server.prepares = 0
+  saves.length = 0
   put('src/queue.c', 'int main(void) { return 0; }\n')
   vi.useFakeTimers({ shouldAdvanceTime: true })
 })
@@ -213,7 +217,70 @@ describe('a person edits a task file while its machine is being brought back', (
   })
 })
 
+describe('the same file open in two cells', () => {
+  it('shows the same text in both and is saved once', async () => {
+    server.machine = 'ready'
+    const main = ref<{ openFile: (path: string) => Promise<boolean> } | null>(null)
+    const props = { projectId: 'p1', taskId: 'task-1', active: true }
+    const Two = defineComponent({
+      setup: () => () =>
+        h('div', [
+          h('div', { class: 'cell-a' }, [h(TaskFilesHost as unknown as Component, { ...props, ref: main })]),
+          h('div', { class: 'cell-b' }, [h(TaskFilesHost as unknown as Component, { ...props, path: 'src/queue.c' })]),
+        ]),
+    })
+    const view = render(Two, { global: { plugins: [vuetify] } })
+    await settle()
+    await main.value!.openFile('src/queue.c')
+    await settle()
+    const editors = () => [...view.container.querySelectorAll<HTMLTextAreaElement>('[data-testid="editor"]')]
+    expect(editors()).toHaveLength(2)
+
+    await fireEvent.update(editors()[0], MINE)
+    await settle()
+    expect(editors()[1].value).toBe(MINE)
+    await settle(1000)
+    expect(server.files.get('src/queue.c')!.content).toBe(MINE)
+    expect(saves).toEqual(['src/queue.c'])
+
+    // Typing on in the other cell is made against what the first one saved.
+    const more = MINE + '// more\n'
+    await fireEvent.update(editors()[1], more)
+    await settle(1000)
+    expect(editors()[0].value).toBe(more)
+    expect(server.files.get('src/queue.c')!.content).toBe(more)
+    expect(saves).toEqual(['src/queue.c', 'src/queue.c'])
+  })
+
+  it('closing a cell with text not saved yet loses nothing', async () => {
+    const view = mount()
+    await settle()
+    await view.open('src/queue.c')
+    await type(MINE)
+    await settle()
+    view.unmount()
+    server.machine = 'ready'
+    mount()
+    await settle(2500)
+    expect(server.files.get('src/queue.c')!.content).toBe(MINE)
+  })
+})
+
 describe('a file link opens in the panel when the task has the file', () => {
+  it('reveals the lines the link points at', async () => {
+    const panel = ref<{ openFile: (path: string, lines?: { start: number; end: number }) => Promise<boolean> } | null>(
+      null
+    )
+    const Host = defineComponent({
+      setup: () => () =>
+        h(TaskFilesHost as unknown as Component, { ref: panel, projectId: 'p1', taskId: 'task-1', active: true }),
+    })
+    render(Host, { global: { plugins: [vuetify] } })
+    await settle()
+    await panel.value!.openFile('src/queue.c', { start: 1, end: 1 })
+    expect(((await screen.findByTestId('editor')) as HTMLElement).dataset.lines).toBe('1-1')
+  })
+
   it('opens a file of the task', async () => {
     const view = mount()
     await settle()

@@ -39,9 +39,10 @@ vi.mock('../../api/docHistory', () => ({
 vi.mock('../CodeEditor.vue', () => ({
   default: {
     name: 'CodeEditor',
-    props: ['modelValue', 'filename', 'readonly'],
+    props: ['modelValue', 'filename', 'readonly', 'lines'],
     emits: ['update:modelValue', 'save'],
-    template: '<textarea class="stub-editor" :value="modelValue" />',
+    template:
+      '<textarea class="stub-editor" :value="modelValue" :data-lines="lines ? `${lines.start}-${lines.end}` : undefined" />',
   },
 }))
 vi.mock('../panels/preview/PreviewPages.vue', () => ({
@@ -268,6 +269,19 @@ describe('点一个文件，落在它真的在的那一格', () => {
     // 预览现在也画得出源码，所以先问一次房间里有没有这一份（替身按「没有」答），
     // 没有才落在「文件」那一格。
     expect(readPreviewFile).toHaveBeenCalledWith('topic-A', 'src/b.ts')
+  })
+
+  it('带行号的链接 → 在「文件」那一格打开，并定位到那几行', async () => {
+    docSays('详见 <&src/b.ts:2-3>\n')
+
+    const { container } = mountPanel()
+    await flush()
+    await clickChip(container, 'src/b.ts:2-3')
+
+    expect(visible(container, '.task-files')).toBe(true)
+    await vi.waitFor(() =>
+      expect(container.querySelector('.task-files .stub-editor')?.getAttribute('data-lines')).toBe('2-3')
+    )
   })
 
   it('这件任务的工作副本里没有它 → 退到「项目当前版本」那一格开它', async () => {

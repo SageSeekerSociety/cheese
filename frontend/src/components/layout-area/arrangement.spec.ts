@@ -9,6 +9,7 @@ import {
   defaultWeights,
   hidesTabs,
   homeCell,
+  placeBeside,
   placedPanels,
   placeInGroup,
   placePanel,
@@ -425,5 +426,33 @@ describe('cells with a width of their own, and hidden cells', () => {
     const shown = toDockview({ root: ROOM.root! }, box, panelState, fixedNav)
     const hidden = toDockview({ root: ROOM.root! }, box, panelState, hiddenFiles)
     expect(ratio(hidden)).toBeCloseTo(ratio(shown), 2)
+  })
+})
+
+describe('a panel opened beside another', () => {
+  const panelsInRows = (a: LayoutArrangement) =>
+    a.root && 'children' in a.root ? a.root.children.map((c) => ('panels' in c ? c.panels : [])) : []
+
+  it('gets a cell of its own to the right of that panel, in the same row', () => {
+    const start: LayoutArrangement = {
+      root: { direction: 'row', children: [{ panels: ['chat'] }, { panels: ['files', 'changes'] }] },
+    }
+    const next = placeBeside(start, 'file:a', 'files')
+    expect(panelsInRows(next)).toEqual([['chat'], ['files', 'changes'], ['file:a']])
+  })
+
+  it('makes a row with the cell when that cell sits in a column', () => {
+    const start: LayoutArrangement = {
+      root: { direction: 'column', children: [{ panels: ['files'] }, { panels: ['term'] }] },
+    }
+    const next = placeBeside(start, 'file:a', 'files')
+    const top = next.root && 'children' in next.root ? next.root.children[0] : null
+    expect(top && 'children' in top ? top.direction : null).toBe('row')
+    expect(cellsOf(next).map((c) => c.panels)).toEqual([['files'], ['file:a'], ['term']])
+  })
+
+  it('goes where any panel would when the other panel is not placed', () => {
+    const start: LayoutArrangement = { root: { panels: ['chat'] } }
+    expect(placedPanels(placeBeside(start, 'file:a', 'files'))).toEqual(['chat', 'file:a'])
   })
 })
