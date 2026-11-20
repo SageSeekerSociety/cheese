@@ -38,8 +38,8 @@ from app.domain.machine.models import (
     PROVIDER_ERROR_WINDOW,
     PROVIDER_PROBE_INTERVAL,
     CloudHost,
-    Environment,
     MachineStatus,
+    SandboxHome,
     WarmMachine,
     capacity,
     warm_pool_target,
@@ -104,7 +104,7 @@ def host_phase(host: CloudHost, *, homes: int, online: bool) -> str:
     return "ready"
 
 
-def sandbox_state(home: Environment, now: datetime) -> str:
+def sandbox_state(home: SandboxHome, now: datetime) -> str:
     """销毁中、已冻结、在等宿主机（会话已被告知「正在准备」）、工作中、空闲。"""
     if home.stopped_at is not None:
         return "stopping"
@@ -119,7 +119,7 @@ def sandbox_state(home: Environment, now: datetime) -> str:
     return "idle"
 
 
-def _idle_deadline(home: Environment, previewed: bool = False) -> datetime | None:
+def _idle_deadline(home: SandboxHome, previewed: bool = False) -> datetime | None:
     """最早什么时候因空闲被回收：最近一次工具调用加上规格的空闲时长。真正的判据还
     看房间最后一轮何时结束、后台命令还在不在跑（``SandboxLifecycle._idle_since``），
     所以这是下限，不是时刻表。"""
@@ -150,7 +150,7 @@ def _percentile(values: list[float], pct: float) -> float | None:
 
 
 async def _names(
-    session: AsyncSession, homes: list[Environment], hosts: list[CloudHost]
+    session: AsyncSession, homes: list[SandboxHome], hosts: list[CloudHost]
 ) -> tuple[dict[uuid.UUID, str], dict[uuid.UUID, str]]:
     project_ids = {h.project_id for h in homes if h.project_id is not None} | {
         h.project_id for h in hosts if h.project_id is not None
@@ -285,9 +285,9 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
     )
     homes = list(
         await session.scalars(
-            select(Environment)
-            .where(Environment.host_id.is_not(None))
-            .order_by(Environment.created_at)
+            select(SandboxHome)
+            .where(SandboxHome.host_id.is_not(None))
+            .order_by(SandboxHome.created_at)
         )
     )
     warm = list(
@@ -302,7 +302,7 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
     previewed = await previewed_sessions(
         session, [home.session_id for home in homes if home.session_id is not None]
     )
-    by_host: dict[uuid.UUID, list[Environment]] = defaultdict(list)
+    by_host: dict[uuid.UUID, list[SandboxHome]] = defaultdict(list)
     for home in homes:
         assert home.host_id is not None
         by_host[home.host_id].append(home)
@@ -318,12 +318,12 @@ async def overview(session: AsyncSession, hub, now: datetime | None = None) -> d
     def online(device_id: str | None) -> bool:
         return device_id is not None and hub.is_online(device_id)
 
-    def taking(host_id) -> list[Environment]:
+    def taking(host_id) -> list[SandboxHome]:
         """A host's sandboxes that hold one of its slots: a parked one keeps
         only its directory on the disk (`HostPool.occupancy`)."""
         return [h for h in by_host.get(host_id, []) if h.parked_at is None]
 
-    def parked(host_id) -> list[Environment]:
+    def parked(host_id) -> list[SandboxHome]:
         return [h for h in by_host.get(host_id, []) if h.parked_at is not None]
 
     host_rows = []

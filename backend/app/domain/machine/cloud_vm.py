@@ -32,7 +32,7 @@ from app.domain.agent.environment import VM, spec_of
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.machine import holder as holders
 from app.domain.machine import lease_claim, session_work
-from app.domain.machine.models import CloudHost, Environment
+from app.domain.machine.models import CloudHost, SandboxHome
 from app.domain.machine.progress import publish_line, tell_vm_released
 from app.domain.machine.repositories import CloudHostRepository
 from app.domain.machine.services import HostPool
@@ -55,15 +55,15 @@ async def release_idle(db, lifecycle) -> int:
     candidates = (
         await db.execute(
             select(
-                Environment.id,
-                Environment.session_id,
-                Environment.topic_id,
-                Environment.active_at,
-                Environment.spec,
+                SandboxHome.id,
+                SandboxHome.session_id,
+                SandboxHome.topic_id,
+                SandboxHome.active_at,
+                SandboxHome.spec,
                 CloudHost.device_id,
             )
-            .join(CloudHost, CloudHost.id == Environment.host_id)
-            .join(Topic, Topic.id == Environment.topic_id)
+            .join(CloudHost, CloudHost.id == SandboxHome.host_id)
+            .join(Topic, Topic.id == SandboxHome.topic_id)
             .where(
                 # Every whole VM whose session has gone quiet, whatever the
                 # room's state: an archived room's cleanup may never come for
@@ -73,12 +73,12 @@ async def release_idle(db, lifecycle) -> int:
                 CloudHost.whole_machine,
                 CloudHost.released_at.is_(None),
                 CloudHost.device_id.is_not(None),
-                Environment.active_at < now - idle_for,
+                SandboxHome.active_at < now - idle_for,
                 # A whole cloud VM is not frozen (``lifecycle``): it is
                 # released, and this is where that happens.
-                Environment.frozen_at.is_(None),
+                SandboxHome.frozen_at.is_(None),
             )
-            .order_by(Environment.active_at)
+            .order_by(SandboxHome.active_at)
         )
     ).all()
     await db.commit()
@@ -133,8 +133,8 @@ async def _release(db, lifecycle, home, idle_for: timedelta) -> bool:
         else await AgentSessionService(db).by_id(home.session_id, lock=True)
     )
     current = await db.scalar(
-        select(Environment)
-        .where(Environment.id == home.id)
+        select(SandboxHome)
+        .where(SandboxHome.id == home.id)
         .with_for_update()
         .execution_options(populate_existing=True)
     )

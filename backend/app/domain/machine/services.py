@@ -61,8 +61,8 @@ from app.domain.machine.models import (
     PROVIDER_PROBE_INTERVAL,
     AiStatus,
     CloudHost,
-    Environment,
     MachineStatus,
+    SandboxHome,
 )
 from app.domain.machine.progress import (
     tell_preparing,
@@ -339,7 +339,7 @@ class HostPool(PoolSweep):
         await self._require_room_to_grow()
         return await self._acquire(body, home, data_disk, image_version=image_version)
 
-    async def current_home(self, session_id: uuid.UUID) -> Environment | None:
+    async def current_home(self, session_id: uuid.UUID) -> SandboxHome | None:
         return await self._repo.current_home(session_id)
 
     async def _place_on_own_vm(
@@ -819,7 +819,7 @@ class HostPool(PoolSweep):
         return host is not None and host.device_id == device_id and _keeps(host)
 
     async def _unpark(
-        self, home: Environment, host: CloudHost, session_id: uuid.UUID
+        self, home: SandboxHome, host: CloudHost, session_id: uuid.UUID
     ) -> bool:
         """Start a parked sandbox again on its host, under the pool's lock:
         when the host takes sandboxes, answers, and has a slot for it — a
@@ -861,7 +861,7 @@ class HostPool(PoolSweep):
                 }
         return True
 
-    async def _wake_frozen(self, home: Environment, session_id: uuid.UUID) -> None:
+    async def _wake_frozen(self, home: SandboxHome, session_id: uuid.UUID) -> None:
         """Ask for a frozen sandbox to be woken, under the pool's lock.
 
         The mark goes at once so a concurrent freeze sees that somebody wants
@@ -949,14 +949,14 @@ class HostPool(PoolSweep):
             return None
         return (datetime.now(UTC) - home.waiting_since).total_seconds()
 
-    async def _vm(self, home: Environment) -> bool:
+    async def _vm(self, home: SandboxHome) -> bool:
         host = None if home.host_id is None else await self._repo.get(home.host_id)
         return host is not None and host.whole_machine
 
-    async def _locked_home(self, session_id: uuid.UUID) -> Environment | None:
+    async def _locked_home(self, session_id: uuid.UUID) -> SandboxHome | None:
         return await self._session.scalar(
-            select(Environment)
-            .where(Environment.session_id == session_id)
+            select(SandboxHome)
+            .where(SandboxHome.session_id == session_id)
             .with_for_update()
             .execution_options(populate_existing=True)
         )
@@ -984,9 +984,9 @@ class HostPool(PoolSweep):
             return False
         return (
             await self._session.scalar(
-                select(Environment.id).where(
-                    Environment.host_id == host.id,
-                    Environment.resource_id == resource_id,
+                select(SandboxHome.id).where(
+                    SandboxHome.host_id == host.id,
+                    SandboxHome.resource_id == resource_id,
                 )
             )
         ) is None
@@ -1116,7 +1116,7 @@ class HostPool(PoolSweep):
         return {"enrolled": enrolled, "failed": failed}
 
 
-def _touch(home: Environment) -> None:
+def _touch(home: SandboxHome) -> None:
     now = datetime.now(UTC)
     if home.active_at is None or now - home.active_at >= ACTIVE_STEP:
         home.active_at = now

@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from app.core.storage import private_storage
 from app.domain.machine.holder import namespace_of
-from app.domain.machine.models import Environment, SandboxRootSnapshot
+from app.domain.machine.models import SandboxHome, SandboxRootSnapshot
 
 PREFIX = "sandbox-root-snapshots"
 URL_TTL_S = 3600
@@ -58,7 +58,7 @@ async def save(db, home, device_id, *, hub, run_on_host):
     # never replace (or delete) a newer home's backup. Hold only this short
     # publication transaction under the source row lock, never the transfer.
     source = await db.get(
-        Environment, home_id, with_for_update=True, populate_existing=True
+        SandboxHome, home_id, with_for_update=True, populate_existing=True
     )
     if source is None or (source.session_id, source.stopped_at) != (
         session_id,

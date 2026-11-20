@@ -19,7 +19,7 @@ project, paid for by the project's team. And a person's own 芝士 conversation
 (``Personal``), one topic of their thread with 芝士: its sandbox is in no
 project, only that person may have it started, and their own credits pay for
 it. A holder is named by the conversation a sandbox's row points at
-(``Environment.topic_id``), and which of the two it is is the register's kind
+(``SandboxHome.topic_id``), and which of the two it is is the register's kind
 (``conversations``).
 """
 
@@ -54,7 +54,7 @@ from app.domain.conversation.models import Conversation, ConversationKind
 from app.domain.conversation.services import of_rooms, room_column, room_of
 from app.domain.identity.actor import Actor
 from app.domain.machine.environments import environment_of
-from app.domain.machine.models import Environment
+from app.domain.machine.models import SandboxHome
 from app.domain.membership.roster import roster
 from app.domain.project.services import ProjectService
 from app.domain.room_task.models import Task
@@ -74,7 +74,7 @@ class SandboxHolder(Protocol):
 
     @property
     def id(self) -> uuid.UUID:
-        """The conversation a sandbox's row names (``Environment.topic_id``)."""
+        """The conversation a sandbox's row names (``SandboxHome.topic_id``)."""
         ...
 
     @property
@@ -92,7 +92,7 @@ class SandboxHolder(Protocol):
     @property
     def generation(self) -> str:
         """The holder's resource now: a sandbox made for an earlier one is not
-        this holder's any more (``Environment.room_resource_id``), and a
+        this holder's any more (``SandboxHome.room_resource_id``), and a
         session's credential names the one it was signed for (``r``)."""
         ...
 
@@ -438,7 +438,7 @@ async def payers(
 ) -> dict[uuid.UUID, Payer]:
     """Each holder's payer, read together. Read off the register of
     conversations, which still names a room that has since become a task in
-    place (``Environment.topic_id`` keeps its id)."""
+    place (``SandboxHome.topic_id`` keeps its id)."""
     rows = await db.execute(
         select(Conversation.id, Conversation.project_id).where(
             Conversation.id.in_(set(holder_ids))
@@ -504,8 +504,8 @@ async def at_work(db: AsyncSession, holder_ids: set[uuid.UUID]) -> set[uuid.UUID
     )
 
 
-def namespace_of(home: Environment | Row) -> uuid.UUID:
+def namespace_of(home: SandboxHome | Row) -> uuid.UUID:
     """The directory a sandbox's home sits under on its machine, read off its
-    row (a ``Environment``, or a row of its columns): its holder's
+    row (a ``SandboxHome``, or a row of its columns): its holder's
     ``namespace`` when it was made — its project, else its own conversation."""
     return home.project_id or home.topic_id

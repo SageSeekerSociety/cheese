@@ -21,7 +21,7 @@ from sqlalchemy import delete, select
 
 from app.core.config import settings
 from app.domain.machine import enrollment
-from app.domain.machine.models import AiStatus, CloudHost, Environment, MachineStatus
+from app.domain.machine.models import AiStatus, CloudHost, MachineStatus, SandboxHome
 from tests.integration.conftest import session_auth_headers
 from tests.integration.test_cloud_host_pool import Case
 from tests.integration.test_cloud_host_pool import pool as pool
@@ -64,7 +64,7 @@ def _empty(case: Case, host_id: uuid.UUID) -> None:
 
     async def go():
         async with case.client.test_request_factory() as db:
-            await db.execute(delete(Environment).where(Environment.host_id == host_id))
+            await db.execute(delete(SandboxHome).where(SandboxHome.host_id == host_id))
             await db.commit()
 
     case.run(go)
@@ -469,7 +469,7 @@ def _park(case: Case, host_id: uuid.UUID) -> uuid.UUID:
         async with case.client.test_request_factory() as db:
             now = datetime.now(UTC)
             db.add(
-                Environment(
+                SandboxHome(
                     id=home_id,
                     host_id=host_id,
                     spec="standard",
@@ -575,7 +575,7 @@ def test_a_host_refreshed_in_place_keeps_its_parked_sandboxes(pool, monkeypatch)
 
     async def still_there():
         async with pool.client.test_request_factory() as db:
-            return await db.get(Environment, parked)
+            return await db.get(SandboxHome, parked)
 
     assert pool.run(still_there) is not None
 

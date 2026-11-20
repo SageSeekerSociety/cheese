@@ -264,7 +264,7 @@ class AgentSessionService:
         placed it again since (``RELEASED``). Whether its agent has been told
         is another fact (``LOST_KEY``), and does not enter into this.
 
-        Each session works in a home of its own (``Environment``), so a
+        Each session works in a home of its own (``SandboxHome``), so a
         task's files are in its own session's home and in no other session's
         of the same room. None while no session of it has taken a machine:
         nothing holds a working copy of it yet.

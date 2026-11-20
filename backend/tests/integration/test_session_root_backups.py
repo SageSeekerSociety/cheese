@@ -15,7 +15,7 @@ from app.core.storage import S3StorageBackend
 from app.domain.agent import execution
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.machine import lease_claim, root_snapshots, session_work
-from app.domain.machine.models import CloudHost, Environment, SandboxRootSnapshot
+from app.domain.machine.models import CloudHost, SandboxHome, SandboxRootSnapshot
 from tests.executor_release import running
 from tests.integration.test_switch_pushes_first import _machines, _room
 from tests.support.files_bucket import files_bucket
@@ -36,7 +36,7 @@ async def _source_home(db, room):
     )
     db.add(host)
     await db.flush()
-    home = Environment(
+    home = SandboxHome(
         session_id=room.session_id,
         host_id=host.id,
         sandbox_image="ghcr.io/example/root@sha256:" + "1" * 64,
@@ -108,7 +108,7 @@ async def test_a_late_save_cannot_replace_the_root_of_a_new_home(client, monkeyp
         try:
             await asyncio.wait_for(reached.wait(), timeout=5)
             async with client.test_factory() as db:
-                leaving = await db.get(Environment, old.id)
+                leaving = await db.get(SandboxHome, old.id)
                 leaving.session_id = None
                 await db.commit()
                 current = await _source_home(db, room)
@@ -231,7 +231,7 @@ async def test_a_saved_root_can_be_downloaded_after_the_home_is_gone(
 
         async with client.test_factory() as db:
             await root_snapshots.save(db, home, "source", hub=None, run_on_host=host)
-            await db.delete(await db.get(Environment, home.id))
+            await db.delete(await db.get(SandboxHome, home.id))
             await db.commit()
         async with client.test_factory() as db:
             restored = await root_snapshots.for_restore(db, room.session_id)

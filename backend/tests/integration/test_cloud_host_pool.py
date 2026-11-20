@@ -33,9 +33,9 @@ from app.domain.machine.models import (
     HOST_OWNER,
     AiStatus,
     CloudHost,
-    Environment,
     HostReading,
     MachineStatus,
+    SandboxHome,
     WarmMachine,
 )
 from app.domain.machine.sandbox_images import image_for_session
@@ -339,7 +339,7 @@ def _empty_host(pool, host_id: uuid.UUID, *, draining: bool = False) -> None:
 
     async def go():
         async with pool.client.test_request_factory() as db:
-            await db.execute(delete(Environment).where(Environment.host_id == host_id))
+            await db.execute(delete(SandboxHome).where(SandboxHome.host_id == host_id))
             if draining:
                 host = await db.get(CloudHost, host_id)
                 host.draining_since = datetime.now(UTC)
@@ -608,7 +608,7 @@ def test_an_idle_host_is_released_after_the_hold_and_not_before(pool):
     async def sandbox_destroyed():
         # What the idle sweep does once it has destroyed the sandbox there.
         async with pool.client.test_request_factory() as db:
-            await db.execute(delete(Environment).where(Environment.host_id == host_id))
+            await db.execute(delete(SandboxHome).where(SandboxHome.host_id == host_id))
             await db.commit()
 
     pool.run(sandbox_destroyed)
@@ -1126,7 +1126,7 @@ def test_a_host_given_up_loses_its_homes_in_one_statement(pool, monkeypatch):
         async with pool.client.test_request_factory() as db:
             return list(
                 await db.scalars(
-                    select(Environment).where(Environment.host_id == host_id)
+                    select(SandboxHome).where(SandboxHome.host_id == host_id)
                 )
             )
 
@@ -1161,7 +1161,7 @@ def test_a_vanished_host_still_counted_as_failed_drops_its_homes_at_once(
         async with pool.client.test_request_factory() as db:
             return list(
                 await db.scalars(
-                    select(Environment).where(Environment.host_id == host_id)
+                    select(SandboxHome).where(SandboxHome.host_id == host_id)
                 )
             )
 
@@ -1204,8 +1204,8 @@ def test_rooms_whose_host_came_up_are_settled_in_one_transaction(pool):
         async with pool.client.test_request_factory() as db:
             return list(
                 await db.scalars(
-                    select(Environment.host_id).where(
-                        Environment.waiting_since.is_not(None)
+                    select(SandboxHome.host_id).where(
+                        SandboxHome.waiting_since.is_not(None)
                     )
                 )
             )
@@ -1226,8 +1226,8 @@ def test_a_home_another_transaction_holds_is_left_for_the_next_sweep(pool):
     async def settle_while_one_is_held():
         async with pool.client.test_request_factory() as held:
             home_id = await held.scalar(
-                select(Environment.id)
-                .where(Environment.session_id == sessions[0])
+                select(SandboxHome.id)
+                .where(SandboxHome.session_id == sessions[0])
                 .with_for_update()
             )
             async with pool.client.test_request_factory() as db:
@@ -1243,7 +1243,7 @@ def test_a_home_another_transaction_holds_is_left_for_the_next_sweep(pool):
         async with pool.client.test_request_factory() as db:
             return list(
                 await db.scalars(
-                    select(Environment.id).where(Environment.waiting_since.is_not(None))
+                    select(SandboxHome.id).where(SandboxHome.waiting_since.is_not(None))
                 )
             )
 

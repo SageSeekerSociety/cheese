@@ -7,8 +7,8 @@ from app.domain.machine.models import (
     GONE,
     MAX_ENROLL_ATTEMPTS,
     CloudHost,
-    Environment,
     MachineStatus,
+    SandboxHome,
     sandbox_image_ready,
 )
 
@@ -78,7 +78,7 @@ async def _home_removed(db, session_id) -> bool:
     """The sandbox being destroyed is gone, so the next attempt places the
     session in a new one."""
     stopped = await db.scalar(
-        select(Environment.stopped_at).where(Environment.session_id == session_id)
+        select(SandboxHome.stopped_at).where(SandboxHome.session_id == session_id)
     )
     return stopped is None
 

@@ -35,8 +35,8 @@ from app.domain.machine.models import (
     HOST_OWNER,
     AiStatus,
     CloudHost,
-    Environment,
     MachineStatus,
+    SandboxHome,
 )
 from app.domain.machine.repositories import CloudHostRepository
 from app.domain.machine.runner import ComputeMeterSweeper
@@ -185,8 +185,8 @@ def _homes_on(case, host_id) -> int:
         async with case.client.test_request_factory() as db:
             return await db.scalar(
                 select(func.count())
-                .select_from(Environment)
-                .where(Environment.host_id == host_id)
+                .select_from(SandboxHome)
+                .where(SandboxHome.host_id == host_id)
             )
 
     return case.client.portal.call(read)
@@ -297,8 +297,8 @@ def _idle_for(case, seat, delta: timedelta):
     async def go():
         async with case.client.test_request_factory() as db:
             await db.execute(
-                update(Environment)
-                .where(Environment.session_id == seat.session)
+                update(SandboxHome)
+                .where(SandboxHome.session_id == seat.session)
                 .values(active_at=datetime.now(UTC) - delta)
             )
             await db.commit()
@@ -744,8 +744,8 @@ def test_a_vm_whose_session_walked_away_goes(cloud):
     async def walked_away():
         async with case.client.test_request_factory() as db:
             await db.execute(
-                update(Environment)
-                .where(Environment.session_id == seat.session)
+                update(SandboxHome)
+                .where(SandboxHome.session_id == seat.session)
                 .values(session_id=None)
             )
             await db.commit()

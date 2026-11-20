@@ -773,7 +773,7 @@ async def test_an_agent_may_put_itself_in_a_platform_sandbox(client, monkeypatch
 
     # The session was placed on a host still being created: it holds a home
     # there but no lease yet. Switching away gives that slot back to the pool.
-    from app.domain.machine.models import CloudHost, Environment, MachineStatus
+    from app.domain.machine.models import CloudHost, MachineStatus, SandboxHome
 
     async with client.test_factory() as db:
         host = CloudHost(
@@ -791,7 +791,7 @@ async def test_an_agent_may_put_itself_in_a_platform_sandbox(client, monkeypatch
         db.add(host)
         await db.flush()
         db.add(
-            Environment(
+            SandboxHome(
                 host_id=host.id,
                 spec="standard",
                 project_id=project_id,
@@ -822,7 +822,7 @@ async def test_an_agent_may_put_itself_in_a_platform_sandbox(client, monkeypatch
     assert switched.status_code == 200, switched.text
     async with client.test_factory() as db:
         homes = list(
-            await db.scalars(select(Environment).where(Environment.host_id == host_id))
+            await db.scalars(select(SandboxHome).where(SandboxHome.host_id == host_id))
         )
         row = await AgentSessionService(db).by_id(session_id)
     assert homes == []

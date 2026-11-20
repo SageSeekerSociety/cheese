@@ -34,7 +34,7 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.services import IdentityService
 from app.domain.machine import task_machine
-from app.domain.machine.models import Environment
+from app.domain.machine.models import SandboxHome
 from app.domain.machine.sandbox_wait import SANDBOX_LOST_KEPT
 from app.domain.topic.models import Topic
 from tests.delivery import delivery_task
@@ -105,8 +105,8 @@ class Machines:
             # installed in: what a call there prepares in place.
             async with self.case.client.test_request_factory() as db:
                 image = await db.scalar(
-                    select(Environment.sandbox_image).where(
-                        Environment.resource_id == target["resource_id"]
+                    select(SandboxHome.sandbox_image).where(
+                        SandboxHome.resource_id == target["resource_id"]
                     )
                 )
             return {

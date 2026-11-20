@@ -31,7 +31,7 @@ from app.domain.agent.device_hub import DeviceCallError
 from app.domain.agent_session.models import LOST_KEY, AgentSession
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.machine import session_work as work_lease
-from app.domain.machine.models import Environment
+from app.domain.machine.models import SandboxHome
 from app.domain.topic.models import Topic, TopicStatus
 from tests.executor_release import running
 from tests.integration.test_sandboxes_on_every_machine import _on_alices_computers
@@ -263,8 +263,8 @@ async def test_a_sandbox_is_handed_out_again_only_while_its_idle_clock_is_fresh(
 
     async with client.test_factory() as db:
         await db.execute(
-            update(Environment)
-            .where(Environment.topic_id == room.topic_id)
+            update(SandboxHome)
+            .where(SandboxHome.topic_id == room.topic_id)
             .values(active_at=datetime.now(UTC) - timedelta(minutes=1))
         )
         await db.commit()
@@ -273,6 +273,6 @@ async def test_a_sandbox_is_handed_out_again_only_while_its_idle_clock_is_fresh(
     remote.assert_awaited()
     async with client.test_factory() as db:
         home = await db.scalar(
-            select(Environment).where(Environment.topic_id == room.topic_id)
+            select(SandboxHome).where(SandboxHome.topic_id == room.topic_id)
         )
     assert datetime.now(UTC) - home.active_at < timedelta(seconds=30)

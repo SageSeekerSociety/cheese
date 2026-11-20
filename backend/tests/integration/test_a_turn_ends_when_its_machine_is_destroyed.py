@@ -50,7 +50,7 @@ from app.domain.block.models import Block
 from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.delivery.models import NativeInput
 from app.domain.machine.lifecycle import SandboxLifecycle
-from app.domain.machine.models import CloudHost, Environment, MachineStatus
+from app.domain.machine.models import CloudHost, MachineStatus, SandboxHome
 from app.domain.notice_meta import EVENT_TURN_TIMEOUT
 from app.domain.run_record.models import RunRecord
 from app.main import app
@@ -327,7 +327,7 @@ def _sandbox_home(client, task: dict, task_id: uuid.UUID) -> uuid.UUID:
                 select(AgentSession).where(AgentSession.conversation_id == task_id)
             )
             assert placed is not None, "the task's session was never placed"
-            home = Environment(
+            home = SandboxHome(
                 host_id=host.id,
                 spec="standard",
                 project_id=uuid.UUID(task["project_id"]),

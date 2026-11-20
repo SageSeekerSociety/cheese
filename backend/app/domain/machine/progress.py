@@ -23,14 +23,14 @@ from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent_session.models import AgentSession
 from app.domain.block.schemas import BlockOut
 from app.domain.conversation.services import room_of
-from app.domain.machine.models import Environment
+from app.domain.machine.models import SandboxHome
 from app.domain.repository.kept_work import keeps_work
 from app.domain.run_record.service import FRAME as RUN_RECORD_FRAME
 from app.domain.run_record.service import as_payload as run_record_payload
 from app.domain.run_record.service import record as keep_record
 
 
-async def _conversation(session: AsyncSession, home: Environment) -> uuid.UUID:
+async def _conversation(session: AsyncSession, home: SandboxHome) -> uuid.UUID:
     """The conversation the sandbox is for: its session's. A task's session
     works in the task's own conversation, while ``home.topic_id`` names the
     room its machine belongs to."""
@@ -61,7 +61,7 @@ async def say_in(
 
 
 async def _line(
-    session: AsyncSession, home: Environment, content: str, meta: dict
+    session: AsyncSession, home: SandboxHome, content: str, meta: dict
 ) -> dict | None:
     """Say it in the conversation: a person has something to do. A person's
     own 芝士 conversation has no lines of the platform's in it; its 芝士 hears
@@ -78,7 +78,7 @@ async def _line(
 
 
 async def _record(
-    session: AsyncSession, home: Environment, content: str, meta: dict
+    session: AsyncSession, home: SandboxHome, content: str, meta: dict
 ) -> dict | None:
     """Keep it as a run record of the conversation the sandbox is for."""
     kept = await keep_record(
@@ -92,7 +92,7 @@ async def _record(
 
 async def tell_preparing(
     session: AsyncSession,
-    home: Environment,
+    home: SandboxHome,
     sentence: str = "sandboxPreparing",
     *,
     whole_machine: bool = False,
@@ -108,7 +108,7 @@ async def tell_preparing(
 
 
 async def tell_ready(
-    session: AsyncSession, home: Environment, whole_machine: bool = False
+    session: AsyncSession, home: SandboxHome, whole_machine: bool = False
 ) -> dict | None:
     return await _record(
         session,
@@ -124,7 +124,7 @@ async def tell_ready(
 
 
 async def tell_replaced(
-    session: AsyncSession, home: Environment, whole_machine: bool = False
+    session: AsyncSession, home: SandboxHome, whole_machine: bool = False
 ) -> dict | None:
     return await _record(
         session,
@@ -134,14 +134,14 @@ async def tell_replaced(
     )
 
 
-async def _kept(session: AsyncSession, home: Environment) -> bool:
+async def _kept(session: AsyncSession, home: SandboxHome) -> bool:
     """Whether the sandbox's project keeps its task checkouts' uncommitted
     work off the sandbox (`repository.kept_work`): there that work comes along
     to the next one too, and the ``…Kept`` sentence says so."""
     return home.project_id is not None and await keeps_work(home.project_id, session)
 
 
-async def tell_lost(session: AsyncSession, home: Environment) -> dict | None:
+async def tell_lost(session: AsyncSession, home: SandboxHome) -> dict | None:
     """The sandbox's host stopped answering and the pool gave up on it: the
     session works in a new sandbox from what was kept."""
     return await _line(
@@ -153,7 +153,7 @@ async def tell_lost(session: AsyncSession, home: Environment) -> dict | None:
 
 
 async def tell_released(
-    session: AsyncSession, home: Environment, minutes: int
+    session: AsyncSession, home: SandboxHome, minutes: int
 ) -> dict | None:
     return await _record(
         session,
@@ -166,7 +166,7 @@ async def tell_released(
     )
 
 
-async def tell_unpaid(session: AsyncSession, home: Environment) -> dict | None:
+async def tell_unpaid(session: AsyncSession, home: SandboxHome) -> dict | None:
     return await _line(
         session,
         home,
@@ -180,7 +180,7 @@ async def tell_unpaid(session: AsyncSession, home: Environment) -> dict | None:
 
 
 async def tell_vm_released(
-    session: AsyncSession, home: Environment, minutes: int
+    session: AsyncSession, home: SandboxHome, minutes: int
 ) -> dict | None:
     return await _record(
         session,

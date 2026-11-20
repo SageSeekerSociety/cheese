@@ -26,7 +26,7 @@ from app.domain.agent_session.services import AgentSessionService
 from app.domain.machine import lifecycle
 from app.domain.machine import session_work as work_lease
 from app.domain.machine.lifecycle import SandboxLifecycle
-from app.domain.machine.models import Environment
+from app.domain.machine.models import SandboxHome
 from tests.integration.test_switch_pushes_first import _machines, _room
 
 pytestmark = pytest.mark.anyio
@@ -65,15 +65,15 @@ async def _on_alices_computers(client, monkeypatch):
 async def _home(client, room):
     async with client.test_factory() as db:
         return await db.scalar(
-            select(Environment).where(Environment.topic_id == room.topic_id)
+            select(SandboxHome).where(SandboxHome.topic_id == room.topic_id)
         )
 
 
 async def _last_used(client, room, ago: timedelta):
     async with client.test_factory() as db:
         await db.execute(
-            update(Environment)
-            .where(Environment.topic_id == room.topic_id)
+            update(SandboxHome)
+            .where(SandboxHome.topic_id == room.topic_id)
             .values(active_at=datetime.now(UTC) - ago)
         )
         await db.commit()

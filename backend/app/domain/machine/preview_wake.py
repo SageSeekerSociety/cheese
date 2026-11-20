@@ -3,7 +3,7 @@
 Two pieces that keep a ``cheese serve`` preview responsive without spending
 model turns:
 
-1. ``touch_preview_activity`` moves the serving session's ``Environment.active_at``
+1. ``touch_preview_activity`` moves the serving session's ``SandboxHome.active_at``
    forward when a reader's browser loads or interacts with the preview, at most
    once per ``ACTIVE_STEP`` (1 minute). While someone is actively browsing the
    preview, the idle sweeper does not reclaim the sandbox under them; once they
@@ -37,7 +37,7 @@ from app.core.redis import get_redis_client
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent_session.models import AgentSession
 from app.domain.machine import lifecycle
-from app.domain.machine.models import Environment
+from app.domain.machine.models import SandboxHome
 from app.domain.machine.repositories import CloudHostRepository
 from app.domain.machine.services import ACTIVE_STEP, HostPool
 from app.domain.machine.session_work import _session_author
@@ -46,7 +46,7 @@ from app.domain.room_task.place import Place
 
 logger = logging.getLogger("cheese.machine.preview_wake")
 
-#: Minimum interval between DB updates of ``Environment.active_at`` per
+#: Minimum interval between DB updates of ``SandboxHome.active_at`` per
 #: (conversation, seat) when a reader browses a preview.
 PREVIEW_TOUCH_STEP_S = ACTIVE_STEP.total_seconds()
 
@@ -111,7 +111,7 @@ async def touch_preview_activity(
     *,
     project_id: uuid.UUID | None = None,
 ) -> list[asyncio.Task[bool]]:
-    """Refresh ``Environment.active_at`` when a reader browses an app preview.
+    """Refresh ``SandboxHome.active_at`` when a reader browses an app preview.
 
     Throttled in-memory and in SQL to ``ACTIVE_STEP`` (1 minute) so bursts of
     asset requests from a dev server cost at most one row update per minute.
@@ -159,17 +159,17 @@ async def touch_preview_activity(
         cutoff = now - ACTIVE_STEP
         updated = list(
             await db.execute(
-                update(Environment)
+                update(SandboxHome)
                 .where(
-                    Environment.session_id == session_row.id,
-                    Environment.stopped_at.is_(None),
+                    SandboxHome.session_id == session_row.id,
+                    SandboxHome.stopped_at.is_(None),
                     or_(
-                        Environment.active_at.is_(None),
-                        Environment.active_at <= cutoff,
+                        SandboxHome.active_at.is_(None),
+                        SandboxHome.active_at <= cutoff,
                     ),
                 )
                 .values(active_at=now)
-                .returning(Environment.id, Environment.frozen_at)
+                .returning(SandboxHome.id, SandboxHome.frozen_at)
             )
         )
         for home_id, _frozen_at in updated:
@@ -255,16 +255,16 @@ async def wake_for_files(bind, conversation_id: uuid.UUID, *, hub=None) -> None:
     async with AsyncSession(bind, expire_on_commit=False) as db:
         now = datetime.now(UTC)
         await db.execute(
-            update(Environment)
+            update(SandboxHome)
             .where(
-                Environment.session_id.in_(
+                SandboxHome.session_id.in_(
                     select(AgentSession.id).where(
                         AgentSession.conversation_id == conversation_id
                     )
                 ),
-                Environment.stopped_at.is_(None),
-                Environment.frozen_at.is_(None),
-                Environment.active_at <= now - ACTIVE_STEP,
+                SandboxHome.stopped_at.is_(None),
+                SandboxHome.frozen_at.is_(None),
+                SandboxHome.active_at <= now - ACTIVE_STEP,
             )
             .values(active_at=now)
         )
@@ -272,11 +272,11 @@ async def wake_for_files(bind, conversation_id: uuid.UUID, *, hub=None) -> None:
         frozen = list(
             await db.scalars(
                 select(AgentSession.id)
-                .join(Environment, Environment.session_id == AgentSession.id)
+                .join(SandboxHome, SandboxHome.session_id == AgentSession.id)
                 .where(
                     AgentSession.conversation_id == conversation_id,
-                    Environment.frozen_at.is_not(None),
-                    Environment.stopped_at.is_(None),
+                    SandboxHome.frozen_at.is_not(None),
+                    SandboxHome.stopped_at.is_(None),
                 )
             )
         )
@@ -289,11 +289,11 @@ async def is_frozen(db: AsyncSession, conversation_id: uuid.UUID) -> bool:
     request sent to it would wait out its deadline, and asking costs no thaw."""
     found = await db.scalar(
         select(AgentSession.id)
-        .join(Environment, Environment.session_id == AgentSession.id)
+        .join(SandboxHome, SandboxHome.session_id == AgentSession.id)
         .where(
             AgentSession.conversation_id == conversation_id,
-            Environment.frozen_at.is_not(None),
-            Environment.stopped_at.is_(None),
+            SandboxHome.frozen_at.is_not(None),
+            SandboxHome.stopped_at.is_(None),
         )
         .limit(1)
     )

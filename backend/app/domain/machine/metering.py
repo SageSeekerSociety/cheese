@@ -33,7 +33,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.machine import holder as holders
-from app.domain.machine.models import GONE, CloudHost, Environment
+from app.domain.machine.models import GONE, CloudHost, SandboxHome
 from app.domain.usage.compute import SANDBOX, VM, ComputeMeter, hourly_price, vm_spec
 from app.domain.usage.ledger import Ledger
 from app.domain.usage.models import ComputeRun
@@ -54,22 +54,22 @@ def _running(*, include_frozen: bool = False):
 
     running = (
         select(
-            Environment.id,
-            Environment.project_id,
-            Environment.topic_id,
-            Environment.session_id,
+            SandboxHome.id,
+            SandboxHome.project_id,
+            SandboxHome.topic_id,
+            SandboxHome.session_id,
         )
-        .join(CloudHost, CloudHost.id == Environment.host_id)
+        .join(CloudHost, CloudHost.id == SandboxHome.host_id)
         .where(
-            Environment.stopped_at.is_(None),
-            Environment.waiting_since.is_(None),
+            SandboxHome.stopped_at.is_(None),
+            SandboxHome.waiting_since.is_(None),
             CloudHost.device_id.is_not(None),
             CloudHost.released_at.is_(None),
             CloudHost.whole_machine.is_(False),
         )
     )
     if not include_frozen:
-        running = running.where(Environment.frozen_at.is_(None))
+        running = running.where(SandboxHome.frozen_at.is_(None))
     return running
 
 
@@ -101,11 +101,11 @@ async def _observe_vms(session: AsyncSession, meter: ComputeMeter) -> tuple[int,
         if subject not in runs:
             unopened.append(host)
     # One read for every VM still to open, not one per VM.
-    homes: dict[uuid.UUID, Environment] = {}
+    homes: dict[uuid.UUID, SandboxHome] = {}
     if unopened:
         for home in await session.scalars(
-            select(Environment).where(
-                Environment.host_id.in_([host.id for host in unopened])
+            select(SandboxHome).where(
+                SandboxHome.host_id.in_([host.id for host in unopened])
             )
         ):
             assert home.host_id is not None
@@ -168,8 +168,8 @@ async def observe(session: AsyncSession) -> dict[str, int]:
     stops: dict[uuid.UUID, datetime | None] = {}
     if ended:
         rows = await session.execute(
-            select(Environment.id, Environment.stopped_at).where(
-                Environment.id.in_([uuid.UUID(s) for s in ended])
+            select(SandboxHome.id, SandboxHome.stopped_at).where(
+                SandboxHome.id.in_([uuid.UUID(s) for s in ended])
             )
         )
         stops = {home_id: stopped_at for home_id, stopped_at in rows.all()}

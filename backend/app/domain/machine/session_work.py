@@ -71,7 +71,7 @@ from app.domain.machine.lifecycle import (
     thaw_if_asked,
     use_session_work,
 )
-from app.domain.machine.models import CloudHost, Environment, sandbox_image_ready
+from app.domain.machine.models import CloudHost, SandboxHome, sandbox_image_ready
 from app.domain.machine.progress import publish_line
 from app.domain.machine.sandbox_images import image_for_session
 from app.domain.machine.sandbox_wait import (
@@ -795,7 +795,7 @@ async def switch_environment(
             await db.commit()
             await checkpoint(old, start)
         home = await db.scalar(
-            select(Environment).where(Environment.session_id == session_id)
+            select(SandboxHome).where(SandboxHome.session_id == session_id)
         )
         if home is not None and home.sandbox_image:
             home.stopped_at = datetime.now(UTC)

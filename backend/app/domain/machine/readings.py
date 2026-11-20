@@ -36,8 +36,8 @@ from app.core.config import settings
 from app.domain.machine import holder as holders
 from app.domain.machine.models import (
     CloudHost,
-    Environment,
     HostReading,
+    SandboxHome,
     SandboxUsage,
 )
 
@@ -199,7 +199,7 @@ async def _write(
         present = (
             set(
                 await session.scalars(
-                    select(Environment.id).where(Environment.id.in_(usage))
+                    select(SandboxHome.id).where(SandboxHome.id.in_(usage))
                 )
             )
             if usage

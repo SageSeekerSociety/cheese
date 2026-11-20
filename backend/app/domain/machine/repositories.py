@@ -15,10 +15,10 @@ from app.domain.machine.models import (
     TRANSITIONAL,
     AiStatus,
     CloudHost,
-    Environment,
     HostProjectStore,
     HostReading,
     MachineStatus,
+    SandboxHome,
 )
 
 
@@ -67,13 +67,13 @@ class CloudHostRepository:
         one holds no slot and is left out, unless ``parked``: whether a host
         is empty, for releasing it, counts them too."""
         query = (
-            select(Environment.host_id, func.count())
-            .join(CloudHost, CloudHost.id == Environment.host_id)
+            select(SandboxHome.host_id, func.count())
+            .join(CloudHost, CloudHost.id == SandboxHome.host_id)
             .where(CloudHost.released_at.is_(None))
-            .group_by(Environment.host_id)
+            .group_by(SandboxHome.host_id)
         )
         if not parked:
-            query = query.where(Environment.parked_at.is_(None))
+            query = query.where(SandboxHome.parked_at.is_(None))
         rows = await self._session.execute(query)
         return {host_id: int(homes) for host_id, homes in rows.all()}
 
@@ -101,10 +101,10 @@ class CloudHostRepository:
             counts[host_id] = int(
                 await self._session.scalar(
                     select(func.count())
-                    .select_from(Environment)
+                    .select_from(SandboxHome)
                     .where(
-                        Environment.host_id == host_id,
-                        Environment.created_at > reading.read_at,
+                        SandboxHome.host_id == host_id,
+                        SandboxHome.created_at > reading.read_at,
                     )
                 )
                 or 0
@@ -124,11 +124,11 @@ class CloudHostRepository:
 
     # --- homes ---------------------------------------------------------------
 
-    async def put_home(self, host_id: uuid.UUID, home: dict) -> Environment:
+    async def put_home(self, host_id: uuid.UUID, home: dict) -> SandboxHome:
         """Place a new home on a host, from its fields. The host now keeps its
         project's store too, whatever happens to this home later."""
         host = await self._session.get(CloudHost, host_id)
-        row = Environment(
+        row = SandboxHome(
             host_id=host_id, sandbox_image=host.sandbox_image if host else None, **home
         )
         self._session.add(row)
@@ -161,22 +161,22 @@ class CloudHostRepository:
             )
         )
 
-    async def put_device_home(self, device_id: str, home: dict) -> Environment:
+    async def put_device_home(self, device_id: str, home: dict) -> SandboxHome:
         """Place a new home on a person's computer, from its fields."""
-        row = Environment(device_id=device_id, **home)
+        row = SandboxHome(device_id=device_id, **home)
         self._session.add(row)
         await self._session.flush()
         return row
 
-    async def lock_home(self, home_id: uuid.UUID) -> Environment | None:
+    async def lock_home(self, home_id: uuid.UUID) -> SandboxHome | None:
         return await self._session.scalar(
-            select(Environment)
-            .where(Environment.id == home_id)
+            select(SandboxHome)
+            .where(SandboxHome.id == home_id)
             .with_for_update()
             .execution_options(populate_existing=True)
         )
 
-    async def lock_homes(self, home_ids: list[uuid.UUID]) -> list[Environment]:
+    async def lock_homes(self, home_ids: list[uuid.UUID]) -> list[SandboxHome]:
         """Those of the homes nobody else holds, locked in one statement.
 
         One another transaction holds is skipped, not waited on: a tool call
@@ -185,78 +185,78 @@ class CloudHostRepository:
         home this batch holds while the batch waits on its home."""
         return list(
             await self._session.scalars(
-                select(Environment)
-                .where(Environment.id.in_(home_ids))
+                select(SandboxHome)
+                .where(SandboxHome.id.in_(home_ids))
                 .with_for_update(skip_locked=True)
                 .execution_options(populate_existing=True)
             )
         )
 
-    async def current_home(self, session_id: uuid.UUID) -> Environment | None:
+    async def current_home(self, session_id: uuid.UUID) -> SandboxHome | None:
         """The home of the session's placement, as the database has it now:
         a sweep may have started destroying it since this session last read
         it."""
         return await self._session.scalar(
-            select(Environment)
-            .where(Environment.session_id == session_id)
+            select(SandboxHome)
+            .where(SandboxHome.session_id == session_id)
             .execution_options(populate_existing=True)
         )
 
-    async def homes_on(self, host_id: uuid.UUID) -> list[Environment]:
+    async def homes_on(self, host_id: uuid.UUID) -> list[SandboxHome]:
         return list(
             await self._session.scalars(
-                select(Environment).where(Environment.host_id == host_id)
+                select(SandboxHome).where(SandboxHome.host_id == host_id)
             )
         )
 
     async def room_homes(
         self, topic_id: uuid.UUID, room_resource_id: str
-    ) -> list[tuple[Environment, CloudHost]]:
+    ) -> list[tuple[SandboxHome, CloudHost]]:
         rows = await self._session.execute(
-            select(Environment, CloudHost)
-            .join(CloudHost, CloudHost.id == Environment.host_id)
+            select(SandboxHome, CloudHost)
+            .join(CloudHost, CloudHost.id == SandboxHome.host_id)
             .where(
-                Environment.topic_id == topic_id,
-                Environment.room_resource_id == room_resource_id,
+                SandboxHome.topic_id == topic_id,
+                SandboxHome.room_resource_id == room_resource_id,
                 # A home its session left is the idle sweep's, not the room's.
-                Environment.session_id.is_not(None),
+                SandboxHome.session_id.is_not(None),
             )
         )
         return [(home, host) for home, host in rows.all()]
 
-    async def waiting_homes(self) -> list[tuple[Environment, CloudHost]]:
+    async def waiting_homes(self) -> list[tuple[SandboxHome, CloudHost]]:
         """Homes whose room was told their sandbox is being prepared, and that
         wait for their host to come up."""
         rows = await self._session.execute(
-            select(Environment, CloudHost)
-            .join(CloudHost, CloudHost.id == Environment.host_id)
+            select(SandboxHome, CloudHost)
+            .join(CloudHost, CloudHost.id == SandboxHome.host_id)
             .where(
-                Environment.waiting_since.is_not(None),
-                Environment.stopped_at.is_(None),
+                SandboxHome.waiting_since.is_not(None),
+                SandboxHome.stopped_at.is_(None),
             )
         )
         return [(home, host) for home, host in rows.all()]
 
-    async def delete_home(self, home: Environment) -> None:
+    async def delete_home(self, home: SandboxHome) -> None:
         await self._session.delete(home)
         await self._session.flush()
 
     async def delete_homes_on(self, host_id: uuid.UUID) -> None:
         """Every home still recorded on this host, gone in one statement."""
         await self._session.execute(
-            delete(Environment).where(Environment.host_id == host_id)
+            delete(SandboxHome).where(SandboxHome.host_id == host_id)
         )
 
     async def delete_device_homes(self, device_id: str, resource_id: str) -> None:
         """The homes in the directory a room's cleanup removed from a machine."""
         hosts = select(CloudHost.id).where(CloudHost.device_id == device_id)
         await self._session.execute(
-            delete(Environment).where(
+            delete(SandboxHome).where(
                 or_(
-                    Environment.host_id.in_(hosts),
-                    Environment.device_id == device_id,
+                    SandboxHome.host_id.in_(hosts),
+                    SandboxHome.device_id == device_id,
                 ),
-                Environment.resource_id == resource_id,
+                SandboxHome.resource_id == resource_id,
             )
         )
 
@@ -264,9 +264,9 @@ class CloudHostRepository:
         self, topic_id: uuid.UUID, room_resource_id: str
     ) -> None:
         await self._session.execute(
-            delete(Environment).where(
-                Environment.topic_id == topic_id,
-                Environment.room_resource_id == room_resource_id,
+            delete(SandboxHome).where(
+                SandboxHome.topic_id == topic_id,
+                SandboxHome.room_resource_id == room_resource_id,
             )
         )
 

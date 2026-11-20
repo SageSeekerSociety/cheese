@@ -217,8 +217,8 @@ def _seed_sandbox(client, topic_id, seat) -> uuid.UUID:
         from app.domain.machine.models import (
             AiStatus,
             CloudHost,
-            Environment,
             MachineStatus,
+            SandboxHome,
         )
 
         async with client.test_request_factory() as db:
@@ -247,7 +247,7 @@ def _seed_sandbox(client, topic_id, seat) -> uuid.UUID:
             )
             db.add(host)
             await db.flush()
-            home = Environment(
+            home = SandboxHome(
                 host_id=host.id,
                 topic_id=topic_id,
                 room_resource_id=str(topic_id),
@@ -270,11 +270,11 @@ def _freeze(client, session_id) -> str:
     async def _do() -> str:
         from datetime import UTC, datetime, timedelta
 
-        from app.domain.machine.models import Environment
+        from app.domain.machine.models import SandboxHome
 
         async with client.test_request_factory() as db:
             home = await db.scalar(
-                select(Environment).where(Environment.session_id == session_id)
+                select(SandboxHome).where(SandboxHome.session_id == session_id)
             )
             home.frozen_at = datetime.now(UTC) - timedelta(minutes=5)
             home.active_at = datetime.now(UTC) - timedelta(minutes=15)
@@ -393,7 +393,7 @@ def test_waking_an_app_that_exited_in_a_running_sandbox_asks_the_agent(
 
 
 def test_browsing_an_app_preview_refreshes_sandbox_idle_clock(client, preview_config):
-    """Browsing a previewed app moves its session's `Environment.active_at`
+    """Browsing a previewed app moves its session's `SandboxHome.active_at`
     forward (throttled to `ACTIVE_STEP`) so the idle sweeper does not reclaim
     the sandbox while someone is using the preview."""
     from datetime import UTC, datetime, timedelta
@@ -402,8 +402,8 @@ def test_browsing_an_app_preview_refreshes_sandbox_idle_clock(client, preview_co
     from app.domain.machine.models import (
         AiStatus,
         CloudHost,
-        Environment,
         MachineStatus,
+        SandboxHome,
     )
     from app.domain.machine.preview_wake import (
         clear_preview_touch_cache,
@@ -438,7 +438,7 @@ def test_browsing_an_app_preview_refreshes_sandbox_idle_clock(client, preview_co
             )
             db.add(host)
             await db.flush()
-            home = Environment(
+            home = SandboxHome(
                 host_id=host.id,
                 topic_id=topic_id,
                 room_resource_id=str(topic_id),
@@ -448,7 +448,7 @@ def test_browsing_an_app_preview_refreshes_sandbox_idle_clock(client, preview_co
                 spec="standard",
                 active_at=stale,
             )
-            other_home = Environment(
+            other_home = SandboxHome(
                 host_id=host.id,
                 topic_id=topic_id,
                 room_resource_id=str(topic_id),
@@ -467,15 +467,15 @@ def test_browsing_an_app_preview_refreshes_sandbox_idle_clock(client, preview_co
     async def _touch_and_read() -> tuple[datetime, datetime, datetime]:
         async with client.test_request_factory() as db:
             await touch_preview_activity(db, topic_id, seat)
-            first = (await db.get(Environment, home_id)).active_at
-            other = (await db.get(Environment, other_home_id)).active_at
+            first = (await db.get(SandboxHome, home_id)).active_at
+            other = (await db.get(SandboxHome, other_home_id)).active_at
             # Move it back in DB without clearing the in-memory throttle: a
             # second call within ACTIVE_STEP must skip the DB write.
-            home = await db.get(Environment, home_id)
+            home = await db.get(SandboxHome, home_id)
             home.active_at = stale
             await db.commit()
             await touch_preview_activity(db, topic_id, seat)
-            second = (await db.get(Environment, home_id)).active_at
+            second = (await db.get(SandboxHome, home_id)).active_at
             return first, second, other
 
     first, second, other = client.portal.call(_touch_and_read)
@@ -497,8 +497,8 @@ def test_opening_a_frozen_sandboxes_preview_thaws_it(
     from app.domain.machine.models import (
         AiStatus,
         CloudHost,
-        Environment,
         MachineStatus,
+        SandboxHome,
     )
     from app.domain.machine.preview_wake import (
         clear_preview_touch_cache,
@@ -531,7 +531,7 @@ def test_opening_a_frozen_sandboxes_preview_thaws_it(
             )
             db.add(host)
             await db.flush()
-            home = Environment(
+            home = SandboxHome(
                 host_id=host.id,
                 topic_id=topic_id,
                 room_resource_id=str(topic_id),
@@ -560,7 +560,7 @@ def test_opening_a_frozen_sandboxes_preview_thaws_it(
         assert len(tasks) == 1, "a frozen sandbox was not asked to thaw"
         started = await tasks[0]
         async with client.test_request_factory() as db:
-            home = await db.get(Environment, home_id)
+            home = await db.get(SandboxHome, home_id)
             row = await AgentSessionService(db).by_id(session_id)
             return (
                 started,
