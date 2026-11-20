@@ -2,7 +2,7 @@
 //
 // 以前它是左边那一列 64px 的方块栏（LeftAppRail）：首页一格、一个项目一格、「＋」一格，
 // 底下问芝士和头像。2026-11-16 那一列拿掉了（蔡松洋定的方向一）：项目切换器住进侧栏头，
-// 写你在哪儿；首页是它下面的一行，带等你处理的总件数；问芝士和头像住进侧栏底。没有侧栏
+// 写你在哪儿；首页是它下面的一行，带等你处理的总件数（首页那一格的侧栏不画这一行）；问芝士和头像住进侧栏底。没有侧栏
 // 的页面、平板上侧栏收起时，首页、问芝士和头像临时回到顶栏。格子怎么来（顺序、件数、落点、快捷键）还是 destinations.ts 算，
 // 外壳算一次、在这里交出去，侧栏和顶栏只画。
 import type { Component, ComputedRef, InjectionKey } from 'vue'
@@ -39,7 +39,7 @@ export function useAppNav(): AppNav | null {
   return inject(KEY, null)
 }
 
-/** 首页那一格（项目切换器菜单最上面那一行「首页」）。侧栏头上那一行 2026-11-19 删了。 */
+/** 首页那一格（侧栏上「首页」那一行）。 */
 export function homeItemOf(items: NavGenericItem[]): NavItem | null {
   return (items.find((i) => i.type === 'item' && i.icon === 'cheese') as NavItem | undefined) ?? null
 }

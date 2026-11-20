@@ -18,10 +18,10 @@ paths:
   `使用通行密钥登录`, so use `getByLabel('密码', { exact: true })` and
   `getByRole('button', { name: '登录', exact: true })`. On desktop the sidebar
   head is `getByTestId('sidebar-frame-top')` and projects are rows of its
-  switcher (`openProjectSwitcher` in `helpers.ts`). There is no 首页 row any
-  more (2026-11-19): 待办 is a row of the home sidebar's own directory
-  (`getByRole('link', { name: '待办' })`), and from a project you reach it
-  through the head's menu.
+  switcher (`openProjectSwitcher` in `helpers.ts`). In project, space and admin
+  sidebars the 首页 row under the head is `getByTestId('sidebar-home')`; the
+  home area's sidebar has no such row, and 待办 is a row of its own directory
+  (`getByRole('link', { name: '待办' })`).
 - **Seed chain**: alice comes from the seed migration; her PROJECT comes from
   `backend/scripts/seed_fusion_demo.py` (CI runs it in e2e.yml). A spec
   assuming a project tile without that seed passes locally on a dev DB and

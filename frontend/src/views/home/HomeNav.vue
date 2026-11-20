@@ -38,7 +38,7 @@ import TransferTeamDialog from '@/views/teams/TransferTeamDialog.vue'
 
 const props = defineProps<{
   /** 手机上「待办」是底栏的一格，这里就不再列一次。桌面上这一行是去 /inbox 的常驻路
-   *  （侧栏头下面原来也有一行「首页」，2026-11-19 删了）。 */
+   *  （首页这一格的侧栏头下面不画「首页」那一行）。 */
   inbox?: boolean
   /** 我所在的团队（含自己名下那一个）。 */
   teams: Team[]

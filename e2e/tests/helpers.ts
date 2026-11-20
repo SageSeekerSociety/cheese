@@ -106,8 +106,8 @@ export async function apiLogin(page: Page, language: "zh-CN" | "en" = "zh-CN") {
   );
   await page.goto("/inbox");
   // The app shell is up when the sidebar head (the project switcher's row) is
-  // there. The 首页 row it used to be is gone (2026-11-19): 待办 is reached
-  // through this row's menu now.
+  // there. /inbox is in the home area, whose sidebar has no 首页 row under the
+  // head (its own 待办 row leads there), so the head is what to wait on.
   await page
     .getByTestId("sidebar-frame-top")
     .waitFor();

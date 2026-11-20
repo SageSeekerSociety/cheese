@@ -1,5 +1,5 @@
 // 侧栏最上面：侧栏头写你在哪儿（项目里是这个项目，首页一带是「首页」），点开是项目列表；
-// 下面一整条搜索。原来「首页」那一行 2026-11-19 删了，回首页走切换器菜单里那一行。
+// 下面一整条搜索；项目、空间、后台里再下面「首页」一行，带等你处理的总件数，由它回首页。
 import type { Project } from '@/cx_types'
 import type { NavGenericItem } from './types'
 
@@ -8,7 +8,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render, screen } from '@testing-library/vue'
+import { cleanup, fireEvent, render, screen, within } from '@testing-library/vue'
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import { provideAppNav } from './appNav'
@@ -86,7 +86,7 @@ function railOf(): NavGenericItem[] {
   ]
 }
 
-async function mount(path: string, reorder = vi.fn()) {
+async function mount(path: string, reorder = vi.fn(), props: { homeArea?: boolean } = {}) {
   await router.push(path)
   await router.isReady()
   const Host = defineComponent({
@@ -99,7 +99,7 @@ async function mount(path: string, reorder = vi.fn()) {
         frame: { top: SidebarFrameTop, foot: SidebarFrameTop },
         foldSidebar: computed(() => null),
       })
-      return () => h(SidebarFrameTop)
+      return () => h(SidebarFrameTop, props)
     },
   })
   return render(Host, { global: { plugins: [vuetify, router] } })
@@ -143,24 +143,28 @@ describe('侧栏头写你在哪儿', () => {
   })
 })
 
-describe('侧栏头上没有「首页」那一行', () => {
-  // 2026-11-19 蔡松洋定：侧栏头下面那一行「首页」四处侧栏一起删，顶栏那一处也去掉。
-  // 回首页走项目切换器菜单里的「首页」，命令面板也搜得到「待办」。这一条钉住「删干净了」，
-  // 免得它从别处又长回来。
-  it('项目页的侧栏头只有头、搜索，没有去 /inbox 的一行', async () => {
+describe('「首页」那一行', () => {
+  // 项目、空间、后台的侧栏头写的是你在哪儿，回首页要一下就够得着，等你处理的总件数也得一直看得见。
+  it('项目里：一下回首页，带等你处理的总件数', async () => {
     const view = await mount('/projects/p1/topics/t1')
-    expect(view.getByTestId('project-switcher')).not.toBeNull()
-    expect(view.getByTestId('sidebar-search')).not.toBeNull()
-    expect(view.queryByTestId('sidebar-home')).toBeNull()
-    expect(view.container.querySelector('a[href="/inbox"]')).toBeNull()
+    const row = within(view.container).getByRole('link', { name: /^首页/ })
+    expect(row.getAttribute('href')).toBe('/inbox')
+    expect(row.textContent).toContain('5')
+    await fireEvent.click(row)
+    await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/inbox'))
   })
 
-  it('首页一带也一样：入口在切换器菜单里，不在侧栏头上', async () => {
-    const view = await mount('/teams/ruc')
-    expect(view.queryByTestId('sidebar-home')).toBeNull()
+  it('空间、后台的侧栏也有', async () => {
+    for (const path of ['/spaces/s1/announcements', '/admin']) {
+      const view = await mount(path)
+      expect(within(view.container).getByRole('link', { name: /^首页/ }).getAttribute('href'), path).toBe('/inbox')
+      cleanup()
+    }
+  })
+
+  it('首页那一格的侧栏没有这一行：侧栏头已经写着「首页」', async () => {
+    const view = await mount('/teams/ruc', vi.fn(), { homeArea: true })
+    expect(view.getByTestId('project-switcher').textContent?.trim()).toBe('首页')
     expect(view.container.querySelector('a[href="/inbox"]')).toBeNull()
-    await fireEvent.click(view.getByTestId('project-switcher'))
-    const row = await screen.findByRole('link', { name: /首页/ })
-    expect(row.getAttribute('href')).toBe('/inbox')
   })
 })

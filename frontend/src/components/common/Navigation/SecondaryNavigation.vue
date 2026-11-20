@@ -19,9 +19,10 @@
       :title="t('navigation.sidebar.resize')"
       @pointerdown="startResize"
     />
-    <!-- 桌面上侧栏头和侧栏底：项目切换器、搜索，头像 + 问芝士（appNav.ts）。
-         四处侧栏（项目、首页、空间、后台）都长这两段，左边那一列拿掉后它们住在这里。 -->
-    <template v-if="frame" #prepend><component :is="frame.top" /></template>
+    <!-- 桌面上侧栏头和侧栏底：项目切换器、搜索和「首页」那一行，头像 + 问芝士（appNav.ts）。
+         四处侧栏（项目、首页、空间、后台）都长这两段，左边那一列拿掉后它们住在这里；首页那一格
+         的侧栏不画「首页」那一行（`homeArea`）。 -->
+    <template v-if="frame" #prepend><component :is="frame.top" :home-area="homeArea" /></template>
     <slot></slot>
     <template v-if="frame" #append><component :is="frame.foot" /></template>
   </v-navigation-drawer>
@@ -53,6 +54,8 @@ interface Props {
   border?: string
   // 自定义类名
   customClass?: string
+  // 首页那一格的侧栏（HomeSidebarView）：侧栏头已经写着「首页」，不再画下面那一行「首页」
+  homeArea?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
