@@ -107,14 +107,15 @@ def _checkpoints(method: str, params: dict) -> bool:
 _STARTS_WORK = frozenset({"invoke", "mcp", "control"})
 
 
-def _with_caller(method: str, params: dict, caller: dict) -> dict:
+def _with_caller(method: str, params: dict, caller: dict | None) -> dict:
     """``params`` as the machine is sent them: a call that may start work
     names whose it is (``caller``), as the credential it came with says. Set
     here, over whatever the request said, so the name a command runs under is
     always the one this route verified."""
     if method not in _STARTS_WORK:
         return params
-    return {**params, "caller": caller}
+    named = {key: value for key, value in params.items() if key != "caller"}
+    return named if caller is None else {**named, "caller": caller}
 
 
 class ExecutionRequest(BaseModel):
@@ -257,12 +258,17 @@ async def execute(
         raise ForbiddenError("This credential only reads the machine's files")
     target = lease
     # Who the call is from: the session attached to the machine (its
-    # attachment), the conversation it works and the seat it acts under.
-    caller = {
-        "attachment": str(session_id),
-        "conversation": str(topic_id),
-        **({"author": claims["a"]} if claims.get("a") else {}),
-    }
+    # attachment), the conversation it works and the seat it acts under. A
+    # credential no session holds names nobody: the call is the machine's own.
+    caller = (
+        {
+            "attachment": str(session_id),
+            "conversation": str(topic_id),
+            **({"author": claims["a"]} if claims.get("a") else {}),
+        }
+        if session_id is not None
+        else None
+    )
     if _checkpoints(payload.method, payload.params) and (
         await machine_owner_reads.sandbox_destroyed(
             db, target["device_id"], target.get("resource_id")

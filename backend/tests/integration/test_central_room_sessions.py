@@ -790,7 +790,11 @@ async def test_scoped_execution_and_controls_use_platform_owned_target(
     assert response.status_code == 200, response.text
     assert response.json() == {"content": "executor file"}
     assert call.await_args is not None
-    assert call.await_args.args == (target, "invoke", payload["params"])
+    sent_to, method, sent = call.await_args.args
+    assert (sent_to, method) == (target, "invoke")
+    # The tool call arrives as asked, and says which conversation it is from.
+    assert {key: sent[key] for key in payload["params"]} == payload["params"]
+    assert sent["caller"]["conversation"] == str(topic)
     assert call.await_args.kwargs["trace_id"].startswith("execution-")
     context_fs = {"method": "context_fs", "params": {"operation": "tree"}}
     response = client.post(endpoint, headers=headers, json=context_fs)
