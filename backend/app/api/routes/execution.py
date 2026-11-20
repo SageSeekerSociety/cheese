@@ -225,7 +225,7 @@ async def execute(
         # a machine to push, and what it held was pushed by the checkpoint of
         # the turn that last used it, or kept.
         return {}
-    if not current or released:
+    if owned is None or lease is None or not current or released:
         raise ConflictError("Execution generation is no longer current")
     if payload.method not in {
         "ping",
