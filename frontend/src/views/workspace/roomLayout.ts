@@ -2,7 +2,8 @@
 // 布局区（layouts/pagePanels.ts）。页签可以拖去和别的并排、拖进对话那一格，格子可以收起、
 // 放大，摆法按页面的种类（频道 / 任务 / 私聊）记在这台设备上。
 //
-// 对话那一块和工作面板固定的那几格不能关（只能挪）；对话独占一格时不画页签栏。工作面板那几格
+// 对话那一块和工作面板固定的那几格不能关（只能挪）；频道和私聊里对话独占一格时不画页签栏，
+// 任务页上它和别的格子一样有页签栏（收起、放大）。工作面板那几格
 // 同属 `work` 这一组：新打开的一格（一件任务、一份文件）落到这一组页签最多的那一格里，✕ 也只在
 // 那一格上。「收起」（✕、页头的「概览」）收的是只装着这一组的那几格；挪进对话那一格的不跟着收。
 //
@@ -78,15 +79,17 @@ export function useRoomLayout(
       signal: tab.signal,
       temporary: tab.temporary,
       transient: tab.transient,
+      beside: tab.beside,
       alwaysRender: tab.alwaysRender,
       group: WORK_GROUP,
-      // 固定的几格和今天一样不能关（挪去哪都行）；能关的是打开的任务和文件。
-      closable: !!tab.transient,
+      // 固定的几格不能关（挪去哪都行）；能关的是打开的任务和文件，以及任务的「文件」那一格。
+      closable: !!tab.transient || !!tab.closable,
       minWidth: 360,
       hidden: opts.workHidden(),
       actions: [hideAction],
     }))
-    const fixed = work.filter((panel) => !panel.transient).map((panel) => panel.id)
+    // 默认摆法里只有不能关的那几格：「文件」由读者打开（「+」、点一个文件链接）。
+    const fixed = work.filter((panel) => !panel.closable).map((panel) => panel.id)
     // 没拖过的人：窄桌面对半分，宽屏（≥ 1440px）把多出来的那块给工作面板。
     const wide = window.innerWidth >= 1440
     const arrangement: LayoutNode = {
@@ -104,8 +107,9 @@ export function useRoomLayout(
           title: t('work.room.tabs.chat'),
           icon: 'mdi-message-outline',
           minWidth: 480,
-          // 对话独占一格时不画页签栏：页面和今天一样；有别的页签拖进来才出现。
-          stripWhenShared: true,
+          // 频道和私聊：对话独占一格时不画页签栏，有别的页签拖进来才出现。任务页上对话那一格
+          // 和别的格子一样有页签栏，能收起、放大。
+          stripWhenShared: kind !== 'task',
           signal: chatNews.value ? { kind: 'dot' } : undefined,
         },
         ...work,

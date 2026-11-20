@@ -29,7 +29,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.errors import ValidationError
 from app.core.sentences import say
-from app.domain.agent_session.models import LEASE_DEVICE, LOST_KEY, AgentSession
+from app.domain.agent_session.models import (
+    LEASE_DEVICE,
+    LOST_KEY,
+    AgentSession,
+    released_lease,
+)
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import Supply
 from app.domain.machine import enrollment, host_refresh
@@ -698,6 +703,8 @@ class PoolSweep:
                     **(row.execution_request or {}),
                     LOST_KEY: True,
                 }
+                if (row.work_lease or {}).get("device_id") == host.device_id:
+                    row.work_lease = released_lease(row.work_lease)
                 lost += 1
                 lines.append((home.topic_id, await tell_lost(self._session, home)))
             elif home.waiting_since is not None:

@@ -52,6 +52,8 @@ export interface LayoutPanel {
    * the page to drop it (`close`).
    */
   transient?: boolean
+  /** A transient panel that appears in a cell of its own, beside the cell of this panel. */
+  beside?: string
   /** The cell's folded state is the same wherever the panel is placed, remembered under this key. */
   foldKey?: string
   /** What to render. Without it the layer renders the area's `panel` slot with `{ id }`. */

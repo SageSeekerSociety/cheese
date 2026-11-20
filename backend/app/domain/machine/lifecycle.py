@@ -106,6 +106,7 @@ from app.domain.agent_session.models import (
     PARKED_KEY,
     THAW_KEY,
     AgentSession,
+    released_lease,
 )
 from app.domain.block.models import Block, BlockKind
 from app.domain.machine import holder as holders
@@ -1306,6 +1307,8 @@ class SandboxLifecycle:
                 }
                 request[PARKED_KEY] = running
                 row.execution_request = request
+                if (row.work_lease or {}).get("device_id") == device_id:
+                    row.work_lease = released_lease(row.work_lease)
         await keep_parked(
             self._session,
             conversation_id=home.topic_id,
@@ -1518,6 +1521,8 @@ class SandboxLifecycle:
                 if running:
                     request[LOST_PROCESSES_KEY] = running
                 row.execution_request = request
+                if (row.work_lease or {}).get("device_id") == device_id:
+                    row.work_lease = released_lease(row.work_lease)
                 # The platform has just taken this session's machine away, and
                 # it is the one authority that knows a runner will never report
                 # the end of the turn that was running on it. Recording that

@@ -50,5 +50,8 @@
   "modelCallFromMachineNeedsSocket": "执行机上的凭据不能调模型：沙箱里请经平台 socket（$CHEESE_PLATFORM_SOCKET）调用",
   "deviceCodeSpent": "这个设备码已失效，请在设备上重新运行 cheesehost auth login",
   "deviceTokenNotReplaced": "只有平台自己开的机器能更换令牌，这台机器是成员自己接入的",
-  "modelPathNotProxied": "模型代理只转发调用模型的接口（{path} 不在其中）"
+  "modelPathNotProxied": "模型代理只转发调用模型的接口（{path} 不在其中）",
+  "taskMachineNoSession": "这个任务还没有准备过环境，暂时无法编辑文件",
+  "taskMachinePreparing": "任务的环境正在准备，稍后再保存",
+  "taskMachinePrepareFailed": "保存失败：任务的环境未能准备好，稍后重试"
 }

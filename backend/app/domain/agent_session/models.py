@@ -61,9 +61,37 @@ from app.domain.common import Timestamps, UuidPk
 # foreign key resolves in a process that never imports `app.models`.
 from app.domain.conversation.models import Conversation  # noqa: F401
 
+#: The ``status`` of a lease whose sandbox was destroyed (idle, or given up with
+#: its host) or parked with its processes stopped (``released_lease``): it
+#: still names the machine and home it was on, and nothing there answers for
+#: the session's work until a placement replaces it with a ready lease. Whether
+#: a machine holds the work is this; whether the agent has been told it lost
+#: its sandbox is ``LOST_KEY`` / ``PARKED_KEY``, which the first tool call that
+#: carries a notice reads and clears, whoever brought the machine back.
+RELEASED = "released"
+
+
+def released_lease(lease: dict | None) -> dict | None:
+    """``lease`` as it stands once its sandbox is gone (``RELEASED``): checked
+    by nobody since (`verified_at` dropped), and the claim of an install that
+    was running on it ended with it."""
+    if lease is None:
+        return None
+    return {
+        **{
+            key: value
+            for key, value in lease.items()
+            if key not in ("verified_at", "claim", "claim_until")
+        },
+        "status": RELEASED,
+    }
+
+
 #: Set in a session's ``execution_request`` when its cloud sandbox was destroyed
-#: (idle, or given up with its host). Cleared by the first tool call that lands
-#: in a new one; until then the room's lease still names the machine it was on.
+#: (idle, or given up with its host): the notice its agent is owed. Cleared by
+#: the first tool call that carries a notice in the sandbox that replaced it —
+#: one the agent placed, or one a person brought back for the task's files.
+#: Whether a machine holds the session's work is its lease's (``RELEASED``).
 LOST_KEY = "sandbox_lost"
 #: Set beside ``LOST_KEY`` when the host could say what was running in the
 #: sandbox it destroyed (``sandbox_home.destroy``): each process's command
@@ -75,8 +103,10 @@ LOST_PROCESSES_KEY = "sandbox_lost_processes"
 #: Set in a session's ``execution_request`` when its cloud sandbox was parked
 #: (``lifecycle._park``): its processes stopped, its home kept on the host.
 #: The value is what was running, as ``LOST_PROCESSES_KEY`` names it (an empty
-#: list when nothing was). The first tool call that lands in it again is told
-#: its files are all there and its processes are not, and clears it.
+#: list when nothing was). The agent's first tool call that carries a notice
+#: once it runs again is told its files are all there and its processes are
+#: not, and clears it; like ``LOST_KEY`` it is the notice, not the machine's
+#: state.
 PARKED_KEY = "sandbox_parked"
 #: Set in a session's ``execution_request`` when it asked for another cloud
 #: sandbox while it already had one — the spec it is on, asked again

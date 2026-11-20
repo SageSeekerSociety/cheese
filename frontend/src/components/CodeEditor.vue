@@ -140,6 +140,8 @@ const props = withDefaults(
 const emit = defineEmits<{
   (e: 'update:modelValue', v: string): void
   (e: 'save'): void
+  /** ⌘/Ctrl-P inside the editor: find a file by name (the browser's print dialog is not wanted). */
+  (e: 'quick-open'): void
 }>()
 
 const host = ref<HTMLElement | null>(null)
@@ -217,6 +219,7 @@ onMounted(async () => {
   })
   // ⌘/Ctrl-S saves without the browser's save dialog.
   editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => emit('save'))
+  editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyP, () => emit('quick-open'))
   showLines()
 })
 

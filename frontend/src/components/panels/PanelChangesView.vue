@@ -8,12 +8,12 @@
 //
 // 合成之后只有一棵树，标着每个文件改了多少。默认那一面把这次改到的文件连着往下排
 // （顶部是宿主塞进来的这次交付的情况，`head` 插槽），每段的差异默认收着，点段头铺开
-// 一段；点树上的文件就滚到它那一段并把它铺开。要看全文或微调就点段头的「打开」，那一
-// 份单独开在这一格里（保存冲突的两条出路原样保留）。不在改动里的文件从「打开其他
-// 文件」挑。
+// 一段；点树上的文件就滚到它那一段并把它铺开。要看全文就点段头的「打开」，那一份单独
+// 开在这一格里；要改它，横条上的「编辑」把它开到任务的「文件」那一格。这一格只看、只审。
+// 不在改动里的文件从「打开其他文件」挑。
 //
 // **只认 props**：改过的文件、diff、当前打开哪一份、它读回来的正文，都是从外面
-// 递进来的；点一份文件、按保存、切版本发事件出去。取数在
+// 递进来的；点一份文件、去编辑、切版本发事件出去。取数在
 // `composables/usePanelChanges.ts`，`PanelChanges.vue` 那只薄容器把它接上——
 // 于是这一格在测试和 /demo 里都只需要一串 props。
 //
@@ -26,13 +26,12 @@ import type { DocumentRevisionsBundle } from '../../composables/useDocumentRevis
 import type { FileSource, RoomTask, WorkspaceFile } from '../../cx_types'
 import type { DiffLine, FileDiff } from '../../lib/diff'
 import type { FileKind } from '../../lib/fileKind'
-import type { MergeConflict, OfficeComparison, ReviewBundle } from '../../types/reviewComment'
+import type { OfficeComparison, ReviewBundle } from '../../types/reviewComment'
 
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useDisplay } from 'vuetify'
 
 import { buildFileRows } from '../../lib/changesTree'
-import ReviewMergePicker from '../review/ReviewMergePicker.vue'
 
 import ChangesAllView from './ChangesAllView.vue'
 import ChangesFileBar from './ChangesFileBar.vue'
@@ -69,22 +68,18 @@ const props = defineProps<{
   /** 「打开其他文件」从这里挑：这个来源里的全部文件。 */
   allFiles: WorkspaceFile[]
   openPath: string | null
-  fileDraft: string
-  fileSaving: boolean
-  fileDirty: boolean
+  fileText: string
   fileVersion: string | null
   fileBinary: boolean
   fileTooLarge: boolean
   fileBytes: number
   fileReadOnly: boolean
-  fileConflict: boolean
-  /** 存的时候和别人的修改重叠了：逐处选一个版本。 */
-  fileMerge?: MergeConflict | null
-  agentName?: string
+  /** 这件任务有「文件」那一格：打开的文件可以去那里编辑。 */
+  canEdit?: boolean
   openDiff: FileDiff | null
   openDiffLines: DiffLine[]
-  effectiveView: 'diff' | 'edit'
-  fileView: 'diff' | 'edit'
+  effectiveView: 'diff' | 'text'
+  fileView: 'diff' | 'text'
   openIsImage: boolean
   openIsDocument: boolean
   openDocumentType: FileKind | null
@@ -95,7 +90,6 @@ const props = defineProps<{
   openImageError: string
   collapsedDirs: Set<string>
   revealTick: number
-  draftCount: number
   docBytes: ArrayBuffer | null
   docLoading: boolean
   docError: string
@@ -122,14 +116,10 @@ const emit = defineEmits<{
   'toggle-dir': [path: string]
   refresh: []
   download: []
-  save: []
-  overwrite: []
-  'resolve-merge': [content: string]
-  'cancel-merge': []
+  /** 在任务的「文件」那一格编辑打开的这份文件。 */
+  'edit-file': [path: string]
   'toggle-compare': []
-  reload: []
-  'view-changed': [view: 'diff' | 'edit']
-  'draft-changed': [content: string]
+  'view-changed': [view: 'diff' | 'text']
 }>()
 
 const { mdAndUp } = useDisplay()
@@ -231,19 +221,18 @@ const fileRows = computed(() =>
     <ChangesFileBar
       :open-path="props.openPath"
       :source-status="props.sourceStatus"
-      :file-dirty="props.fileDirty"
       :open-diff="props.openDiff"
       :open-is-document="props.openIsDocument"
       :effective-view="props.effectiveView"
       :file-read-only="props.fileReadOnly"
-      :file-saving="props.fileSaving"
+      :can-edit="props.canEdit"
       :current-task="props.currentTask"
       :file-source="props.fileSource"
       :file-tool-ready="props.fileToolReady"
       :refreshing="props.refreshing"
       @close-file="emit('close-file')"
       @view-changed="emit('view-changed', $event)"
-      @save="emit('save')"
+      @edit-file="props.openPath && emit('edit-file', props.openPath)"
       @select-version="emit('select-version', $event)"
       @download="emit('download')"
       @refresh="emit('refresh')"
@@ -294,26 +283,6 @@ const fileRows = computed(() =>
           t('work.room.changes.retryLive')
         }}</BaseButton>
       </div>
-      <!-- 保存冲突: 芝士 wrote this file after it was read. Show it and let the
-         human choose — a silent winner is how edits vanished. -->
-      <ReviewMergePicker
-        v-if="props.fileMerge"
-        :regions="props.fileMerge.regions"
-        :agent-name="props.agentName ?? ''"
-        :busy="props.fileSaving"
-        @resolve="emit('resolve-merge', $event)"
-        @cancel="emit('cancel-merge')"
-      />
-      <div v-else-if="props.fileConflict" class="file-conflict">
-        <v-icon size="15" class="me-1">mdi-alert-outline</v-icon>
-        <span class="file-conflict__text"> {{ t('work.room.changes.conflict') }} </span>
-        <BaseButton kind="ghost" size="sm" @click="emit('reload')">{{
-          t('work.room.changes.reloadLatest')
-        }}</BaseButton>
-        <BaseButton kind="danger" size="sm" :loading="props.fileSaving" @click="emit('overwrite')">
-          {{ t('work.room.changes.saveAnyway') }}
-        </BaseButton>
-      </div>
       <div class="file-body">
         <ChangesFileTree
           v-if="treeShown"
@@ -360,11 +329,8 @@ const fileRows = computed(() =>
             :file-binary="props.fileBinary"
             :file-too-large="props.fileTooLarge"
             :file-bytes="props.fileBytes"
-            :file-draft="props.fileDraft"
-            :file-read-only="props.fileReadOnly"
+            :file-text="props.fileText"
             @download="emit('download')"
-            @save="emit('save')"
-            @draft-changed="emit('draft-changed', $event)"
             @toggle-compare="emit('toggle-compare')"
           />
           <!-- 没打开文件时是全部改动那一面：这次交付的情况在最上面（宿主塞进来），下面
@@ -396,9 +362,6 @@ const fileRows = computed(() =>
         </div>
       </div>
     </div>
-    <p v-if="props.draftCount" class="source-note source-drafts">
-      {{ t('work.room.changes.draftsKept') }}
-    </p>
     <ChangesOpenFile v-model="pickerOpen" :files="props.allFiles" @pick="openOther" />
   </div>
 </template>
@@ -412,9 +375,6 @@ const fileRows = computed(() =>
   font-size: 13px;
   color: var(--muted);
   overflow-wrap: anywhere;
-}
-.source-drafts {
-  border-top: 1px solid var(--line);
 }
 
 .panel-changes {
@@ -462,24 +422,8 @@ const fileRows = computed(() =>
   flex: 1 1 auto;
   min-height: 0;
 }
-.file-conflict {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  flex-wrap: wrap;
-  padding: 6px 8px;
-  font-size: 13px;
-  color: rgb(var(--v-theme-error));
-  background: rgba(var(--v-theme-error), 0.07);
-  border-bottom: 1px solid rgba(var(--v-theme-error), 0.25);
-  flex: 0 0 auto;
-}
-.file-conflict__text {
-  flex: 1 1 200px;
-  min-width: 0;
-}
-/* 现场没答上来时那条说明：和冲突那条不同，它不是错误（红底会把「可以先看这个」
-   读成「坏了」），用中性的底和墨色。 */
+/* 现场没答上来时那条说明：它不是错误（红底会把「可以先看这个」读成「坏了」），用中性
+   的底和墨色。 */
 .live-fallback {
   display: flex;
   align-items: center;

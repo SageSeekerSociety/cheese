@@ -29,6 +29,7 @@ import {
   activatePanel,
   cellOfPanel,
   cellsOf,
+  placeBeside,
   placedPanels,
   placeInGroup,
   placePanel,
@@ -103,9 +104,13 @@ const infos = computed<LayoutPanelInfo[]>(() =>
 const groupOf = (id: string) => byId.value.get(id)?.group
 const transient = computed(() => new Set(props.panels.filter((panel) => panel.transient).map((panel) => panel.id)))
 
-/** Transient panels that are not placed yet go to their group's cell. */
+/** Transient panels that are not placed yet go to their group's cell, or beside the panel they name. */
+function placeTransient(arrangement: LayoutArrangement, id: string): LayoutArrangement {
+  const beside = byId.value.get(id)?.beside
+  return beside ? placeBeside(arrangement, id, beside) : placeInGroup(arrangement, id, groupOf)
+}
 function withTransients(arrangement: LayoutArrangement, ids: readonly string[]): LayoutArrangement {
-  return ids.reduce((next, id) => (transient.value.has(id) ? placeInGroup(next, id, groupOf) : next), arrangement)
+  return ids.reduce((next, id) => (transient.value.has(id) ? placeTransient(next, id) : next), arrangement)
 }
 
 /** A panel whose fold is remembered on its own gets that fold, whatever the arrangement says. */
@@ -388,7 +393,7 @@ function open(id: string) {
   pendingOpen = null
   chosen.value = id
   if (!placed.value.includes(id)) {
-    commit(transient.value.has(id) ? placeInGroup(arrangement.value, id, groupOf) : placePanel(arrangement.value, id))
+    commit(transient.value.has(id) ? placeTransient(arrangement.value, id) : placePanel(arrangement.value, id))
   }
   if (isNarrow.value || !dockReady.value) {
     let next = activatePanel(arrangement.value, id)

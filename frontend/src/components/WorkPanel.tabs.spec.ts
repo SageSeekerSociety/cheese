@@ -105,7 +105,7 @@ describe('tab 栏', () => {
   it('一个还没跑过的任务也是这几格，顺序不变', async () => {
     const { findAllByRole } = mount({ taskId: 'task1' })
     const labels = (await findAllByRole('tab')).map((t) => t.textContent?.trim() ?? '')
-    expect(labels).toEqual(['概览', '现场', '改动', '预览'])
+    expect(labels).toEqual(['概览', '现场', '改动', '预览', '文件'])
   })
 
   it('任务里没有支线这一格：支线只挂在频道主线的消息下面', async () => {

@@ -19,7 +19,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.errors import ConflictError, ForbiddenError, NotFoundError
-from app.core.sandbox_auth import bind_resource_token, for_a_machine
+from app.core.sandbox_auth import (
+    bind_resource_token,
+    for_a_machine,
+    scoped_token_claims,
+)
 from app.core.sentences import say
 from app.domain.addressing import REASON_MACHINE_OWNER, Addressed, Recipient
 from app.domain.agent import execution
@@ -607,6 +611,60 @@ async def _platform_machine(db, device_id: str) -> bool:
     return device is not None and device.supply is Supply.cloud
 
 
+async def _launch_values(db, row, topic, project) -> tuple[str, dict]:
+    """Who the session ``row`` acts as on its machine, and the variables its
+    executor is set up with when no turn is handing them over: the room's
+    environment, as a turn hands it over — the executor records the one it was
+    installed with, and the next turn's start is refused while the two differ."""
+    author = await _session_author(db, project, row.agent_handle)
+    environment = (
+        EnvironmentConfig().snapshot()
+        if topic.kind == TopicKind.root
+        else await pin_environment(db, project.id, topic.id)
+    )
+    return author, {"CHEESE_ENVIRONMENT": json.dumps(environment)}
+
+
+async def hands_for_a_person(db, row, *, actor: Actor, wait_s: float, hub=None):
+    """The hands of the session ``row`` taken for a person, with no turn
+    behind them: a person opening the task's files for editing brings its
+    machine back. The same admission a tool call goes through (`ensure`),
+    with the credential and variables a session is started again with when
+    no turn starts it (`restart_executor`), and checked end to end, so an
+    executor that stopped since is started again. Placed in ``actor``'s name,
+    whose project pays as it does for its teammate. Nothing is told to the
+    agent: a notice it is owed stays for its own next tool call."""
+    topic = await TopicService(db).get_or_404(await room_of(db, row.conversation_id))
+    project = await ProjectService(db).get_or_404(topic.project_id)
+    holder_id = await holders.holder_of(db, row.conversation_id)
+    author, values = await _launch_values(db, row, topic, project)
+    token = bind_resource_token(
+        mint_session_token(project.id, row.conversation_id, author),
+        str(topic.resource_id or topic.id),
+        session_id=str(row.id),
+    )
+    claims = scoped_token_claims(token)
+    assert claims is not None  # minted just now
+    await db.commit()
+    return await ensure(
+        db,
+        topic_id=holder_id,
+        session_id=row.id,
+        claims=claims,
+        token=token,
+        env=values,
+        wait_s=wait_s,
+        gone=_never_gone,
+        hub=hub,
+        actor=actor,
+        whole_check=True,
+    )
+
+
+async def _never_gone() -> bool:
+    return False
+
+
 async def restart_executor(db, row, lease) -> Restart:
     """How to start again the executor of the session ``row`` on the machine
     its ``lease`` is on, as a tool call there would: with the credential a
@@ -620,7 +678,7 @@ async def restart_executor(db, row, lease) -> Restart:
         else None
     )
     chosen = await environment_of(db, row, topic, task, project)
-    author = await _session_author(db, project, row.agent_handle)
+    author, values = await _launch_values(db, row, topic, project)
     resource = lease.get("room_resource_id") or str(topic.resource_id or topic.id)
     token = bind_resource_token(
         mint_session_token(project.id, row.conversation_id, author),
@@ -634,14 +692,6 @@ async def restart_executor(db, row, lease) -> Restart:
         "generation"
     )
     api = await device_api_base(db, lease["device_id"], settings.connector_public_base)
-    # The room's environment, as a turn hands it over: the executor records the
-    # one it was installed with, and the next turn's start is refused while the
-    # two differ.
-    environment = (
-        EnvironmentConfig().snapshot()
-        if topic.kind == TopicKind.root
-        else await pin_environment(db, project.id, topic.id)
-    )
     start = partial(
         _start_executor,
         device_hub,
@@ -653,7 +703,7 @@ async def restart_executor(db, row, lease) -> Restart:
         platform_machine=await _platform_machine(db, lease["device_id"]),
         setup=_executor_env(
             {
-                "CHEESE_ENVIRONMENT": json.dumps(environment),
+                **values,
                 "CHEESE_SANDBOX_IMAGE": await image_for_session(
                     db, lease["device_id"], row.id
                 ),
@@ -850,8 +900,9 @@ async def _verified(db, *, topic_id, session_id, claims, token, env, hub):
     it; and the lock is released before the machine runs any call, so a call
     admitted the moment before archival commits runs after it here just as it
     does through the lock. An archived room, a rotated room resource (an
-    unarchive), a sandbox given up with its host (``LOST_KEY``), a lease being
-    re-checked or replaced (its ``verified_at`` is dropped, `_attempt`), a
+    unarchive), a notice owed to the agent about its sandbox (``LOST_KEY``,
+    ``PARKED_KEY``: only the whole check hands it over, also when a person
+    brought the machine back in between), a lease being re-checked or replaced (its ``verified_at`` is dropped, `_attempt`), a
     sandbox being destroyed or not touched for ``ACTIVE_STEP``, and a machine
     the hub does not reach are all left to the whole check."""
     holder = await holders.look(db, topic_id)
@@ -990,6 +1041,8 @@ async def ensure(
     gone,
     hub=None,
     tells_agent=False,
+    actor: Actor | None = None,
+    whole_check=False,
 ):
     """Hands for this session, waiting up to ``wait_s`` while they are prepared.
 
@@ -999,16 +1052,25 @@ async def ensure(
     beside its tool's result. Only such a caller is given one, and it is given
     once: a session whose sandbox was lost hears so on the first of its tool
     calls that has a new one, not on a hook's call that nobody reads.
+    ``actor``: who a sandbox placed for this call is started for, when that is
+    not the session's own choice (a person bringing a task's machine back).
+    ``whole_check``: hands checked a moment ago are checked again end to end
+    (`_verified` reads only the record), so an executor that stopped since is
+    started again rather than handed out.
     """
     hub = hub or device_hub
-    held = await _verified(
-        db,
-        topic_id=topic_id,
-        session_id=session_id,
-        claims=claims,
-        token=token,
-        env=env,
-        hub=hub,
+    held = (
+        None
+        if whole_check
+        else await _verified(
+            db,
+            topic_id=topic_id,
+            session_id=session_id,
+            claims=claims,
+            token=token,
+            env=env,
+            hub=hub,
+        )
     )
     if held is not None:
         return held
@@ -1024,6 +1086,7 @@ async def ensure(
             env=env,
             hub=hub,
             tells_agent=tells_agent,
+            actor=actor,
         )
         if not isinstance(outcome, _Preparing):
             return outcome
@@ -1047,7 +1110,7 @@ async def ensure(
 
 
 async def _attempt(
-    db, *, topic_id, session_id, claims, token, env, hub, tells_agent=False
+    db, *, topic_id, session_id, claims, token, env, hub, tells_agent=False, actor=None
 ):
     """The row reservation survives worker death; remote work holds no DB lock."""
     holder = await holders.lock_for_work(db, topic_id)
@@ -1168,7 +1231,7 @@ async def _attempt(
     if selected is None:
         chosen = await sessions.environment(row.conversation_id, row.agent_handle)
         chooser = (chosen.chosen_by if chosen is not None else None) or None
-        allocation_actor = (
+        allocation_actor = actor or (
             Actor(**chooser)
             if isinstance(chooser, dict)
             else Actor(handle=claims.get("a", ""), user_id=None, via="cheese")
@@ -1222,6 +1285,21 @@ async def _attempt(
         row = await sessions.by_id(session_id, lock=True)
         if row is None or (row.execution_request or {}).get("generation") != generation:
             raise ConflictError("Execution request changed during provisioning")
+        # Placing a new home commits (`HostPool._place_on_free`), and another
+        # attempt of this session — a person's, a parallel tool call — may
+        # have taken the lease's claim meanwhile, or finished with it. The
+        # claim is asked again under the lock that writes it, and the lease
+        # read as it is now: two installations on one lease left the first
+        # one's claim overwritten, and it failed once it was done.
+        lease = row.work_lease
+        if lease and lease.get("claim_until"):
+            if datetime.fromisoformat(lease["claim_until"]) > now:
+                await db.commit()
+                return _Preparing(
+                    say("environmentPreparing"),
+                    partial(lease_claim.moved, db, session_id, lease.get("claim")),
+                )
+        ready = bool(lease and lease.get("status", "ready") == "ready")
     else:
         device_id = selected.device_id
     # Placement records the session host before the screen that asks opens.

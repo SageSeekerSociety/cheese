@@ -222,14 +222,14 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         expect: '差异',
       },
       {
-        name: '改到一半',
-        note: '有没保存的改动时路径后面点一颗点，切到全文面就摆出保存；没改动之前那颗按钮是灰的。',
-        props: { ...CHANGES_BAR_PROPS, effectiveView: 'edit' as const, fileDirty: true },
-        expect: '保存',
+        name: '能编辑的一份',
+        note: '任务还开着、这份文件能改：横条上摆「编辑」，点它到任务的「文件」那一格去改。这一格自己只看不改。',
+        props: { ...CHANGES_BAR_PROPS, effectiveView: 'text' as const },
+        expect: '编辑',
       },
       {
         name: '打不开的一份',
-        note: '二进制、图片、过大的文件没有编辑面，也就没有保存：这里摆一句「只读」，省得人以为是自己没权限。',
+        note: '二进制、图片、过大的文件哪里都改不了：这里摆一句「只读」，不摆「编辑」。',
         props: { ...CHANGES_BAR_PROPS, fileReadOnly: true },
         expectSelector: '.changes-bar__ro',
       },
@@ -256,7 +256,7 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         // 取数那一层交来的是带 Authorization 取回的 object URL；这里用一张内嵌的小图代替。
         props: {
           ...CHANGES_CONTENT_PROPS,
-          effectiveView: 'edit' as const,
+          effectiveView: 'text' as const,
           openIsImage: true,
           openImageSrc:
             'data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 width=%2264%22 height=%2264%22%3E%3Crect width=%2264%22 height=%2264%22 fill=%22%23f59e0b%22/%3E%3C/svg%3E',
@@ -268,7 +268,7 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         note: '图片要带登录取字节；取不到时说清楚、给下载原文件，而不是留一块空白。',
         props: {
           ...CHANGES_CONTENT_PROPS,
-          effectiveView: 'edit' as const,
+          effectiveView: 'text' as const,
           openIsImage: true,
           openImageError: '图片加载失败（HTTP 404）',
         },
@@ -277,13 +277,13 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
       {
         name: '二进制文件',
         note: '解不出文本的文件说清是二进制，只给下载原文件这一条路。',
-        props: { ...CHANGES_CONTENT_PROPS, effectiveView: 'edit' as const, fileBinary: true, fileBytes: 40960 },
+        props: { ...CHANGES_CONTENT_PROPS, effectiveView: 'text' as const, fileBinary: true, fileBytes: 40960 },
         expect: '非文本文件，无法编辑',
       },
       {
         name: '文件太大',
         note: '超过上限的一份不往浏览器里搬，报一下有多大、让人下载下去看。',
-        props: { ...CHANGES_CONTENT_PROPS, effectiveView: 'edit' as const, fileTooLarge: true, fileBytes: 9437184 },
+        props: { ...CHANGES_CONTENT_PROPS, effectiveView: 'text' as const, fileTooLarge: true, fileBytes: 9437184 },
         expect: '文件过大，无法在浏览器中打开',
       },
       {

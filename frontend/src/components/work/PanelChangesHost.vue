@@ -14,7 +14,7 @@
 // 这一格顶部那块（这次交付的情况）也是在这里塞进去的（`AcceptReviewHead`）。
 import type { ReviewBundle } from '../../types/reviewComment'
 
-import { computed, ref } from 'vue'
+import { computed } from 'vue'
 
 import { injectAcceptCard } from '../../composables/useAcceptCard'
 import { usePanelChanges } from '../../composables/usePanelChanges'
@@ -35,9 +35,13 @@ const props = withDefaults(
     // Bumped by WorkPanel when a turn ends — the moment 芝士's commits and its
     // working tree actually changed. Silent re-fetch, never a spinner.
     refreshTick?: number
+    /** The task has a 文件 panel: an open file can be edited there. */
+    canEdit?: boolean
   }>(),
-  { active: false, refreshTick: 0, readOnly: false }
+  { active: false, refreshTick: 0, readOnly: false, canEdit: false }
 )
+
+const emit = defineEmits<{ 'edit-file': [path: string] }>()
 
 // 整只 props 递进去，而不是抄一份值：取数那一层要跟着这几个 prop 变（换个房间、切
 // 到这一格），抄出来的那一份是死的。
@@ -59,16 +63,17 @@ const review = computed<ReviewBundle | null>(() => {
     remove: c.remove,
   }
 })
-
-const panel = ref<InstanceType<typeof PanelChanges> | null>(null)
-
-// 地址里的 chip 指到某个文件时，工作面板会拿着文件路径来开这一格。开没开成要回话：
-// 这一支里没有那份文件时，工作面板得换一格去开它。
-defineExpose({ openFile: (path: string) => panel.value?.openFile(path) ?? Promise.resolve(false) })
 </script>
 
 <template>
-  <PanelChanges ref="panel" :topic-id="props.topicId" :read-only="props.readOnly" :changes="changes" :review="review">
+  <PanelChanges
+    :topic-id="props.topicId"
+    :read-only="props.readOnly"
+    :changes="changes"
+    :review="review"
+    :can-edit="props.canEdit"
+    @edit-file="emit('edit-file', $event)"
+  >
     <template #head><AcceptReviewHead /></template>
   </PanelChanges>
 </template>

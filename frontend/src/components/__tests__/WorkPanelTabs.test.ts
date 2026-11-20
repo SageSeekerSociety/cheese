@@ -295,7 +295,7 @@ describe('工作面板 · Tab 容器', () => {
   // 旧代码里 `openTool.value = 'files'` 那一句。切分之后它变成三段接力
   // (PanelDoc 的 open-file → 容器的 openFile → PanelChanges.openFile)，所以这条
   // 用例点的是文档里真实渲染出来的那颗 chip，走完整条线。
-  it('文档里的 <&path> chip → 落到改动 tab 的文件半边，并打开那个文件', async () => {
+  it('文档里的 <&path> chip → 落到任务的「文件」那一格，并打开那个文件', async () => {
     seedRoom(TASK, '详见 <&src/b.ts> 这个文件\n')
     readFile.mockResolvedValue({
       path: 'src/b.ts',
@@ -322,13 +322,10 @@ describe('工作面板 · Tab 容器', () => {
     await fireEvent.click(chip!)
     await flush()
 
-    // 落在改动 tab 上……
-    expect(visible(container, '.panel-changes')).toBe(true)
+    // 落在「文件」那一格上，开着的正是被点的那个文件：这件任务工作树上的那一份。
+    expect(visible(container, '.task-files')).toBe(true)
     expect(visible(container, '.test-overview')).toBe(false)
-    // ……而且是它的文件半边，开着的正是被点的那个文件。
-    // 任务页上，文件就是这件任务工作树上的那一份。
-    expect(readFile).toHaveBeenCalledWith('p1', 'src/b.ts', 'topic-A', TASK, 'live')
-    expect(container.querySelector('.changes-bar__path')?.textContent?.trim()).toBe('src/b.ts')
+    await vi.waitFor(() => expect(container.querySelector('.task-files__path')?.textContent?.trim()).toBe('src/b.ts'))
   })
 
   // 规则 1: 几格永远都在、位置不变，这一格此刻有没有东西只决定它的字深浅。判定
@@ -365,7 +362,7 @@ describe('工作面板 · Tab 容器', () => {
     const { container } = mountPanel()
     await flush()
 
-    expect(tabLabels(container)).toEqual(['概览', '现场', '改动', '预览'])
+    expect(tabLabels(container)).toEqual(['概览', '现场', '改动', '预览', '文件'])
     expect(isEmpty(findTab(container, '概览'))).toBe(false)
     expect(['现场', '改动', '预览'].every((label) => isEmpty(findTab(container, label)))).toBe(true)
     expect(visible(container, '.test-overview')).toBe(true)
@@ -448,7 +445,7 @@ describe('工作面板 · Tab 容器', () => {
     await fireEvent.click(container.querySelector<HTMLElement>('.doc-editor .mention.file-ref')!)
     await flush()
 
-    expect(emitted()['update:tab']).toContainEqual(['changes'])
+    expect(emitted()['update:tab']).toContainEqual(['code'])
   })
 
   it('直接开在预览上，不会顶着一个「有新内容」的提示', async () => {

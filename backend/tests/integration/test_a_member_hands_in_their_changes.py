@@ -17,6 +17,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.core.device_failures import DeviceCallError
 from app.domain.agent import execution
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.claude_code.remote_execution import runtime_context
@@ -249,6 +250,27 @@ def test_a_reviewer_who_adjusted_a_waiting_version_adopts_the_adjusted_one(
         world.sandbox.repo, "show", f"{card.pr_head_sha}:{_note(world)}"
     )
     assert shown == "Tweaked by the reviewer\n"
+
+
+def test_a_sandbox_that_does_not_answer_is_said_without_its_internals(
+    client, world, monkeypatch
+):
+    # The executor's socket is gone: the person is told the environment did
+    # not answer, and that their saved changes are still there.
+    _save(client, world, _note(world), "Hello from alice\n")
+
+    async def gone(target, method, params, **_):
+        raise DeviceCallError(
+            "dial unix /tmp/cheese-execution-1000-ab12.sock: connect: no such file"
+        )
+
+    monkeypatch.setattr(execution, "call", gone)
+
+    r = _hand_in(client, world)
+
+    assert r.status_code == 503, r.text
+    assert r.json()["error"]["i18n"]["key"] == "handInMachineNotResponding"
+    assert "sock" not in r.json()["error"]["message"]
 
 
 def test_adopting_ones_own_hand_in_completes_once_the_forge_says_it_merges(

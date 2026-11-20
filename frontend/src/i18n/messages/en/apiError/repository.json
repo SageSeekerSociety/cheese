@@ -20,6 +20,7 @@
   "taskEndedCreateNew": "This task has ended. Create a new task",
   "taskFileChangedReload": "The file has been updated. Load it again before saving",
   "taskFileEditsOverlap": "This file changed after you opened it, in places you changed too. Pick a version for each",
+  "taskFileExists": "A file or folder with this name already exists",
   "taskFileNotOnMachine": "This task file isn't in the environment yet",
   "taskFilePathOutside": "The file path must be inside the task's working directory",
   "taskFileReadBeforeSave": "Load the file before saving changes",

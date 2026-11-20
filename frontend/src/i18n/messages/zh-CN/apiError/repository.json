@@ -20,6 +20,7 @@
   "taskEndedCreateNew": "这条任务已结束，请创建新任务",
   "taskFileChangedReload": "文件已有更新，请重新读取后再保存",
   "taskFileEditsOverlap": "这个文件在你打开之后又被改过，有和你改的位置重叠的地方，逐处选一个版本",
+  "taskFileExists": "已有同名的文件或文件夹",
   "taskFileNotOnMachine": "环境里还没有这个任务文件",
   "taskFilePathOutside": "文件路径必须在任务工作目录内",
   "taskFileReadBeforeSave": "请先读取文件，再保存修改",

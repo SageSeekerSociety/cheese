@@ -67,6 +67,7 @@ import DeliveryReviewHead from './work/DeliveryReviewHead.vue'
 import PanelChangesHost from './work/PanelChangesHost.vue'
 import PanelPreviewHost from './work/PanelPreviewHost.vue'
 import PanelSiteHost from './work/PanelSiteHost.vue'
+import TaskFilesHost from './work/TaskFilesHost.vue'
 import { workPaneId } from './work/workLayout'
 import WorkPane from './work/WorkPane.vue'
 import ProjectFileTab from './ProjectFileTab.vue'
@@ -276,6 +277,8 @@ const DOC_TAB = 'doc:'
 // AI 队友提议的一项技能，路径写成 `skill:<编号>`：读完就地决定存不存。内容由页面从插槽
 // 递进来（`#skill`），面板自己不取数。
 const SKILL_TAB = 'skill:'
+// 任务工作副本里的一份文件，在「文件」那一格旁边单开一格，路径写成 `work:<路径>`：一格一份文件。
+const WORK_TAB = 'work:'
 function fileKey(path: string): string {
   return FILE_TAB + path
 }
@@ -463,7 +466,7 @@ function enterClass(key: string) {
   return e?.key === key ? `tabpane-in tabpane-in--${e.from}` : undefined
 }
 
-const changesRef = ref<InstanceType<typeof PanelChangesHost> | null>(null)
+const codeRef = ref<InstanceType<typeof TaskFilesHost> | null>(null)
 
 const topicId = computed(() => props.topic?.id ?? null)
 // 这一面板读的那段对话：任务页上是任务，否则是房间自己。
@@ -510,7 +513,10 @@ const {
 
 // 此刻面板上开着哪一份文件（撰写框上「芝士会看到你在看什么」那一行读它）。
 watch(
-  () => (active.value === 'preview' ? previewPath.value : tabFile(active.value, FILE_TAB, DOC_TAB)),
+  () =>
+    active.value === 'preview'
+      ? previewPath.value
+      : tabFile(active.value, FILE_TAB, DOC_TAB)?.replace(new RegExp(`^${WORK_TAB}`), '') ?? null,
   (path) => emit('viewing', path),
   { immediate: true }
 )
@@ -562,7 +568,7 @@ function pollThreads() {
 }
 
 function hasContent(key: TabKey): boolean {
-  if (key === 'chat' || key === 'overview' || key === 'threads' || key === 'files') return true
+  if (key === 'chat' || key === 'overview' || key === 'threads' || key === 'files' || key === 'code') return true
   // 「例行事务」也是永远有得看的一格：没有例行事务时它写的是「还没有例行事务，点新建」——
   // 那一格自己是让人动手建一条的地方，不是一个「暂无」。数有几条要现问后端，而这一格
   // 关着的时候不该为此多打一个请求。
@@ -688,6 +694,7 @@ const panelTabs = computed<PanelTab[]>(() =>
 /** 页签上写什么：文件写文件名，资料库文档写它的标题，技能写它的名字。 */
 function fileTabName(f: OpenFileTab): string {
   if (f.skill) return f.skill.title || t('work.room.workCard.skill')
+  if (f.path.startsWith(WORK_TAB)) return f.path.slice(WORK_TAB.length).split('/').pop() || f.path
   return f.document ? f.document.title || t('work.room.doc.untitled') : f.path.split('/').pop() || f.path
 }
 const asSignal = (signal: PanelTab['signal']): LayoutPanelSignal | undefined =>
@@ -705,6 +712,7 @@ const fixedMeta = computed<WorkTabMeta[]>(() =>
     faint: tab.empty,
     hint: tab.title,
     signal: asSignal(tab.signal),
+    closable: tab.key === 'code',
   }))
 )
 /** 自由区每一份：它们随读者打开、关掉而来去。 */
@@ -714,6 +722,8 @@ const fileMeta = computed<WorkTabMeta[]>(() =>
     title: fileTabName(f),
     icon: f.document ? 'mdi-file-document-outline' : f.skill ? 'mdi-lightbulb-outline' : fileIcon(f.path),
     temporary: !f.pinned,
+    // 单开的工作文件落在「文件」那一格旁边自己的一格里，不和自由区挤一格。
+    beside: f.path.startsWith(WORK_TAB) ? 'code' : undefined,
   }))
 )
 
@@ -834,7 +844,7 @@ async function openFile(path: string) {
     openFileTab(want)
     return
   }
-  // 剩下的都是源文件，分两处：这件任务的工作副本里有它，就开在「改动」那一格；没有，
+  // 剩下的都是源文件，分两处：这件任务的工作副本里有它，就开在「文件」那一格；没有，
   // 就退回项目当前版本那一格只读地开它——频道里没有这一格，任务还没有分支（没有电脑
   // 打开过它）也算没有。一枚 chip 是读者指名要看的一份文件，不该因为没归到这件任务就
   // 点不开；当前版本里也没有它时，那一格自己会说，并列出改过它的任务。
@@ -847,13 +857,28 @@ async function openFile(path: string) {
       return
     }
     // 这一步是用户点了一份文件，该走守卫问一句。问不到「可以走」就当场收手：`setTab`
-    // 停在原地，「改动」那一格要么是空的、要么指向一份没露面的「改动」——再往下走就是
-    // 一次没有落地、也没人知道的假动作。
-    if (!(await setTab('changes'))) return
+    // 停在原地，再往下走就是一次没有落地、也没人知道的假动作。
+    if (!(await setTab('code'))) return
     await nextTick()
-    if (await changesRef.value?.openFile(want)) return
+    if (await codeRef.value?.openFile(want, at ? { start: Number(at[1]), end: Number(at[2] ?? at[1]) } : null)) return
   }
   await openFileTab(want, { lines: at ? { start: Number(at[1]), end: Number(at[2] ?? at[1]) } : null })
+}
+
+/** 「文件」那一格树上的「在旁边打开」：这份文件单开一格，摆在「文件」旁边。 */
+async function openBeside(path: string) {
+  const key = WORK_TAB + path
+  noteFileOrigin()
+  placeFile(key)
+  pinFile(key)
+  await setTab(fileKey(key))
+}
+
+/** 「改动」里的「编辑」：在任务的「文件」那一格打开这份文件。 */
+async function openInFiles(path: string) {
+  if (!(await setTab('code'))) return
+  await nextTick()
+  await codeRef.value?.openFile(path)
 }
 
 // 这份文件是不是房间自己的（芝士交付的、人传上来的）。不是就去树上找。
@@ -1145,15 +1170,39 @@ defineExpose({
             :pane-class="enterClass('changes')"
           >
             <PanelChangesHost
-              ref="changesRef"
               :topic-id="topicId"
               :task-id="taskId"
               :read-only="changesReadOnly"
               :project-id="projectId"
               :active="shown('changes')"
               :refresh-tick="refreshTick"
+              :can-edit="!review && tabs.some((tab) => tab.key === 'code')"
+              @edit-file="openInFiles"
             />
             <template v-if="docked === 'changes'" #dock><slot name="dock" /></template>
+          </WorkPane>
+          <!-- 任务的工作副本：人在这里浏览、编辑芝士干活的那一份文件。读者打开它（页签「+」、
+               点一个文件链接、「改动」里的「编辑」）才摆出来。 -->
+          <WorkPane
+            v-if="mounted.has('code')"
+            :target="target('code')"
+            :pane-id="workPaneId('code')"
+            :shown="shown('code')"
+            :pane-class="enterClass('code')"
+          >
+            <TaskFilesHost
+              ref="codeRef"
+              :project-id="projectId"
+              :task-id="taskId"
+              :read-only="changesReadOnly"
+              :active="shown('code')"
+              :refresh-tick="refreshTick"
+              :changed="summary.changedFiles"
+              :phone="withChat"
+              :agent-name="agentName"
+              @open-beside="openBeside"
+            />
+            <template v-if="docked === 'code'" #dock><slot name="dock" /></template>
           </WorkPane>
           <WorkPane
             v-if="mounted.has('preview')"
@@ -1248,6 +1297,17 @@ defineExpose({
                 :lines="f.project.lines"
                 @open-task="emit('open-card', $event)"
                 @navigate="emit('navigate', $event)"
+              />
+              <TaskFilesHost
+                v-else-if="f.path.startsWith(WORK_TAB)"
+                :project-id="projectId"
+                :task-id="taskId"
+                :read-only="changesReadOnly"
+                :active="shown(fileKey(f.path))"
+                :refresh-tick="refreshTick"
+                :phone="withChat"
+                :agent-name="agentName"
+                :path="f.path.slice(WORK_TAB.length)"
               />
               <div v-else-if="f.skill" class="panel-skill">
                 <slot :id="f.skill.id" name="skill" />
