@@ -8,7 +8,7 @@ the forge (`repository.forge_files`); editing them brings the machine back:
 
 - in the environment the task points to, the one machine and the one copy
   its teammates work in (no second environment, no second copy), acting
-  through a session attached to it (`task_session`);
+  through a session attached to it (`acting_session`);
 - through the same admission a tool call goes through
   (`session_work.hands_for_a_person`): a parked sandbox starts again where its
   home is, a destroyed one is placed anew and its executor installed, a frozen
@@ -105,7 +105,7 @@ class Status:
     failed: str | None
 
 
-async def task_session(db: AsyncSession, task_id: uuid.UUID) -> AgentSession | None:
+async def acting_session(db: AsyncSession, task_id: uuid.UUID) -> AgentSession | None:
     """The session a person's bring-up of the task's machine acts through:
     one attached to the environment the task points to
     (`environment_rows.environment_of_conversation`), the one that acted
@@ -131,7 +131,7 @@ async def prepare(
     already under way here. Answers whether this call started it. Refuses a
     task with no session, and a person the task's project would not start a
     sandbox for, before anything is started."""
-    row = await task_session(db, task_id)
+    row = await acting_session(db, task_id)
     if row is None:
         raise NoTaskSession()
     holder = await holders.look(db, await holders.holder_of(db, task_id))
@@ -196,7 +196,7 @@ async def _bring_up(bind, task_id: uuid.UUID, actor: Actor, *, hub=None) -> None
         deadline = time.monotonic() + BRING_UP_S
         async with AsyncSession(bind, expire_on_commit=False) as db:
             while True:
-                row = await task_session(db, task_id)
+                row = await acting_session(db, task_id)
                 if row is None:
                     raise NoTaskSession()
                 outcome = await session_work.hands_for_a_person(

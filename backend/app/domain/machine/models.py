@@ -303,12 +303,6 @@ class SandboxHome(UuidPk, Timestamps, Base):
     __tablename__ = "sandbox_homes"
     sandbox_image: Mapped[str | None] = mapped_column(String(255), nullable=True)
     __table_args__ = (
-        Index(
-            "uq_sandbox_homes_current_session",
-            "session_id",
-            unique=True,
-            postgresql_where=text("session_id IS NOT NULL"),
-        ),
         CheckConstraint(
             "(host_id IS NULL) <> (device_id IS NULL)",
             name="ck_sandbox_homes_one_machine",
@@ -363,10 +357,6 @@ class SandboxHome(UuidPk, Timestamps, Base):
     room_resource_id: Mapped[str] = mapped_column(String(36))
     # The directory's resource on the host (the lease's ``resource_id``).
     resource_id: Mapped[str] = mapped_column(String(36))
-    # Written by releases before environments named their homes; nothing
-    # reads it. Who works in a home is the environment that names it
-    # (``machine.occupants``).
-    session_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     # When the room was told this session's sandbox is being prepared; cleared
     # once it is told the sandbox is ready.
     waiting_since: Mapped[datetime | None] = mapped_column(

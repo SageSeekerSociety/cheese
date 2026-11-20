@@ -1141,7 +1141,6 @@ async def test_a_rooms_cleanup_gives_back_its_homes_on_a_shared_cloud_host(
                     topic_id=topic,
                     room_resource_id=resource,
                     resource_id=resource,
-                    session_id=uuid.uuid4(),
                 )
             )
         await session.commit()
@@ -1219,7 +1218,6 @@ async def test_a_room_that_became_a_task_is_still_cleaned_up(client, monkeypatch
                 topic_id=room_id,
                 room_resource_id=str(operation.resource_id),
                 resource_id=resource,
-                session_id=conversation.id,
             )
         )
         await session.commit()

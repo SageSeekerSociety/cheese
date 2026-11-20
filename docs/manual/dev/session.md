@@ -48,7 +48,7 @@ covers:
 
 `AgentSession.runtime_location` 是这条会话的进程落在哪台会话机上，连同开它的通道和骨架自己的运行状态（平台不解析）；`place()` 是读它的唯一入口，没有它就没有地点，下一轮重新租，而不是去猜房间上记着什么。`placed_at` 排的是「谁最后开的屏」——不能拿 `updated_at` 排：那一列每轮存 `resume_token` 时也在动，「最后开屏的」会变成「最后说过话的」。
 
-`work_lease` 是另一回事，它是这位队友的执行环境落到一台机器上的那一份。执行环境是每位队友在每个对话里自己的（`agent_environments`，见[同一频道里的几个 AI 队友](/dev/turn#seats-machine)）：沙箱放在规格给得出的哪台机器上由平台定，不进沙箱时就是那一台电脑。
+会话在哪台机器上干活是另一回事：它接在一个执行环境上（`environment_attachments` → `environments`，`app.domain.environment`），环境记着机器、目录和执行器装到了哪一步。选择（`agent_environments`，见[同一频道里的几个 AI 队友](/dev/turn#seats-machine)）和对话默认一样的会话，接在对话指向的那个环境上（`conversation_environments`）；选择是自己的，就接在一个只属于自己的环境上。沙箱放在规格给得出的哪台机器上由平台定，不进沙箱时就是那一台电脑。
 
 ### 频道里的会话 {#scratch}
 

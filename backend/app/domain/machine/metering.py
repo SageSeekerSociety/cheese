@@ -59,7 +59,7 @@ def _running(*, include_frozen: bool = False):
             SandboxHome.id,
             SandboxHome.project_id,
             SandboxHome.topic_id,
-            occupants.a_session_in(SandboxHome.id).label("session_id"),
+            occupants.a_session_in(SandboxHome.id).label("occupant"),
         )
         .join(CloudHost, CloudHost.id == SandboxHome.host_id)
         .where(
@@ -109,7 +109,7 @@ async def _observe_vms(session: AsyncSession, meter: ComputeMeter) -> tuple[int,
             select(
                 SandboxHome.host_id,
                 SandboxHome.topic_id,
-                occupants.a_session_in(SandboxHome.id).label("session_id"),
+                occupants.a_session_in(SandboxHome.id).label("occupant"),
             ).where(SandboxHome.host_id.in_([host.id for host in unopened]))
         ):
             assert home.host_id is not None
@@ -124,7 +124,7 @@ async def _observe_vms(session: AsyncSession, meter: ComputeMeter) -> tuple[int,
             subject=subject,
             project_id=host.project_id,
             topic_id=home.topic_id if home else None,
-            session_id=home.session_id if home else None,
+            session_id=home.occupant if home else None,
             at=host.created_at,
         )
         opened += 1
@@ -164,7 +164,7 @@ async def observe(session: AsyncSession) -> dict[str, int]:
                 subject=str(home_id),
                 project_id=home.project_id,
                 topic_id=home.topic_id,
-                session_id=home.session_id,
+                session_id=home.occupant,
                 at=now,
             )
             opened += 1

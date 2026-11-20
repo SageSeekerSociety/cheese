@@ -20,12 +20,12 @@ from app.core.db import async_session_factory
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.harness import harness_for
 from app.domain.agent.harness.claude_code.remote_execution.runtime import Executor
-from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.models import Project
 from app.domain.review.pr_publish import _draft_pr_for_one_task
 from app.domain.room_task.lock_order import lock_task_for_change
 from app.domain.topic.models import Topic
 from app.domain.topic_membership.services import TopicMemberService
+from tests.support.environments import remember_place
 
 
 async def poll_approved_device(
@@ -172,10 +172,11 @@ async def main():
             # A task's files are read from its own session's machine; here
             # every task's session took this one.
             for task in request["tasks"]:
-                await AgentSessionService(session).remember_place(
+                await remember_place(
+                    session,
                     conversation_id=uuid.UUID(task["id"]),
                     agent_handle=actor,
-                    work_lease={
+                    environment={
                         "kind": "device",
                         "device_id": device["device_id"],
                         "home": str(home),

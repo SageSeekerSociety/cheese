@@ -61,7 +61,6 @@ def _home(host, project, room, **fields) -> SandboxHome:
         topic_id=room,
         room_resource_id=str(room),
         resource_id=str(uuid.uuid4()),
-        session_id=uuid.uuid4(),
         **fields,
     )
 

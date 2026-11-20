@@ -29,12 +29,12 @@ Handing a topic to a different agent therefore destroys nothing — the new agen
 looks up a key that has no row and starts fresh, and handing it back finds the
 old row still there.
 
-A row also carries WHERE this conversation's process runs, and the machine its
-work was placed on (``execution_request`` / ``work_lease``). Which execution
-environment that placement follows is the agent's own, kept per (conversation,
-agent) in ``agent_environments``; a room, a task or a project holds only the
-default a new agent takes (``machine/environments.environment_of``). 进程在哪
-台会话机上仍然是这条会话自己的事（``runtime_location``）。
+A row also carries WHERE this conversation's process runs
+(``runtime_location``). The machine its work is placed on is the execution
+environment it is attached to (``app.domain.environment``), of the choice
+that is the agent's own, kept per (conversation, agent) in
+``agent_environments``; a room, a task or a project holds only the default a
+new agent takes (``machine/environments.environment_of``).
 """
 
 import uuid
@@ -87,12 +87,6 @@ class SessionPlace:
     lease: dict | None
 
 
-#: The device a session's lease is on, as `ix_agent_sessions_lease_device`
-#: indexes it. The key is written as a literal, not bound, so the index serves
-#: a prepared statement's generic plan too (`attachment.attached_on`).
-LEASE_DEVICE_SQL = "(work_lease ->> 'device_id')"
-
-
 class AgentSession(UuidPk, Timestamps, Base):
     __tablename__ = "agent_sessions"
     # One session per agent per conversation.
@@ -104,9 +98,6 @@ class AgentSession(UuidPk, Timestamps, Base):
             "harness",
             unique=True,
         ),
-        # Which session holds a sandbox on a device: every request a sandbox
-        # makes through its device link asks it (`machine.caller.caller_of`).
-        Index("ix_agent_sessions_lease_device", text(LEASE_DEVICE_SQL)),
     )
 
     # The conversation this session is in: a room's or a task's id.
@@ -130,24 +121,6 @@ class AgentSession(UuidPk, Timestamps, Base):
     # anything — so "has this place run" is `resume_token IS NOT NULL`, not the
     # bare existence of a row.
     resume_token: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    # 这条会话的工作机器租约：手在哪、这一代的工作区在哪、装到了什么程度。
-    # **房间**租手（一个话题一个容器，2026-09-28 决定，推翻结论 60）：这一份是房间
-    # 那一项选择落到这条会话上的那一份，房间里每一条会话的租约落在同一台机器上，
-    # 换机器是房间一起换（`machine/session_work.request_choice`），不是谁自己搬。
-    # 一位成员自己的 Claude Code 例外：它的手是它会话所在的那台主人电脑，不跟房间
-    # （`session_work._own_host`）。
-    #
-    # ``none_as_null=True``：没租到手要落成 SQL NULL。默认那一档会把 Python 的
-    # ``None`` 序列化成 JSON ``'null'`` 存进去，于是 ``work_lease IS NOT NULL``
-    # 对「手就在会话机上」的 pi 会话也为真，读的人拿到的却是 ``None``。
-    work_lease: Mapped[dict | None] = mapped_column(
-        JSON(none_as_null=True), nullable=True
-    )
-    # A requested choice and its authenticated authorization source. Recording
-    # intent does not reserve a machine; the first execution tool consumes it.
-    execution_request: Mapped[dict | None] = mapped_column(
-        JSON(none_as_null=True), nullable=True
-    )
     # 这条会话的进程在哪台会话机上，连同开它的通道与骨架的运行状态。
     runtime_location: Mapped[dict | None] = mapped_column(
         JSON(none_as_null=True), nullable=True

@@ -40,9 +40,6 @@ from app.domain.environment.models import (
     EnvironmentAttachment,
 )
 
-#: Re-exported: an environment whose sandbox is gone (`Attachment.released`).
-__all__ = ["RELEASED"]
-
 # What an agent is owed, as its session's ``environment_notice`` keeps it.
 _LOST = "lost"
 _LOST_PROCESSES = "lost_processes"

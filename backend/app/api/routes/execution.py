@@ -200,7 +200,7 @@ async def execute(
         if owned is not None and owned.conversation_id != topic_id:
             raise ForbiddenError("This credential works another conversation")
     else:
-        owned = await owner_reads.legacy_execution(db, topic_id)
+        owned = await owner_reads.pointed_execution(db, topic_id)
         session_id = owned.id if owned is not None else None
     held = attachment(owned) if owned is not None else None
     lease = held.environment if held is not None else None

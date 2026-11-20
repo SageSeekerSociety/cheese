@@ -194,10 +194,10 @@ async def project_owner(session: AsyncSession, project_id: uuid.UUID) -> str | N
     )
 
 
-async def legacy_execution(session: AsyncSession, conversation_id: uuid.UUID):
-    """The session a credential that names only a conversation (one minted
-    before credentials named sessions) works through: one attached to the
-    environment the conversation points to. None when it points to none, or
+async def pointed_execution(session: AsyncSession, conversation_id: uuid.UUID):
+    """The session a credential that names only a conversation works
+    through: one attached to the environment the conversation points to,
+    which is where its machine is found. None when it points to none, or
     nobody is attached there."""
     pointed = (
         select(ConversationEnvironment.environment_id)

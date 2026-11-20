@@ -1,10 +1,10 @@
 """A sandbox's request finds the session holding it from an index.
 
 Every request a sandbox makes through its device link (`/machine/api/...`,
-`/machine/llm/...`) starts by finding the session whose lease holds that
-sandbox: the sessions whose ``work_lease ->> 'device_id'`` is the device it
-came in on (`machine.caller.caller_of`). `ix_agent_sessions_lease_device`
-indexes that expression, so the read is not a scan of every session.
+`/machine/llm/...`) starts by finding the sessions attached to the
+environment on the device it came in on (`machine.caller.caller_of`).
+`ix_environments_device_id` indexes that, so the read is not a scan of every
+session.
 """
 
 import re
