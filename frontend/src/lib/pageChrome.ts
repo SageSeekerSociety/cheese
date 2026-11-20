@@ -1,5 +1,5 @@
-// 页头（components/common/PageHeader.vue 等）从外壳拿的四样东西：面包屑、页面登记的
-// 操作区组件、页面登记的页签组件，和桌面上画在页头最左边的那颗 ←（PageBack.vue）。
+// 页头（components/common/PageHeader.vue）从外壳拿的三样东西：面包屑、页面登记的
+// 操作区组件、页面登记的页签组件。
 //
 // 为什么是注入口：面包屑从路由表算（composables/usePageTitle 读 useRoute），操作区和
 // 页签在 navigation store 里。页头自己去拿，它和渲染它的每一页就离不开路由和 pinia；
@@ -19,15 +19,12 @@ export interface PageChrome {
   actions: Readonly<Ref<Component | null>>
   /** 页面用 setTabs 登记的页签。 */
   tabs: Readonly<Ref<Component | null>>
-  /** 这一页的 ←（ParentBackButton）：它自己决定画不画、去哪。 */
-  back: Component | null
 }
 
 export const EMPTY_PAGE_CHROME: PageChrome = {
   breadcrumbs: ref([]),
   actions: shallowRef(null),
   tabs: shallowRef(null),
-  back: null,
 }
 
 export const PAGE_CHROME: InjectionKey<PageChrome> = Symbol('pageChrome')

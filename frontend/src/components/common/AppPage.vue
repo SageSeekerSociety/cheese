@@ -23,7 +23,6 @@ import { useDisplay } from 'vuetify'
 import { headerCommands } from '@/commands'
 import BaseButton from '@/components/base/BaseButton.vue'
 import NavLink from '@/components/common/NavLink.vue'
-import PageBack from '@/components/common/PageBack.vue'
 
 withDefaults(
   defineProps<{
@@ -56,7 +55,6 @@ const { mdAndUp } = useDisplay()
          状态就整条不画。 -->
     <header v-if="mdAndUp || $slots.meta" class="app-page__head" :class="`app-page__head--${width}`">
       <div class="app-page__head-row">
-        <PageBack />
         <h1 v-if="mdAndUp" class="app-page__title t-title">
           <template v-if="parent">
             <NavLink :to="parent.to" class="app-page__parent">{{ parent.label }}</NavLink>

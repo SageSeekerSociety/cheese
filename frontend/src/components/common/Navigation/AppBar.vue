@@ -28,6 +28,12 @@
         @click="sidebar.toggle()"
       />
       <span v-else class="app-bar__toggle-room" aria-hidden="true" />
+      <!-- Back: in-app history first, the declared parent when there is none. A fixed slot,
+           so 首页 and the place name never shift; where there is nowhere to go back to the
+           slot stays empty (ParentBackButton never draws a dead arrow). -->
+      <span class="app-bar__back">
+        <ParentBackButton />
+      </span>
       <router-link
         v-if="homeItem"
         :to="homeItem.to ?? '/inbox'"
@@ -78,8 +84,8 @@
 </template>
 
 <script setup lang="ts">
-// 桌面的第一层：一条 40px 的顶栏（docs/design-system.md §1.4）。左边侧栏开关、「首页」（带等你
-// 处理的总件数）和你所在的去处；中间搜索和问芝士；右边帮助与反馈、头像。上面的东西不随
+// 桌面的第一层：一条 40px 的顶栏（docs/design-system.md §1.4）。左边侧栏开关、返回、「首页」（带
+// 等你处理的总件数）和你所在的去处；中间搜索和问芝士；右边帮助与反馈、头像。上面的东西不随
 // 换页、收起侧栏挪位置。桌面版 macOS 上它就是窗口的标题栏：整条可拖，左边让出三颗窗口按钮。
 //
 // 登录态和导航数据由外壳交进来（`layouts/AppShell.vue` 的 provideAppNav）：这个组件在
@@ -93,6 +99,7 @@ import AccountButton from './AccountButton.vue'
 import { homeItemOf, useAppNav } from './appNav'
 import DesktopUpdateReady from './DesktopUpdateReady.vue'
 import HelpAndFeedbackMenu from './HelpAndFeedbackMenu.vue'
+import ParentBackButton from './ParentBackButton.vue'
 import ProjectSwitcher from './ProjectSwitcher.vue'
 
 import CheeseLogo from '@/assets/logo-plain.svg?component'
@@ -150,8 +157,9 @@ const loggedIn = computed(() => props.loggedIn)
 }
 
 /* In the desktop app on macOS the window buttons sit at this bar's left end
-   (desktop/src-tauri/src/main.rs places them, centred in its 40px); the bar's own content
-   starts past them. The width lives in style.css (`--window-buttons-inset`), 0 elsewhere. */
+   (desktop/src-tauri/src/main.rs places them, centred in its 40px); the bar's own content,
+   the sidebar toggle and the back button first, starts past them. Buttons and links are
+   controls, not drag area. The width lives in style.css (`--window-buttons-inset`), 0 elsewhere. */
 .app-system-bar.app-system-bar--window-buttons {
   padding-inline-start: max(8px, var(--window-buttons-inset));
 }
@@ -173,9 +181,15 @@ const loggedIn = computed(() => props.loggedIn)
   gap: 8px;
 }
 
-.app-bar__toggle-room {
+.app-bar__toggle-room,
+.app-bar__back {
   flex: none;
   width: 28px;
+}
+
+.app-bar__back {
+  display: inline-flex;
+  align-items: center;
 }
 
 /* 顶栏里能点的这一簇是同一种形状：高 28、无边、悬停出底色。 */

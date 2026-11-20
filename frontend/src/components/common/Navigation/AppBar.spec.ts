@@ -36,15 +36,14 @@ vi.mock('@/api', async (original) => ({
 }))
 
 const blank = { template: '<div />' }
-const router = createRouter({
-  history: createWebHistory(),
-  routes: [
-    { path: '/teams/:handle', name: 'TeamsDetailDefault', component: blank },
-    { path: '/my/archived-projects', name: 'my-archived-projects', component: blank },
-    { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: blank },
-    { path: '/:rest(.*)', component: blank },
-  ],
-})
+const routes = [
+  { path: '/inbox', name: 'inbox', component: blank },
+  { path: '/teams/:handle', name: 'TeamsDetailDefault', component: blank },
+  { path: '/my/archived-projects', name: 'my-archived-projects', component: blank },
+  { path: '/spaces/:spaceId/tasks', name: 'SpacesDetailTasksList', component: blank },
+  { path: '/:rest(.*)', component: blank },
+]
+const router = createRouter({ history: createWebHistory(), routes })
 
 beforeAll(() => {
   if (!('ResizeObserver' in globalThis)) {
@@ -112,16 +111,18 @@ interface MountOptions {
   sidebar?: NavSidebar | null
   inSpace?: boolean
   area?: string | null
+  /** 换一个刚建出来的路由：它没有应用内来路，像贴链接直接打开的第一页。 */
+  on?: typeof router
 }
 
 async function mount(
   path: string,
-  { loggedIn = true, sidebar = null, inSpace = false, area = null }: MountOptions = {}
+  { loggedIn = true, sidebar = null, inSpace = false, area = null, on = router }: MountOptions = {}
 ) {
   // 首帧那道门关着：这一组用例看的是顶栏画什么，不需要它去问任何东西。
   closeFirstPaint()
-  await router.push(path)
-  await router.isReady()
+  await on.push(path)
+  await on.isReady()
   const Host = defineComponent({
     setup() {
       provideAppNav({
@@ -139,7 +140,7 @@ async function mount(
     },
   })
   return render(Host, {
-    global: { plugins: [createVuetify({ components, directives }), router, createPinia(), i18n] },
+    global: { plugins: [createVuetify({ components, directives }), on, createPinia(), i18n] },
   })
 }
 
@@ -221,6 +222,28 @@ describe('顶栏最左那颗侧栏开关', () => {
     const none = await mount('/settings')
     expect(none.queryByRole('button', { name: t('navigation.sidebar.collapse') })).toBeNull()
     expect(none.queryByRole('button', { name: t('navigation.sidebar.expand') })).toBeNull()
+  })
+})
+
+describe('顶栏上的 ←', () => {
+  it('有应用内来路时，按下去回到刚才那一页', async () => {
+    await router.push('/inbox')
+    const view = await mount('/projects/p1/topics/t1')
+    // happy-dom 的 history 不记地址，浏览器退一格这件事在这里替它做：回到路由记下的上一条。
+    const go = vi.spyOn(window.history, 'go').mockImplementation(() => {
+      void router.replace(String(router.options.history.state.back))
+    })
+    await fireEvent.click(view.getByRole('button', { name: t('shell.back.previous') }))
+    await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/inbox'))
+    go.mockRestore()
+  })
+
+  it('贴链接直接打开的第一页上没有 ←：按它只会把人送出应用', async () => {
+    window.history.replaceState(null, '', '/')
+    const fresh = createRouter({ history: createWebHistory(), routes })
+    const view = await mount('/projects/p1/topics/t1', { on: fresh })
+    expect(view.queryByRole('button', { name: /^返回/ })).toBeNull()
+    expect(view.queryByRole('link', { name: /^返回/ })).toBeNull()
   })
 })
 

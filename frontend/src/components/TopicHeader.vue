@@ -29,7 +29,6 @@ import ChannelDetailsDialog from '@/components/channel/ChannelDetailsDialog.vue'
 import DeleteChannelDialog from '@/components/channel/DeleteChannelDialog.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
-import PageBack from '@/components/common/PageBack.vue'
 import ChannelNotifyMenu from '@/components/room/ChannelNotifyMenu.vue'
 import PanelToggle from '@/components/room/PanelToggle.vue'
 import TopicMembers from '@/components/TopicMembers.vue'
@@ -195,7 +194,6 @@ useCommands(roomCommands)
 
 <template>
   <div class="topic-header" :class="{ 'topic-header--bar': !mdAndUp }">
-    <PageBack />
     <!-- 桌面标题和状态沿同一基线排列，编号放在详情里。 -->
     <div class="topic-header__text">
       <button
