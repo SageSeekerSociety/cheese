@@ -296,6 +296,7 @@
     "remove_table agent_turn_inputs",
     "remove_table agent_types_archive",
     "remove_table device_dedup_archive_20261010",
+    "remove_table environment_backfill_marks",
     "remove_table llm_call_log",
     "remove_table milestones",
     "remove_table project_machines",
