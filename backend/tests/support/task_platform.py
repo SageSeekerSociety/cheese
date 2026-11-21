@@ -1,11 +1,13 @@
 """A task's platform and forge, for the `cheese` CLI on a machine under test.
 
 The forge is a bare repository on disk. The platform is an HTTP server that
-answers the routes the CLI calls for a task — the task itself and the room's
-messages — over a real socket, so the CLI is exercised as it runs on a machine
-and not through stand-ins for its own functions. Any write the CLI still sends
-is recorded and refused: it keeps its work by pushing commits, so a test that
-finds one here is seeing a regression.
+answers the routes the CLI calls for a task — the task itself, the room's
+messages, and the snapshot of its uncommitted work the platform keeps for a
+repository that is not its own — over a real socket, so the CLI is exercised
+as it runs on a machine and not through stand-ins for its own functions. The
+snapshot is read the way the backend reads it (`kept_work`). Any other write
+the CLI still sends is recorded and refused: it keeps its work by pushing
+commits, so a test that finds one here is seeing a regression.
 """
 
 import importlib.util
@@ -16,6 +18,8 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
+
+from app.domain.repository import kept_work
 
 CLI = Path(__file__).resolve().parents[2] / "sandbox" / "cheese"
 
@@ -68,6 +72,9 @@ class TaskPlatform:
         #: Every write the CLI sent, which is a regression if it is not empty.
         self.writes: list[dict] = []
         self.room_messages: list[str] = []
+        #: The task's snapshot the platform keeps (`kept_work.KeptBundle`):
+        #: the bundle, the commit it carries and the one it was cut from.
+        self.kept: dict | None = None
         platform = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -96,18 +103,55 @@ class TaskPlatform:
 
             def do_GET(self):
                 task = f"/projects/{platform.project}/git/tasks/{platform.task_id}"
+                if self.path == "/":
+                    # GitHub's site, as the CLI probes it to tell it is
+                    # reachable (`_configure_git_transport`).
+                    return self.answer(200, b"", "text/html")
                 if self.path == task:
                     return self.data(platform.task())
+                if self.path == task + "/kept":
+                    if platform.kept is None:
+                        self.send_response(204)
+                        self.end_headers()
+                        return None
+                    return self.answer(
+                        200, platform.kept["bundle"], "application/octet-stream"
+                    )
                 return self.answer(404, b"{}")
 
             def do_PUT(self):
-                platform.writes.append({"path": self.path, "body": self.read_body()})
+                body = self.read_body()
+                if self.path == platform.kept_path:
+                    try:
+                        commit, cut_from = kept_work.snapshot_in(
+                            body, uuid.UUID(platform.task_id)
+                        )
+                    except kept_work.NotABundle:
+                        return self.answer(400, b"{}")
+                    platform.kept = {
+                        "bundle": body,
+                        "commit": commit,
+                        "cut_from": cut_from,
+                    }
+                    return self.data({})
+                platform.writes.append({"path": self.path, "body": body})
+                return self.answer(404, b"{}")
+
+            def do_DELETE(self):
+                if self.path == platform.kept_path:
+                    platform.kept = None
+                    return self.data({})
+                platform.writes.append({"path": self.path, "body": b""})
                 return self.answer(404, b"{}")
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
         self.url = f"http://127.0.0.1:{self.server.server_address[1]}"
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
+
+    @property
+    def kept_path(self) -> str:
+        return f"/projects/{self.project}/git/tasks/{self.task_id}/kept"
 
     def task(self) -> dict:
         return {
@@ -123,7 +167,9 @@ class TaskPlatform:
                 {
                     "forge_kind": self.forge_kind,
                     "forge_repo": "owner/repo",
-                    "remote": self.site_remote().as_uri(),
+                    "remote": self.github_remote
+                    if self.forge_kind == "github_app"
+                    else self.site_remote().as_uri(),
                 }
                 if self.forge_kind
                 else {}
@@ -142,6 +188,26 @@ class TaskPlatform:
             remote.parent.mkdir()
             remote.symlink_to(self.forge)
         return remote
+
+    @property
+    def github_remote(self) -> str:
+        """The repository as GitHub names it, `<site>/<owner>/<repo>.git`, on
+        this platform's own address; git reaches the bare repository under
+        that name through `wire_home`."""
+        return f"{self.url}/owner/repo.git"
+
+    def wire_home(self, home: Path) -> None:
+        """Point the git of a machine whose home is `home` from the GitHub
+        name of the repository to the bare one."""
+        if self.forge_kind == "github_app":
+            git(
+                home,
+                "config",
+                "--file",
+                str(home / ".gitconfig"),
+                f"url.{self.forge}.insteadOf",
+                self.github_remote,
+            )
 
     def branch_head(self) -> str | None:
         found = git(self.forge, "for-each-ref", "--format=%(objectname)", self.ref)

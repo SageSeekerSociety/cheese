@@ -90,13 +90,26 @@ def device(tmp_path, monkeypatch):
             self.do_GET()
 
         def do_GET(self):
-            # The task the CLI is working. There is no other route: a sync
-            # delivers commits to the forge and uploads nothing, and there is
-            # nothing for a fresh sandbox to download.
+            # The task the CLI is working, and the snapshot of its uncommitted
+            # work the platform keeps (`_keep_working_copy`): this project's
+            # repository is not the platform's. There is no other route: a
+            # sync delivers commits to the forge and uploads nothing else.
+            if self.path.endswith("/kept"):
+                self.send_response(204)
+                self.end_headers()
+                return
             task = self.path.rsplit("/", 1)[-1]
             self.send_response(200)
             self.end_headers()
             self.wfile.write(json.dumps({"data": tasks[task]}).encode())
+
+        def do_PUT(self):
+            self.rfile.read(int(self.headers.get("Content-Length", "0")))
+            self.send_response(200 if self.path.endswith("/kept") else 404)
+            self.end_headers()
+            self.wfile.write(b'{"data": {}}')
+
+        do_DELETE = do_PUT
 
         def log_request(self, *_):
             # Every call the machine made to the platform, for a test to count.
@@ -130,6 +143,25 @@ def device(tmp_path, monkeypatch):
         server.shutdown()
         server.server_close()
         thread.join()
+
+
+def uploads(home) -> list[str]:
+    """What the machine uploaded to the platform besides the snapshot of a
+    task's uncommitted work the platform keeps for it."""
+    return [
+        line
+        for line in (home / "requests.log").read_text().splitlines()
+        if line.startswith("PUT ") and not line.endswith("/kept")
+    ]
+
+
+def calls(home) -> str:
+    """The machine's calls to the platform, the kept snapshots left out."""
+    return "\n".join(
+        line
+        for line in (home / "requests.log").read_text().splitlines()
+        if not line.endswith("/kept")
+    )
 
 
 def test_committing_in_one_task_pushes_only_its_branch(device):
@@ -209,7 +241,7 @@ def test_sync_leaves_uncommitted_work_alone_without_changing_index_or_branch(dev
     assert git(remote, "rev-parse", tasks[task]["branch"]) == head
     # Only pushed commits travel now: what the agent has not committed is
     # uploaded nowhere.
-    assert "PUT " not in (home / "requests.log").read_text()
+    assert uploads(home) == []
     assert not (home / "backups").exists()
 
 
@@ -225,7 +257,7 @@ def test_sync_never_uploads_uncommitted_files(device):
     cli._sync_task(task)
 
     assert git(remote, "rev-parse", tasks[task]["branch"]) == committed
-    assert "PUT " not in (home / "requests.log").read_text()
+    assert uploads(home) == []
     assert not (home / "backups").exists()
 
 
@@ -260,11 +292,11 @@ def test_sync_all_touches_only_the_tasks_with_something_to_push(device):
     assert git(remote, "rev-parse", tasks[committed]["branch"]) == git(
         work, "rev-parse", "HEAD"
     )
-    seen = (home / "requests.log").read_text()
+    seen = calls(home)
     assert committed in seen
     assert edited not in seen
     assert not [task for task in finished if task in seen]
-    assert "PUT " not in seen
+    assert uploads(home) == []
 
 
 def _sync_by_hand(work, *args):
@@ -350,7 +382,7 @@ def test_a_sync_by_hand_delivers_commits_and_uploads_nothing(device, left):
     else:
         assert git(remote, "rev-parse", tasks[task]["branch"]) == delivered
         assert (work / "draft.txt").read_text() == "not committed\n"
-    assert "PUT " not in (home / "requests.log").read_text()
+    assert uploads(home) == []
     assert not (home / "backups").exists()
 
 
@@ -737,7 +769,7 @@ def test_rejected_concurrent_push_preserves_both_histories(device, tmp_path):
     # carries it now.
     assert git(work, "rev-parse", "HEAD") == local_head
     assert git(work, "show", "HEAD:local.txt") == "local writer"
-    assert "PUT " not in (home / "requests.log").read_text()
+    assert uploads(home) == []
     assert not (home / "backups").exists()
 
 
@@ -751,7 +783,7 @@ def test_closed_task_sync_leaves_its_files_and_delivered_branch_alone(device):
     cli._sync_task(task)
     assert git(remote, "rev-parse", tasks[task]["branch"]) == head
     assert (work / "draft.txt").read_text() == "late work"
-    assert "PUT " not in (home / "requests.log").read_text()
+    assert uploads(home) == []
     assert not (home / "backups").exists()
     with pytest.raises(SystemExit):
         cli._task_worktree(task)
@@ -1129,7 +1161,7 @@ def test_a_closed_task_checkout_moved_off_its_branch_is_left_alone_not_reported(
 
     assert not (home / "posted.jsonl").exists()
     assert (work / "leftover.txt").read_text() == "written after the task closed\n"
-    assert "PUT " not in (home / "requests.log").read_text()
+    assert uploads(home) == []
     assert not (home / "backups").exists()
 
 
@@ -1235,7 +1267,7 @@ def test_a_forge_out_of_reach_does_not_unsay_work_it_already_has(device):
     cli._sync_task(task)
 
     assert not (home / "posted.jsonl").exists()
-    assert "PUT " not in (home / "requests.log").read_text()
+    assert uploads(home) == []
     remote.with_name("unreachable.git").rename(remote)
     assert git(remote, "rev-parse", branch) == pushed
 
@@ -1280,7 +1312,7 @@ def test_commits_after_the_pr_joined_the_merge_queue_are_kept_not_pushed(device)
     assert git(work, "show", "HEAD:b.txt") == "after the accept"
     (told,) = (home / "posted.jsonl").read_text().splitlines()
     assert "#17" in json.loads(told)["body"]["content"]
-    assert "PUT " not in (home / "requests.log").read_text()
+    assert uploads(home) == []
 
 
 @pytest.fixture

@@ -7404,12 +7404,13 @@ def _open_from_forge(repo: Path, task_dir: Path, data: dict) -> None:
     # tracking ref afterwards.
     #
     # The task's kept working copy (`_keep_working_copy`) comes in the same
-    # fetch, as a pattern for the same reason: a task with nothing uncommitted
-    # has none.
+    # fetch when the forge holds it, as a pattern for the same reason: a task
+    # with nothing uncommitted has none. When the platform holds it, it is
+    # fetched from there for a new checkout (`_fetch_kept_bundle`).
     base, branch = data["base"], data["branch"]
     kept = (
         [f"+{_kept_ref(data['task_id'])}*:{_kept_copy(data['task_id'])}*"]
-        if _keeps_work(data)
+        if _kept_on_forge(data)
         else []
     )
     _git_task(
@@ -7429,6 +7430,8 @@ def _open_from_forge(repo: Path, task_dir: Path, data: dict) -> None:
         exists_on_forge = False
     if (task_dir / ".git").exists():
         return
+    if not _kept_on_forge(data):
+        _fetch_kept_bundle(repo, data)
     existing = _git_task(repo, "branch", "--list", data["branch"])
     create = [] if existing else ["-b", data["branch"]]
     remote_start = data["branch"] if exists_on_forge else data["base"]
@@ -7973,12 +7976,76 @@ def _kept_copy(task_id: str) -> str:
     return KEPT_COPIES + str(uuid.UUID(task_id))
 
 
-def _keeps_work(data: dict) -> bool:
+def _kept_on_forge(data: dict) -> bool:
     """Whether a task's uncommitted work is kept on its forge: a repository the
-    platform hosts. A project bound to GitHub keeps only what it pushed — a
-    snapshot there would put files nobody committed into someone else's
-    repository, readable by everyone who can read it."""
+    platform hosts. Any other repository is someone else's, where a snapshot
+    would put files nobody committed, readable by everyone who can read it:
+    the platform keeps it instead, handed over as a git bundle
+    (`_send_kept_bundle`)."""
     return data.get("forge_kind") == "forgejo"
+
+
+def _kept_bundle_call(task_id: str, method: str, body: bytes | None = None) -> bytes:
+    """One call to the platform's copy of the task's snapshot
+    (`/projects/<project>/git/tasks/<task>/kept`); the body it answered, empty
+    when there is none. Any HTTP error raises."""
+    project = _need("CHEESE_PROJECT", PROJECT)
+    req = urllib.request.Request(
+        f"{API}/projects/{project}/git/tasks/{task_id}/kept", data=body, method=method
+    )
+    req.add_header("Content-Type", "application/octet-stream")
+    if TOKEN:
+        req.add_header("Authorization", f"Bearer {TOKEN}")
+    try:
+        with _urlopen(req, timeout=300) as r:
+            return r.read()
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode(errors="replace")
+        raise RuntimeError(f"{method} kept HTTP {e.code}: {raw[:400]}") from None
+
+
+def _send_kept_bundle(
+    worktree: Path, ref: str, task_id: str, commit: str, last: str | None
+) -> None:
+    """Hand the snapshot `commit` to the platform: a bundle of the task's
+    `KEPT_REFS` ref with only the objects its HEAD does not have, which is
+    all a new checkout of that HEAD needs to lay it back. The local ref is
+    the snapshot (`last` before) only once the platform has it."""
+    admin = Path(_git_task(worktree, "rev-parse", "--absolute-git-dir"))
+    bundle = admin / f"cheese-kept-{uuid.uuid4().hex}.bundle"
+    _git_task(worktree, "update-ref", ref, commit)
+    try:
+        _git_task(worktree, "bundle", "create", "-q", str(bundle), ref, "^HEAD")
+        _kept_bundle_call(task_id, "PUT", bundle.read_bytes())
+    except BaseException:
+        if last is None:
+            _git_task(worktree, "update-ref", "-d", ref)
+        else:
+            _git_task(worktree, "update-ref", ref, last)
+        raise
+    finally:
+        bundle.unlink(missing_ok=True)
+
+
+def _fetch_kept_bundle(repo: Path, data: dict) -> None:
+    """Fetch the task's snapshot the platform keeps into `KEPT_COPIES`, for a
+    new checkout to lay back (`_lay_back_kept`); with none kept, drop a copy an
+    earlier checkout here fetched. A snapshot that cannot be fetched fails
+    nothing: the checkout is still the branch."""
+    task_id = str(uuid.UUID(data["task_id"]))
+    copy = _kept_copy(task_id)
+    bundle = repo / f"cheese-kept-{uuid.uuid4().hex}.bundle"
+    try:
+        body = _kept_bundle_call(task_id, "GET")
+        if not body:
+            _git_task(repo, "update-ref", "-d", copy)
+            return
+        bundle.write_bytes(body)
+        _git_task(repo, "fetch", "-q", str(bundle), f"+{_kept_ref(task_id)}:{copy}")
+    except (RuntimeError, OSError) as exc:
+        print(f"[cheese] 没提交的改动没能放回：{exc}", file=sys.stderr)
+    finally:
+        bundle.unlink(missing_ok=True)
 
 
 class _TooLargeToKeep(RuntimeError):
@@ -8041,11 +8108,12 @@ def _working_tree(worktree: Path) -> str | None:
 
 
 def _keep_working_copy(worktree: Path) -> None:
-    """Keep what a task checkout has not committed on the project's forge, at
-    the task's `KEPT_REFS` ref: one commit whose tree is the checkout's files
-    and whose parent is its HEAD. Not on any branch, so the task's history has
-    no commit for it; the next snapshot replaces it, and a checkout with
-    nothing uncommitted has none.
+    """Keep what a task checkout has not committed off its sandbox, as the
+    task's `KEPT_REFS` ref: one commit whose tree is the checkout's files and
+    whose parent is its HEAD. On the project's forge when the platform hosts
+    it, with the platform otherwise (`_kept_on_forge`). Not on any branch, so
+    the task's history has no commit for it; the next snapshot replaces it,
+    and a checkout with nothing uncommitted has none.
 
     A new checkout of the task lays it back (`_lay_back_kept`): this is what
     lets a sandbox be destroyed without taking with it the edits a person
@@ -8053,19 +8121,21 @@ def _keep_working_copy(worktree: Path) -> None:
 
     Nothing reaches the forge when this checkout's last snapshot (the local
     `KEPT_REFS` ref) is the same files on the same HEAD, so a checkpoint over
-    every task of a room costs a forge call only for the ones that changed."""
+    every task of a room costs a call only for the ones that changed."""
     marker = _task_marker(worktree)
-    if marker is None or not _keeps_work(marker):
+    if marker is None:
         return
     admin = Path(_git_task(worktree, "rev-parse", "--absolute-git-dir"))
     with (admin / "cheese-keep.lock").open("a") as lock:
         # A commit's hook, a turn's checkpoint and a save can all ask at once;
         # one snapshot at a time keeps the local ref the forge's.
         _lock(lock)
-        _keep_locked(worktree, _kept_ref(marker["task_id"]))
+        _keep_locked(worktree, marker)
 
 
-def _keep_locked(worktree: Path, ref: str) -> None:
+def _keep_locked(worktree: Path, marker: dict) -> None:
+    task_id = str(uuid.UUID(marker["task_id"]))
+    ref, on_forge = _kept_ref(task_id), _kept_on_forge(marker)
     try:
         last = _git_task(worktree, "rev-parse", "--verify", "-q", ref)
     except RuntimeError:
@@ -8075,11 +8145,14 @@ def _keep_locked(worktree: Path, ref: str) -> None:
     if tree is None:
         if last is None:
             return
-        try:
-            _git_task(worktree, *quiet, "push", "-q", "origin", f":{ref}")
-        except RuntimeError as exc:
-            if "remote ref does not exist" not in str(exc):
-                raise
+        if not on_forge:
+            _kept_bundle_call(task_id, "DELETE")
+        else:
+            try:
+                _git_task(worktree, *quiet, "push", "-q", "origin", f":{ref}")
+            except RuntimeError as exc:
+                if "remote ref does not exist" not in str(exc):
+                    raise
         _git_task(worktree, "update-ref", "-d", ref)
         return
     head = _git_task(worktree, "rev-parse", "HEAD")
@@ -8098,6 +8171,9 @@ def _keep_locked(worktree: Path, ref: str) -> None:
         "Uncommitted work, kept by the platform",
         extra_env=_KEPT_IDENTITY,
     )
+    if not on_forge:
+        _send_kept_bundle(worktree, ref, task_id, commit, last)
+        return
     _git_task(worktree, *quiet, "push", "-q", "origin", f"+{commit}:{ref}")
     _git_task(worktree, "update-ref", ref, commit)
 
@@ -8119,8 +8195,6 @@ def _kept_start(repo: Path, data: dict) -> str | None:
     its kept snapshot can be laid back: the commit that snapshot was cut from,
     when the base branch has it. None when there is nothing kept, or it was
     cut from a commit the base does not have (one that was never pushed)."""
-    if not _keeps_work(data):
-        return None
     try:
         parent = _git_task(
             repo, "rev-parse", "--verify", "-q", f"{_kept_copy(data['task_id'])}^"
@@ -8139,12 +8213,10 @@ def _lay_back_kept(task_dir: Path, data: dict) -> None:
 
     Only over the HEAD it was cut from. A branch that moved since (a commit
     pushed from elsewhere, a step that landed) is left clean rather than
-    merged into by guesswork; the snapshot stays on the forge, and the
+    merged into by guesswork; the snapshot stays where it was kept, and the
     platform tells the teammate and the task's people so
     (`repository.kept_work`). A snapshot that cannot be laid back fails
     nothing: the checkout is still the branch."""
-    if not _keeps_work(data):
-        return
     try:
         kept = _git_task(
             task_dir, "rev-parse", "--verify", "-q", _kept_copy(data["task_id"])
@@ -8155,10 +8227,17 @@ def _lay_back_kept(task_dir: Path, data: dict) -> None:
         head = _git_task(task_dir, "rev-parse", "HEAD")
         parent = _git_task(task_dir, "rev-parse", f"{kept}^")
         if parent != head:
+            # Where this checkout can name it: on the forge, or the copy
+            # fetched from the platform.
+            where = (
+                _kept_ref(data["task_id"])
+                if _kept_on_forge(data)
+                else _kept_copy(data["task_id"])
+            )
             print(
                 "[cheese] 没提交的改动没有放回：保存它们时所在的提交不是现在任务"
                 "分支的最新提交（之后分支有了新提交，或那个提交没推上去）。"
-                f"它们在 {_kept_ref(data['task_id'])}（{kept[:12]}），"
+                f"它们在 {where}（{kept[:12]}），"
                 f"用 git diff HEAD {kept[:12]} 查看。",
                 file=sys.stderr,
             )

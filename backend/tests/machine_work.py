@@ -105,3 +105,35 @@ def machine_keeps(
         return _git(work, "rev-parse", "HEAD").stdout.strip()
     finally:
         shutil.rmtree(work, ignore_errors=True)
+
+
+def machine_bundles(
+    project_id: uuid.UUID, place_id: uuid.UUID, files: dict[str, str]
+) -> tuple[bytes, str]:
+    """The place's checkout with `files` changed and not committed, as `cheese
+    keep` hands it to the platform for a repository that is not its own: a
+    bundle of the kept ref with only the objects the branch's head lacks.
+    Returns the bundle and the snapshot commit; nothing is pushed."""
+    repo = git_store.ensure_repo(project_id)
+    branch = git_store.branch_for_task(place_id)
+    work = Path(tempfile.mkdtemp(prefix="cheese-machine-"))
+    ref = f"refs/cheese/kept/{place_id}"
+    try:
+        _git(work.parent, "clone", "-q", "-b", branch, str(repo), str(work))
+        _git(work, "config", "user.name", CHEESE_NAME)
+        _git(work, "config", "user.email", CHEESE_EMAIL)
+        for path, content in files.items():
+            target = work / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+        _git(work, "add", "-A")
+        tree = _git(work, "write-tree").stdout.strip()
+        commit = _git(
+            work, "commit-tree", tree, "-p", "HEAD", "-m", "kept"
+        ).stdout.strip()
+        _git(work, "update-ref", ref, commit)
+        bundle = work / "kept.bundle"
+        _git(work, "bundle", "create", "-q", str(bundle), ref, "^HEAD")
+        return bundle.read_bytes(), commit
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
