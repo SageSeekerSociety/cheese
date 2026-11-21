@@ -261,7 +261,7 @@ _BASELINE: dict[str, int] = {
     "app/api/routes/execution.py": 10,
     "app/api/routes/fetch.py": 3,
     "app/api/routes/forge_token.py": 2,
-    "app/api/routes/git_http.py": 2,
+    "app/api/routes/git_http.py": 1,
     "app/api/routes/groups.py": 4,
     "app/api/routes/legal.py": 2,
     "app/api/routes/living_docs.py": 1,

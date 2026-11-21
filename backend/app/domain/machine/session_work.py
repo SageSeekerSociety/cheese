@@ -1224,7 +1224,7 @@ async def attach_person(db, attacher: Attacher) -> uuid.UUID:
     holder_id = await holders.holder_of(db, attacher.conversation_id)
     holder = await holders.lock_for_work(db, holder_id)
     if holder.project_id is None:
-        raise NotFoundError("Conversation not found")
+        raise NotFoundError(say("topicNotFound"))
     settled, _, _ = await _settle_person(db, holder, attacher, topic_id=holder_id)
     return settled.id
 
@@ -1259,7 +1259,7 @@ async def _attempt(db, *, topic_id, attacher: Attacher, hub):
             holder.project_id is None
             or await holders.holder_of(db, conversation_id) != topic_id
         ):
-            raise NotFoundError("Conversation not found")
+            raise NotFoundError(say("topicNotFound"))
         location = {}
         settled, attachment_id, environment = await _settle_person(
             db, holder, attacher, topic_id=topic_id
@@ -1610,7 +1610,7 @@ async def environment_credential(
     A 支线's conversation keeps no work, so its environment's credential
     never pushes."""
     if holder.project_id is None:
-        raise ForbiddenError("An environment in no project acts for nobody")
+        raise ForbiddenError()
     return mint_environment_credential(
         project_id=str(holder.project_id),
         conversation_id=str(conversation_id),
