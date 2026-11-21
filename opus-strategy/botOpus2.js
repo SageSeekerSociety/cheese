@@ -23,7 +23,7 @@ export const COMPS = {
 // 任何阵容都要的通用卡：魔王（核心盟约 +20）、两张整备区也生效的助力引擎
 const UNIVERSAL = { 魔王: 7, 夏栎: env('OPUS2_XL', 6), 星源: env('OPUS2_XY', 7) };
 // 这里只记录会在休整期或战斗中持续加层的卡；普通卡的数值，精锐约翻倍。
-// “获得时”卡只在获得/合成时触发，不能当作每回合叠层，但仍是有效的叠层目标。
+// “获得时”卡只在获得/合成时触发，不能当作每回合叠层；“本回合每获得一名干员”卡另列。
 export const STACKERS = {
   sira: { 复奏: 4, 安洁莉娜: 4, 伺夜: 4, 荒芜拉普兰德: 10 },
   preci: { 迷迭香: 10, 黑键: 4, 鸿雪: 8, 空弦: 3, 霍尔海雅: 4 },
@@ -34,13 +34,16 @@ export const STACKERS = {
   leth: { 地灵: 2, 折光: 8, 复奏: 4, 黑键: 4, 纯烬艾雅法拉: 10 },
 };
 export const ON_GAIN = {
-  sira: { 拉普兰德: 4 },
-  preci: { 灰喉: 4, 雪猎: 8 },
+  preci: { 灰喉: 4, 雪猎: 5 },
   yan: { 拜松: 4, 仇白: 6, 黍: 8 },
 };
+// 这些卡是叠层引擎，但触发条件不是“每回合自动加层”：
+// 拉普兰德/安洁莉娜看刷新，风絮/夕看本回合获得干员数。
+const REFRESH_ENGINES = { sira: { 拉普兰德: 4, 安洁莉娜: 4 } };
+const GAIN_ENGINES = { yan: { 风絮: 2, 夕: 4 } };
 const UNI_STACK = { 夏栎: 2, 星源: 4, 魔王: 10 };
 const stackOf = (ps, n) => (STACKERS[st(ps).comp]?.[n]) || UNI_STACK[n] || 0;
-const stackTargetOf = (ps, n) => stackOf(ps, n) || ON_GAIN[st(ps).comp]?.[n] || 0;
+const stackTargetOf = (ps, n) => stackOf(ps, n) || ON_GAIN[st(ps).comp]?.[n] || REFRESH_ENGINES[st(ps).comp]?.[n] || GAIN_ENGINES[st(ps).comp]?.[n] || 0;
 const BENCH_ENGINE = new Set(['夏栎', '星源']);   // 整备区也生效：放整备区，给层数最多的已激活盟约（主盟约）加层
 const SEAT_PREF = (process.env.OPUS2_PREF || 'mix') === 'mix'
   ? [['sarg', 'leth', 'ursus'], ['leth', 'sarg', 'ursus'], ['sarg', 'leth', 'ursus'], ['leth', 'ursus', 'sarg']]
