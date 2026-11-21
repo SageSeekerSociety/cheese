@@ -48,6 +48,8 @@ export interface RoomLayoutOptions {
   onActivated: (key: string) => void
   onClose: (key: string) => void
   onKeep: (key: string) => void
+  /** 读者在「+」里选了能开好几格的那一种：页面新开一格。 */
+  onSpawn: (key: string) => void
 }
 
 export function useRoomLayout(
@@ -81,6 +83,7 @@ export function useRoomLayout(
       transient: tab.transient,
       beside: tab.beside,
       alwaysRender: tab.alwaysRender,
+      spawns: tab.spawns,
       group: WORK_GROUP,
       // 固定的几格不能关（挪去哪都行）；能关的是打开的任务和文件，以及任务的「文件」那一格。
       closable: !!tab.transient || !!tab.closable,
@@ -89,7 +92,7 @@ export function useRoomLayout(
       actions: [hideAction],
     }))
     // 默认摆法里只有不能关的那几格：「文件」由读者打开（「+」、点一个文件链接）。
-    const fixed = work.filter((panel) => !panel.closable).map((panel) => panel.id)
+    const fixed = work.filter((panel) => !panel.closable && !panel.spawns).map((panel) => panel.id)
     // 没拖过的人：窄桌面对半分，宽屏（≥ 1440px）把多出来的那块给工作面板。
     const wide = window.innerWidth >= 1440
     const arrangement: LayoutNode = {
@@ -118,6 +121,7 @@ export function useRoomLayout(
       onActivated: (id) => id !== CONVERSATION && opts.onActivated(id),
       onClose: opts.onClose,
       onKeep: opts.onKeep,
+      onSpawn: opts.onSpawn,
       // 私聊页没有页头那一行：对话自己的头和工作面板的页签栏并排，同高。
       tabStripHeight: kind === 'dm' ? 'var(--app-page-header-height)' : undefined,
     }

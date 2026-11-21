@@ -1,0 +1,9 @@
+{
+  "ended": "Terminal ended",
+  "cannotConnect": "Cannot connect to the terminal",
+  "outdated": "This environment needs an update before it can run a terminal",
+  "unsupported": "This environment does not support a terminal",
+  "notOwner": "Only this computer's owner can open a terminal",
+  "limit": "At most 8 terminals can be open at once",
+  "empty": "No terminal sessions"
+}

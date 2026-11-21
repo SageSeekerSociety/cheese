@@ -9,7 +9,17 @@
 
 import { t } from '@/i18n'
 
-export type TabKey = 'chat' | 'overview' | 'threads' | 'files' | 'site' | 'changes' | 'preview' | 'routines' | 'code'
+export type TabKey =
+  | 'chat'
+  | 'overview'
+  | 'threads'
+  | 'files'
+  | 'site'
+  | 'changes'
+  | 'preview'
+  | 'routines'
+  | 'code'
+  | 'terminal'
 
 export interface TabDef {
   key: TabKey
@@ -65,6 +75,10 @@ export const CODE_TAB: TabDef = {
     return t('work.room.tabs.files')
   },
 }
+
+// 任务里人自己的终端：每一格是一个 shell，读者从「+」里加，加几格就有几个。只有桌面上的任务页有，
+// 所以它不在上面那几张表里，由工作面板按需摆出来（`WorkPanel` 的 `terminalMeta`）。
+export const TERMINAL_TAB: TabDef = tab('terminal', 'mdi-console')
 
 /** 话题页右侧有哪几格：共用的那几格，总览后面接「支线」「文件」，最后是「例行事务」和任务的文件。 */
 export function workPanelTabs(withChat: boolean): TabDef[] {

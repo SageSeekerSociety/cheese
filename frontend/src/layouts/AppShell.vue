@@ -73,6 +73,7 @@
         @activated="pageClaim?.onActivated?.($event)"
         @close="pageClaim?.onClose?.($event)"
         @keep="pageClaim?.onKeep?.($event)"
+        @spawn="pageClaim?.onSpawn?.($event)"
       >
         <template #panel="{ id }">
           <div :ref="outletRef(id)" class="app-outlet" :data-page-panel="id" />

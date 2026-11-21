@@ -31,4 +31,6 @@ export interface WorkTabMeta {
   closable?: boolean
   /** 一格出现时单开在这一格旁边（「文件」里「在旁边打开」的那份文件）。 */
   beside?: string
+  /** 能开好几格的一种（终端）：总列在「+」里，选它是要页面新开一格，它自己不摆出来。 */
+  spawns?: boolean
 }

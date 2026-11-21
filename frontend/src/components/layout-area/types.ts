@@ -67,6 +67,12 @@ export interface LayoutPanel {
    * cannot be closed is always placed: a saved arrangement without it is not used.
    */
   closable?: boolean
+  /**
+   * A kind of panel the reader may open any number of: always listed under "+", and never
+   * placed itself. Picking it asks the page for a new one (`spawn`), which the page then
+   * declares as a transient panel.
+   */
+  spawns?: boolean
   /** Cannot be closed or dragged out of its cell. Other tabs may still join that cell. */
   pinned?: boolean
   /** A cell holding this panel never gets narrower than this, in px. */

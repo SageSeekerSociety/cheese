@@ -99,6 +99,27 @@ describe('LayoutArea on a narrow screen', () => {
     expect(JSON.stringify(saved.root)).toContain('three')
   })
 
+  it('a kind of panel that can be opened any number of times stays under "+" and asks the page for a new one', async () => {
+    const spawn = vi.fn()
+    render(LayoutArea, {
+      props: {
+        panels: [...PANELS, { id: 'terminal', title: 'Terminal', spawns: true }],
+        defaultArrangement: DEFAULT,
+        storageKey: KEY,
+        version: 1,
+        narrow: true,
+        onSpawn: spawn,
+      },
+      global: { plugins: [createVuetify({ components, directives }), i18n] },
+    })
+    for (let n = 0; n < 2; n++) {
+      await fireEvent.click(await screen.findByRole('button', { name: i18n.global.t('shell.layout.add') }))
+      await fireEvent.click(await screen.findByText('Terminal'))
+    }
+    expect(spawn.mock.calls).toEqual([['terminal'], ['terminal']])
+    expect(screen.getAllByRole('tab').map((t) => t.textContent?.trim())).toEqual(['One', 'Two'])
+  })
+
   it('a panel the page opens while the area is up joins its group, and is not remembered', async () => {
     const grouped: LayoutPanel[] = [
       { id: 'one', title: 'One', component: Note, props: { label: 'note one' } },

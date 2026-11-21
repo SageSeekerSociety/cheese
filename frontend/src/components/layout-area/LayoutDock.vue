@@ -104,6 +104,8 @@ const emit = defineEmits<{
   activated: [id: string]
   /** The panels on screen now: the visible tab of every cell in sight. */
   visible: [ids: string[]]
+  /** The reader picked, under "+", a panel that spawns others. */
+  spawn: [id: string]
   /** The reader closed the tab of a transient panel. */
   close: [id: string]
   /** The reader double-clicked the tab of a temporary panel. */
@@ -383,6 +385,10 @@ watch(
 )
 
 function addTo(group: DockviewGroupPanel | null, id: string) {
+  if (props.unplaced.some((panel) => panel.id === id && panel.spawns)) {
+    emit('spawn', id)
+    return
+  }
   const dock = api.value
   if (!dock) return
   if (!group) {
