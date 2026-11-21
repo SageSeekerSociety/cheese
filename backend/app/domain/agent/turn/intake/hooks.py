@@ -505,6 +505,11 @@ class HookEvents:
                         line, meta = model_error_notice(event.text)
                         if resume.reason in _PLATFORM_SIDE_WAITS:
                             cause = cause or resume.reason
+                if seat and meta.get("code") is not None:
+                    # Whose turn it was: the top of the channel lists the teammates
+                    # that stopped on a failure nobody has come back to, and which
+                    # teammate it was is what the notice alone cannot say.
+                    meta = {**meta, "agent_handle": seat}
                 error_line, error_code = line, meta.get("code")
                 if cause is not None and not recovering:
                     _tell_operators(cause, project_id, turn_id, event.text)
