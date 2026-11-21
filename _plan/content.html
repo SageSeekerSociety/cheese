@@ -1,0 +1,168 @@
+<main class="page">
+
+  <style>code, .table-wrap code { overflow-wrap: anywhere; }</style>
+
+  <header class="masthead">
+    <p class="eyebrow">技术方案 · 2026-10-11</p>
+    <h1 class="title">说明文件收口</h1>
+    <p class="subtitle">统一到 AGENTS.md；描述按目录薄放，不逐文件；索引按需取，不预建。</p>
+  </header>
+
+  <p class="lede">结论先说：三件事里只有一件照原样做。命名收口要做——它是修 bug，根目录 CLAUDE.md 压着两个子目录 AGENTS.md，那 255 行现在没有任何 agent 读得到。另外两件按 AI 时代的实测要改方向：<strong>描述放「每目录一份、薄、手写」，不写进每个文件头</strong>；<strong>索引按需取，不预建</strong>。理由是官方明确不要做逐文件描述，而预建索引会过期。</p>
+
+  <nav class="toc">
+    <a href="#context">背景</a>
+    <a href="#outside">别人怎么做</a>
+    <a href="#approach">方案</a>
+    <a href="#phases">阶段</a>
+    <a href="#verification">验证</a>
+    <a href="#risks">风险</a>
+    <a href="#decision">执行与拍板</a>
+  </nav>
+
+  <section class="section" id="context">
+    <h2>背景</h2>
+    <p>仓库里关于「agent 该怎么在这儿干活」的说明文件有三份：根目录 <code>CLAUDE.md</code>（81 行），<code>backend/AGENTS.md</code>（49 行），<code>frontend/AGENTS.md</code>（206 行）。另有 <code>.claude/rules/</code> 下 6 份按路径触发的规则。</p>
+    <p>名字混着用不是风格问题，是功能问题。Claude Code 的默认设置叫 <code>claude-md-or-agents-md</code>：从工作目录往上数，只要存在一个 <code>CLAUDE.md</code>（或 <code>.claude/CLAUDE.md</code>、<code>CLAUDE.local.md</code>），所有 <code>AGENTS.md</code> 一律不读，包括子目录里的。根上有 <code>CLAUDE.md</code>，所以那 255 行现在是死文件。</p>
+    <p>平台这边还有一层：芝士的会话由三个 harness 之一驱动，三者对说明文件的取法各不相同。这一层决定了改名到底修好谁。</p>
+    <div class="table-outer"><div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>harness</th><th>根目录</th><th>子目录 CLAUDE.md</th><th>子目录 AGENTS.md</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>claude-code</td><td>不读</td><td>不读</td><td>不读</td></tr>
+          <tr><td>pi</td><td>读</td><td>读</td><td>不读</td></tr>
+          <tr><td>codex</td><td>未核</td><td>未核</td><td>未核</td></tr>
+        </tbody>
+      </table>
+    </div></div>
+    <p class="scroll-hint">左右滑动看全部列</p>
+    <p>claude-code 这一行不是遗漏：会话启动时带的是 <code>--setting-sources user</code>，代码注释写明是刻意排除宿主的上层说明（<code>harness/claude_code/remote_execution/client.py</code>）。pi 这一行是平台自己走树的实现（<code>harness/pi/repository.py</code>）：根目录读 <code>AGENTS.md</code>、<code>CLAUDE.md</code>、<code>CLAUDE.local.md</code>，全树读 <code>.claude/rules/**</code> 和任意层级的 <code>CLAUDE.md</code>，但嵌套清单里没有 <code>AGENTS.md</code>。两个 harness 对同一个仓库给出不同说法，正是 <code>pi/repository.py</code> 开头那段注释说要避免的事。</p>
+  </section>
+
+  <section class="section" id="outside">
+    <h2>别人怎么做</h2>
+    <p>这一节只收 AI 时代的材料——官方 agent 文档、真做过的仓库、2026 年的实测论文。上一轮拿 JSDoc、Sphinx、golint 那一套来判，问的是人类文档规范，答的不是这个问题，整段作废。</p>
+
+    <h3>三条路的名分差别很大</h3>
+    <p>真正被大规模采纳的，是<strong>每目录一份手写说明</strong>。AGENTS.md 已是事实标准（agents.md 自述 6 万+ 项目在用，2026 年起由 Linux Foundation 下的 AAIF 托管），Codex、Claude Code、Cursor 原生支持。你设想的「只展开一级、更深按需」在这套机制里有精确实现：Codex 从仓库根逐层走到当前目录，每目录最多读一个文件，近者覆盖远者，总量上限 32 KiB；Claude Code 的子目录 <code>CLAUDE.md</code> 只在读到该目录文件时才载入。真实大仓库的量级都是个位数到十几：airflow 14 份、vscode 8 份、openai/codex 2 份、rust 2 份——没有一个做到每个文件。</p>
+    <p>而<strong>「每文件/目录一段 schema 描述 + 生成索引」几乎全是失败或孤例</strong>。最完整的 RFC 实现 Agentic-Insights/codebase-context-spec 已归档，它自己的索引从 2024-12-08 起就没再更新过——正是「描述过期」的活样本。唯一还活着的同类项目 aoci-code（1,470★，单人）反而明文规定语义<strong>必须模型手写，禁止 AST/符号抽取/模板生成</strong>。采纳度差约 4000 倍：<code>.context/index.md</code> 公开文件 242 个，AGENTS.md 1,058,816 个。生成索引的工具（repomix、aider、code2prompt、gitingest）则几乎不写自然语言描述，只输出文件树和符号。</p>
+
+    <h3>实测：分两段，端到端那一半基本是负的</h3>
+    <p>「找到该改的文件」有正收益：SemNav 的语义卡片把 File Hit@10 从 68.33% 抬到 82.67%；角色感知摘要比文件路径表征高最多 40% Hit@5。但这不转化成成功率。</p>
+    <div class="callout-stack">
+      <div class="callout callout--warn">
+        <p><strong>上下文文件整体不提升成功率，成本反涨 20% 以上。</strong>arXiv 2602.11988 直接测 AGENTS.md：这个结论跨不同模型、不同 agent、LLM 生成和人工提交的都成立。而且它单独点名：<strong>「仓库概述」这类内容——正是给 agent 描述目录/文件——不有用</strong>，真正有用的是「非标准的编码约定」。另有预注册研究（2607.27250）同样测不到正确率变化（效应界定在 ≤10–15 个百分点）。</p>
+      </div>
+      <div class="callout callout--warn">
+        <p><strong>摘要替代不了代码。</strong>arXiv 2607.09691：把文件剩余部分渲染成 UML 骨架和签名，跟直接删掉它解决的 issue 数一样多（N=70，p=0.75）；自然语言摘要答得出源码能答的行为问题只占 4/45（源码 27/45）。</p>
+      </div>
+      <div class="callout callout--warn">
+        <p><strong>静态索引输给按需探索。</strong>arXiv 2607.25431：200 题 SWE-bench Verified 上，按需候选+读完即退役解决 79 题，纯按需探索 66 题，Aider 的静态 repo map 只有 56 题。</p>
+      </div>
+    </div>
+    <p>还有两条成本教训：token 少不等于花得少（arXiv 2607.12161，工具输出砍 38.4% token，账单反涨 6.8%）；LSP 语义检索并不比 grep 省 token，甚至多花 6%–118%，而且免费给 agent 它也不用（使用率 0–6%）。</p>
+
+    <h3>官方怎么说</h3>
+    <p>Anthropic 的 best-practices 有一张 ✅Include/❌Exclude 表，<strong>「File-by-file descriptions of the codebase」就在 ❌ 栏</strong>，同栏还有「Anything Claude can figure out by reading code」。它推荐的是按目录分层、单个文件薄（目标 &lt;200 行）；索引用 glob/grep 让 agent 即取，官方给的理由正是「预建索引会过期」；规模再大就把约定搬到 Skills/Plugins/MCP。有意思的是它也反过来警告：按目录分层「随代码库增长难以治理，约定会漂移、文件会过时、根文件没人负责」。</p>
+    <p>关于「越深越没人读」：有实测说 AGENTS.md 100% 被发现、被引用的文件 90% 以上会话会读、目录 README 80%+，但<strong>嵌套 README 只有约 40%</strong>、孤儿文档不到 10%（Augment 的博客，中等可信度）。堆多了还会反噬。</p>
+  </section>
+
+  <section class="section" id="approach">
+    <h2>方案</h2>
+    <p>整体走仓库已经用过很多遍的路子：新做法只对新改动生效，存量冻结。<code>check-file-sizes.py</code>、<code>catalog-ratchet.py</code>、<code>scene-ratchet.py</code> 都是这个形状。</p>
+
+    <h3>一、命名收口到 AGENTS.md</h3>
+    <p>根目录 <code>CLAUDE.md</code> 改成 <code>AGENTS.md</code>，子目录两份已经是这个名。改完 Claude Code 会在启动时读根文件，并在用 Read 打开子目录里的文件时带进那一层的 AGENTS.md——正好是「就近一级、更深按需」，不用自己造机制。</p>
+    <p>预期收益要说准：这一步的价值是<strong>让那 255 行重新可达、让两个 harness 说法一致</strong>，不是提升 agent 合格率——按上面的实测，说明文件对成功率没有可测影响。它是修 bug，不是提性能。</p>
+    <p>只改名是半个修复。必须一起动的还有四处：</p>
+    <ul>
+      <li><code>pi/repository.py</code> 的嵌套清单（第 82 行）加上 <code>AGENTS.md</code>，否则 pi 那边照旧看不见那两份。</li>
+      <li><code>check-claude-md-review.py</code> 的 <code>GUARDED = "CLAUDE.md"</code>。它保证这份文件只有人批准才能合；改名会让这道护栏静默失效。</li>
+      <li><code>check-repo-rules.sh</code> 第 312 行盯住根 <code>CLAUDE.md</code> 的那条规则（不许出现平台 CLI 用法）。</li>
+      <li>三处把旧名字写死的引用：<code>claude-review.yml</code> 第 52 行让自动 reviewer 照着 CLAUDE.md 走；<code>ratchet-snapshot.py</code> 第 585 行把 <code>CLAUDE.md</code> 登记成 palette 那条 ratchet 的判据文件；<code>check-repo-rules.sh</code> 的规则与报错文案（第 312、333 行）。</li>
+    </ul>
+    <p>再补一道防呆：把 Project instructions 钉成 <code>claude-md-and-agents-md</code>，避开某个人的 <code>CLAUDE.local.md</code> 把整套机制关掉。这个值只在 user 设置、<code>--settings</code> 和管理设置里生效，写进项目设置无效，所以进每个人的 user 配置或平台的启动参数。</p>
+
+    <h3>二、描述：每目录一份、薄、手写，不做逐文件</h3>
+    <p>方向按实测改了。原设想是每个代码文件头加一段 schema 注释、索引由代码生成；实测和官方都指向不做这个，改为：</p>
+    <ul>
+      <li><strong>放「每目录一份」，不写进每个文件头。</strong>两条硬理由叠加：官方 ❌ 栏点名「逐文件描述」；前端 <code>src/</code> 1000 行上限<strong>把注释算进行数</strong>，逐文件描述头直接吃代码预算。而且「写进源码文件头、专门给 AI 读」这条在 AI 原生项目里没有先例。</li>
+      <li><strong>薄。</strong>几行就够：这块是干什么、改动时的注意点、和哪些目录强耦合。官方对单个说明文件的目标是 &lt;200 行；嵌套说明被读率只有约 40%，所以薄是硬要求。</li>
+      <li><strong>手写，不生成。</strong>被大规模采纳的形态就是手写。唯一同类的活项目 aoci-code 反而明文禁止生成。生成的那条路（CCS）已归档，且自证过期。</li>
+      <li><strong>先做关键目录，不追覆盖率。</strong>先给前后端入口附近几个高价值目录加，让 harness 走到那儿时读到高信号的一小段；不要为了「每个目录都有」去做全量。</li>
+      <li><strong>要 schema 字段就抄现成的。</strong>Cursor <code>.mdc</code> 用 description/globs，Copilot 用 applyTo+description，Skill 用 description。没有权威的「目录级描述 schema 模板」，自造字段名只会孤立。</li>
+    </ul>
+
+    <h3>三、索引：按需取，不预建</h3>
+    <p>原设想是生成一份「只展开一级」的索引。实测和官方都指向不预建：静态 repo map 在对比里输给按需探索；官方推荐 glob/grep 即取，理由就是预建索引会过期（CCS 自证、aoci 明文防生成、<code>codeindex-sync</code> 把维护一个代码索引记成一张生产事故表）。</p>
+    <p>所以：一级视图由 harness 现有的走树机制给（每目录一份说明，走到哪读到哪），跨目录的检索交给 agent 的 glob/grep。只有当真需要「跨全仓、走树覆盖不到」的检索时，才考虑上 MCP 式的按需查询服务（serena、code-index-mcp 那种符号级「一级视图 + 按需展开」），而不是预生成每文件描述。</p>
+  </section>
+
+  <section class="section" id="phases">
+    <h2>阶段</h2>
+    <ol class="phases">
+      <li class="phase">
+        <div class="phase__head"><h3 class="phase__name">命名收口</h3><span class="pill pill--neutral"><span class="pill__dot"></span>未开始</span></div>
+        <p class="phase__note">改名 + pi 清单 + 两道护栏 + 三处引用文字，一个 PR 做完。判据：改名前后的会话里，子目录 AGENTS.md 由不加载变成加载。</p>
+      </li>
+      <li class="phase">
+        <div class="phase__head"><h3 class="phase__name">给关键目录补说明</h3><span class="pill pill--neutral"><span class="pill__dot"></span>未开始</span></div>
+        <p class="phase__note">选前后端入口附近的几个高价值目录，各补一段薄的每目录说明。先这些，不铺开。</p>
+      </li>
+      <li class="phase">
+        <div class="phase__head"><h3 class="phase__name">量一次再决定要不要铺</h3><span class="pill pill--neutral"><span class="pill__dot"></span>未开始</span></div>
+        <p class="phase__note">量 agent 定位目标文件的命中率，验证「每目录说明」有没有带来增量。没有就不铺。</p>
+      </li>
+    </ol>
+    <p>索引那一件不进阶段——按上面的结论，它由 harness 走树加 glob/grep 覆盖，不单独建东西。</p>
+  </section>
+
+  <section class="section" id="verification">
+    <h2>验证</h2>
+    <p>每一步都要有能当场核对的动作，不是「确认没问题」。</p>
+    <ul>
+      <li>命名：改名前后的会话各截一次上下文，比对子目录 AGENTS.md 在不在里面。</li>
+      <li>pi：给 <code>test_pi_repository.py</code> 加一个临时仓库，断言嵌套 AGENTS.md 被读到——今天这个断言会失败，这正是要修的东西。</li>
+      <li>护栏：拿一个只改 AGENTS.md 的测试 PR 跑 <code>check-claude-md-review.py</code>，它必须报「需要人批准」。</li>
+      <li>关键目录说明：量 agent 定位目标文件的命中率和 $/solved，<strong>不量 token 数</strong>——实测证明 token 少不代表花得少。</li>
+      <li>薄：每目录说明的行数和被读到的情况都记录一次，验证「越深越没人读」，据此决定要不要继续铺。</li>
+    </ul>
+  </section>
+
+  <section class="section" id="risks">
+    <h2>风险</h2>
+    <div class="callout-stack">
+      <div class="callout callout--warn">
+        <p><strong>别把说明文件当提性能的手段。</strong>两篇实测都说它对成功率没有可测影响，其中一篇还量到成本涨 20% 以上（2602.11988、2607.27250）。命名收口的正当收益是可达性和一致性。</p>
+      </div>
+      <div class="callout callout--warn">
+        <p><strong>别做全量。</strong>嵌套说明被读率只有约 40%，孤儿文档不到 10%，堆多了反噬。追求「每个目录/每个文件都有」只会制造会过期的噪音。</p>
+      </div>
+      <div class="callout callout--warn">
+        <p><strong>过期的描述会主动带偏 agent。</strong>有案例：一份记录了旧架构的 AGENTS.md 让 agent 照着做，做出能用但架构错的方案。对策是薄、放在会被读到的地方、有明确的复核触发点（如目录结构变更时）。</p>
+      </div>
+      <div class="callout callout--warn">
+        <p><strong>嵌套 AGENTS.md 的加载面比想的窄。</strong>只在用 Read 打开子目录文件时触发，用户 @-mention 不算，<code>cat</code>/<code>grep</code> 也不算，auto 模式还会静默漏。所以跨目录检索要靠 glob/grep 兜住。</p>
+      </div>
+      <div class="callout callout--warn">
+        <p><strong>读 AGENTS.md 有版本门槛。</strong>要 Claude Code ≥ 2.1.277；Amazon Bedrock 或关掉遥测的会话读不到，只能靠 <code>CLAUDE.md</code> 里 <code>@AGENTS.md</code> 导入。改名之前先确认团队的版本。</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="decision">
+    <h2>执行与拍板</h2>
+    <dl class="facts">
+      <div class="fact"><dt>负责人</dt><dd>未定</dd></div>
+      <div class="fact"><dt>时间</dt><dd>未定</dd></div>
+      <div class="fact"><dt>待定夺</dt><dd>命名收口做不做；关键目录选哪几个；要不要做「量一次再决定铺不铺」。</dd></div>
+    </dl>
+  </section>
+
+  <footer class="footnote">
+    <p>仓库现状数字取自 2026-10-11 的 <code>main</code>（6706 个受版本控制的文件，988 个后端 app 模块，1394 个前端 ts/tsx）。Claude Code 的行为依据官方 best-practices 与 memory 文档（<code>code.claude.com/docs/en/best-practices</code>、<code>/memory</code>，直接读 <code>AGENTS.md</code> 需 ≥ 2.1.277）；harness 行为依据本仓库代码。外部与论文结论的完整出处见 <code>_survey/ai-era.md</code>。</p>
+  </footer>
+
+</main>
