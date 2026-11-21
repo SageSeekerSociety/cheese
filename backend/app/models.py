@@ -56,6 +56,7 @@ from app.domain.project_situation import models as project_situation  # noqa: F4
 from app.domain.project_skill import models as project_skill  # noqa: F401
 from app.domain.questions import models as questions  # noqa: F401
 from app.domain.remote_mcp import models as remote_mcp  # noqa: F401
+from app.domain.repository import models as repository  # noqa: F401
 from app.domain.review import comment_models as review_comments  # noqa: F401
 from app.domain.review import models as review  # noqa: F401
 from app.domain.room_task import models as room_task  # noqa: F401

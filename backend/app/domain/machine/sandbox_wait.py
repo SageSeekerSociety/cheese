@@ -36,7 +36,7 @@ SANDBOX_LOST = (
     "提交、依赖和缓存、/tmp、正在运行的进程都不在了，需要的重新做、重新安装、"
     "重新启动。"
 )
-# The same, in a project whose repository the platform hosts: what a task
+# The same, in a project with a repository: what a task
 # checkout had not committed was kept off the sandbox (`repository.kept_work`)
 # and comes back with the checkout.
 SANDBOX_LOST_KEPT = (
