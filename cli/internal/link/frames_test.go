@@ -1,11 +1,13 @@
 package link
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -147,6 +149,14 @@ func TestConnectorWritesTheAnswerFramesInTheFixtures(t *testing.T) {
 					failure = errors.New(reason)
 				}
 				built = MachineClose(f.Meaning["stream_id"].(string), failure)
+			case "stream.data":
+				built = StreamData(f.Meaning["stream_id"].(string), []byte(f.Meaning["payload"].(string)))
+			case "stream.close":
+				var failure error
+				if reason := f.Meaning["error"].(string); reason != "" {
+					failure = errors.New(reason)
+				}
+				built = StreamClose(f.Meaning["stream_id"].(string), failure)
 			default:
 				t.Fatalf("no builder for %s", f.Type)
 			}
@@ -168,6 +178,38 @@ func TestACleanResultCarriesNoErrorKey(t *testing.T) {
 	}
 	if _, present := out["error"]; present {
 		t.Errorf("clean result carries an error key: %s", data)
+	}
+}
+
+// The frames the server writes on a stream it opens, read the way host.go
+// and stream.go read them.
+func TestTheServersStreamFramesAreReadAsItMeantThem(t *testing.T) {
+	for _, f := range loadFixtures(t) {
+		if f.Origin != "server" || !strings.HasPrefix(f.Type, "stream.") {
+			continue
+		}
+		t.Run(f.name, func(t *testing.T) {
+			var m Msg
+			decodeFrame(t, f.Frame, &m)
+			if m.ID != f.Meaning["stream_id"].(string) {
+				t.Errorf("id: got %q", m.ID)
+			}
+			if want, ok := f.Meaning["state"].(string); ok && m.Path != want {
+				t.Errorf("path: got %q, want %q", m.Path, want)
+			}
+			if want, ok := f.Meaning["header"].(string); ok && m.Header != want {
+				t.Errorf("header: got %q, want %q", m.Header, want)
+			}
+			if want, ok := f.Meaning["bytes"].(float64); ok && m.Bytes != int64(want) {
+				t.Errorf("bytes: got %d, want %v", m.Bytes, want)
+			}
+			if want, ok := f.Meaning["payload"].(string); ok {
+				got, err := base64.StdEncoding.DecodeString(m.Data)
+				if err != nil || string(got) != want {
+					t.Errorf("payload: got %q (%v), want %q", got, err, want)
+				}
+			}
+		})
 	}
 }
 

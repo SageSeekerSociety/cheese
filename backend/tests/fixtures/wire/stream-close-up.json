@@ -1,0 +1,14 @@
+{
+  "type": "stream.close",
+  "origin": "device",
+  "why": "The stream is over on the machine's side: the executor closed it, or it could not be reached. `error` says why when it failed and is absent when the executor closed it cleanly.",
+  "frame": {
+    "t": "stream.close",
+    "id": "stream-3f9a1c7e5b2d4086a1e9c7b5d3f1a2b4",
+    "error": "dial unix /tmp/cheese-execution-1000-0a1b.sock: connect: no such file or directory"
+  },
+  "meaning": {
+    "stream_id": "stream-3f9a1c7e5b2d4086a1e9c7b5d3f1a2b4",
+    "error": "dial unix /tmp/cheese-execution-1000-0a1b.sock: connect: no such file or directory"
+  }
+}
