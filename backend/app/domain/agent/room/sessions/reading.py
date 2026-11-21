@@ -209,10 +209,19 @@ async def _take(
         else:
             await svc._say_waiting(seat, event.reason)
     elif isinstance(event, Ended):
+        if event.epoch is not None:
+            # The machine said the process is gone, in its runner's place:
+            # what its own exit report would have ended is ended first.
+            await svc._hear(live.session, Read(None, event), required=True)
         if seat in svc.work and svc.live.get(seat) is live:
             await svc._died(
                 live, out_of_reach=event.reason == "out of reach", said=event.said
             )
+        elif event.epoch is not None and svc.live.get(seat) is live:
+            # As on its runner's own exit report (``_keep``): the
+            # conversation is over on this seat.
+            svc.live.pop(seat, None)
+            svc.dead.add((seat, live.conversation))
         return True
     elif isinstance(event, CaughtUp):
         caught.set()

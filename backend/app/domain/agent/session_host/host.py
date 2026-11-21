@@ -584,6 +584,9 @@ class SessionHost:
         protocol, until its process is gone, another registration took it
         over, or the reading is stopped.
 
+        The process is gone when its runner reports it, or when the machine
+        answers that the runner itself is not there (``Ended``).
+
         Every answer renews the lease on its runner. One not renewed for
         ``LEASE_S`` makes the session unreachable, which the room is told and
         nothing else: no input is settled and no work ended on it, because a
@@ -610,6 +613,27 @@ class SessionHost:
                         continue
                     return self._superseded(ref, running, driver, exc)
                 running.answering = False
+                if (
+                    starting.no_runner(exc, ref.state)
+                    and not running.stopping
+                    and not await self._ours(running, asked)
+                ):
+                    # The machine answered that the runner is not there, and
+                    # a runner lives exactly as long as its process: the
+                    # process this registration held is gone, and its runner
+                    # with it, before it could say so. That is its exit, the
+                    # same fact `SessionExited` carries; left unsaid, what
+                    # was handed to it holds the seat against the very
+                    # message that would start the next runner.
+                    logger.warning(
+                        "the runner of %s session %s on %s is gone unreported",
+                        driver.label,
+                        ref.home,
+                        running.host,
+                    )
+                    self._forget(ref, running)
+                    await hand(Read(None, Ended("exited", epoch=asked)))
+                    return
                 now = time.monotonic()
                 if failing_since is None:
                     logger.info(
