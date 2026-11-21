@@ -34,6 +34,8 @@ export interface TaskTerminalHooks {
   reset: () => void
   /** The terminal's size now, to open and to resize the shell at. */
   size: () => { cols: number; rows: number }
+  /** What names the tab: the shell's number, and the program in its foreground (null at the prompt). */
+  named?: (name: { number?: number; program: string | null }) => void
 }
 
 /** How often the machine's bring-up is asked about (ms). */
@@ -117,7 +119,14 @@ export function useTaskTerminal(taskId: () => string, terminalId: () => string, 
         })
         return
       }
-      let message: { type?: string; ended?: boolean; reason?: string }
+      let message: {
+        type?: string
+        ended?: boolean
+        reason?: string
+        number?: number
+        program?: string | null
+        name?: string | null
+      }
       try {
         message = JSON.parse(String(event.data))
       } catch {
@@ -127,8 +136,11 @@ export function useTaskTerminal(taskId: () => string, terminalId: () => string, 
         settled = true
         retries = 0
         hooks.reset()
+        hooks.named?.({ number: message.number, program: message.program ?? null })
         state.value = message.ended ? 'ended' : 'open'
         resize()
+      } else if (message.type === 'program') {
+        hooks.named?.({ program: message.name ?? null })
       } else if (message.type === 'exit') {
         state.value = 'ended'
       } else if (message.type === 'refused') {

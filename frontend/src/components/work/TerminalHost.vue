@@ -9,6 +9,7 @@ import { t } from '../../i18n'
 import PanelTerminal from '../panels/PanelTerminal.vue'
 
 const props = defineProps<{ taskId: string; terminalId: string; active: boolean }>()
+const emit = defineEmits<{ named: [name: { number?: number; program: string | null }] }>()
 
 const screen = ref<InstanceType<typeof PanelTerminal> | null>(null)
 
@@ -19,6 +20,7 @@ const { state, reason, start, type, resize } = useTaskTerminal(
     output: (bytes, done) => (screen.value ? screen.value.write(bytes, done) : done()),
     reset: () => screen.value?.reset(),
     size: () => screen.value?.size() ?? { cols: 80, rows: 24 },
+    named: (name) => emit('named', name),
   }
 )
 

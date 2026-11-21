@@ -4,7 +4,8 @@
 //      shell, and what the shell writes reaches the screen.
 //   2. With no machine holding the task, the tab brings one up first and then attaches.
 //   3. A refusal with a reason (the limit, someone else's computer) is said, not retried.
-//   4. A shell whose machine went away leaves the tab waiting; using it starts a new one.
+//   4. The tab learns what names it: the shell's number, the program in its foreground.
+//   5. A shell whose machine went away leaves the tab waiting; using it starts a new one.
 import { defineComponent, h } from 'vue'
 import { cleanup, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -57,6 +58,7 @@ class FakeSocket {
 }
 
 const shown: string[] = []
+const names: { number?: number; program: string | null }[] = []
 let terminal: ReturnType<typeof useTaskTerminal>
 
 function mount() {
@@ -73,6 +75,7 @@ function mount() {
             },
             reset: () => shown.splice(0),
             size: () => ({ cols: 80, rows: 24 }),
+            named: (name) => names.push(name),
           }
         )
         void terminal.start()
@@ -88,6 +91,7 @@ describe('a 终端 tab', () => {
   beforeEach(() => {
     FakeSocket.all = []
     shown.splice(0)
+    names.splice(0)
     machine.now = 'ready'
     prepareTaskMachine.mockClear()
     vi.stubGlobal('WebSocket', FakeSocket)
@@ -108,6 +112,15 @@ describe('a 终端 tab', () => {
     expect(shown.join('')).toBe('README.md\r\n')
     // What reached the screen is acknowledged, so the machine sends more.
     expect(last().sent).toContainEqual(JSON.stringify({ type: 'ack' }))
+  })
+
+  it('names the tab by the shell number and the program in its foreground', async () => {
+    mount()
+    await waitFor(() => expect(FakeSocket.all).toHaveLength(1))
+    last().say({ type: 'attached', ended: false, number: 2, program: null })
+    last().say({ type: 'program', name: 'make' })
+    last().say({ type: 'program', name: null })
+    expect(names).toEqual([{ number: 2, program: null }, { program: 'make' }, { program: null }])
   })
 
   it('brings the task machine up first when nothing holds the task', async () => {

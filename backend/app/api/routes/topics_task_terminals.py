@@ -43,6 +43,11 @@ class TaskTerminalOut(BaseModel):
     id: str
     #: The shell exited; it stays listed until it is closed.
     ended: bool
+    #: What names its tab: the lowest number none of the person's listed
+    #: shells held when it opened, kept for its life.
+    number: int
+    #: The program in its foreground, by command name; None at the prompt.
+    program: str | None = None
 
 
 class TaskTerminalsOut(BaseModel):

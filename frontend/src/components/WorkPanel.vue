@@ -643,7 +643,7 @@ const keyExists = (key: string) =>
   openFiles.value.some((f) => fileKey(f.path) === key)
 const activeTabLabel = computed(() => {
   if (isDelivery(active.value)) return props.deliveries.find((d) => deliveryKey(d.id) === active.value)?.title
-  if (active.value.startsWith(TERMINAL_KEY)) return TERMINAL_TAB.label
+  if (active.value.startsWith(TERMINAL_KEY)) return terminalTitle(active.value.slice(TERMINAL_KEY.length))
   return active.value.startsWith('file:')
     ? active.value.slice('file:'.length).split('/').pop()
     : panelTabs.value.find((tab) => tab.key === active.value)?.label
@@ -746,12 +746,19 @@ const terminalMeta = computed<WorkTabMeta[]>(() =>
         { key: TERMINAL_TAB.key, title: TERMINAL_TAB.label, icon: TERMINAL_TAB.icon, spawns: true },
         ...terminals.ids.value.map((id) => ({
           key: TERMINAL_KEY + id,
-          title: TERMINAL_TAB.label,
+          title: terminalTitle(id),
           icon: TERMINAL_TAB.icon,
         })),
       ]
     : []
 )
+/** 一格终端叫什么：前台在跑的程序名；回到提示符时是「终端」「终端 2」……（号码跟着那个 shell 走）。 */
+function terminalTitle(id: string): string {
+  const name = terminals.names.value[id]
+  if (name?.program) return name.program
+  const n = name?.number ?? 1
+  return n > 1 ? t('work.room.terminal.numbered', { n }) : TERMINAL_TAB.label
+}
 /** 「+」里选了能开好几格的那一种：新开一格，翻到它。 */
 async function spawnTab(key: string) {
   if (key !== TERMINAL_TAB.key || !offersTerminals.value) return
@@ -1317,7 +1324,12 @@ defineExpose({
               :shown="shown(TERMINAL_KEY + id)"
               :pane-class="enterClass(TERMINAL_KEY + id)"
             >
-              <TerminalHost :task-id="taskId" :terminal-id="id" :active="shown(TERMINAL_KEY + id)" />
+              <TerminalHost
+                :task-id="taskId"
+                :terminal-id="id"
+                :active="shown(TERMINAL_KEY + id)"
+                @named="terminals.named(id, $event)"
+              />
             </WorkPane>
           </template>
           <template v-for="f in openFiles" :key="fileKey(f.path)">

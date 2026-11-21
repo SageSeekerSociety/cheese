@@ -152,7 +152,7 @@ def test_a_shell_outlives_its_watcher_and_shows_what_it_wrote(machine):
     _, before, now = line.strip().split("-")
     assert before == now
     assert machine.request("terminal_list", {"owner": "alice"}) == {
-        "terminals": [{"id": "t1", "ended": False}]
+        "terminals": [{"id": "t1", "ended": False, "number": 1, "program": None}]
     }
     again.close()
 
@@ -180,9 +180,10 @@ def test_a_ninth_shell_is_refused_and_an_ended_one_does_not_count(machine):
 
     terms[0].type("exit\n")
     terms[0].until(lambda t: t.exit is not None)
-    assert {"id": "t0", "ended": True} in machine.request(
-        "terminal_list", {"owner": "alice"}
-    )["terminals"]
+    listed = machine.request("terminal_list", {"owner": "alice"})["terminals"]
+    assert {"id": "t0", "ended": True} in [
+        {"id": shell["id"], "ended": shell["ended"]} for shell in listed
+    ]
     again = machine.terminal("alice", "t8").until(_attached)
     assert "attached" in again.statuses[0]
     for term in [*terms, again]:
@@ -216,3 +217,33 @@ def test_closing_a_shell_ends_it(machine):
 
 def test_an_executor_offers_a_terminal(machine):
     assert "terminal" in machine.request("ping", {})["capabilities"]
+
+
+def test_each_shell_keeps_its_own_number_while_others_close(machine):
+    first = machine.terminal("alice", "a").until(_attached)
+    second = machine.terminal("alice", "b").until(_attached)
+    assert (first.statuses[0]["number"], second.statuses[0]["number"]) == (1, 2)
+
+    machine.request("terminal_close", {"owner": "alice", "id": "a"})
+    third = machine.terminal("alice", "c").until(_attached)
+    listed = machine.request("terminal_list", {"owner": "alice"})["terminals"]
+    assert {shell["id"]: shell["number"] for shell in listed} == {"b": 2, "c": 1}
+    # Another person's shells are numbered on their own.
+    bob = machine.terminal("bob", "a").until(_attached)
+    assert bob.statuses[0]["number"] == 1
+    for term in (first, second, third, bob):
+        term.close()
+
+
+def test_a_watcher_is_told_which_program_runs_in_the_foreground(machine):
+    term = machine.terminal("alice", "t1").until(_attached)
+    assert term.statuses[0]["program"] is None
+    term.type("sleep 3\n")
+    term.until(lambda t: {"program": "sleep"} in t.statuses, timeout=5)
+    term.until(
+        lambda t: (
+            t.statuses[-1] == {"program": None} and {"program": "sleep"} in t.statuses
+        ),
+        timeout=10,
+    )
+    term.close()

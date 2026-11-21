@@ -231,7 +231,7 @@ def test_typing_reaches_the_shell_and_the_shell_outlives_the_page(client, machin
         assert str(checkout.resolve()) in output
 
     assert _listed(client, task_id) == {
-        "terminals": [{"id": "t1", "ended": False}],
+        "terminals": [{"id": "t1", "ended": False, "number": 1, "program": None}],
         "refused": None,
     }
     with client.websocket_connect(_url(task_id, "t1", "alice")) as ws:

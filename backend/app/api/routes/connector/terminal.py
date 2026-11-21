@@ -9,7 +9,9 @@ release does not cut a person's terminal.
 
 Down, BINARY frames are what the shell wrote and TEXT frames say what
 happened, as JSON: ``attached`` (what follows starts with what it last
-wrote; ``ended`` when it has exited already), ``exit`` (the shell ended),
+wrote; ``ended`` when it has exited already; the shell's ``number`` and the
+``program`` in its foreground), ``program`` (another program holds the
+foreground now, or none: ``name``), ``exit`` (the shell ended),
 ``refused`` (no shell: ``not_owner``, ``unsupported``, ``outdated``,
 ``limit``, ``unavailable``). Up, BINARY frames are keystrokes and TEXT frames
 are ``resize`` (``cols``, ``rows``) and ``ack`` (``bytes`` of one BINARY
@@ -159,7 +161,18 @@ class _Relay:
             self.busy = bool(status["busy"])
         if "attached" in status:
             await self.websocket.send_text(
-                json.dumps({"type": "attached", "ended": bool(status.get("ended"))})
+                json.dumps(
+                    {
+                        "type": "attached",
+                        "ended": bool(status.get("ended")),
+                        "number": status.get("number"),
+                        "program": status.get("program"),
+                    }
+                )
+            )
+        elif "program" in status:
+            await self.websocket.send_text(
+                json.dumps({"type": "program", "name": status["program"]})
             )
         elif "refused" in status:
             reason = status["refused"]

@@ -6,6 +6,10 @@ export interface TaskTerminal {
   id: string
   /** The shell exited; it stays listed until it is closed. */
   ended: boolean
+  /** Names its tab: kept for the shell's life. */
+  number: number
+  /** The program in its foreground, by command name; null at the prompt. */
+  program: string | null
 }
 
 /** Why the person may not open a terminal in the task. */

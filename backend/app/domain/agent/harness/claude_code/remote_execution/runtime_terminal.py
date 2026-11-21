@@ -10,7 +10,10 @@ this executor stopping.
 
 A shell belongs to the person who opened it (``owner``: the platform names
 the person) and has the id the page chose when it opened it; another person's
-shells are neither listed nor reached. One person keeps at most ``LIMIT`` live
+shells are neither listed nor reached. Each shell has a number, the lowest
+none of the person's listed shells holds, kept for its life: its tab is named
+by it, and by the program in its foreground while one runs (``program``,
+said to watchers as it changes). One person keeps at most ``LIMIT`` live
 shells in an environment; a shell that has ended is listed, as ended, until it
 is closed, and does not count.
 
@@ -18,9 +21,10 @@ Watching a shell is a connection of its own: after the line that asks for it
 (`serve`) the connection carries frames, a type byte and a four-byte length,
 both ways. Down: ``o`` output, ``s`` a status (JSON), ``x`` the shell ended
 (its exit status as text). Up: ``i`` keystrokes, ``r`` a size (JSON
-``{"cols", "rows"}``). A connection that attaches is told so (``attached``),
-then given what the shell last wrote (the last ``RING_BYTES`` of it, from a
-line's start) before anything new, and the terminal is resized so a
+``{"cols", "rows"}``). A connection that attaches is told so (``attached``,
+with the shell's number and the program in its foreground), then given what
+the shell last wrote (the last ``RING_BYTES`` of it, from a line's start
+outside any escape sequence or image) before anything new, and the terminal is resized so a
 full-screen program draws itself again. Several connections may watch one
 shell; the size is the last one asked for.
 
@@ -65,6 +69,9 @@ MAX_FRAME = 1024 * 1024
 #: How often a watcher is told whether a program is running in the shell's
 #: foreground: what the platform reads as the person still using it.
 BUSY_EVERY_S = 20.0
+#: How often a shell's foreground is looked at, so a tab can name the program
+#: running there within a moment of it starting or ending.
+FOREGROUND_EVERY_S = 0.5
 #: Frames waiting for one watcher. A watcher that stops reading holds the
 #: shell's output (the shell waits) for at most ``STALL_S``, then is let go.
 QUEUE_FRAMES = 64
@@ -77,6 +84,25 @@ def frame(kind: bytes, payload: bytes = b"") -> bytes:
 
 def status(value: dict) -> bytes:
     return frame(STATUS, json.dumps(value).encode())
+
+
+def _command_name(pgid):
+    """The command name of a process group's leader: what a tab calls the
+    program running in a shell's foreground."""
+    try:
+        return Path(f"/proc/{pgid}/comm").read_text().strip() or None
+    except OSError:
+        pass
+    try:
+        found = subprocess.run(
+            ["ps", "-o", "comm=", "-p", str(pgid)],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return Path(found).name or None
 
 
 def _size(value, default):
@@ -126,10 +152,13 @@ class _Watcher:
 
 
 class Shell:
-    def __init__(self, owner, terminal_id, argv, cwd, env, cols, rows):
-        self.owner, self.id = owner, terminal_id
+    def __init__(self, owner, terminal_id, number, argv, cwd, env, cols, rows):
+        self.owner, self.id, self.number = owner, terminal_id, number
         self.lock = threading.Lock()
         self.ring = bytearray()
+        # The program in the shell's foreground, by command name; None at the
+        # prompt.
+        self.program = None
         self.watchers = set()
         self.ended, self.exit_code = False, None
         master, slave = os.openpty()
@@ -158,6 +187,7 @@ class Shell:
             os.close(slave)
         self.master = master
         threading.Thread(target=self._read, daemon=True).start()
+        threading.Thread(target=self._watch_foreground, daemon=True).start()
 
     @staticmethod
     def _winsize(fd, rows, cols):
@@ -201,7 +231,15 @@ class Shell:
         what the shell last wrote, then everything new, in that order."""
         with self.lock:
             watcher.frames.put_nowait(
-                status({"attached": self.id, "ended": self.ended, "busy": self.busy()})
+                status(
+                    {
+                        "attached": self.id,
+                        "ended": self.ended,
+                        "busy": self.busy(),
+                        "number": self.number,
+                        "program": self.program,
+                    }
+                )
             )
             if self.ring:
                 watcher.frames.put_nowait(frame(OUTPUT, bytes(self.ring)))
@@ -252,6 +290,24 @@ class Shell:
             os.close(self.master)
         self._send(frame(EXIT, str(code).encode()))
 
+    def _watch_foreground(self):
+        """Say which program runs in the shell's foreground whenever that
+        changes: a tab is named after it."""
+        leader = None
+        while not self.ended:
+            time.sleep(FOREGROUND_EVERY_S)
+            try:
+                now = os.tcgetpgrp(self.master)
+            except OSError:
+                continue
+            if now == leader:
+                continue
+            leader = now
+            program = None if now == self.process.pid else _command_name(now)
+            if program != self.program:
+                self.program = program
+                self._send(status({"program": program}))
+
     def end(self):
         """End the shell and everything in its session."""
         if not self.ended:
@@ -281,7 +337,12 @@ class Terminals:
         with self.lock:
             return {
                 "terminals": [
-                    {"id": shell.id, "ended": shell.ended}
+                    {
+                        "id": shell.id,
+                        "ended": shell.ended,
+                        "number": shell.number,
+                        "program": shell.program,
+                    }
                     for (who, _), shell in self.shells.items()
                     if who == owner
                 ]
@@ -344,8 +405,19 @@ class Terminals:
             )
             if live >= LIMIT:
                 return None, "limit"
+            # The lowest number no shell of this person still listed holds: it
+            # names the shell's tab for as long as the shell is listed.
+            held = {s.number for (who, _), s in self.shells.items() if who == owner}
+            number = next(n for n in range(1, len(held) + 2) if n not in held)
             shell = Shell(
-                owner, terminal_id, [shell_path, "-l"], str(cwd), env, cols, rows
+                owner,
+                terminal_id,
+                number,
+                [shell_path, "-l"],
+                str(cwd),
+                env,
+                cols,
+                rows,
             )
             self.shells[(owner, terminal_id)] = shell
         executor.log("terminal", "opened", terminal=terminal_id, pid=shell.process.pid)
