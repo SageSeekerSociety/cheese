@@ -90,11 +90,11 @@ This upgrade path applies to ordinary room executors. Private execution containe
 | 主机接入和后台维护 | 数据盘上的共享只读 rootfs |
 | bubblewrap 启动 | 镜像 lower、home quota 内的 upper/work，以及原有 home、包缓存和执行器挂载 |
 
-`backend/sandbox/image/template-packages.tsv` 记录临时 VM 上读取的 Debian 13 模板软件包及版本。镜像保留这份清单中的全部包，增加 `build-essential`、`gdb` 和 `strace`；apt 构建时可取得更新版本，实际使用的完整环境由 `default.json` 的 digest 固定。原有 `jj` 单独按版本和 SHA-256 安装。镜像清除构建时生成的主机密钥、机器标识和随机种子。
+`backend/sandbox/image/template-packages.tsv` 记录临时 VM 上读取的 Debian 13 模板软件包及版本。镜像保留这份清单中的全部包，增加 `build-essential`、`gdb`、`strace` 和 `clangd`；apt 构建时可取得更新版本，实际使用的完整环境由 `default.json` 的 digest 固定。原有 `jj` 单独按版本和 SHA-256 安装。镜像清除构建时生成的主机密钥、机器标识和随机种子。
 
 ### 构建和选择
 
-`.github/workflows/sandbox-image.yml` 在配方变化时构建、检查基线包和 C/C++ 编译运行，并把同仓分支的镜像推到 GHCR，以完整提交号作标签。PR 构建不发布。构建完成后，把输出的不可变 digest 写进 `backend/sandbox/image/default.json`，随 backend 发布；发布标签本身不会改变运行中的主机。
+`.github/workflows/sandbox-image.yml` 在配方变化时构建、检查基线包、C/C++ 编译运行和 clangd 能读懂一个 C 文件，并把同仓分支的镜像推到 GHCR，以完整提交号作标签。PR 构建不发布。构建完成后，把输出的不可变 digest 写进 `backend/sandbox/image/default.json`，随 backend 发布；发布标签本身不会改变运行中的主机。
 
 安装 payload 的 `sandbox_image` 只使用主机确认准备好的完整 digest 引用；引用为空时使用宿主根目录，不推断默认镜像已在主机上。`cloud_hosts.sandbox_image` 和 `warm_machines.sandbox_image` 记录主机当前可接单的镜像，`sandbox_homes.sandbox_image` 固定该 sandbox 生命周期内使用的镜像。此版选择平台发布的默认镜像及其保留版本；项目自己的 Dockerfile 和 devcontainer 属于 v2，本版不解析或构建它们。
 

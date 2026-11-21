@@ -40,10 +40,11 @@ jobs:
           image="ghcr.io/${GITHUB_REPOSITORY,,}/sandbox-rootfs:$GITHUB_SHA"
           docker buildx build --platform linux/amd64 --load --tag "$image" backend/sandbox/image
           docker run --rm "$image" sh -eu -c '
-            command -v gcc g++ make gdb git python3 tmux jj
+            command -v gcc g++ make gdb clangd git python3 tmux jj
             printf "int main(void){return 0;}\n" > /tmp/main.c
             gcc -Wall -Werror /tmp/main.c -o /tmp/main && /tmp/main
             g++ -Wall -Werror /tmp/main.c -o /tmp/main-cpp && /tmp/main-cpp
+            clangd --check=/tmp/main.c >/tmp/clangd.log 2>&1 || { cat /tmp/clangd.log; exit 1; }
             cut -f1 /usr/share/cheese/template-packages.tsv | sort > /tmp/want
             cut -f1 /usr/share/cheese/image-packages.tsv | sort > /tmp/have
             test -z "$(comm -23 /tmp/want /tmp/have)"
