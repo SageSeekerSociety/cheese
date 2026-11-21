@@ -158,3 +158,12 @@ def test_a_wait_the_service_names_is_the_wait():
     )
     assert quota.kind == QUOTA_RESET
     assert quota.wait_s == 2 * 86400 + 3 * 3600 + 5 * 60
+
+
+def test_an_expired_login_is_never_started_again_by_itself():
+    said = (
+        "Failed to authenticate: OAuth session expired and could not be "
+        "refreshed (authentication_failed)"
+    )
+    assert classify(said) is None
+    assert classify(said, api_error_status=401) is None

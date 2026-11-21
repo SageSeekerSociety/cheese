@@ -27,6 +27,8 @@ const listMachineSkills = vi.fn()
 const fetchSkillMarket = vi.fn()
 const fetchMachineSkill = vi.fn()
 
+// 地址上的 `?focus=&why=` 由视图读，组件收成 props（`src/components` 里不读路由）。
+
 vi.mock('@/api/projectSkills', () => ({
   listSkillCatalog: (...a: unknown[]) => listSkillCatalog(...a),
   listProjectSkills: (...a: unknown[]) => listProjectSkills(...a),
@@ -84,9 +86,19 @@ function agent(overrides: Partial<ProjectAgent> = {}): ProjectAgent {
   }
 }
 
-function mountPage() {
+/** 队友卡片上除「编辑」以外的动作都收在「更多」里：先点开第 nth 张卡片的「更多」，再点这一项。 */
+async function inMore(label: string, nth = 0) {
+  const mores = await screen.findAllByRole('button', { name: '更多' })
+  await fireEvent.click(mores[nth])
+  // 只认菜单里的那一项：面板打开后，面板标题里也有同样的字（「技能」），关掉的菜单也还留在文档里，
+  // 所以取菜单列表里最后弹出的那一份。
+  const hits = (await screen.findAllByText(label)).filter((el) => el.closest('.v-list'))
+  await fireEvent.click(hits[hits.length - 1])
+}
+
+function mountPage(focus?: { focus: string; why: string }) {
   return render(AgentTeamSettings, {
-    props: { projectId: PROJECT },
+    props: { projectId: PROJECT, ...focus },
     global: { plugins: [createVuetify({ components, directives })] },
   })
 }
@@ -184,9 +196,8 @@ describe('队友名册', () => {
     setProjectDefaultAgent.mockResolvedValue(agent({ id: 'a2', is_default: true }))
     mountPage()
 
-    const buttons = await screen.findAllByRole('button', { name: '设为默认' })
-    expect(buttons).toHaveLength(1)
-    await fireEvent.click(buttons[0])
+    // 默认的那位（第一张）菜单里没有「设为默认」，第二张有。
+    await inMore('设为默认', 1)
     await waitFor(() => {
       expect(setProjectDefaultAgent).toHaveBeenCalledWith(PROJECT, { instance_id: 'a2' })
     })
@@ -232,7 +243,7 @@ describe('停用', () => {
     deactivateProjectAgent.mockResolvedValue({ deleted: true })
     mountPage()
 
-    await fireEvent.click(await screen.findByRole('button', { name: '停用' }))
+    await inMore('停用')
     expect(await screen.findByText('停用「评审」')).toBeTruthy()
     expect(screen.getByText(/已在用它的频道照常工作/)).toBeTruthy()
     expect(deactivateProjectAgent).not.toHaveBeenCalled()
@@ -245,7 +256,7 @@ describe('停用', () => {
     })
     mountPage()
 
-    await fireEvent.click(await screen.findByRole('button', { name: '停用' }))
+    await inMore('停用')
     await fireEvent.click(await screen.findByRole('button', { name: '取消' }))
     expect(deactivateProjectAgent).not.toHaveBeenCalled()
   })
@@ -260,8 +271,10 @@ describe('停用', () => {
 
     expect(await screen.findByText('评审')).toBeTruthy()
     expect(screen.getByText('已停用')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: '停用' })).toBeNull()
-    expect(screen.queryByRole('button', { name: '设为默认' })).toBeNull()
+    await fireEvent.click(await screen.findByRole('button', { name: '更多' }))
+    expect(await screen.findByText('账号与登录')).toBeTruthy()
+    expect(screen.queryByText('停用')).toBeNull()
+    expect(screen.queryByText('设为默认')).toBeNull()
   })
 
   it('确认之后才真的停用', async () => {
@@ -272,7 +285,7 @@ describe('停用', () => {
     deactivateProjectAgent.mockResolvedValue({ deleted: true })
     mountPage()
 
-    await fireEvent.click(await screen.findByRole('button', { name: '停用' }))
+    await inMore('停用')
     const dialog = await screen.findByRole('dialog')
     const confirm = Array.from(dialog.querySelectorAll('button')).find((b) => b.textContent?.trim() === '停用')
     await fireEvent.click(confirm as HTMLButtonElement)
@@ -334,7 +347,7 @@ describe('技能面板的 409', () => {
     updateProjectAgent.mockRejectedValueOnce(new ApiError(409, 'stale')).mockResolvedValueOnce({})
     mountPage()
 
-    await fireEvent.click(await screen.findByRole('button', { name: '技能' }))
+    await inMore('技能')
     await installFrom() // 第一次：被 409 拦下，触发重读
     await waitFor(() => expect(listProjectAgents).toHaveBeenCalledTimes(2))
     // 名册发出 ≠ 重读落完：重指面板目标是 fetch 回来之后的一串微任务。真实网络里这
@@ -363,7 +376,7 @@ describe('技能面板的 409', () => {
     updateProjectAgent.mockResolvedValue({ version: 2 })
     mountPage()
 
-    await fireEvent.click(await screen.findByRole('button', { name: '技能' }))
+    await inMore('技能')
     await installFrom() // 装一份：成功
     await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(1))
     fetchMachineSkill.mockResolvedValue(landed('images', '图'))
@@ -382,7 +395,6 @@ describe('技能面板的 409', () => {
     fetchSkillMarket.mockResolvedValue(MARKET)
     fetchMachineSkill.mockResolvedValue(landed('documents', '文档'))
   }
-  const skillButtons = () => screen.findAllByRole('button', { name: '技能' })
   async function closePanel() {
     await fireEvent.click(await screen.findByRole('button', { name: t('global.cancel') }))
     await new Promise((resolve) => setTimeout(resolve, 0))
@@ -395,12 +407,12 @@ describe('技能面板的 409', () => {
     updateProjectAgent.mockResolvedValueOnce({ version: 2 }).mockResolvedValueOnce({ version: 3 })
     mountPage()
 
-    await fireEvent.click((await skillButtons())[0])
+    await inMore('技能')
     await installFrom()
     await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(1))
     await new Promise((resolve) => setTimeout(resolve, 0))
     await closePanel()
-    await fireEvent.click((await skillButtons())[0])
+    await inMore('技能')
     fetchMachineSkill.mockResolvedValue(landed('images', '图'))
     await installFrom()
     await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(2))
@@ -422,13 +434,13 @@ describe('技能面板的 409', () => {
       .mockResolvedValueOnce({ version: 3 })
     mountPage()
 
-    await fireEvent.click((await skillButtons())[0])
+    await inMore('技能')
     await installFrom()
     await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(1))
     await closePanel()
     releaseSave()
     await new Promise((resolve) => setTimeout(resolve, 0))
-    await fireEvent.click((await skillButtons())[0])
+    await inMore('技能')
     fetchMachineSkill.mockResolvedValue(landed('images', '图'))
     await installFrom()
     await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(2))
@@ -450,11 +462,11 @@ describe('技能面板的 409', () => {
       .mockResolvedValueOnce({ version: 3 })
     mountPage()
 
-    await fireEvent.click((await skillButtons())[0])
+    await inMore('技能')
     await installFrom()
     await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(1))
     await closePanel()
-    await fireEvent.click((await skillButtons())[0])
+    await inMore('技能')
     releaseSave()
     await new Promise((resolve) => setTimeout(resolve, 0))
     fetchMachineSkill.mockResolvedValue(landed('images', '图'))
@@ -488,11 +500,11 @@ describe('技能面板的 409', () => {
       .mockResolvedValueOnce({ version: 6 })
     mountPage()
 
-    await fireEvent.click((await skillButtons())[0])
+    await inMore('技能')
     await installFrom()
     await waitFor(() => expect(updateProjectAgent).toHaveBeenCalledTimes(1))
     await closePanel()
-    await fireEvent.click((await skillButtons())[1])
+    await inMore('技能', 1)
     releaseSave()
     await new Promise((resolve) => setTimeout(resolve, 0))
     fetchMachineSkill.mockResolvedValue(landed('images', '图'))
@@ -503,5 +515,52 @@ describe('技能面板的 409', () => {
       expected_version: 5,
       configuration: expect.objectContaining({ skills: ['images'] }),
     })
+  })
+})
+
+describe('账号与登录', () => {
+  it('平时不占地方：登录那块收着，「更多」里有入口', async () => {
+    listProjectAgents.mockResolvedValue({ data: [agent({ id: 'a1' })], total: 1 })
+    mountPage()
+
+    await screen.findAllByRole('button', { name: '更多' })
+    expect(screen.queryByTestId('agent-login')).toBeNull()
+    await inMore('账号与登录')
+    const panel = await screen.findByTestId('agent-login')
+    expect(panel.textContent).toContain('claude /login')
+    expect(panel.textContent).not.toContain('登录已过期')
+  })
+
+  it('从红行点「重新登录」过来：那位队友的卡片自己展开红条和做法，别的队友不动', async () => {
+    listProjectAgents.mockResolvedValue({
+      data: [
+        agent({ id: 'a1' }),
+        agent({ id: 'a2', handle: 'reviewer', seat_handle: 'reviewer-seat', display_name: '评审', is_default: false }),
+      ],
+      total: 2,
+    })
+    mountPage({ focus: 'reviewer-seat', why: 'login_expired' })
+
+    const panel = await screen.findByTestId('agent-login')
+    expect(screen.getAllByTestId('agent-login')).toHaveLength(1)
+    expect(panel.textContent).toContain('登录已过期')
+    expect(panel.textContent).toContain('claude /login')
+    expect(panel.closest('[data-agent-id]')?.getAttribute('data-agent-id')).toBe('a2')
+  })
+
+  it('点「我已重新登录」：红条换成已重新登录，并重读名册', async () => {
+    listProjectAgents.mockResolvedValue({
+      data: [
+        agent({ id: 'a2', handle: 'reviewer', seat_handle: 'reviewer-seat', display_name: '评审', is_default: false }),
+      ],
+      total: 1,
+    })
+    mountPage({ focus: 'reviewer-seat', why: 'login_expired' })
+
+    await fireEvent.click(await screen.findByRole('button', { name: '我已重新登录' }))
+    await waitFor(() => expect(screen.queryByRole('button', { name: '我已重新登录' })).toBeNull())
+    expect(screen.getByTestId('agent-login').textContent).toContain('已重新登录。')
+    expect(screen.getByTestId('agent-login').textContent).not.toContain('登录已过期')
+    expect(listProjectAgents.mock.calls.length).toBeGreaterThanOrEqual(2)
   })
 })
