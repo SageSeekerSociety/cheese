@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 from app.core.device_failures import EXECUTOR_UNREACHABLE
 from app.domain.agent import device_link
 from app.domain.agent.device_contract import DeviceCallError, HubScreen, ViewerTransport
-from app.domain.agent.device_hub import machine
+from app.domain.agent.device_hub import machine, streams
 
 if TYPE_CHECKING:
     from app.domain.agent import device_hub as pkg
@@ -52,6 +52,7 @@ async def on_device_message(
         device.target = msg.target
         device.executor = msg.executor
         device.profiles = msg.profiles
+        device.streams = msg.streams
         device.dropped_at = None
         device.announced.set()
         if device.proto not in (None, device_link.PROTOCOL_VERSION):
@@ -133,6 +134,9 @@ async def on_device_message(
         return
     if msg.t.startswith("machine."):
         await machine.on_frame(hub, device_id, msg)
+        return
+    if msg.t.startswith("stream."):
+        await streams.on_frame(hub, device_id, msg)
         return
     if msg.t == "screen.data" and screen is not None:
         await _fan_out_screen_data(screen, msg.decoded_data())

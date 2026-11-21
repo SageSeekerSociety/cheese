@@ -1,0 +1,14 @@
+{
+  "type": "stream.ack",
+  "origin": "server",
+  "why": "How many more bytes of the stream's output the server has passed on. The connector stops reading the executor once a window of output is out unacknowledged, so a flood waits on the machine and not in the link every session shares.",
+  "frame": {
+    "t": "stream.ack",
+    "id": "stream-3f9a1c7e5b2d4086a1e9c7b5d3f1a2b4",
+    "bytes": 32768
+  },
+  "meaning": {
+    "stream_id": "stream-3f9a1c7e5b2d4086a1e9c7b5d3f1a2b4",
+    "bytes": 32768
+  }
+}

@@ -19,6 +19,7 @@ import {
   sameArrangement,
   serializeArrangement,
   setCollapsed,
+  spawnLanding,
   unplacedPanels,
   withCellIds,
 } from './arrangement'
@@ -454,5 +455,34 @@ describe('a panel opened beside another', () => {
   it('goes where any panel would when the other panel is not placed', () => {
     const start: LayoutArrangement = { root: { panels: ['chat'] } }
     expect(placedPanels(placeBeside(start, 'file:a', 'files'))).toEqual(['chat', 'file:a'])
+  })
+})
+
+describe('a panel that spawns others', () => {
+  const work = (id: string) => (['files', 'preview', 'terminal'].includes(id) ? 'work' : undefined)
+
+  it("is offered on the cell its new panels land in: its group's home, not the conversation", () => {
+    expect(spawnLanding(DEFAULT, { id: 'shell', group: 'work' }, work)).toBe('top')
+  })
+
+  it('follows its group when the group moves', () => {
+    const moved: LayoutArrangement = {
+      root: {
+        direction: 'row',
+        children: [
+          { id: 'a', panels: ['chat', 'files', 'preview'] },
+          { id: 'b', panels: ['nav'] },
+        ],
+      },
+    }
+    expect(spawnLanding(moved, { id: 'shell', group: 'work' }, work)).toBe('a')
+  })
+
+  it('with no cell of its group, is offered where a new panel is placed', () => {
+    expect(spawnLanding(DEFAULT, { id: 'shell', group: 'elsewhere' }, work)).toBe('left')
+  })
+
+  it("opening beside a panel, is offered on that panel's cell", () => {
+    expect(spawnLanding(DEFAULT, { id: 'shell', beside: 'chat' }, work)).toBe('middle')
   })
 })

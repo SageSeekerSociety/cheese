@@ -9,15 +9,23 @@ import { authToken, BASE } from './http'
 export function screenWsUrl(sid: string): string {
   const token = authToken()
   const q = token ? `?token=${encodeURIComponent(token)}` : ''
+  return `${connectorWsBase()}/connector/session/${encodeURIComponent(sid)}/screen${q}`
+}
+
+function connectorWsBase(): string {
   const override = (import.meta.env.VITE_CONNECTOR_WS_BASE as string | undefined) ?? ''
-  let base: string
-  if (override && !override.startsWith('__')) {
-    base = override.replace(/^http/, 'ws').replace(/\/$/, '')
-  } else {
-    const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
-    base = `${proto}://${window.location.host}`
-  }
-  return `${base}/connector/session/${encodeURIComponent(sid)}/screen${q}`
+  if (override && !override.startsWith('__')) return override.replace(/^http/, 'ws').replace(/\/$/, '')
+  const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
+  return `${proto}://${window.location.host}`
+}
+
+// A person's terminal in a task: one of their shells there, by the id the page chose. Served by
+// the same process as the 现场 socket, reached the same way.
+export function taskTerminalWsUrl(taskId: string, terminalId: string, cols: number, rows: number): string {
+  const query = new URLSearchParams({ cols: String(cols), rows: String(rows) })
+  const token = authToken()
+  if (token) query.set('token', token)
+  return `${connectorWsBase()}/connector/tasks/${encodeURIComponent(taskId)}/terminals/${encodeURIComponent(terminalId)}?${query}`
 }
 
 // Dev-only observability hook, same purpose as `window.__queryClient`: the probe

@@ -369,7 +369,9 @@ const docked = computed(() => !panelFloat.value && panelOpen.value)
 const roomReady = computed(() => !!selectedTopic.value && !(props.taskId && !currentTask.value))
 /** 工作面板此刻有哪几格：固定的几格（面板算好的名字和信号，没挂上时照表），打开的任务，打开的文件。 */
 function workTabs() {
-  const handle = panelRef.value as (WorkPanelHandle & { fixedMeta?: WorkTabMeta[]; fileMeta?: WorkTabMeta[] }) | null
+  const handle = panelRef.value as
+    | (WorkPanelHandle & { fixedMeta?: WorkTabMeta[]; fileMeta?: WorkTabMeta[]; terminalMeta?: WorkTabMeta[] })
+    | null
   const fixed =
     handle?.fixedMeta ??
     roomTabs({ withChat: false, review: false, task: !!props.taskId }).map((tab) => ({
@@ -388,6 +390,8 @@ function workTabs() {
       alwaysRender: true,
     })),
     ...(handle?.fileMeta ?? []).map((tab) => ({ ...tab, transient: true, alwaysRender: true })),
+    // 终端：「+」里那一项，和读者开着的每一格（一格一个 shell，挪动时不能重画）。
+    ...(handle?.terminalMeta ?? []).map((tab) => ({ ...tab, transient: !tab.spawns, alwaysRender: true })),
   ]
 }
 const room = useRoomLayout(usePagePanels, {
@@ -399,6 +403,7 @@ const room = useRoomLayout(usePagePanels, {
   onActivated: (key) => (panelRef.value as { activated?: (key: string) => void } | null)?.activated?.(key),
   onClose: (key) => (panelRef.value as { closeTab?: (key: string) => void } | null)?.closeTab?.(key),
   onKeep: (key) => (panelRef.value as { keepTab?: (key: string) => void } | null)?.keepTab?.(key),
+  onSpawn: (key) => void (panelRef.value as { spawnTab?: (key: string) => void } | null)?.spawnTab?.(key),
 })
 const conversationTarget = computed(() => room.panels.outlet(CONVERSATION))
 /** 对话那一格里的那一块：窄档的面板浮层就压在它上面。 */

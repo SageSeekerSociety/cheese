@@ -1,0 +1,14 @@
+{
+  "type": "stream.data",
+  "origin": "device",
+  "why": "Bytes the executor wrote on a stream the server opened, base64 of the raw bytes. Non-ASCII and escape sequences on purpose: a terminal's output is bytes, not text.",
+  "frame": {
+    "t": "stream.data",
+    "id": "stream-3f9a1c7e5b2d4086a1e9c7b5d3f1a2b4",
+    "data": "G1szMm1+L3F1ZXVlG1swbSQg57yW6K+R6YCa6L+HDQo="
+  },
+  "meaning": {
+    "stream_id": "stream-3f9a1c7e5b2d4086a1e9c7b5d3f1a2b4",
+    "payload": "\u001b[32m~/queue\u001b[0m$ 编译通过\r\n"
+  }
+}

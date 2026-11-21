@@ -54,6 +54,7 @@ import {
   reconcile,
   resetSizes,
   setCollapsed,
+  spawnLanding,
   withCellIds,
 } from './arrangement'
 import { fromDockview, STRIP_SIZE, toDockview } from './dockviewJson'
@@ -104,6 +105,8 @@ const emit = defineEmits<{
   activated: [id: string]
   /** The panels on screen now: the visible tab of every cell in sight. */
   visible: [ids: string[]]
+  /** The reader picked, under "+", a panel that spawns others. */
+  spawn: [id: string]
   /** The reader closed the tab of a transient panel. */
   close: [id: string]
   /** The reader double-clicked the tab of a temporary panel. */
@@ -383,6 +386,10 @@ watch(
 )
 
 function addTo(group: DockviewGroupPanel | null, id: string) {
+  if (props.unplaced.some((panel) => panel.id === id && panel.spawns)) {
+    emit('spawn', id)
+    return
+  }
   const dock = api.value
   if (!dock) return
   if (!group) {
@@ -402,6 +409,11 @@ function addTo(group: DockviewGroupPanel | null, id: string) {
 const cellCount = computed(() => cellsOf(model.value).length)
 
 const groupOf = (id: string) => info.value.get(id)?.group
+
+/** What a cell's "+" offers: panels in no cell, and a spawning panel only where it would land. */
+function offeredIn(cellId: string): LayoutPanelInfo[] {
+  return props.unplaced.filter((panel) => !panel.spawns || spawnLanding(model.value, panel, groupOf) === cellId)
+}
 /**
  * The page's buttons for a cell: those its visible tab declares, in its group's home cell
  * only. Every cell offers collapse and maximize besides, in the same places.
@@ -734,7 +746,11 @@ const noContextMenu = () => []
 
       <template #rightHeaderActions="scope: IDockviewHeaderActionsProps">
         <div class="layout-actions">
-          <LayoutAddMenu v-if="unplaced.length && !locked" :panels="unplaced" @pick="addTo(scope.group, $event)" />
+          <LayoutAddMenu
+            v-if="offeredIn(scope.group.id).length && !locked"
+            :panels="offeredIn(scope.group.id)"
+            @pick="addTo(scope.group, $event)"
+          />
           <BaseButton
             v-if="!maximizedGroup && canCollapse(model, scope.group.id)"
             kind="ghost"

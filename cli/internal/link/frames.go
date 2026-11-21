@@ -3,7 +3,8 @@ package link
 import "encoding/base64"
 
 // The frames the connector writes up: two for one execution.call, its
-// Heartbeat, and the machine.* frames of a stream its sandbox opened.
+// Heartbeat, the machine.* frames of a stream its sandbox opened, and the
+// stream.* frames of a stream the server opened.
 //
 // They live here beside Msg, not inline at the call site in
 // cli/internal/host/executor.go, because nothing at this seam imports anything
@@ -76,6 +77,22 @@ func MachineEnd(id string) Msg {
 // (Error says why when it failed); down, the platform has answered in full.
 func MachineClose(id string, err error) Msg {
 	m := Msg{T: "machine.close", ID: id}
+	if err != nil {
+		m.Error = err.Error()
+	}
+	return m
+}
+
+// StreamData carries bytes the executor wrote on one stream the server
+// opened, base64 like ExecutionData.
+func StreamData(id string, payload []byte) Msg {
+	return Msg{T: "stream.data", ID: id, Data: base64.StdEncoding.EncodeToString(payload)}
+}
+
+// StreamClose says one stream the server opened is over on this side: the
+// executor closed it, or it could not be reached (Error says why).
+func StreamClose(id string, err error) Msg {
+	m := Msg{T: "stream.close", ID: id}
 	if err != nil {
 		m.Error = err.Error()
 	}

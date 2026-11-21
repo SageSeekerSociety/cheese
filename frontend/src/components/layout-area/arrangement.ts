@@ -290,6 +290,21 @@ export function placeBeside(arrangement: LayoutArrangement, panelId: string, nea
   return { root: visit(arrangement.root) }
 }
 
+/**
+ * The cell a panel opened for a spawning panel lands in, by id: beside the panel it names,
+ * in its group's home cell, or where a newly placed panel goes when the group has none.
+ * Undefined when that is a cell that does not exist yet.
+ */
+export function spawnLanding(
+  arrangement: LayoutArrangement,
+  spawner: { id: string; group?: string; beside?: string },
+  groupOf: (id: string) => string | undefined
+): string | undefined {
+  if (spawner.beside) return cellOfPanel(arrangement, spawner.beside)?.id
+  const home = homeCell(arrangement, spawner.group, groupOf)
+  return (home ?? cellOfPanel(placePanel(arrangement, spawner.id), spawner.id))?.id
+}
+
 /** A group's home: the cell holding most of its panels (the first such, in reading order). */
 export function homeCell(
   arrangement: LayoutArrangement,

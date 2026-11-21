@@ -80,6 +80,8 @@ const emit = defineEmits<{
   close: [id: string]
   /** The reader double-clicked the tab of a temporary panel: the page keeps it. */
   keep: [id: string]
+  /** The reader picked a panel that spawns others under "+": the page opens a new one. */
+  spawn: [id: string]
 }>()
 
 defineSlots<{
@@ -90,10 +92,24 @@ defineSlots<{
 const display = useDisplay()
 const isNarrow = computed(() => props.narrow ?? !display.mdAndUp.value)
 
-const declared = computed(() => props.panels.map((panel) => panel.id))
-const byId = computed(() => new Map(props.panels.map((panel) => [panel.id, panel])))
+// A panel that spawns others is never placed: it only stands under "+" (`spawns`).
+const placeable = computed(() => props.panels.filter((panel) => !panel.spawns))
+const spawners = computed<LayoutPanelInfo[]>(() =>
+  props.panels
+    .filter((panel) => panel.spawns)
+    .map((panel) => ({
+      id: panel.id,
+      title: panel.title,
+      icon: panel.icon,
+      group: panel.group,
+      beside: panel.beside,
+      spawns: true,
+    }))
+)
+const declared = computed(() => placeable.value.map((panel) => panel.id))
+const byId = computed(() => new Map(placeable.value.map((panel) => [panel.id, panel])))
 const infos = computed<LayoutPanelInfo[]>(() =>
-  props.panels.map((panel) => {
+  placeable.value.map((panel) => {
     const info: LayoutPanelInfo & Partial<Pick<LayoutPanel, 'component' | 'props'>> = { ...panel }
     delete info.component
     delete info.props
@@ -102,7 +118,7 @@ const infos = computed<LayoutPanelInfo[]>(() =>
 )
 
 const groupOf = (id: string) => byId.value.get(id)?.group
-const transient = computed(() => new Set(props.panels.filter((panel) => panel.transient).map((panel) => panel.id)))
+const transient = computed(() => new Set(placeable.value.filter((panel) => panel.transient).map((panel) => panel.id)))
 
 /** Transient panels that are not placed yet go to their group's cell, or beside the panel they name. */
 function placeTransient(arrangement: LayoutArrangement, id: string): LayoutArrangement {
@@ -116,7 +132,7 @@ function withTransients(arrangement: LayoutArrangement, ids: readonly string[]):
 /** A panel whose fold is remembered on its own gets that fold, whatever the arrangement says. */
 function withFolds(arrangement: LayoutArrangement): LayoutArrangement {
   let next = arrangement
-  for (const panel of props.panels) {
+  for (const panel of placeable.value) {
     if (!panel.foldKey) continue
     const cell = cellOfPanel(next, panel.id)
     const folded = rememberedFold(panel.foldKey).value
@@ -133,7 +149,7 @@ function savedArrangement(): LayoutArrangement | null {
   const saved = restoreArrangement(storageGet(props.storageKey), {
     version: props.version,
     declared: declared.value.filter((id) => !transient.value.has(id)),
-    required: props.panels.filter((panel) => panel.pinned || !panel.closable).map((panel) => panel.id),
+    required: placeable.value.filter((panel) => panel.pinned || !panel.closable).map((panel) => panel.id),
   })
   return saved && withCellIds(reconcile(saved, declared.value))
 }
@@ -152,7 +168,7 @@ function commit(next: LayoutArrangement, reload = false) {
   // Transient panels are the page's business: what is remembered is the rest.
   const lasting = declared.value.filter((id) => !transient.value.has(id))
   storageSet(props.storageKey, serializeArrangement(reconcile(arrangement.value, lasting), props.version))
-  for (const panel of props.panels) {
+  for (const panel of placeable.value) {
     const cell = panel.foldKey ? cellOfPanel(arrangement.value, panel.id) : undefined
     if (cell) rememberFold(panel.foldKey!, !!cell.collapsed)
   }
@@ -184,7 +200,10 @@ const placed = computed(() => placedPanels(arrangement.value))
 const unplaced = computed(() =>
   unplacedPanels(arrangement.value, declared.value).filter((id) => !transient.value.has(id))
 )
-const unplacedInfos = computed(() => infos.value.filter((info) => unplaced.value.includes(info.id)))
+const unplacedInfos = computed(() => [
+  ...infos.value.filter((info) => unplaced.value.includes(info.id)),
+  ...spawners.value,
+])
 
 // ---------------------------------------------------------------- sizes
 
@@ -193,7 +212,7 @@ function widthOf(panel: LayoutPanel): number {
   return rememberedWidth(panel.width!).value
 }
 const fixedWidths = computed<Record<string, number>>(() =>
-  Object.fromEntries(props.panels.filter((panel) => panel.width).map((panel) => [panel.id, widthOf(panel)]))
+  Object.fromEntries(placeable.value.filter((panel) => panel.width).map((panel) => [panel.id, widthOf(panel)]))
 )
 function onResized(id: string, width: number) {
   const spec = byId.value.get(id)?.width
@@ -322,7 +341,7 @@ const chosen = ref<string>()
 const stackPlaced = computed(() => placed.value.filter((id) => !byId.value.get(id)?.hidden))
 const stackActive = computed(() => {
   if (chosen.value && stackPlaced.value.includes(chosen.value)) return chosen.value
-  const pinned = new Set(props.panels.filter((panel) => panel.pinned).map((panel) => panel.id))
+  const pinned = new Set(placeable.value.filter((panel) => panel.pinned).map((panel) => panel.id))
   const actives = cellsOf(arrangement.value)
     .map((cell) => cell.active ?? cell.panels[0])
     .filter((id) => stackPlaced.value.includes(id))
@@ -336,6 +355,7 @@ function selectInStack(id: string) {
 }
 
 function addInStack(id: string) {
+  if (spawners.value.some((panel) => panel.id === id)) return emit('spawn', id)
   commit(placePanel(arrangement.value, id, stackActive.value))
   chosen.value = id
 }
@@ -448,6 +468,7 @@ defineExpose({ reset, open, fold, rearranged })
           @host="onDockHost"
           @shown="restoreScroll"
           @ready="dockLoaded = true"
+          @spawn="emit('spawn', $event)"
           @resized="onResized"
           @maximized="setMaximized"
           @activated="emit('activated', $event)"

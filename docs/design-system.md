@@ -265,7 +265,7 @@ stylelint 会拦下新增的写死颜色（§7）。
 
 ### 2.6 界面杂项
 
-`--scrollbar-*`、`--focus-ring`、`--selection-bg`、`--overlay`、`--shadow-1` / `--shadow-2`、`--code-*` 是管道，不是设计语言的一部分。`--focus-ring` 是无障碍底线，不要移除。
+`--scrollbar-*`、`--focus-ring`、`--selection-bg`、`--overlay`、`--shadow-1` / `--shadow-2`、`--code-*`、`--terminal-ansi-*`（任务终端的 16 种 ANSI 颜色，每一种在 `--surface` 上都过 4.5:1）是管道，不是设计语言的一部分。`--focus-ring` 是无障碍底线，不要移除。
 
 ### 2.6 对比度
 

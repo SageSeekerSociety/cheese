@@ -185,3 +185,48 @@ def test_a_machine_frame_up_is_read_as_the_connector_wrote_it(fixture) -> None:
         assert parsed.path == meaning["state"]
     if "payload" in meaning:
         assert parsed.decoded_data() == meaning["payload"].encode()
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    [
+        f
+        for f in FIXTURES
+        if f["type"].startswith("stream.") and f["origin"] == "server"
+    ],
+    ids=lambda f: f"{f['type']}-down",
+)
+def test_the_backend_writes_the_stream_frames_in_the_fixtures(fixture) -> None:
+    meaning = fixture["meaning"]
+    built = {
+        "stream.open": lambda: device_link.stream_open(
+            meaning["stream_id"], meaning["state"], meaning["header"]
+        ),
+        "stream.data": lambda: device_link.stream_data(
+            meaning["stream_id"], meaning.get("payload", "").encode()
+        ),
+        "stream.ack": lambda: device_link.stream_ack(
+            meaning["stream_id"], meaning.get("bytes", 0)
+        ),
+        "stream.close": lambda: device_link.stream_close(meaning["stream_id"]),
+    }[fixture["type"]]()
+    assert built == fixture["frame"]
+
+
+@pytest.mark.parametrize(
+    "fixture",
+    [
+        f
+        for f in FIXTURES
+        if f["type"].startswith("stream.") and f["origin"] == "device"
+    ],
+    ids=lambda f: f"{f['type']}-up",
+)
+def test_a_stream_frame_up_is_read_as_the_connector_wrote_it(fixture) -> None:
+    parsed = device_link.LinkMsg.parse(fixture["frame"])
+    meaning = fixture["meaning"]
+    assert parsed.id == meaning["stream_id"]
+    if "payload" in meaning:
+        assert parsed.decoded_data() == meaning["payload"].encode()
+    if "error" in meaning:
+        assert parsed.error == meaning["error"]

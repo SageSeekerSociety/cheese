@@ -47,6 +47,7 @@ import { useQuery } from '@tanstack/vue-query'
 
 import { provideAcceptCard } from '../composables/useAcceptCard'
 import { useRoomFileProbe } from '../composables/useRoomFileProbe'
+import { useTaskTerminals } from '../composables/useTaskTerminals'
 import { useTopicMemory } from '../composables/useTopicMemory'
 import { useTopicWorkSummary } from '../composables/useTopicWorkSummary'
 import { fileIcon, previewCanShowInRoom } from '../lib/fileKind'
@@ -57,7 +58,7 @@ import { withViewTransition } from '../lib/viewTransition'
 import ErrorBoundary from './common/ErrorBoundary.vue'
 import DocumentActions from './library/DocumentActions.vue'
 // 这一屏有哪几格（共用表 + 只有产品有的那几格，按频道 / 任务 / 打开的任务挑）。
-import { roomTabs } from './panels/panelTabList'
+import { roomTabs, TERMINAL_TAB } from './panels/panelTabList'
 import PanelTabs, { type PanelTab } from './panels/PanelTabs.vue'
 import { confirmAnnotationDiscard } from './panels/preview/annotationDiscard'
 import { usePreviewPointer } from './panels/preview/usePreviewPointer'
@@ -68,6 +69,7 @@ import PanelChangesHost from './work/PanelChangesHost.vue'
 import PanelPreviewHost from './work/PanelPreviewHost.vue'
 import PanelSiteHost from './work/PanelSiteHost.vue'
 import TaskFilesHost from './work/TaskFilesHost.vue'
+import TerminalHost from './work/TerminalHost.vue'
 import { workPaneId } from './work/workLayout'
 import WorkPane from './work/WorkPane.vue'
 import ProjectFileTab from './ProjectFileTab.vue'
@@ -217,6 +219,14 @@ const changesReadOnly = computed(
     props.topic?.status === 'archived' ||
     props.taskReadOnly ||
     (!!reviewCard && reviewCard.loaded.value && !reviewCard.pendingCard.value)
+)
+// 人自己的终端（每一格是一个 shell）：桌面上的任务页才有（布局区里才有「+」），审阅时、任务关了没有。
+// 有哪几个 shell 是那台电脑说的：打开任务时问一次（`useTaskTerminals`），一格一个。
+const TERMINAL_KEY = 'terminal:'
+const offersTerminals = computed(() => !!props.taskId && !!props.layout && !props.review && !changesReadOnly.value)
+const terminals = useTaskTerminals(
+  () => props.taskId ?? null,
+  () => offersTerminals.value
 )
 // 审阅时底部那一条：没有页头（手机）时一直在；有页头时只在写退回理由的那一会儿在。开着
 // 对话那一种看法时不在：对话自己的输入框上面就挂着同一条。
@@ -628,10 +638,12 @@ const tabPanelId = `wp-panel-${useId()}`
 const tabBodyRef = ref<HTMLElement | null>(null)
 const keyExists = (key: string) =>
   tabs.value.some((tab) => tab.key === key) ||
+  (key.startsWith(TERMINAL_KEY) && terminals.ids.value.includes(key.slice(TERMINAL_KEY.length))) ||
   (isDelivery(key) && props.deliveries.some((d) => deliveryKey(d.id) === key)) ||
   openFiles.value.some((f) => fileKey(f.path) === key)
 const activeTabLabel = computed(() => {
   if (isDelivery(active.value)) return props.deliveries.find((d) => deliveryKey(d.id) === active.value)?.title
+  if (active.value.startsWith(TERMINAL_KEY)) return terminalTitle(active.value.slice(TERMINAL_KEY.length))
   return active.value.startsWith('file:')
     ? active.value.slice('file:'.length).split('/').pop()
     : panelTabs.value.find((tab) => tab.key === active.value)?.label
@@ -727,6 +739,43 @@ const fileMeta = computed<WorkTabMeta[]>(() =>
   }))
 )
 
+// ---- 人自己的终端：「+」里的「终端」新开一格 ----
+const terminalMeta = computed<WorkTabMeta[]>(() =>
+  offersTerminals.value
+    ? [
+        { key: TERMINAL_TAB.key, title: TERMINAL_TAB.label, icon: TERMINAL_TAB.icon, spawns: true },
+        ...terminals.ids.value.map((id) => ({
+          key: TERMINAL_KEY + id,
+          title: terminalTitle(id),
+          icon: TERMINAL_TAB.icon,
+        })),
+      ]
+    : []
+)
+/** 一格终端叫什么：前台在跑的程序名；回到提示符时是「终端」「终端 2」……（号码跟着那个 shell 走）。 */
+function terminalTitle(id: string): string {
+  const name = terminals.names.value[id]
+  if (name?.program) return name.program
+  const n = name?.number ?? 1
+  return n > 1 ? t('work.room.terminal.numbered', { n }) : TERMINAL_TAB.label
+}
+/** 「+」里选了能开好几格的那一种：新开一格，翻到它。 */
+async function spawnTab(key: string) {
+  if (key !== TERMINAL_TAB.key || !offersTerminals.value) return
+  const id = terminals.add()
+  // The page declares the new tab, then the layout places it.
+  await nextTick()
+  await nextTick()
+  await setTab(TERMINAL_KEY + id, { guard: false })
+}
+function closeTerminal(key: string) {
+  terminals.close(key.slice(TERMINAL_KEY.length))
+  const next = new Set(mounted.value)
+  next.delete(key)
+  mounted.value = next
+  if (active.value === key) active.value = defaultTab.value
+}
+
 /** 布局区里读者点了一格：它就是此刻在看的那一格（地址跟着走）。 */
 function activated(key: string) {
   if (!keyExists(key) || key === active.value) return
@@ -738,6 +787,7 @@ function activated(key: string) {
 /** 布局区里一格能关的页签（打开的任务、自由区的文件）被关掉了。 */
 function closeTab(key: string) {
   if (isDelivery(key)) void closeDelivery(key)
+  else if (key.startsWith(TERMINAL_KEY)) closeTerminal(key)
   else if (key.startsWith(FILE_TAB)) void closeFile(key.slice(FILE_TAB.length))
 }
 /** 自由区那一格被双击：留下来。 */
@@ -1047,6 +1097,8 @@ defineExpose({
   activeTab: () => active.value,
   fixedMeta,
   fileMeta,
+  terminalMeta,
+  spawnTab,
   activated,
   closeTab,
   keepTab,
@@ -1264,6 +1316,22 @@ defineExpose({
             />
             <template v-if="docked === 'routines'" #dock><slot name="dock" /></template>
           </WorkPane>
+          <template v-for="id in terminals.ids.value" :key="TERMINAL_KEY + id">
+            <WorkPane
+              v-if="taskId && mounted.has(TERMINAL_KEY + id)"
+              :target="target(TERMINAL_KEY + id)"
+              :pane-id="workPaneId(TERMINAL_KEY + id)"
+              :shown="shown(TERMINAL_KEY + id)"
+              :pane-class="enterClass(TERMINAL_KEY + id)"
+            >
+              <TerminalHost
+                :task-id="taskId"
+                :terminal-id="id"
+                :active="shown(TERMINAL_KEY + id)"
+                @named="terminals.named(id, $event)"
+              />
+            </WorkPane>
+          </template>
           <template v-for="f in openFiles" :key="fileKey(f.path)">
             <WorkPane
               v-if="mounted.has(fileKey(f.path))"
