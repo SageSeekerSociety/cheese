@@ -712,28 +712,30 @@ async def test_a_call_without_an_id_records_nothing(
 
 
 @pytest.mark.anyio
-async def test_an_old_room_token_works_only_through_the_rooms_own_environment(
+async def test_a_credential_naming_no_session_runs_nothing_on_the_machine(
     db_factory, owner_client, monkeypatch
 ):
-    """A credential minted before credentials named sessions names only a
-    conversation: it reaches the machine through the environment that
-    conversation points to, and through no session's own."""
+    """A credential that names a conversation but no session is not admitted
+    to run anything on that conversation's machine, not even when exactly
+    one session works there and the conversation points to its environment:
+    nothing says which session's work it may touch."""
     project, topic, _ = await _a_room_with_hands(db_factory)
     await _an_attached_machine(monkeypatch, _answers_with_a_result)
-    legacy_token = mint_scoped_token(
+    room_token = mint_scoped_token(
         project_id=str(project), topic_id=str(topic), resource_id=str(topic)
     )
-    # The only environment is one session's own: the room points to none.
-    assert (await _invoke(owner_client, topic, legacy_token)).status_code == 409
     async with db_factory() as db:
         held = await db.scalar(
             select(EnvironmentAttachment.environment_id)
             .join(AgentSession, AgentSession.id == EnvironmentAttachment.session_id)
             .where(AgentSession.conversation_id == topic)
         )
-        db.add(ConversationEnvironment(conversation_id=topic, environment_id=held))
+        await db.merge(
+            ConversationEnvironment(conversation_id=topic, environment_id=held)
+        )
         await db.commit()
-    assert (
-        await _invoke(owner_client, topic, legacy_token, key="legacy")
-    ).status_code == 200
-    assert await _outcomes(db_factory, topic) == [("legacy", "done")]
+
+    refused = await _invoke(owner_client, topic, room_token, key="room")
+
+    assert refused.status_code == 409
+    assert await _outcomes(db_factory, topic) == []

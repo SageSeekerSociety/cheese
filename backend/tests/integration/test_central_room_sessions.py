@@ -25,7 +25,11 @@ from app.api.deps import get_chat_service
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.device_failures import DeviceCallError
-from app.core.sandbox_auth import mint_scoped_token, scoped_token_claims
+from app.core.sandbox_auth import (
+    bind_resource_token,
+    mint_scoped_token,
+    scoped_token_claims,
+)
 from app.domain.agent import execution, machine_launcher
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_hub import device_hub
@@ -51,6 +55,7 @@ from app.domain.agent.harness.driven.runner import LONG_POLL, socket_path
 from app.domain.agent.launch import MachinePlace
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.session_host.host import SessionHost
+from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.topic.models import Topic
 from app.domain.topic.services import TopicService
@@ -88,6 +93,24 @@ async def place_session(db, topic, resource, target, *, agent=AGENT, machine="ce
     )
 
 
+async def session_credential(factory, project, topic, resource, *, agent=AGENT):
+    """What a turn of the room's session ``agent`` presents to the executor
+    route: a credential naming its session and the generation it is attached
+    under (none while it is attached to nothing)."""
+    async with factory() as db:
+        row = await AgentSessionService(db).latest(topic, agent)
+        assert row is not None
+        held = await attachments.attachment_of(db, row.id)
+    return bind_resource_token(
+        mint_scoped_token(
+            project_id=str(project), topic_id=str(topic), resource_id=str(resource)
+        ),
+        str(resource),
+        session_id=str(row.id),
+        lease_generation=held.generation if held is not None else None,
+    )
+
+
 async def session_place(factory, topic, agent=AGENT, harness="claude-code"):
     async with factory() as db:
         return await AgentSessionService(db).place(topic, agent, harness=harness)
@@ -112,8 +135,8 @@ async def test_execution_survives_an_unrelated_room_column_rename(
         try:
             call = AsyncMock(return_value={"content": "still running"})
             monkeypatch.setattr(execution, "call", call)
-            token = mint_scoped_token(
-                project_id=str(project), topic_id=str(topic), resource_id=str(resource)
+            token = await session_credential(
+                client.test_factory, project, topic, resource
             )
             response = client.post(
                 f"/topics/{topic}/execution/{resource}",
@@ -553,9 +576,7 @@ async def test_scoped_execution_does_not_hold_admission_connection_during_remote
         return {"value": "kept"}
 
     monkeypatch.setattr(execution, "call", invoke)
-    token = mint_scoped_token(
-        project_id=str(project), topic_id=str(topic), resource_id=str(resource)
-    )
+    token = await session_credential(client.test_factory, project, topic, resource)
     request = asyncio.create_task(
         asyncio.to_thread(
             client.post,
@@ -629,9 +650,7 @@ async def test_owner_execution_route_preserves_scope_and_reaches_device(
     )
     device_connection_app.app.dependency_overrides[get_db] = owner_db
     transport = httpx.ASGITransport(app=device_connection_app.app)
-    token = mint_scoped_token(
-        project_id=str(project), topic_id=str(topic), resource_id=str(resource)
-    )
+    token = await session_credential(db_factory, project, topic, resource)
     endpoint = f"/topics/{topic}/execution/{resource}"
     payload = {"method": "invoke", "params": {"tool": "Read", "args": {}}}
     try:
@@ -698,9 +717,7 @@ async def test_a_machine_that_does_not_answer_is_not_a_fault_of_this_server(
         raise TimeoutError
 
     monkeypatch.setattr(execution, "call", never_answers)
-    token = mint_scoped_token(
-        project_id=str(project), topic_id=str(topic), resource_id=str(resource)
-    )
+    token = await session_credential(client.test_factory, project, topic, resource)
     response = await asyncio.to_thread(
         client.post,
         f"/topics/{topic}/execution/{resource}",
@@ -714,12 +731,10 @@ async def test_a_machine_that_does_not_answer_is_not_a_fault_of_this_server(
 async def test_a_teammate_that_rented_no_hands_is_not_an_executor(
     client, room, monkeypatch
 ):
-    """手就在会话机上的那条会话没有租约，它不该把执行路由拖成 500。
-
-    pi 每一轮都把 `work_lease` 写成「没有」。只要「没租到手」落库时成了 JSON 的
-    `null` 而不是 SQL NULL，`work_lease IS NOT NULL` 这条谓词就在说谎：那一行被
-    选进候选，读的人拿到 None，一个本该干净的 409 变成 500。一个房间里同时坐着
-    pi 和 claude-code 两条会话时——换骨架，或者两个队友各跑各的骨架——就会撞上。
+    """手就在会话机上的那条会话没有执行环境：它的凭证在执行路由上被干净地拒绝，
+    不是 500；旁边真有执行环境的队友，用它自己的凭证照常够到它那台机器。一个房间里
+    同时坐着 pi 和 claude-code 两条会话时——换骨架，或者两个队友各跑各的骨架——
+    就会遇到这种情形。
     """
     project, topic = room
     async with client.test_factory() as db:
@@ -738,25 +753,30 @@ async def test_a_teammate_that_rented_no_hands_is_not_an_executor(
             },
         )
         await db.commit()
-    token = mint_scoped_token(
-        project_id=str(project), topic_id=str(topic), resource_id=str(resource)
+    pi_token = await session_credential(
+        client.test_factory, project, topic, resource, agent="pi-teammate"
     )
     endpoint = f"/topics/{topic}/execution/{resource}"
     payload = {"method": "invoke", "params": {"tool": "Read"}}
-    headers = {"Authorization": f"Bearer {token}"}
 
-    # 房间里只有那条没有租约的会话：这一代没有手可借。
-    assert client.post(endpoint, headers=headers, json=payload).status_code == 409
+    # 没有执行环境的那条会话：拒绝，不是服务器出错。
+    refused = client.post(
+        endpoint, headers={"Authorization": f"Bearer {pi_token}"}, json=payload
+    )
+    assert refused.status_code == 401, refused.text
 
-    # 旁边坐下一个真租了手的队友，借的就是它那一份。
+    # 旁边坐下一个真有执行环境的队友，它自己的凭证够到它那一台。
     target = {"kind": "device", "device_id": "executor", "resource_id": str(resource)}
     async with client.test_factory() as db:
         await place_session(db, topic, resource, target)
         await db.commit()
+    token = await session_credential(client.test_factory, project, topic, resource)
     call = AsyncMock(return_value={"content": "executor file"})
     monkeypatch.setattr("app.domain.agent.execution.call", call)
 
-    response = client.post(endpoint, headers=headers, json=payload)
+    response = client.post(
+        endpoint, headers={"Authorization": f"Bearer {token}"}, json=payload
+    )
     assert response.status_code == 200, response.text
     sent_to = call.await_args.args[0]
     assert {key: sent_to.get(key) for key in target} == target
@@ -780,11 +800,7 @@ async def test_scoped_execution_and_controls_use_platform_owned_target(
     call = AsyncMock(return_value={"content": "executor file"})
     monkeypatch.setattr("app.domain.agent.execution.call", call)
     endpoint = f"/topics/{topic}/execution/{resource}"
-    token = mint_scoped_token(
-        project_id=str(project),
-        topic_id=str(topic),
-        resource_id=str(resource),
-    )
+    token = await session_credential(client.test_factory, project, topic, resource)
     headers = {"Authorization": f"Bearer {token}"}
     payload = {
         "method": "invoke",

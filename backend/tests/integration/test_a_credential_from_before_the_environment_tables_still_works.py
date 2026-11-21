@@ -125,6 +125,7 @@ async def test_a_credential_and_a_command_from_before_still_act_for_the_session(
                         "workspace": "/work",
                         "mcp_servers": [],
                         "own": True,
+                        "context_tree": {"files": 3},
                         "url": (
                             f"http://api/topics/{room_id}/execution/session-{resource}"
                         ),
@@ -162,3 +163,5 @@ async def test_a_credential_and_a_command_from_before_still_act_for_the_session(
     async with client.test_factory() as db:
         caller = await caller_of(db, device.device_id, "/ada/state", str(session_id))
     assert caller is not None and caller.session_id == str(session_id)
+    # What its install left that the platform does not name is still there.
+    assert caller.environment["context_tree"] == {"files": 3}

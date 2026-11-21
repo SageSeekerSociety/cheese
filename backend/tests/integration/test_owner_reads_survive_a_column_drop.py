@@ -109,8 +109,8 @@ def test_an_execution_session_is_found_by_its_id_and_conversation(db_session, _p
             ),
             {"id": session_id, "room": room},
         )
-        # Attached to an environment the room points to, named column by
-        # column as the owner's own reads are.
+        # Attached to an environment, named column by column as the owner's
+        # own reads are.
         await db_session.execute(
             text(
                 "INSERT INTO environments (id, topic_id, device_id, resource_id,"
@@ -127,18 +127,8 @@ def test_an_execution_session_is_found_by_its_id_and_conversation(db_session, _p
             ),
             {"id": session_id},
         )
-        await db_session.execute(
-            text(
-                "INSERT INTO conversation_environments"
-                " (conversation_id, environment_id) VALUES (:room, :id)"
-            ),
-            {"id": session_id, "room": room},
-        )
         named = await owner_reads.session_execution(db_session, session_id)
         assert named is not None and named.conversation_id == room
-        legacy = await owner_reads.pointed_execution(db_session, room)
-        assert legacy is not None and legacy.id == session_id
-        assert await owner_reads.pointed_execution(db_session, uuid.uuid4()) is None
 
     _portal.call(ask)
 
