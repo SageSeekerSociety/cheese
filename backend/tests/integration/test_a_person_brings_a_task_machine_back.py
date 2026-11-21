@@ -137,6 +137,9 @@ class Machines:
         if method == "task_fs":
             executor = object.__new__(Executor)
             executor.env = {"HOME": str(self.home(target))}
+            # The room's workspace, where a task with no checkout is worked.
+            executor.root = self.home(target) / "room"
+            executor.root.mkdir(parents=True, exist_ok=True)
             return executor.task_fs(params)
         return await self._executor(target, method, params, **kwargs)
 
@@ -785,3 +788,71 @@ def test_a_persons_read_that_reaches_the_machine_is_an_act_of_theirs(
     assert read(case, f"deliveries/{case.task.id}.txt").status_code == 200
 
     assert run(case, acted) > before + timedelta(minutes=4)
+
+
+def test_a_persons_first_file_in_a_task_with_no_repository_lands_in_the_workspace(
+    unworked_task, monkeypatch
+):
+    """A project with no repository: the task has no branch, its files are
+    the room's workspace on a machine, and none is asked of a forge."""
+    from sqlalchemy import delete, update
+
+    from app.domain.project.models import ProjectForge
+    from app.domain.repository import forge_files
+    from app.domain.room_task.models import Task
+
+    case = unworked_task
+
+    async def no_repository():
+        async with case.client.test_request_factory() as db:
+            await db.execute(
+                delete(ProjectForge).where(ProjectForge.project_id == case.project_id)
+            )
+            await db.execute(
+                update(Task)
+                .where(Task.id == case.task.id)
+                .values(branch_name=None, base_branch=None)
+            )
+            await db.commit()
+
+    run(case, no_repository)
+
+    async def no_forge(*_args, **_kwargs):
+        raise AssertionError("a task with no repository asked a forge")
+
+    monkeypatch.setattr(forge_files, "branch_head", no_forge)
+    monkeypatch.setattr(forge_files, "repository_data", no_forge)
+    asked = case.machines.executor
+
+    async def executor(target, method, params, **kwargs):
+        if method == "invoke" and "cheese worktree" in params["args"]["command"]:
+            # What `cheese worktree` says for a project with no repository.
+            return {"value": {"stdout": "taskWithoutRepository\n", "stderr": ""}}
+        return await asked(target, method, params, **kwargs)
+
+    monkeypatch.setattr(execution, "call", executor)
+    listed = case.client.get(
+        f"/projects/{case.project_id}/files",
+        params={"task": str(case.task.id), "source": "live"},
+        headers=case.headers,
+    )
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["data"]["data"] == []
+
+    assert prepare(case).json()["data"]["started"] is True
+    task_host_comes_up(case, "host-b")
+    assert until_settled(case) == {"machine": "ready", "failed": None}
+    created = arrange(case, "create", "findings.md")
+    assert created.status_code == 200, created.text
+
+    async def home_dir():
+        from app.domain.environment import services as environment_rows
+
+        async with case.client.test_request_factory() as db:
+            environment = await environment_rows.environment_of_conversation(
+                db, case.task.id
+            )
+            return await environment_rows.view(db, environment.id)
+
+    target = run(case, home_dir)
+    assert (case.machines.home(target) / "room" / "findings.md").exists()

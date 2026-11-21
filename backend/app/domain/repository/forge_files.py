@@ -32,6 +32,7 @@ from app.domain.project.forge import (
     binding_for_project,
     branch_head,
     default_branch,
+    default_branch_if_any,
     repository_data,
 )
 from app.domain.repository import merge3, task_rows
@@ -258,7 +259,9 @@ class ProjectFiles:
             head = await self._head(self.project_id, self.session, task.branch_name)
             if head:
                 return head
-        base = task.base_branch or await default_branch(self.project_id, self.session)
+        base = task.base_branch or await default_branch_if_any(
+            self.project_id, self.session
+        )
         if not base:
             return None
         return await self._head(self.project_id, self.session, base)
