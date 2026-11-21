@@ -198,21 +198,27 @@ def test_the_nudge_head_depends_on_an_unwithdrawn_request():
 def test_a_request_without_a_timestamp_is_not_superseded_by_another_pers_approval():
     """Both loops have to be equally conservative: a row we cannot order must
     not be cleared by one we can — that errs toward unblocking a real stop."""
-    assert superseded_change_requests(
-        [
-            review(1, "bob", "CHANGES_REQUESTED", ""),
-            review(2, "bob", "APPROVED", "2026-01-02T00:00:00Z"),
-        ]
-    ) == set()
+    assert (
+        superseded_change_requests(
+            [
+                review(1, "bob", "CHANGES_REQUESTED", ""),
+                review(2, "bob", "APPROVED", "2026-01-02T00:00:00Z"),
+            ]
+        )
+        == set()
+    )
 
 
 def test_reviews_without_an_author_are_never_the_same_person():
-    assert superseded_change_requests(
-        [
-            review(1, "", "CHANGES_REQUESTED", "2026-01-01T00:00:00Z"),
-            review(2, "", "APPROVED", "2026-01-02T00:00:00Z"),
-        ]
-    ) == set()
+    assert (
+        superseded_change_requests(
+            [
+                review(1, "", "CHANGES_REQUESTED", "2026-01-01T00:00:00Z"),
+                review(2, "", "APPROVED", "2026-01-02T00:00:00Z"),
+            ]
+        )
+        == set()
+    )
 
 
 def test_a_mixed_batch_keeps_the_live_request_blocking():
