@@ -140,7 +140,7 @@ def task(client, tmp_path):
                 harness=harness_for(None),
             )
             await db.commit()
-        await device_hub.attach_device(DEVICE, _connector(client))
+        await _link(_connector(client))
         await device_hub.on_device_message(
             DEVICE, {"t": "hello", "v": 1, "executor": True, "streams": True}
         )
@@ -154,6 +154,22 @@ def task(client, tmp_path):
             capture_output=True,
             timeout=30,
         )
+        client.portal.call(_unlink)
+
+
+#: The stand-in links this test put on the shared hub, taken off again when it
+#: ends: a link left there is a machine every later test's sweep still calls.
+_LINKS: list[Any] = []
+
+
+async def _link(connector) -> None:
+    _LINKS.append(connector)
+    await device_hub.attach_device(DEVICE, connector)
+
+
+async def _unlink() -> None:
+    while _LINKS:
+        await device_hub.detach_device(DEVICE, _LINKS.pop())
 
 
 def _connector(client, kind=_Connector) -> Any:
@@ -302,7 +318,7 @@ def test_a_machine_without_the_servers_program_is_unavailable(client, task):
 
 def test_an_executor_older_than_language_servers_is_outdated(client, task):
     async def old():
-        await device_hub.attach_device(DEVICE, _connector(client, _OldConnector))
+        await _link(_connector(client, _OldConnector))
         await device_hub.on_device_message(
             DEVICE, {"t": "hello", "v": 1, "executor": True, "streams": True}
         )
