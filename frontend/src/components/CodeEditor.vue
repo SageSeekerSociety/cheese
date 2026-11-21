@@ -237,6 +237,9 @@ onMounted(async () => {
     theme: THEME_NAME,
     readOnly: props.readonly,
     automaticLayout: true, // follow the drawer's resize
+    // Hovers and the completion list are laid out against the window, not the editor's box:
+    // the editor sits in a narrow panel that clips whatever is wider than it.
+    fixedOverflowWidgets: true,
     minimap: { enabled: false }, // too cramped for a side drawer
     fontSize: 12.5,
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
