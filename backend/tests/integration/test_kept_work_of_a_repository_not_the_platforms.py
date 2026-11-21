@@ -71,10 +71,11 @@ def _as(pid, conversation) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _kept(client, pid, task, headers, method="get", body=None):
+def _kept(client, pid, task, headers, method="get", body=None, cut_from=None):
     return client.request(
         method,
         f"/projects/{pid}/git/tasks/{task.id}/kept",
+        params={"cut_from": cut_from} if cut_from else None,
         content=body,
         headers={**headers, "Content-Type": "application/octet-stream"},
     )
@@ -86,12 +87,12 @@ def _task_with_kept_work(client):
     machine_commits(pid, task.id, {"backend/usage/models.py": "POOL = 1\n"})
     _published(client, task)
     _on_github(client, pid)
-    bundle, commit = machine_bundles(
+    bundle, commit, head = machine_bundles(
         pid,
         task.id,
         {"backend/usage/models.py": "POOL = 2\n", "notes/draft.md": "draft\n"},
     )
-    kept = _kept(client, pid, task, _as(pid, task.id), "put", bundle)
+    kept = _kept(client, pid, task, _as(pid, task.id), "put", bundle, head)
     assert kept.status_code == 200, kept.text
     return pid, room, task, bundle, commit
 
@@ -123,7 +124,10 @@ def test_another_tasks_session_cannot_read_or_replace_the_snapshot(
     other = _as(pid, uuid.uuid4())
 
     assert _kept(client, pid, task, other).status_code in (403, 404)
-    assert _kept(client, pid, task, other, "put", b"x").status_code in (403, 404)
+    assert _kept(client, pid, task, other, "put", b"x", "0" * 40).status_code in (
+        403,
+        404,
+    )
     assert _kept(client, pid, task, other, "delete").status_code in (403, 404)
     assert _kept(client, pid, task, _as(pid, task.id)).content == bundle
 
@@ -178,10 +182,11 @@ def test_the_tasks_own_environment_keeps_its_snapshot(
     monkeypatch.setattr(settings, "device_connection_secret", "owner-secret")
     pid, _, task, _, _ = _task_with_kept_work(client)
     device, attachment = _alice_attached(client, task.id)
-    bundle, _ = machine_bundles(pid, task.id, {"notes/draft.md": "later\n"})
+    bundle, _, head = machine_bundles(pid, task.id, {"notes/draft.md": "later\n"})
 
     kept = client.put(
         f"/machine/api/projects/{pid}/git/tasks/{task.id}/kept",
+        params={"cut_from": head},
         content=bundle,
         headers=_from_the_machine(device, attachment if named else None),
     )

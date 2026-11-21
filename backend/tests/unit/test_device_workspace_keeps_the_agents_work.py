@@ -105,7 +105,9 @@ def device(tmp_path, monkeypatch):
 
         def do_PUT(self):
             self.rfile.read(int(self.headers.get("Content-Length", "0")))
-            self.send_response(200 if self.path.endswith("/kept") else 404)
+            self.send_response(
+                200 if self.path.split("?")[0].endswith("/kept") else 404
+            )
             self.end_headers()
             self.wfile.write(b'{"data": {}}')
 
@@ -151,7 +153,7 @@ def uploads(home) -> list[str]:
     return [
         line
         for line in (home / "requests.log").read_text().splitlines()
-        if line.startswith("PUT ") and not line.endswith("/kept")
+        if line.startswith("PUT ") and not line.split("?")[0].endswith("/kept")
     ]
 
 
@@ -160,7 +162,7 @@ def calls(home) -> str:
     return "\n".join(
         line
         for line in (home / "requests.log").read_text().splitlines()
-        if not line.endswith("/kept")
+        if not line.split("?")[0].endswith("/kept")
     )
 
 

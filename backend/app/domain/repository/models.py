@@ -14,7 +14,7 @@ class KeptBundle(Base):
     """A task checkout's last snapshot of what it had not committed, as a git
     bundle in the private bucket: one commit whose tree is the checkout's
     files and whose parent is the head they were on (``cut_from``), with only
-    the objects that head does not already have. One per task; the next
+    the objects the project's repository does not already have. One per task; the next
     snapshot replaces it, and a checkout with nothing uncommitted removes it."""
 
     __tablename__ = "kept_bundles"

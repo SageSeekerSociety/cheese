@@ -109,11 +109,12 @@ def machine_keeps(
 
 def machine_bundles(
     project_id: uuid.UUID, place_id: uuid.UUID, files: dict[str, str]
-) -> tuple[bytes, str]:
+) -> tuple[bytes, str, str]:
     """The place's checkout with `files` changed and not committed, as `cheese
     keep` hands it to the platform for a repository that is not its own: a
     bundle of the kept ref with only the objects the branch's head lacks.
-    Returns the bundle and the snapshot commit; nothing is pushed."""
+    Returns the bundle, the snapshot commit and the head it was cut from;
+    nothing is pushed."""
     repo = git_store.ensure_repo(project_id)
     branch = git_store.branch_for_task(place_id)
     work = Path(tempfile.mkdtemp(prefix="cheese-machine-"))
@@ -134,6 +135,7 @@ def machine_bundles(
         _git(work, "update-ref", ref, commit)
         bundle = work / "kept.bundle"
         _git(work, "bundle", "create", "-q", str(bundle), ref, "^HEAD")
-        return bundle.read_bytes(), commit
+        head = _git(work, "rev-parse", "HEAD").stdout.strip()
+        return bundle.read_bytes(), commit, head
     finally:
         shutil.rmtree(work, ignore_errors=True)

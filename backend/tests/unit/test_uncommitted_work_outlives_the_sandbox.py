@@ -162,6 +162,31 @@ def test_changes_are_not_laid_over_a_branch_that_moved_since(
     assert kept_commit(platform)
 
 
+def test_a_commit_that_was_never_pushed_is_kept_with_the_changes_made_after_it(
+    tmp_path, monkeypatch, platform, capsys
+):
+    """A commit the sandbox could not push is not gone with it: the snapshot
+    carries it, and the next sandbox can read it and the uncommitted changes
+    made on top of it. They are not laid over the branch, whose head is not
+    the commit they were made on."""
+    worktree = started(tmp_path, monkeypatch, platform)
+    (worktree / "notes.txt").write_text("committed, never pushed\n")
+    git(worktree, "add", "notes.txt")
+    # `git` here runs no hook, so nothing pushes it.
+    git(worktree, "commit", "-qm", "Not pushed")
+    (worktree / "report.txt").write_text("edited after it\n")
+    load_cli(platform)._keep_working_copy(worktree)
+    capsys.readouterr()
+
+    again = sandbox(tmp_path, monkeypatch, platform, "second")
+
+    assert status(again) == []
+    assert "没提交的改动没有放回" in capsys.readouterr().err
+    copy = f"refs/remotes/origin/cheese-kept/{platform.task_id}"
+    assert git(again, "show", f"{copy}:report.txt") == "edited after it"
+    assert git(again, "show", f"{copy}:notes.txt") == "committed, never pushed"
+
+
 def test_nothing_uncommitted_reaches_a_repository_the_platform_does_not_host(
     tmp_path, monkeypatch
 ):

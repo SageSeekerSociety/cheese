@@ -173,43 +173,43 @@ class NotABundle(ValueError):
 _OBJECT = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 
 
-def snapshot_in(bundle: bytes, task_id: uuid.UUID) -> tuple[str, str]:
-    """The snapshot commit a bundle carries and the commit it was cut from,
-    read off its header: exactly one ref, the task's ``KEPT_REFS`` one, and
-    exactly one prerequisite, the head the snapshot's objects were packed
-    against (`git bundle create … ^HEAD`)."""
+def snapshot_in(bundle: bytes, task_id: uuid.UUID) -> str:
+    """The snapshot commit a bundle carries, read off its header: exactly one
+    ref, the task's ``KEPT_REFS`` one. Its prerequisites are what the
+    project's repository already had when it was packed, which is the
+    machine's to know."""
     header, blank, _ = bundle.partition(b"\n\n")
     lines = header.decode("utf-8", errors="replace").split("\n")
     if not blank or lines[0] not in ("# v2 git bundle", "# v3 git bundle"):
         # i18n-exempt: only the platform's own CLI sends a bundle; no person reads it
         raise NotABundle("not a git bundle")
-    prerequisites, refs = [], []
-    for line in lines[1:]:
-        if line.startswith("@"):
-            continue  # a v3 capability
-        if line.startswith("-"):
-            prerequisites.append(line[1:].split(" ", 1)[0])
-        else:
-            refs.append(tuple(line.split(" ", 1)))
+    refs = [
+        tuple(line.split(" ", 1))
+        for line in lines[1:]
+        if not line.startswith(("@", "-"))  # a v3 capability, a prerequisite
+    ]
     if (
-        len(prerequisites) != 1
-        or len(refs) != 1
+        len(refs) != 1
         or len(refs[0]) != 2
         or refs[0][1] != kept_ref(task_id)
-        or not all(_OBJECT.fullmatch(sha) for sha in (prerequisites[0], refs[0][0]))
+        or not _OBJECT.fullmatch(refs[0][0])
     ):
         # i18n-exempt: only the platform's own CLI sends a bundle; no person reads it
         raise NotABundle("not this task's kept snapshot")
-    return refs[0][0], prerequisites[0]
+    return refs[0][0]
 
 
 async def keep_bundle(
-    session: AsyncSession, task_id: uuid.UUID, bundle: bytes
+    session: AsyncSession, task_id: uuid.UUID, bundle: bytes, cut_from: str
 ) -> KeptBundle:
-    """Keep ``bundle`` as the task's snapshot, in place of the one before.
+    """Keep ``bundle`` as the task's snapshot, cut from the commit
+    ``cut_from`` (the head its files were on), in place of the one before.
     The object is written before the row names it and the old one is removed
     after, so a failure part way leaves the previous snapshot whole."""
-    commit, cut_from = snapshot_in(bundle, task_id)
+    commit = snapshot_in(bundle, task_id)
+    if not _OBJECT.fullmatch(cut_from):
+        # i18n-exempt: only the platform's own CLI sends this; no person reads it
+        raise NotABundle("not a commit the snapshot was cut from")
     bucket = private_storage()
     now = datetime.now(UTC)
     key = f"{BUNDLES}/{task_id}/{int(now.timestamp())}-{uuid.uuid4()}.bundle"

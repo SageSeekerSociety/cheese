@@ -196,11 +196,13 @@ async def task_kept_bundle(
 async def keep_task_bundle(
     project_id: uuid.UUID,
     task_id: uuid.UUID,
+    cut_from: str,
     request: Request,
     db: Annotated[AsyncSession, Depends(get_db)],
     credential: PresentedCredential,
 ) -> dict:
-    """Keep the bundle sent as the task's snapshot, in place of the last one."""
+    """Keep the bundle sent as the task's snapshot, cut from the commit
+    ``cut_from``, in place of the last one."""
     task = await _task_for(db, project_id, task_id, credential)
     bundle = bytearray()
     async for chunk in request.stream():
@@ -209,7 +211,7 @@ async def keep_task_bundle(
             # i18n-exempt: only the platform's own CLI sends this; no person reads it
             raise BadRequestError("kept bundle too large")
     try:
-        row = await kept_work.keep_bundle(db, task.id, bytes(bundle))
+        row = await kept_work.keep_bundle(db, task.id, bytes(bundle), cut_from)
     except kept_work.NotABundle as exc:
         raise BadRequestError(str(exc)) from exc
     return ok({"commit": row.commit, "cut_from": row.cut_from, "size": row.size})

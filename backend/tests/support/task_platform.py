@@ -18,6 +18,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
+from urllib.parse import parse_qs
 
 from app.domain.repository import kept_work
 
@@ -121,9 +122,10 @@ class TaskPlatform:
 
             def do_PUT(self):
                 body = self.read_body()
-                if self.path == platform.kept_path:
+                path, _, query = self.path.partition("?")
+                if path == platform.kept_path:
                     try:
-                        commit, cut_from = kept_work.snapshot_in(
+                        commit = kept_work.snapshot_in(
                             body, uuid.UUID(platform.task_id)
                         )
                     except kept_work.NotABundle:
@@ -131,7 +133,7 @@ class TaskPlatform:
                     platform.kept = {
                         "bundle": body,
                         "commit": commit,
-                        "cut_from": cut_from,
+                        "cut_from": parse_qs(query)["cut_from"][0],
                     }
                     return self.data({})
                 platform.writes.append({"path": self.path, "body": body})
