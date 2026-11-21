@@ -97,7 +97,14 @@ const placeable = computed(() => props.panels.filter((panel) => !panel.spawns))
 const spawners = computed<LayoutPanelInfo[]>(() =>
   props.panels
     .filter((panel) => panel.spawns)
-    .map((panel) => ({ id: panel.id, title: panel.title, icon: panel.icon, spawns: true }))
+    .map((panel) => ({
+      id: panel.id,
+      title: panel.title,
+      icon: panel.icon,
+      group: panel.group,
+      beside: panel.beside,
+      spawns: true,
+    }))
 )
 const declared = computed(() => placeable.value.map((panel) => panel.id))
 const byId = computed(() => new Map(placeable.value.map((panel) => [panel.id, panel])))
