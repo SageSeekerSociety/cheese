@@ -147,15 +147,36 @@ function revert() {
   name.value = props.team.name
   intro.value = props.team.intro ?? ''
   handle.value = props.team.handle
+  dropAvatar()
+}
+
+function dropAvatar() {
   avatarFile.value = undefined
   if (preview.value) URL.revokeObjectURL(preview.value)
   preview.value = ''
 }
 
-// 换了一个团队、或者刚存好：草稿从团队现在的样子重新起手。
-watch(() => [props.team.id, props.team.name, props.team.intro, props.team.handle, props.team.avatarId], revert, {
-  immediate: true,
-})
+// 换了一个团队：草稿从团队现在的样子重新起手。
+watch(() => props.team.id, revert, { immediate: true })
+// 团队在别处变了，最常见的是页面分两步存、地址那一步先存上了：没动过的格跟着团队走，
+// 存上了的格（去掉首尾空白后和团队一样）对齐到团队的写法，人改了还没存上的格留着。
+// 下一步存失败了草稿也还在，改一改再按保存就行。
+watch(
+  () => [props.team.name, props.team.intro ?? '', props.team.handle] as const,
+  (now, was) => {
+    const fields = [name, intro, handle]
+    fields.forEach((field, i) => {
+      if (field.value === was[i] || field.value.trim() === now[i]) field.value = now[i]
+    })
+  }
+)
+// 选好的头像只在整份存好以后放下；中途哪一步没存上，它还留着等下一次保存。
+watch(
+  () => props.saved,
+  (saved) => {
+    if (saved) dropAvatar()
+  }
+)
 watch([name, intro, handle], () => emit('edited'))
 onBeforeUnmount(() => {
   if (preview.value) URL.revokeObjectURL(preview.value)
