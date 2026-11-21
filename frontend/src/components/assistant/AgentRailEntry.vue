@@ -1,6 +1,6 @@
 <template>
-  <!-- The way into the person's own assistant from anywhere on desktop: its face, in the top bar
-       right of the search box. Hidden while signed out, where no personal 芝士 answers. -->
+  <!-- The way into the person's own assistant from anywhere on desktop: its face, in the rail above
+       the person's avatar. Hidden where no personal 芝士 answers (inside a project). -->
   <button
     v-if="agentAvailable"
     type="button"
@@ -11,13 +11,13 @@
     data-testid="agent-entry"
     @click="toggleAgent"
   >
-    <v-tooltip activator="parent" location="bottom" :text="label" />
-    <CheeseAvatar :size="24" :state="agentThread.busy.value ? 'think' : null" />
+    <v-tooltip activator="parent" location="end" :text="label" />
+    <CheeseAvatar :size="28" :state="agentThread.busy.value ? 'think' : null" />
   </button>
 </template>
 
 <script setup lang="ts">
-// 桌面顶栏上的芝士：头像那一颗，点了打开或收起全站那个面板（layouts/AgentHost.vue）。
+// 桌面左栏上的芝士：头像那一颗，点了打开或收起全站那个面板（layouts/AgentHost.vue）。
 import CheeseAvatar from '@/components/CheeseAvatar.vue'
 import { t } from '@/i18n'
 import { agentAvailable, agentOpen, agentThread, toggleAgent } from '@/stores/agent'

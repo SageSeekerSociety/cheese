@@ -451,8 +451,7 @@
 
 /* ---- 窗口按钮让位 ----
    macOS 桌面版把标题栏叠在页面上，红黄绿三颗由系统画在网页上层：离窗口左缘 12、
-   在 40px 的顶栏里上下居中，三颗一共到 64（desktop/src-tauri/src/main.rs 的
-   traffic_light_position）。
+   上 16，三颗一共到 64（desktop/src-tauri/src/main.rs 的 traffic_light_position）。
    整屏铺开、左上角直接有控件的层（设置、全屏编辑器、放映、画布、文档里的应用、顶栏、
    跳转链接）都要把这一段让出来，写法一律是
    `max(这一层自己的内距, var(--window-buttons-inset))`——不在这个桌面版里它恒为 0，

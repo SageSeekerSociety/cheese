@@ -33,25 +33,21 @@ function isWide(ch: string): boolean {
 }
 
 /**
- * 默认格子上的字。跳过开头的括号、标点、空格和符号：
- * - 第一个字是汉字（或假名、谚文）就只取这一个字；
- * - 否则是拉丁字母或数字：名字有两个以上的词，取前两个词的首字母（「Web App」→ WA，
- *   「Lab 2」→ L2），这样只差后一个词的几个项目也分得开；只有一个词，取它的前两个
- *   字母（「Cheese」→ Ch）。
- * 名字里一个字母数字都没有（比如只有一个表情），取第一个字形；什么都没有画「·」。
+ * 默认格子上的字：项目名的第一个字母、数字或汉字，只画这一个。
+ *
+ * 开头的括号、标点、空格和符号照旧跳过（「【期末】操作系统实验」→ 期），拉丁字母大写
+ * （「cheese」→ C）。名字里一个字母数字都没有（比如只有一个表情），取第一个字形；
+ * 什么都没有画「·」。
+ *
+ * 到 2026-11-21 为止这一格取的是前两个字母（「Cheese」→ Ch、「Web App」→ WA），为的是
+ * 分清同首字母的几个项目。那天蔡松洋定了改回一个字：这一格本来就小，两个字挤在一起
+ * 不如一个字清楚；分不清的项目到项目设置里自己挑图标、表情、文字或图片。
  */
 export function projectInitials(name?: string | null): string {
   const text = (name ?? '').trim()
   const words = text.match(WORD) ?? []
   if (!words.length) return graphemes(text)[0] ?? '·'
-  const [first = '', second = ''] = words
-  const lead = [...first][0] ?? '·'
-  if (isWide(lead)) return lead
-  const next = [...second][0]
-  if (next && !isWide(next)) return (lead + next).toUpperCase()
-  // 一个词里拉丁字母接着汉字（「AI助手」）：只取汉字之前那一段。
-  const after = [...first][1]
-  return lead.toUpperCase() + (after && !isWide(after) ? after : '')
+  return ([...words[0]][0] ?? '·').toUpperCase()
 }
 
 /** 文字占几格。 */

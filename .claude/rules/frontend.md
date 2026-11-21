@@ -28,7 +28,7 @@ change, `frontend-design` walks the checklist for the parts no gate can see.
   at all `color="grey-lighten-5"` / `class="bg-white"` / `color="white"`, all
   render the same in both themes and are therefore wrong in one of them. The
   fixed-palette names read like semantic colours, which is why they shipped:
-  seven of them sat on the global shell (rail, title bar, mobile bars, `v-main`),
+  seven of them sat on the global shell (sidebars, title bar, mobile bars, `v-main`),
   so when the dark theme landed the shell stayed near-white while the text on it
   followed `on-surface` and went pale grey — unreadable, on every page. Use
   `var(--text)` / `var(--muted)` / `var(--surface)` in CSS; use `background` /
@@ -47,7 +47,7 @@ change, `frontend-design` walks the checklist for the parts no gate can see.
   text colour: it is decoration — icons, dividers, placeholder shapes. It clears the
   3:1 graphics floor but never reaches 4.5:1, so text a reader reads goes to `--muted`
   (§2.6 对比度).
-- The frame (top bar, sidebars) is `--canvas`; the content pane is one
+- The frame (sidebars, top bar) is `--canvas`; the content pane is one
   `--surface`, so content groups by spacing and `--line`, not by white cards on
   grey. Cards get a `--line` border and **no shadow** — `--shadow-1` and
   `--shadow-2` are for menus, dialogs and drawers only (§1.4, §3.4).
