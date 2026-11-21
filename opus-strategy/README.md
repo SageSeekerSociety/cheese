@@ -4,12 +4,13 @@
 
 ## 文件
 
-- `botOpus2.js`：动态选盟约、买卡、刷新、冻结、升本、卖卡和阵容评分。
+- `botOpus2.js`：旧版接口的动态选盟约、买卡、刷新、冻结、升本、卖卡和阵容评分。
+- `botOpusPolicy.js`：新版 `createBotPrepSteps(actions, policy)` 的采购适配层；把阵容目标、精锐合成、逐卡拉表和升本门槛接入 `core`、`target`、`searchTargets`、`buyBonus`、`canLevel`。
 - `botOpusCarry.js`：逐卡拉表的 `mid`、`late`、`boss` 数据。`mid`/`late` 是 R8/R13 边际清怪率，`boss` 是精锐、445 层、60 秒领袖战边际伤害（百万）。
 
 ## 接入方式
 
-把两个文件放入模拟器的机器人模块目录，并让 `botOpus2.js` 与同版本的 `bot.js`、`botOpusCarry.js` 一起加载。主策略依赖旧版扩展接口：
+旧版模拟器使用 `botOpus2.js`，它依赖同版本 `bot.js` 的扩展接口：
 
 ```js
 createBotPrepSteps
@@ -18,7 +19,19 @@ setUnitBonus
 sellJunk
 ```
 
-如果目标模拟器没有 `setUnitBonus`，先适配该扩展点，不要把默认机器人接口直接当成兼容版本运行。当前公开模拟器版本与这份历史策略的接口不完全一致，因此本目录没有把未验证的整局胜率写成结论。
+新版模拟器使用 `botOpusPolicy.js`，并由同版本 `bot.js` 消费：
+
+```js
+createBotPrepSteps({}, {
+  core,
+  target,
+  searchTargets,
+  buyBonus,
+  canLevel,
+})
+```
+
+新版适配层只使用公开的采购、冻结和升本 policy 钩子；新版 `bot.js` 的默认阵容、站位和领袖战排练仍由模拟器负责。新版没有 `setUnitBonus` 时，不要把旧文件直接当成兼容版本运行。目标模式的完整整局验证和 90% 胜率尚未完成，不能把模型估算或小样本结果写成验收结论。
 
 ## 运行边界
 
