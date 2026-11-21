@@ -241,6 +241,25 @@ it('cancels the region note without posting a message', async () => {
   expect(ui.container.querySelector('.design-image__selection')).toBeNull()
   expect(ui.emitted().locate).toBeUndefined()
 })
+// 面板右下角那条浮着的「评论」和图上的标注条落在同一个位置：窄面板里两条必然叠上，
+// 「评论」在 z 序上更高，压住的是标注条自己的「取消」——读者点不动正在写的那一条。
+// 标注条开着时它让开，标注条一收就回来。这条用真渲染的 e2e 也验了一次
+// （`design-region-note.spec.ts` 里 240 宽那一组），这里钉住那一条判据本身。
+// 按结构找、不按那句话找：这句话是文案，改过不止一次（「说明要改什么」→「就这一处说
+// 点什么」→ 现在这一句），钉住它就等于把这条用例绑在文案上，文案一改这条就红。
+const regionNoteCard = (ui: ReturnType<typeof mount>) => ui.container.querySelector('[data-locator-ui]')
+it('steps the panel comment entry aside while the region note is open', async () => {
+  const ui = mount()
+  await paint(ui)
+  await waitFor(() => expect(ui.container.querySelector('.panel-preview__comments-toggle')).toBeTruthy())
+  await select(ui)
+  const card = regionNoteCard(ui) as HTMLElement
+  expect(card).toBeTruthy()
+  expect(ui.container.querySelector('.panel-preview__comments-toggle')).toBeNull()
+  await fireEvent.keyDown(card.querySelector('textarea')!, { key: 'Escape' })
+  expect(regionNoteCard(ui)).toBeNull()
+  expect(ui.container.querySelector('.panel-preview__comments-toggle')).toBeTruthy()
+})
 it('does not send on composition Enter and sends once on an explicit committed Enter', async () => {
   const ui = mount()
   await paint(ui)
