@@ -230,7 +230,7 @@ export const CHAT_ENTRIES: CatalogEntry[] = [
     about: '出错提示：从底部升起来，点右边的叉关掉。新的一条直接顶替旧的，不排队。',
     file: 'src/components/chat/ChatErrorToast.vue',
     component: ChatErrorToast,
-    needs: UI,
+    needs: UI_T,
     states: [
       {
         name: '一条错误',
