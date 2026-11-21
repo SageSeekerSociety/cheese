@@ -28,6 +28,26 @@ let fit: FitAddon | null = null
 let resizeObserver: ResizeObserver | null = null
 let themeObserver: MutationObserver | null = null
 
+const ANSI = [
+  'black',
+  'red',
+  'green',
+  'yellow',
+  'blue',
+  'magenta',
+  'cyan',
+  'white',
+  'brightBlack',
+  'brightRed',
+  'brightGreen',
+  'brightYellow',
+  'brightBlue',
+  'brightMagenta',
+  'brightCyan',
+  'brightWhite',
+] as const
+const kebab = (name: string) => name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)
+
 function token(name: string): string {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim()
 }
@@ -39,6 +59,8 @@ function theme() {
     cursor: token('--ink'),
     cursorAccent: token('--surface'),
     selectionBackground: token('--accent-wash'),
+    // The 16 colours a program asks for, legible on the panel's surface in either theme.
+    ...Object.fromEntries(ANSI.map((name) => [name, token(`--terminal-ansi-${kebab(name)}`)])),
   }
 }
 
