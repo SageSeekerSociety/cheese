@@ -19,14 +19,15 @@ from sqlalchemy import (
 from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.agent_session.attachment import environment_column, place
 from app.domain.agent_session.models import (
     AgentEnvironment,
     AgentRead,
     AgentSession,
     SessionPlace,
-    place_of,
 )
 from app.domain.conversation.services import of_room, room_column
+from app.domain.environment.models import Environment
 from app.domain.topic.models import Topic
 
 
@@ -40,11 +41,11 @@ class PlacedRow:
     harness: str
     resume_token: str | None
     runtime_location: dict | None
-    work_lease: dict | None
+    environment: dict | None
 
     def place(self) -> SessionPlace | None:
         """The session's place, built by the same function the entity uses."""
-        return place_of(self.runtime_location, self.work_lease)
+        return place(self.runtime_location, self.environment)
 
 
 @dataclass(frozen=True)
@@ -313,10 +314,9 @@ class AgentSessionRepository:
         conversation_id: uuid.UUID,
         agent_handle: str,
         harness: str,
-        work_lease: dict | None,
         runtime_location: dict,
     ) -> None:
-        """Record where this session rented hands and where its process runs.
+        """Record where this session's process runs.
 
         The same upsert as ``save`` and for the same reason: setup can reach
         here while a sweep is writing the resume token, and each write must
@@ -332,7 +332,6 @@ class AgentSessionRepository:
             agent_handle=agent_handle,
             harness=harness,
             values={
-                "work_lease": work_lease,
                 "runtime_location": runtime_location,
                 "placed_at": datetime.now(UTC),
             },
@@ -535,23 +534,11 @@ class AgentSessionRepository:
         await self._session.refresh(row)
         return row
 
-    async def placed_in_conversation(
-        self, conversation_id: uuid.UUID
-    ) -> list[AgentSession]:
-        """Every session of this one conversation that is sitting on a machine,
-        newest first."""
-        result = await self._session.execute(
-            select(AgentSession)
-            .where(
-                AgentSession.conversation_id == conversation_id,
-                AgentSession.runtime_location.is_not(None),
-            )
-            .order_by(AgentSession.placed_at.desc(), AgentSession.id)
-        )
-        return list(result.scalars())
-
-    async def placed_in_room(self, room_id: uuid.UUID) -> list[AgentSession]:
-        """Every session in this room that is sitting on a machine, newest first.
+    async def placed_in_room(
+        self, room_id: uuid.UUID
+    ) -> list[tuple[AgentSession, dict | None]]:
+        """Every session in this room that is sitting on a machine, newest
+        first, with the environment it is attached to.
 
         A room has as many as it seats agents. Callers that hold nothing but a
         room id — the transcript upload, the cleanup inventory, the executor
@@ -561,14 +548,14 @@ class AgentSessionRepository:
         `placed_at`, which only taking a machine writes.
         """
         result = await self._session.execute(
-            select(AgentSession)
+            select(AgentSession, environment_column())
             .where(
                 of_room(AgentSession.conversation_id, room_id),
                 AgentSession.runtime_location.is_not(None),
             )
             .order_by(AgentSession.placed_at.desc(), AgentSession.id)
         )
-        return list(result.scalars())
+        return [(row, environment) for row, environment in result.all()]
 
     async def last_used_on(
         self, channel: str, machines: list[str]
@@ -631,7 +618,7 @@ class AgentSessionRepository:
                 AgentSession.harness,
                 AgentSession.resume_token,
                 AgentSession.runtime_location,
-                AgentSession.work_lease,
+                environment_column(),
                 Topic.project_id,
                 room,
             )
@@ -654,7 +641,7 @@ class AgentSessionRepository:
                     harness=row.harness,
                     resume_token=row.resume_token,
                     runtime_location=row.runtime_location,
-                    work_lease=row.work_lease,
+                    environment=row.environment,
                 ),
                 row.project_id,
                 row.room_id,
@@ -687,6 +674,11 @@ class AgentSessionRepository:
     async def forget_room(self, topic_id: uuid.UUID) -> None:
         await self._session.execute(
             delete(AgentSession).where(of_room(AgentSession.conversation_id, topic_id))
+        )
+        # The environments its sessions held go with them: nothing of this
+        # generation of the room is worked in again.
+        await self._session.execute(
+            delete(Environment).where(of_room(Environment.topic_id, topic_id))
         )
 
 

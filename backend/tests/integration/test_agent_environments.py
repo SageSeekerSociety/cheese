@@ -28,6 +28,7 @@ from sqlalchemy import select
 from app.common.auth import create_access_token
 from app.core.config import settings
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
+from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
@@ -44,6 +45,7 @@ from tests.integration.test_switch_pushes_first import (
     _room,
 )
 from tests.support.devices import enrollment_team, place_in_project_team
+from tests.support.environments import environment_of, give_environment
 
 pytestmark = pytest.mark.anyio
 
@@ -63,7 +65,6 @@ async def _second_agent(client, room, handle="linus", *, environment=None):
         sessions = AgentSessionService(db)
         row = await sessions.ensure(room.conversation_id, handle, harness="claude-code")
         generation = str(uuid.uuid4())
-        row.execution_request = {"generation": generation}
         row.runtime_location = {
             "device_id": "center",
             "resource_id": resource,
@@ -73,12 +74,16 @@ async def _second_agent(client, room, handle="linus", *, environment=None):
             await sessions.set_environment(
                 room.conversation_id, handle, environment, chosen_by=None
             )
-            row.work_lease = {
-                **room.lease,
-                "session_id": str(row.id),
-                "generation": generation,
-                "resource_id": str(uuid.uuid4()),
-            }
+            await give_environment(
+                db,
+                row,
+                {
+                    **room.lease,
+                    "generation": generation,
+                    "resource_id": str(uuid.uuid4()),
+                },
+                pointed=False,
+            )
         token = bind_resource_token(
             # Seated as the room's agent; the session is keyed by ``handle``.
             mint_scoped_token(
@@ -145,8 +150,8 @@ async def test_switching_one_agent_leaves_another_where_it_is(client, monkeypatc
         room.old_device
     )
     async with client.test_factory() as db:
-        untouched = await AgentSessionService(db).by_id(other.session_id)
-    assert untouched.work_lease["device_id"] == room.old_device
+        untouched = await environment_of(db, other.session_id)
+    assert untouched is not None and untouched["device_id"] == room.old_device
 
 
 async def test_a_default_moves_nobody_and_a_new_agent_takes_it(client, monkeypatch):
@@ -347,8 +352,7 @@ async def test_a_team_sandbox_never_lands_on_another_teams_computer(
             {"kind": "sandbox", "spec": "team_devices"},
             chosen_by=None,
         )
-        session = await AgentSessionService(db).by_id(room.session_id)
-        session.work_lease = None
+        await attachments.unattach(db, room.session_id)
         await db.commit()
     _machines(monkeypatch)
     monkeypatch.setattr(

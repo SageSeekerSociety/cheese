@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.domain.agent import sandbox_image, toolchain
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.machine_address import device_api_base
+from app.domain.machine import occupants
 from app.domain.machine.models import CloudHost, SandboxHome, WarmMachine
 
 logger = logging.getLogger(__name__)
@@ -20,9 +21,7 @@ async def image_for_session(db, device_id, session_id):
     host = await db.scalar(select(CloudHost).where(CloudHost.device_id == device_id))
     if host is None or host.whole_machine:
         return None
-    home = await db.scalar(
-        select(SandboxHome).where(SandboxHome.session_id == session_id)
-    )
+    home = await occupants.home_of(db, session_id)
     if home is None:
         return host.sandbox_image or None
     if not home.sandbox_image:

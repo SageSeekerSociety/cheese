@@ -61,6 +61,7 @@ from tests.integration.conftest import (
     post_project,
     session_auth_headers,
 )
+from tests.support.environments import works_in
 
 
 class KeepsWorking(StubChannel):
@@ -334,10 +335,10 @@ def _sandbox_home(client, task: dict, task_id: uuid.UUID) -> uuid.UUID:
                 topic_id=task_id,
                 room_resource_id=str(task_id),
                 resource_id=str(task_id),
-                session_id=placed.id,
                 active_at=datetime.now(UTC) - timedelta(minutes=40),
             )
             session.add(home)
+            await works_in(session, placed.id, home)
             await session.commit()
             return home.id
 

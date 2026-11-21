@@ -75,7 +75,6 @@ async def _room_on_alices_computer(client):
         session = await AgentSessionService(db).ensure(
             topic_id, agent.username, harness="claude-code"
         )
-        session.execution_request = {"generation": str(uuid.uuid4())}
         await AgentSessionService(db).set_environment(
             topic_id,
             agent.username,

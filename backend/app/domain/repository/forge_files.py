@@ -27,7 +27,7 @@ from app.core.errors import (
 )
 from app.core.redis import get_redis_client
 from app.core.sentences import say
-from app.domain.agent_session.services import AgentSessionService
+from app.domain.environment import services as environment_rows
 from app.domain.project.forge import (
     binding_for_project,
     branch_head,
@@ -207,8 +207,8 @@ class ProjectFiles:
         room = await self.session.get(Topic, task.room_id)
         if room is None:
             return None
-        return await AgentSessionService(self.session).working_copy(
-            task.id, str(room.resource_id or room.id)
+        return await environment_rows.working_copy(
+            self.session, task.id, str(room.resource_id or room.id)
         )
 
     async def _laid_back(self, task: Any) -> str | None:

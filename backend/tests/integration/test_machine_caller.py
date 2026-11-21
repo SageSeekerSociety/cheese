@@ -15,11 +15,10 @@ The rules, as a person would state them:
 """
 
 import pytest
-from sqlalchemy import update
 
 from app.core.config import settings
-from app.domain.agent_session.models import AgentSession
 from tests.integration.test_switch_pushes_first import _room
+from tests.support.environments import change_environment
 
 pytestmark = pytest.mark.anyio
 
@@ -75,20 +74,16 @@ async def test_a_session_whose_lease_moved_on_is_nobody_from_its_next_request(cl
         _whoami(client, device=room.old_device, state="/old/state").status_code == 200
     )
     async with client.test_factory() as db:
-        await db.execute(
-            update(AgentSession)
-            .where(AgentSession.id == room.session_id)
-            .values(work_lease={**room.lease, "state": "/new/state"})
+        await change_environment(
+            db, room.session_id, {**room.lease, "state": "/new/state"}
         )
         await db.commit()
     assert (
         _whoami(client, device=room.old_device, state="/old/state").status_code == 403
     )
     async with client.test_factory() as db:
-        await db.execute(
-            update(AgentSession)
-            .where(AgentSession.id == room.session_id)
-            .values(work_lease={**room.lease, "status": "released"})
+        await change_environment(
+            db, room.session_id, {**room.lease, "status": "released"}
         )
         await db.commit()
     assert (
@@ -195,16 +190,10 @@ async def test_a_request_naming_a_session_attached_elsewhere_is_refused(client):
     room, other = await _room(client), await _room(client)
     # Another session on the same machine, in a sandbox of its own.
     async with client.test_factory() as db:
-        await db.execute(
-            update(AgentSession)
-            .where(AgentSession.id == other.session_id)
-            .values(
-                work_lease={
-                    **other.lease,
-                    "device_id": room.old_device,
-                    "state": "/other/state",
-                }
-            )
+        await change_environment(
+            db,
+            other.session_id,
+            {**other.lease, "device_id": room.old_device, "state": "/other/state"},
         )
         await db.commit()
     for named in (str(other.session_id), "not-a-session", str(room.project_id)):

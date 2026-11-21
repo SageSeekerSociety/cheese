@@ -1,10 +1,10 @@
 """A sandbox's request finds the session holding it from an index.
 
 Every request a sandbox makes through its device link (`/machine/api/...`,
-`/machine/llm/...`) starts by finding the session whose lease holds that
-sandbox: the sessions whose ``work_lease ->> 'device_id'`` is the device it
-came in on (`machine.caller.caller_of`). `ix_agent_sessions_lease_device`
-indexes that expression, so the read is not a scan of every session.
+`/machine/llm/...`) starts by finding the sessions attached to the
+environment on the device it came in on (`machine.caller.caller_of`).
+`ix_environments_device_id` indexes that, so the read is not a scan of every
+session.
 """
 
 import re
@@ -19,7 +19,7 @@ from tests.integration.test_switch_pushes_first import _room
 pytestmark = pytest.mark.anyio
 
 
-async def test_finding_a_sandboxs_session_uses_the_lease_device_index(client):
+async def test_finding_a_sandboxs_session_uses_the_environment_device_index(client):
     room = await _room(client)
     statements: list[tuple[str, object]] = []
 
@@ -36,9 +36,7 @@ async def test_finding_a_sandboxs_session_uses_the_lease_device_index(client):
 
     (found,) = [s for s in statements if "FROM agent_sessions" in s[0]][:1]
     sql, _ = found
-    # The key is a literal, as the index spells it: a bound key would leave a
-    # prepared statement's generic plan unable to use the index.
-    assert "(agent_sessions.work_lease ->> 'device_id')" in sql, sql
+    assert "environments.device_id = " in sql, sql
     # The statement as sent, its device bound, over enough sessions on other
     # devices that reading them all would be the planner's choice without it.
     bound = re.sub(r"\$1(::VARCHAR)?", "CAST(:device AS varchar)", sql)
@@ -46,18 +44,37 @@ async def test_finding_a_sandboxs_session_uses_the_lease_device_index(client):
         await db.execute(
             text(
                 "INSERT INTO agent_sessions (id, conversation_id, agent_handle,"
-                " harness, work_lease, created_at, updated_at)"
+                " harness, created_at, updated_at)"
                 " SELECT gen_random_uuid(), :room, 'other-' || n, 'claude-code',"
-                " json_build_object('device_id', 'device-' || n), now(), now()"
-                " FROM generate_series(1, 5000) AS n"
+                " now(), now() FROM generate_series(1, 5000) AS n"
             ),
             {"room": str(room.conversation_id)},
         )
-        await db.execute(text("ANALYZE agent_sessions"))
+        # Each attached to an environment of its own on a device of its own.
+        await db.execute(
+            text(
+                "INSERT INTO environments (id, topic_id, device_id, resource_id,"
+                " room_resource_id, choice, created_at, updated_at)"
+                " SELECT id, :room, 'device-' || agent_handle, 'r', 'r',"
+                " '{}'::jsonb, now(), now()"
+                " FROM agent_sessions WHERE agent_handle LIKE 'other-%'"
+            ),
+            {"room": str(room.topic_id)},
+        )
+        await db.execute(
+            text(
+                "INSERT INTO environment_attachments (id, environment_id,"
+                " session_id, generation, acted_at)"
+                " SELECT id, id, id, 'g', now()"
+                " FROM agent_sessions WHERE agent_handle LIKE 'other-%'"
+            )
+        )
+        for table in ("agent_sessions", "environments", "environment_attachments"):
+            await db.execute(text(f"ANALYZE {table}"))
         plan = "\n".join(
             (
                 await db.execute(text("EXPLAIN " + bound), {"device": room.old_device})
             ).scalars()
         )
 
-    assert "ix_agent_sessions_lease_device" in plan, plan
+    assert "ix_environments_device_id" in plan, plan

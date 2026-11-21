@@ -25,7 +25,6 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import execution
 from app.domain.agent.harness import harness_for
 from app.domain.agent.harness.claude_code.remote_execution.runtime import Executor
-from app.domain.agent_session.services import AgentSessionService
 from app.domain.project.models import ProjectForge
 from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic
@@ -37,6 +36,7 @@ from tests.integration.conftest import (
     session_auth_headers,
 )
 from tests.integration.test_accept_pr import _rendered_head, _rendered_revision
+from tests.support.environments import remember_place
 
 ALICE = session_auth_headers("alice")
 
@@ -199,10 +199,11 @@ def _place(client, task_id: str) -> None:
         async with client.test_factory() as session:
             task = await session.get(Task, uuid.UUID(task_id))
             room = await session.get(Topic, task.room_id)
-            await AgentSessionService(session).remember_place(
+            await remember_place(
+                session,
                 conversation_id=task.id,
                 agent_handle="cheese",
-                work_lease={"kind": "device"},
+                environment={"kind": "device"},
                 runtime_location={
                     "device_id": "test-device",
                     "channel": "central",

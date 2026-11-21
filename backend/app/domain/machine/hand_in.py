@@ -45,7 +45,7 @@ from app.core.errors import (
 from app.core.sentences import exception_text, say
 from app.domain.agent import execution
 from app.domain.agent.announce import announce
-from app.domain.agent_session.services import AgentSessionService
+from app.domain.environment import services as environment_rows
 from app.domain.machine.preview_wake import is_frozen
 from app.domain.notice_meta import (
     EVENT_CARD_REDESCRIBED,
@@ -97,13 +97,13 @@ def _checkout(task_id: uuid.UUID) -> str:
 
 
 async def _sandbox(db: AsyncSession, task: Task) -> tuple[dict, bool] | None:
-    """The lease of the sandbox holding the task's working copy, and whether
-    that sandbox is gone; None while no sandbox has held it."""
+    """The environment holding the task's working copy, and whether its
+    sandbox is gone; None while none has held it."""
     room = await db.get(Topic, task.room_id)
     if room is None:
         return None
-    return await AgentSessionService(db).working_copy(
-        task.id, str(room.resource_id or room.id)
+    return await environment_rows.working_copy(
+        db, task.id, str(room.resource_id or room.id)
     )
 
 

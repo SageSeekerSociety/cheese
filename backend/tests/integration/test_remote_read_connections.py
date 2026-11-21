@@ -103,7 +103,7 @@ async def test_machine_wait_releases_the_request_connection(_pg_schema, monkeypa
             AsyncMock(return_value=SimpleNamespace(id=room_id, resource_id=room_id)),
         )
         monkeypatch.setattr(
-            forge_files.AgentSessionService,
+            forge_files.environment_rows,
             "working_copy",
             AsyncMock(return_value=({"kind": "device"}, False)),
         )

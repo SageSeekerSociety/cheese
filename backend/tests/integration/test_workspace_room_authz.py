@@ -17,6 +17,7 @@ from tests.integration.test_file_panel_safety import _put, _worktree
 from tests.integration.test_file_panel_safety import task_machine as task_machine
 from tests.machine_work import machine_commits
 from tests.support import git_store
+from tests.support.environments import remember_place
 
 
 def _connect_workspace(client, project, room):
@@ -29,12 +30,12 @@ def _connect_workspace(client, project, room):
         async with client.test_factory() as session:
             topic = await session.get(Topic, uuid.UUID(room))
             from app.domain.agent.harness import harness_for
-            from app.domain.agent_session.services import AgentSessionService
 
-            await AgentSessionService(session).remember_place(
+            await remember_place(
+                session,
                 conversation_id=task_id,
                 agent_handle="cheese",
-                work_lease={"kind": "device"},
+                environment={"kind": "device"},
                 runtime_location={
                     "device_id": "test-device",
                     "channel": "central",
