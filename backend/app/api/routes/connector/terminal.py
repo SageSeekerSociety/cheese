@@ -49,9 +49,11 @@ from app.api.routes.connector.screen import (
 from app.api.write_access import Can, InChannel
 from app.common.auth import AccessClaims, verify_access_token
 from app.core.config import settings
+from app.core.errors import BaseError
 from app.domain.agent.device_hub import DeviceOffline, device_hub
 from app.domain.agent.device_hub.streams import HubStream, StreamsUnsupported
-from app.domain.machine import preview_wake, terminals
+from app.domain.identity.actor import Actor
+from app.domain.machine import preview_wake, task_machine, terminals
 from app.domain.project_permissions import Permission
 from app.domain.room_task.place import TaskStatus
 from app.domain.user.services import user_by_handle
@@ -71,9 +73,9 @@ WAKE_EVERY_S = 60.0
 class _Person:
     """Who is at the terminal, as the door last found them."""
 
-    def __init__(self, task_id: uuid.UUID, user_id: int, handle: str, workspace: bool):
-        self.task_id, self.user_id = task_id, user_id
-        self.handle, self.in_workspace = handle, workspace
+    def __init__(self, task_id: uuid.UUID, user_id: int, actor: Actor, workspace: bool):
+        self.task_id, self.user_id, self.actor = task_id, user_id, actor
+        self.handle, self.in_workspace = actor.handle, workspace
 
 
 async def _door(
@@ -103,7 +105,7 @@ async def _door(
         if user is None:
             return None
         user_id = user.id
-    return _Person(task.id, user_id, at.actor.handle, not task.branch_name)
+    return _Person(task.id, user_id, at.actor, not task.branch_name)
 
 
 class _Relay:
@@ -224,6 +226,14 @@ async def terminal_socket(
         refused = await terminals.refusal(
             db, person.task_id, person.user_id, hub=device_hub
         )
+        if refused is None:
+            # Opening a shell is what attaches the person where the task's
+            # work is: a machine an AI teammate already brought up holds the
+            # task's copy without the person ever having asked for it.
+            try:
+                await task_machine.attach(db, person.task_id, person.actor)
+            except BaseError:  # the project starts no sandbox for them
+                await db.rollback()
         shells = await terminals.shells_of(
             db,
             person.task_id,
@@ -231,7 +241,7 @@ async def terminal_socket(
             handle=person.handle,
             in_workspace=person.in_workspace,
         )
-    # The door's reads end before the long relay: a session left in a
+    # The door's work ends before the long relay: a session left in a
     # transaction for the life of the socket would hold its locks as long.
     await db.commit()
     if person is None:

@@ -111,14 +111,12 @@ class Status:
     failed: str | None
 
 
-async def prepare(
-    db: AsyncSession, task_id: uuid.UUID, actor: Actor, *, hub=None
-) -> bool:
-    """Attach ``actor`` to where the task's work is and start bringing its
-    machine back, unless a bring-up of that environment is already under
-    way — in this process or any other. Answers whether this call started
-    it. Refuses a person the task's project would not start a sandbox for
-    before anything is started."""
+async def attach(
+    db: AsyncSession, task_id: uuid.UUID, actor: Actor
+) -> tuple[session_work.Attacher, uuid.UUID]:
+    """Attach ``actor`` to where the task's work is, and answer who attached
+    and that environment. Refuses a person the task's project would not
+    start a sandbox for. Flushes; the caller commits."""
     holder = await holders.look(db, await holders.holder_of(db, task_id))
     if holder is None:
         raise NotFoundError(say("taskNotFound"))
@@ -132,7 +130,17 @@ async def prepare(
     attacher = session_work.Attacher.person(
         person, task_id, await session_work.person_launch_values(db, task_id)
     )
-    environment_id = await session_work.attach_person(db, attacher)
+    return attacher, await session_work.attach_person(db, attacher)
+
+
+async def prepare(
+    db: AsyncSession, task_id: uuid.UUID, actor: Actor, *, hub=None
+) -> bool:
+    """Attach ``actor`` to where the task's work is (`attach`) and start
+    bringing its machine back, unless a bring-up of that environment is
+    already under way — in this process or any other. Answers whether this
+    call started it."""
+    attacher, environment_id = await attach(db, task_id, actor)
     now = datetime.now(UTC)
     # One bring-up per environment: whoever moves this first runs it.
     started = await db.scalar(
