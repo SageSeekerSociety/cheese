@@ -238,17 +238,30 @@ class ProjectFiles:
 
     async def _copy_revision(self, task: Any) -> str | None:
         """The commit a new checkout of the task starts as: its laid-back kept
-        snapshot, else the head it landed or its branch's head. None while the
-        forge has nothing of it."""
+        snapshot, else its committed one (`_committed_revision`). None while
+        the forge has nothing of it."""
         laid_back = await self._laid_back(task)
         if laid_back:
             return laid_back
+        return await self._committed_revision(task)
+
+    async def _committed_revision(self, task: Any) -> str | None:
+        """The task's commits as a checkout would hold them: the head it
+        landed, else its branch's head, else — a task nothing was pushed for
+        yet, or one with no branch of its own — the head of the branch its
+        checkout would start from (`cheese worktree`): its base, or the
+        project's default. None when the project has no repository to read."""
         landed = _landed_head(task)
         if landed:
             return landed
-        if not task.branch_name:
+        if task.branch_name:
+            head = await self._head(self.project_id, self.session, task.branch_name)
+            if head:
+                return head
+        base = task.base_branch or await default_branch(self.project_id, self.session)
+        if not base:
             return None
-        return await self._head(self.project_id, self.session, task.branch_name)
+        return await self._head(self.project_id, self.session, base)
 
     async def _forge_source(self, task: Any) -> str:
         """How a copy read off the forge is named: the task's own files
@@ -415,14 +428,12 @@ class ProjectFiles:
 
     async def revision(self):
         task = await self.task()
-        landed = _landed_head(task) if task else None
-        if landed:
-            return landed
-        branch = (
-            task.branch_name
-            if task
-            else await default_branch(self.project_id, self.session)
-        )
+        if task is not None:
+            found = await self._committed_revision(task)
+            if not found:
+                raise NotFoundError(say("taskNothingCommitted"))
+            return found
+        branch = await default_branch(self.project_id, self.session)
         if not branch:
             raise NotFoundError(say("taskNoOwnFileVersion"))
         head = await self._head(self.project_id, self.session, branch)

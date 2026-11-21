@@ -129,21 +129,7 @@ async def require_place_access(
     return work
 
 
-async def require_project_access(
-    work: Annotated[Task | None, Depends(require_place_access)],
-) -> None:
-    """Access, plus a task's own worktree for the routes that read and write it.
-
-    A task that arrived without a branch gets one only when a machine first
-    opens it (`give_branch`), so until then it has no files of its own to serve.
-    Asking what work it holds is not reading them: the work summary takes
-    `require_place_access` alone and answers "nothing changed yet".
-    """
-    if work is not None and work.branch_name is None:
-        raise NotFoundError(say("taskNoOwnFileVersion"))
-
-
-@router.get("/{project_id}/files", dependencies=[Depends(require_project_access)])
+@router.get("/{project_id}/files", dependencies=[Depends(require_place_access)])
 async def list_files(
     project_id: uuid.UUID,
     db: DbSession,
@@ -164,7 +150,7 @@ async def list_files(
     return ok({**page(files, len(files)), "source": actual_source, "dirs": dirs})
 
 
-@router.get("/{project_id}/file", dependencies=[Depends(require_project_access)])
+@router.get("/{project_id}/file", dependencies=[Depends(require_place_access)])
 async def read_file(
     project_id: uuid.UUID,
     path: str,
@@ -193,7 +179,7 @@ async def read_file(
     )
 
 
-@router.get("/{project_id}/file/raw", dependencies=[Depends(require_project_access)])
+@router.get("/{project_id}/file/raw", dependencies=[Depends(require_place_access)])
 async def read_file_raw(
     project_id: uuid.UUID,
     path: str,
@@ -235,7 +221,7 @@ async def read_file_raw(
 
 
 @router.put(
-    "/{project_id}/file", dependencies=[ROUTE_DECIDES, Depends(require_project_access)]
+    "/{project_id}/file", dependencies=[ROUTE_DECIDES, Depends(require_place_access)]
 )
 async def write_file(
     project_id: uuid.UUID,
@@ -321,7 +307,7 @@ class FileArrangeOut(BaseModel):
 
 @router.post(
     "/{project_id}/file/arrange",
-    dependencies=[Depends(require_project_access)],
+    dependencies=[Depends(require_place_access)],
     **typed_response(FileArrangeOut),
 )
 async def arrange_file(
@@ -372,7 +358,7 @@ class ProjectHistoryOut(BaseModel):
 
 @router.get(
     "/{project_id}/history",
-    dependencies=[Depends(require_project_access)],
+    dependencies=[Depends(require_place_access)],
     **typed_response(ProjectHistoryOut),
 )
 async def project_history(
@@ -413,7 +399,7 @@ async def project_history(
     return ok({"commits": out})
 
 
-@router.get("/{project_id}/git/diff", dependencies=[Depends(require_project_access)])
+@router.get("/{project_id}/git/diff", dependencies=[Depends(require_place_access)])
 async def git_diff(
     project_id: uuid.UUID,
     db: DbSession,
