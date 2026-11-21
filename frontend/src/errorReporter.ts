@@ -40,7 +40,11 @@ let timer: number | null = null
 // 的是「一次回调改了布局，这一轮量不完了」—— 浏览器把剩下的推到下一帧，什么都
 // 没丢，页面也没坏。它偏偏是以 window error 的形式发出来的，于是每次都落进运行
 // 记录，把真正的报错埋在里面。没有栈、没有文件、没有人能修，就别上报。
-const IGNORED = [/^ResizeObserver loop/]
+//
+// 编辑器（Monaco）放下一件做到一半的事时，用一个叫 Canceled 的错误拒绝那件事的
+// promise：换了正在显示的文件、关了编辑器，都会这样。取消不是出错，VS Code 自己
+// 的报错入口也不记它；这里同样没有人能修的东西。
+const IGNORED = [/^ResizeObserver loop/, /^Unhandled rejection: Canceled$/]
 
 export function isIgnorable(message: string): boolean {
   return IGNORED.some((re) => re.test(message))
