@@ -22,7 +22,7 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from starlette.websockets import WebSocketDisconnect
 
 from app.domain.agent.device_hub import device_hub
@@ -241,6 +241,30 @@ def test_typing_reaches_the_shell_and_the_shell_outlives_the_page(client, machin
     closed = client.delete(f"/topics/{task_id}/terminals/t1", headers=_headers("alice"))
     assert closed.json()["data"] == {"closed": True}
     assert _listed(client, task_id)["terminals"] == []
+
+
+def test_a_machine_an_ai_teammate_brought_up_takes_the_persons_first_terminal(
+    client, machine
+):
+    """The task's machine is up because its AI teammate works there; the
+    person has never asked for it. Their first terminal opens all the same."""
+    task_id, checkout, _ = machine
+
+    async def never_attached():
+        async with client.test_factory() as db:
+            await db.execute(
+                delete(EnvironmentAttachment).where(
+                    EnvironmentAttachment.user_id.is_not(None)
+                )
+            )
+            await db.commit()
+
+    client.portal.call(never_attached)
+    with client.websocket_connect(_url(task_id, "t1", "alice")) as ws:
+        _read_until(ws, lambda _, c: any(m["type"] == "attached" for m in c))
+        ws.send_bytes(b"pwd; echo done-$((20 + 22))\n")
+        output, _ = _read_until(ws, lambda o, _: "done-42" in o)
+        assert str(checkout.resolve()) in output
 
 
 def _device_of(client, owner_handle: str) -> None:

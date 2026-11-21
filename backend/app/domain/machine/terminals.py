@@ -109,7 +109,8 @@ async def shells_of(
 ) -> Shells | None:
     """Where this person's shells in the task run: the environment the task
     points to, on a machine that holds it now, with the person attached to
-    it (`task_machine.prepare` attaches them). None while that is not so."""
+    it (`task_machine.attach`: opening a shell attaches them, and so does
+    bringing the machine back). None while that is not so."""
     environment = await environment_rows.environment_of_conversation(db, task_id)
     if environment is None:
         return None
