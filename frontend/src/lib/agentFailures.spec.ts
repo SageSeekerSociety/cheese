@@ -5,13 +5,24 @@ import { describe, expect, it } from 'vitest'
 import { agentFailures, needsRelogin } from './agentFailures'
 
 function block(over: Partial<Block> & { meta?: Record<string, unknown> | null }, at: string): Block {
-  return { id: at, kind: 'message', author_type: 'agent', author: 'cedar', created_at: at, ...over } as Block
+  return {
+    id: at,
+    conversation_id: 'room',
+    kind: 'message',
+    author_type: 'participant',
+    author: 'cedar',
+    content: '',
+    created_at: at,
+    ...over,
+  } as Block
 }
 
+// 失败记录是平台自己写的事件：作者类型 `platform`，`agent_handle` 在 meta 里说清是哪位的那一轮。
 const failure = (handle: string | undefined, code: string, at: string) =>
   block(
     {
-      author_type: 'system',
+      kind: 'event',
+      author_type: 'platform',
       author: 'system',
       meta: { event_type: 'turn_failed', severity: 'error', code, ...(handle ? { agent_handle: handle } : {}) },
     },
@@ -57,7 +68,8 @@ describe('teammates stopped on a failure nobody came back to', () => {
   it('a later failure replaces an earlier one, and only an error counts', () => {
     const warn = block(
       {
-        author_type: 'system',
+        kind: 'event',
+        author_type: 'platform',
         author: 'system',
         meta: { event_type: 'turn_failed', severity: 'warn', agent_handle: 'fir' },
       },
