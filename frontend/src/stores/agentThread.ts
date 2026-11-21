@@ -9,9 +9,9 @@
 // （定数，页面用它覆盖预览；服务端记下了它，撤销按它的编号来），`published` 是它发布了一份草稿，
 // `proposal` 是它替人起草了一条要发到项目里的消息、或一个要开的任务（人确认后才发出），`error` 是没答上来的
 // 原因，`done` 收尾。回答在服务端答到底，跟这条连接无关：连接断了就从断的地方接着读。
-import { computed, ref } from 'vue'
+import { computed, ref, toRaw } from 'vue'
 
-import { type AgentChange, AgentChangesApi, type AssistantCall, request } from '@/api'
+import { type AgentChange, AgentChangesApi, ApiError, type AssistantCall, request } from '@/api'
 import { followEventStream, getEventStream, type OnEvent, postEventStream, StreamRefused } from '@/api/eventStream'
 import { t } from '@/i18n'
 import { isCreditRefusal } from '@/lib/creditUsage'
@@ -317,8 +317,12 @@ export function createAssistant(opts: AssistantOptions = {}) {
   /** 退出登录过几次。读到一半、问到一半、回答接到一半时退出了，之后读回来的都是上一个人的，
    *  不再碰面板：不摆话题、不建话题、不问、不写字、不收尾。 */
   let signedOut = 0
+  /** 插进去却被拒了的话：服务端已经答完，页面还没收到 `done`（`say`）。话照旧摆着，这一轮
+   *  收尾后合成一个新问题问（`askHeldBack`）。`line` 是摆着的那一行本身。 */
+  const heldBack = ref<{ conversation: string; line: AssistantMessage; text: string; files: HandedFile[] }[]>([])
 
-  const busy = computed(() => streaming.value !== null)
+  /** 在答，或者答完了、留着的话还没问出去：这时不换话题、不重读，人说的话照旧插进来。 */
+  const busy = computed(() => streaming.value !== null || heldBack.value.length > 0)
 
   /** 还有没摆出来的更早的话题：往上翻能读。 */
   const hasOlder = computed(() => {
@@ -425,10 +429,11 @@ export function createAssistant(opts: AssistantOptions = {}) {
     currentEarlier.value = false
     notice.value = null
     creditRefused.value = false
-    // 退出时还在读的那次打开、还在接的那个回答，都是上一个人的，不再摆。
+    // 退出时还在读的那次打开、还在接的那个回答、留着没问的话，都是上一个人的，不再摆。
     opening++
     signedOut++
     clearTurn()
+    heldBack.value = []
   }
 
   /** 「新话题」：之前说的留在上面，芝士从下一句话起不再读它们。话题等第一句话发出去才建。 */
@@ -566,7 +571,8 @@ export function createAssistant(opts: AssistantOptions = {}) {
    *  只问，不再记一遍。 */
   async function ask(question: string, fallback: string, files: HandedFile[] = [], kept = false) {
     const text = question.trim()
-    if ((!text && !files.length) || busy.value) return
+    // 只看有没有在答：留着的话（`heldBack`）正是要在这里问出去的。
+    if ((!text && !files.length) || streaming.value !== null) return
     // 这时还在读的那次打开（刚打开面板、点了「查看对话」）读回来，会把正在问的这段换走。
     opening++
     const out = signedOut
@@ -625,18 +631,37 @@ export function createAssistant(opts: AssistantOptions = {}) {
     if (out === signedOut) await askUnheard(unheard, fallback)
   }
 
-  /** 插进那一轮的话，那一轮结束前芝士没听到：合成一个问题接着问。 */
+  /** 每一轮收尾都走到这里。插进那一轮的话、那一轮结束前芝士没听到的，合成一个问题接着问；
+   *  都问完了，再问插话被拒、留着的那几句。 */
   async function askUnheard(unheard: Unheard[], fallback: string) {
-    if (!unheard.length) return
     const text = unheard
       .map((u) => u.text ?? '')
       .filter(Boolean)
       .join('\n\n')
+    const files = unheard.flatMap((u) => u.files ?? [])
+    // 这一问收尾时又会走到这里，留着的那几句到时再问。
+    if (text || files.length) return ask(text, fallback, files, true)
+    await askHeldBack(fallback)
+  }
+
+  /** 插话被拒、留着的那几句：从摆着的地方拿下来，合成一个新问题问，像没在答时说的一样。
+   *  那几句服务端没存过，所以不是 `kept`。 */
+  async function askHeldBack(fallback: string) {
+    if (streaming.value !== null || !heldBack.value.length) return
+    // 留着的话都是这一段的：留着的时候不能换话题（`busy`）。
+    const held = heldBack.value.filter((h) => h.conversation === current.value)
+    heldBack.value = []
+    if (!held.length) return
+    // 从 ref 里读回来的都是代理，两边都比它底下那一行本身。
+    const lines = new Set(held.map((h) => toRaw(h.line)))
+    messages.value = messages.value.filter((m) => !lines.has(toRaw(m)))
     await ask(
-      text,
+      held
+        .map((h) => h.text)
+        .filter(Boolean)
+        .join('\n\n'),
       fallback,
-      unheard.flatMap((u) => u.files ?? []),
-      true
+      held.flatMap((h) => h.files)
     )
   }
 
@@ -948,7 +973,8 @@ export function createAssistant(opts: AssistantOptions = {}) {
   }
 
   /** 芝士正在答时，人又说了一句：存进对话，插进正在答的这一轮，芝士下一步之前读到。
-   *  这时恰好答完了，就当作一个新问题问。 */
+   *  这时恰好答完了（服务端回 409，页面可能还没收到 `done`），就当作一个新问题问：还在收尾
+   *  就等它收完。别的失败不重发：服务端可能已经存下了这句。 */
   async function say(text: string, fallback: string, files: HandedFile[] = []) {
     const words = text.trim()
     const id = current.value
@@ -962,10 +988,14 @@ export function createAssistant(opts: AssistantOptions = {}) {
       ...(asking?.shown.selection ? { selection: asking.shown.selection } : {}),
       ...(asking?.shown.cited ? { cited: asking.shown.cited } : {}),
     }
-    messages.value = [
-      ...messages.value,
-      { role: 'user', text: words, at, ...(files.length ? { files: files.map((f) => f.name) } : {}), ...shown },
-    ]
+    const line: AssistantMessage = {
+      role: 'user',
+      text: words,
+      at,
+      ...(files.length ? { files: files.map((f) => f.name) } : {}),
+      ...shown,
+    }
+    messages.value = [...messages.value, line]
     try {
       await request(`/assistant/conversations/${id}/say`, {
         method: 'POST',
@@ -975,11 +1005,24 @@ export function createAssistant(opts: AssistantOptions = {}) {
           ...(asking?.body.selection ? { selection: asking.body.selection } : {}),
         }),
       })
-    } catch {
+    } catch (error) {
       // 退出登录后才没发出去：那是上一个人的话，不替下一个人问。
       if (out !== signedOut) return
+      const answered = error instanceof ApiError && error.status === 409
+      // 还在这一段里收尾：留着，收完再问。
+      if (answered && busy.value && current.value === id) {
+        heldBack.value = [...heldBack.value, { conversation: id, line, text: words, files }]
+        return
+      }
       messages.value = messages.value.filter((m) => !(m.role === 'user' && m.at === at))
-      if (!busy.value) return ask(words, fallback, files)
+      // 已经收完尾、还在这一段：现在就问。
+      if (answered && current.value === id) return ask(words, fallback, files)
+      // 换到了别的话题：那句话是对上一段说的，不问到这里；收到上面的那一段里也不留着它，
+      // 像发出去了一样。
+      if (current.value !== id)
+        earlier.value = earlier.value.map((topic) =>
+          topic.id === id ? { ...topic, messages: topic.messages.filter((m) => toRaw(m) !== line) } : topic
+        )
       notice.value = fallback
     }
   }
