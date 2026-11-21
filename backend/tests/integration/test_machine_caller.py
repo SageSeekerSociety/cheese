@@ -2,8 +2,8 @@
 
 The rules, as a person would state them:
 
-- the caller is the session whose current lease is the state the request came
-  in on, on that device: nothing in the request names it otherwise;
+- the request comes from the environment whose state it came in on, on that
+  device;
 - only the process that owns the device links can say so, and it proves it
   with the device connection secret; without the secret nobody is anyone;
 - a session whose lease ended, or that holds another state now, is nobody from
@@ -11,7 +11,8 @@ The rules, as a person would state them:
 - a request may name the session it is from: it is answered as that session
   when that session is attached to the environment the request came from right
   now, and refused when it is not, whatever else it holds; a request that names
-  nobody is answered as it was before names existed.
+  nobody is the environment itself, in the conversation that points to it, and
+  no agent's.
 """
 
 import pytest
@@ -40,15 +41,15 @@ def _whoami(client, *, device, state, secret="owner-secret", attachment=None):
     )
 
 
-async def test_the_session_holding_the_state_is_the_caller(client):
+async def test_a_request_naming_nobody_is_the_environment_itself(client):
     room = await _room(client)
     answer = _whoami(client, device=room.old_device, state="/old/state")
     assert answer.status_code == 200, answer.text
     assert answer.json() == {
-        "session": str(room.session_id),
+        "session": None,
         "project": str(room.project_id),
         "conversation": str(room.conversation_id),
-        "agent": room.agent_handle,
+        "agent": None,
     }
 
 
@@ -138,7 +139,10 @@ async def test_a_request_on_the_socket_comes_back_with_whose_it_is(client, monke
         await hub.on_device_message(
             room.old_device, {"t": "machine.open", "id": "s", "path": "/old/state"}
         )
-        request = b"GET /whoami HTTP/1.1\r\nhost: cheese\r\n\r\n"
+        request = (
+            b"GET /whoami HTTP/1.1\r\nhost: cheese\r\n"
+            + f"x-cheese-attachment: {room.session_id}\r\n\r\n".encode()
+        )
         await hub.on_device_message(
             room.old_device,
             {
