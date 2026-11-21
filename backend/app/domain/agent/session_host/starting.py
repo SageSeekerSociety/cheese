@@ -212,7 +212,7 @@ async def attach(
             host,
             exc,
         )
-        if missing and _no_runner(exc, ref.state):
+        if missing and no_runner(exc, ref.state):
             # FB-56 forbids reading a question nobody answered as death:
             # an offline machine, a timeout, a connector not ready yet. This
             # is not that. The machine is online and answered that the
@@ -289,7 +289,7 @@ async def attach(
     return found
 
 
-def _no_runner(exc: Exception, state) -> bool:
+def no_runner(exc: Exception, state) -> bool:
     """The connector's own answer that the runner is not there: its socket
     does not exist (``cli/internal/host/executor_unix.go`` dials it by name),
     or the session's state directory itself does not (``executor.go`` resolves
