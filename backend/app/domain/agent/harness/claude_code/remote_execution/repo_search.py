@@ -45,6 +45,7 @@ def search(params, root):
         str(root),
         "grep",
         "--no-color",
+        "-z",  # literal paths, separated from line numbers and text by NUL
         "-n",  # line numbers: the refusal names a place, not just a file
         "-I",  # never a binary
         "-F",  # the keywords are literals, not patterns
@@ -68,9 +69,11 @@ def search(params, root):
             "hits": [],
         }
     hits = []
-    for line in result.stdout.decode("utf-8", "replace").splitlines()[:200]:
-        path, _, rest = line.partition(":")
-        number, _, text = rest.partition(":")
+    remaining = result.stdout.decode("utf-8", "replace")
+    while remaining and len(hits) < 200:
+        path, _, remaining = remaining.partition("\0")
+        number, _, remaining = remaining.partition("\0")
+        text, _, remaining = remaining.partition("\n")
         if not number.isdigit():
             continue
         hits.append({"path": path, "line": int(number), "text": text[:400]})

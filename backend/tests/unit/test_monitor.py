@@ -53,6 +53,20 @@ def monitors(target: dict, session: Session) -> Monitors:
     return Monitors(client.control, session.tell, cwd=lambda: target["workspace"])
 
 
+@pytest.mark.parametrize("chunk_size", [16_384, 2_000_000])
+def test_a_long_output_line_keeps_its_beginning_and_the_next_event(chunk_size):
+    """Truncation preserves a line's beginning regardless of read boundaries."""
+    text = "FAILED: " + "x" * 1_100_000
+    data = (text + "\nnext event\n").encode()
+    lines = monitor.Lines()
+    received = []
+    for offset in range(0, len(data), chunk_size):
+        received.extend(lines.feed(data[offset : offset + chunk_size]))
+    received.extend(lines.rest())
+
+    assert received == [text[: monitor.LINE_MAX] + "...(truncated)", "next event"]
+
+
 async def test_each_line_is_told_as_it_is_printed_and_the_exit_ends_the_watch(
     tmp_path,
 ):
@@ -161,6 +175,37 @@ async def test_task_stop_ends_the_command_and_nothing_more_is_said(tmp_path):
             assert marker.read_text() == stamp
             assert len(session.told) == 1
             assert "No running monitor" in await watching.stop(task)
+        finally:
+            await watching.close()
+
+
+async def test_expiry_kills_a_command_that_ignores_termination(tmp_path):
+    """A monitor's deadline also stops a script that ignores SIGTERM."""
+    with room_machine(tmp_path / "machine") as target:
+        session = Session()
+        watching = monitors(target, session)
+        client = RemoteClient(dict(target))
+        try:
+            answer = await watching.start(
+                {
+                    "command": "trap '' TERM; echo ready; while true; do sleep 1; done",
+                    "description": "ignores termination",
+                    "timeout_ms": 1000,
+                },
+                "c",
+            )
+            task = answer.split("task ", 1)[1].split(",", 1)[0]
+            await until(lambda: session.events() == ["ready"], timeout=2)
+            await until(lambda: session.said("expired"), timeout=2)
+            await asyncio.gather(*watching.chores)
+
+            def killed():
+                result = client.control(
+                    {"subtype": "shell", "operation": "read", "command_id": task}
+                )
+                return result.get("exit") == -9
+
+            await until(killed, timeout=1)
         finally:
             await watching.close()
 
