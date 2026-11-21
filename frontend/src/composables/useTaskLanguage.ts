@@ -1,6 +1,6 @@
 // The language servers of a task's checkout, for the 文件 panel's editor: one
-// socket per task and language on the page (`taskLanguageWsUrl`), shared by every
-// cell of the task that shows a file in that language.
+// socket per task and server on the page (`taskLanguageWsUrl`), shared by every
+// cell of the task that shows a file that server reads.
 //
 // A socket is opened only while some editor has such a file open and the task's
 // machine is up (as `useTaskFiles` knows it): this never brings a machine up. The
@@ -20,8 +20,12 @@ import { computed, onBeforeUnmount, watch } from 'vue'
 
 import { taskLanguageWsUrl } from '@/api'
 
-/** The server each Monaco language goes to: the `language` of the socket's URL. */
-const SERVERS: Record<string, string> = { c: 'c', cpp: 'cpp' }
+/**
+ * The server each Monaco language goes to, named by the `language` of the socket's URL. C and
+ * C++ are one server (clangd, the machine's `runtime_language.SERVERS`), so a task with both
+ * open runs one of it; each document still tells the server its own language.
+ */
+const SERVERS: Record<string, string> = { c: 'c', cpp: 'c' }
 /** How a dropped socket is tried again (ms). */
 export const RETRY_MS = [1000, 2000, 4000, 8000, 16000]
 /** How long a server no editor needs is kept, so flicking through files does not restart it (ms). */

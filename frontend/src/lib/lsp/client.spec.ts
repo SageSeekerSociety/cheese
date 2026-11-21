@@ -46,6 +46,18 @@ describe('the LSP client', () => {
     expect(server.sent('initialized')).toHaveLength(1)
   })
 
+  it('asks a question with the same parameters whether or not it can be cancelled', async () => {
+    const { server, client } = await started()
+    client.open(URI, 'c', 'int main(void) { return 0; }\n')
+    const position = { line: 0, character: 4 }
+    void client.definition(URI, position).catch(() => {})
+    void client.hover(URI, position).catch(() => {})
+    await settle()
+    const asked = { textDocument: { uri: URI }, position }
+    expect(server.sent('textDocument/definition')[0].params).toEqual(asked)
+    expect(server.sent('textDocument/hover')[0].params).toEqual(asked)
+  })
+
   it('delivers each message once and intact, however the bytes are chunked', async () => {
     const { server, heard } = await started()
     // Two messages in one chunk.

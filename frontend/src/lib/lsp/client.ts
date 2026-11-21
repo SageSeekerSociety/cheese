@@ -250,7 +250,9 @@ export class LspClient {
   }
 
   resolveCompletion(item: CompletionItem, token?: CancellationToken): Promise<CompletionItem> {
-    return this.connection.sendRequest<CompletionItem>('completionItem/resolve', item, token)
+    return token
+      ? this.connection.sendRequest<CompletionItem>('completionItem/resolve', item, token)
+      : this.connection.sendRequest<CompletionItem>('completionItem/resolve', item)
   }
 
   hover(uri: string, position: Position, token?: CancellationToken): Promise<Hover | null> {
@@ -279,7 +281,10 @@ export class LspClient {
   private ask<R>(uri: string, method: string, params: object, token?: CancellationToken): Promise<R> {
     if (this.closed) return Promise.reject(new Error('closed'))
     this.flush(uri)
-    return this.connection.sendRequest<R>(method, params, token)
+    // An undefined last argument would be sent as a second positional parameter.
+    return token
+      ? this.connection.sendRequest<R>(method, params, token)
+      : this.connection.sendRequest<R>(method, params)
   }
 
   private notify(method: string, params: object) {
