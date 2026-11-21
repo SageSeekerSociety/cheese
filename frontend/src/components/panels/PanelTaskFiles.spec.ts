@@ -23,7 +23,7 @@ import { setLocale } from '@/i18n'
 const server = {
   files: new Map<string, { content: string; version: string }>(),
   machine: null as 'ready' | 'preparing' | null,
-  failed: null as 'no_session' | 'unavailable' | null,
+  failed: null as 'unavailable' | null,
   prepareFails: false,
   prepares: 0,
 }

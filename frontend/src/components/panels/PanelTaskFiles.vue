@@ -69,7 +69,7 @@ function toggle(path: string) {
 }
 const rows = computed(() => taskFileRows(f.files.value, f.dirs.value, openDirs.value))
 const changedSet = computed(() => new Set([...props.changed, ...f.touched.value]))
-const treeEditable = computed(() => !props.readOnly && !props.phone && f.machine.value !== 'no_session')
+const treeEditable = computed(() => !props.readOnly && !props.phone)
 
 // ---- the open file ----
 const editable = computed(() => !props.phone && f.canEdit.value)
@@ -175,9 +175,6 @@ async function confirmRemove() {
     <div v-if="f.machine.value === 'preparing'" class="task-files__strip" role="status">
       <v-progress-circular indeterminate size="14" width="2" class="task-files__spin" />
       <span class="task-files__strip-text">{{ t('work.room.taskFiles.preparing') }}</span>
-    </div>
-    <div v-else-if="f.machine.value === 'no_session' && !props.readOnly" class="task-files__strip">
-      <span class="task-files__strip-text">{{ t('apiError.taskMachineNoSession') }}</span>
     </div>
     <div
       v-else-if="f.machine.value === 'failed' || f.saveError.value"

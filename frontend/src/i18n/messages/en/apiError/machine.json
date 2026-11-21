@@ -51,7 +51,6 @@
   "deviceCodeSpent": "This device code is no longer valid. Run cheesehost auth login on the machine again",
   "deviceTokenNotReplaced": "Only a machine the platform opened can be given a new token. A member enrolled this one",
   "modelPathNotProxied": "The model proxy forwards only model calls ({path} is not one)",
-  "taskMachineNoSession": "This task has no environment yet, so its files can't be edited",
   "taskMachinePreparing": "The task's environment is being prepared. Save again shortly",
   "taskMachinePrepareFailed": "Saving failed: the task's environment could not be prepared. Try again later"
 }
