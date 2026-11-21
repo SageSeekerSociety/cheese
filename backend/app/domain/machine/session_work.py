@@ -1116,18 +1116,15 @@ async def _settle(db, holder, row, environment, *, topic_id):
     """The environment the session's next call works in, the session attached
     to it (`attachments.settle`): the conversation's, when the session's
     choice is the conversation's default; one of its own otherwise, which an
-    agent on its owner's computer always has."""
+    agent on its owner's computer always has (it never takes the default,
+    though its environment is the conversation's while nobody uses that)."""
     own_computer = (row.runtime_location or {}).get("channel") == OWNER_CHANNEL
-    default = (
-        None
-        if own_computer
-        else (await holder.default_environment(db, row)).model_dump()
-    )
     return await attachments.settle(
         db,
         row,
         choice=environment.model_dump(),
-        default=default,
+        default=(await holder.default_environment(db, row)).model_dump(),
+        own=own_computer,
         where=environment_rows.Where(
             topic_id=topic_id,
             project_id=holder.project_id,

@@ -138,7 +138,9 @@ async def unplaced_environment(
 ) -> uuid.UUID:
     """The environment ``session`` is attached to, made (on no machine yet,
     of the session's own choice) and attached if it has none: what a test of
-    the pool places. Flushes; the caller commits."""
+    the pool places. ``pointed``: its choice is the conversation's default;
+    otherwise it is its own, which the conversation points to only while it
+    points to nothing usable. Flushes; the caller commits."""
     held = await attachments.attachment_of(db, session.id)
     if held is not None and held.environment_id is not None:
         return held.environment_id
@@ -150,7 +152,8 @@ async def unplaced_environment(
         db,
         session,
         choice=choice,
-        default=choice if pointed else None,
+        default=choice,
+        own=not pointed,
         where=environment_rows.Where(
             topic_id=holder_id,
             project_id=holder.project_id,

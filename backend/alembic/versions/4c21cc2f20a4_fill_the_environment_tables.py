@@ -23,11 +23,13 @@ by ``sandbox_homes.session_id``. From this release they are rows of their own
 - What its agent was owed (a lost or parked sandbox, with what was running)
   becomes the session's ``environment_notice``; a thaw it asked for marks its
   sandbox (``sandbox_homes.thaw_wanted_at``).
-- Each conversation points to the environment of its sessions that is of the
-  conversation's default choice and current room generation: one still
-  answering before a released one, then the one placed last. An agent on its
-  owner's computer is never chosen. The host a session asked to leave is the
-  pointer's.
+- Each conversation points to the place its work is in: the environment of
+  its sessions that is of the conversation's default choice and current room
+  generation (one still answering before a released one, then the one placed
+  last; an agent on its owner's computer never counts as the default's), and
+  when none is, the environment still answering of the session placed last,
+  an agent on its owner's computer included. The host a session asked to
+  leave is the pointer's.
 - The directories a session left on people's machines
   (``retained_leases``) become environments nobody is attached to and no
   conversation points to, for the room's cleanup to find.
@@ -233,16 +235,24 @@ SELECT conversation_id, environment_id, left_host_id
   FROM (
     SELECT DISTINCT ON (todo.conversation_id)
            todo.conversation_id,
-           (SELECT pick.environment_id
-              FROM environment_backfill_todo pick
-              JOIN environments env ON env.id = pick.environment_id
-             WHERE pick.conversation_id = todo.conversation_id
-               AND NOT pick.own_computer
-               AND env.choice = pick.default_choice
-               AND env.room_resource_id = pick.generation
-             ORDER BY env.status = 'released', pick.placed_at DESC NULLS LAST,
-                      pick.session_id
-             LIMIT 1) AS environment_id,
+           coalesce(
+             (SELECT pick.environment_id
+                FROM environment_backfill_todo pick
+                JOIN environments env ON env.id = pick.environment_id
+               WHERE pick.conversation_id = todo.conversation_id
+                 AND NOT pick.own_computer
+                 AND env.choice = pick.default_choice
+                 AND env.room_resource_id = pick.generation
+               ORDER BY env.status = 'released', pick.placed_at DESC NULLS LAST,
+                        pick.session_id
+               LIMIT 1),
+             (SELECT pick.environment_id
+                FROM environment_backfill_todo pick
+                JOIN environments env ON env.id = pick.environment_id
+               WHERE pick.conversation_id = todo.conversation_id
+                 AND env.status <> 'released'
+               ORDER BY pick.placed_at DESC NULLS LAST, pick.session_id
+               LIMIT 1)) AS environment_id,
            (SELECT host.id
               FROM environment_backfill_todo asked
               JOIN cloud_hosts host

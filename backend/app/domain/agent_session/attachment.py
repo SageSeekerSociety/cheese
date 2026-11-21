@@ -271,21 +271,26 @@ async def settle(
     row: AgentSession,
     *,
     choice: dict,
-    default: dict | None,
+    default: dict,
     where: environment_rows.Where,
+    own: bool = False,
 ) -> Environment:
     """Attach the session to the environment its next call works in, and
     answer it. The one rule for every attacher:
 
     - Its ``choice`` is the conversation's ``default`` (compared by value):
       the environment the conversation points to, when that one is of the
-      default; otherwise a new one of it, which the conversation now points
-      to. So every attacher with the default works in one environment, and
-      a changed default moves only whoever attaches after it.
-    - Its choice is its own (``default`` None: an agent on its owner's
-      computer, which never takes the conversation's): the environment it is
-      attached to while that one is still of its choice, otherwise a new one
-      no pointer names.
+      default; otherwise a new one of it. Either way the conversation points
+      to it, even from an environment of another choice: every attacher with
+      the default works in one environment, and a changed default moves only
+      whoever attaches after it.
+    - Its choice is its own (it differs from the default, or ``own``: an
+      agent on its owner's computer, which never takes the conversation's):
+      the environment it is attached to while that one is still of its
+      choice, otherwise a new one. That one takes the conversation's
+      pointer only while the conversation points to nothing usable (`_usable`):
+      a conversation points to the place its work is in, which is the
+      default's when anybody uses it and the one in use otherwise.
 
     A session moved to another environment is attached there under a new
     generation, so nothing minted for the one it left acts for it."""
@@ -299,22 +304,28 @@ async def settle(
         if current is not None
         else None
     )
-    if default is not None and choice == default:
-        pointer = await environment_rows.pointer(db, row.conversation_id)
-        target = (
-            await db.get(Environment, pointer.environment_id)
-            if pointer.environment_id is not None
-            else None
-        )
+    pointer = await environment_rows.pointer(db, row.conversation_id)
+    pointed = (
+        await db.get(Environment, pointer.environment_id)
+        if pointer.environment_id is not None
+        else None
+    )
+    if not own and choice == default:
+        target = pointed
         if target is None or not environment_rows.is_of(target, default, where):
             target = environment_rows.new_environment(db, where)
             await db.flush()
-            pointer.environment_id = target.id
-    elif attached is not None and environment_rows.is_of(attached, choice, where):
-        target = attached
+        pointer.environment_id = target.id
     else:
-        target = environment_rows.new_environment(db, where)
+        if attached is not None and environment_rows.is_of(attached, choice, where):
+            target = attached
+        else:
+            target = environment_rows.new_environment(db, where)
+            await db.flush()
+        if not await _usable(db, pointed, default, where, row.id):
+            pointer.environment_id = target.id
     if attached is not None and attached.id == target.id:
+        await db.flush()
         return target
     await db.flush()
     if current is not None:
@@ -337,6 +348,32 @@ async def settle(
     )
     await db.flush()
     return target
+
+
+async def _usable(
+    db: AsyncSession,
+    pointed: Environment | None,
+    default: dict,
+    where: environment_rows.Where,
+    session_id: uuid.UUID,
+) -> bool:
+    """Whether the environment a conversation points to is still the place
+    its work is in: of the holder's current generation, and of the default
+    choice or worked in by somebody besides the session settling now."""
+    if pointed is None or pointed.room_resource_id != where.generation:
+        return False
+    if pointed.choice == default:
+        return True
+    return bool(
+        await db.scalar(
+            select(
+                exists().where(
+                    EnvironmentAttachment.environment_id == pointed.id,
+                    EnvironmentAttachment.session_id != session_id,
+                )
+            )
+        )
+    )
 
 
 async def abandon(db: AsyncSession, row: AgentSession) -> None:

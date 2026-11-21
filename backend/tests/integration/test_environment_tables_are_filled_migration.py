@@ -9,9 +9,11 @@ The rules, as they stood before the migration was written:
 - a session whose sandbox was destroyed or parked still names where it was,
   as an environment nothing answers on, and its agent is still owed the
   notice;
-- a conversation points to the environment of its sessions that is of its
-  default choice: one still answering before a released one, then the one
-  placed last; an agent on its owner's computer is never the conversation's;
+- a conversation points to the place its work is in: the environment of its
+  sessions that is of its default choice (one still answering before a
+  released one, then the one placed last), and when none is, the one still
+  answering of the session placed last, an agent on its owner's computer
+  included; an agent on its owner's computer never displaces the default's;
 - a personal conversation's environment is a standard sandbox;
 - a directory a session left on a person's machine is still there for the
   cleanup to find, and nobody works in it;
@@ -204,6 +206,17 @@ def test_every_session_keeps_working_where_its_lease_said():
                 "retained_leases": [_lease("desk", "g0", platform=False)],
             },
         )
+        # A task whose only agent works on its owner's computer.
+        alone = seed_task(db, project, room)
+        on_laptop = _session(
+            db,
+            alone,
+            "owner",
+            lease=_lease("laptop-2", "g7", platform=False),
+            placed=now,
+            channel="owner",
+        )
+        _choose(db, alone, "owner", {"kind": "self_hosted", "device_id": "laptop-2"})
         personal = _personal(db)
         mine = _session(db, personal, "cheese", lease=_lease("box-4", "g6"))
 
@@ -253,6 +266,9 @@ def test_every_session_keeps_working_where_its_lease_said():
         found = _attachment(db, mine)
         assert json.loads(found["choice"]) == STANDARD
         assert _pointed(db, personal) == found["environment_id"]
+
+        # Nobody uses the task's default: its work is on its agent's laptop.
+        assert _pointed(db, alone) == _attachment(db, on_laptop)["environment_id"]
 
 
 def test_running_it_again_takes_only_what_it_has_not_taken():

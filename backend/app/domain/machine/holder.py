@@ -132,7 +132,8 @@ class SandboxHolder(Protocol):
         self, db: AsyncSession, session: AgentSession
     ) -> Sandbox | SelfHosted:
         """The default of the conversation ``session`` works in: what the
-        environment that conversation points to is of."""
+        environment its agents of the default share is of, which that
+        conversation points to whenever anybody uses it."""
         ...
 
 
