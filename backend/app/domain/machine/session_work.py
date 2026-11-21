@@ -1157,10 +1157,11 @@ async def ensure(
 
 async def _settle(db, holder, row, environment, *, topic_id):
     """The environment the session's next call works in, the session attached
-    to it (`attachments.settle`): the conversation's, when the session's
-    choice is the conversation's default; one of its own otherwise, which an
-    agent on its owner's computer always has (it never takes the default,
-    though its environment is the conversation's while nobody uses that)."""
+    to it (`attachments.settle`): the one it already works in while that is
+    still of its choice; otherwise the conversation's, when its choice is the
+    conversation's default, and one of its own when not, which an agent on
+    its owner's computer always has (it never takes the default, though its
+    environment is the conversation's while nobody uses that)."""
     own_computer = (row.runtime_location or {}).get("channel") == OWNER_CHANNEL
     return await attachments.settle(
         db,

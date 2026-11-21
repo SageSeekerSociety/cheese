@@ -278,19 +278,25 @@ async def settle(
     """Attach the session to the environment its next call works in, and
     answer it. The one rule for every attacher:
 
-    - Its ``choice`` is the conversation's ``default`` (compared by value):
-      the environment the conversation points to, when that one is of the
-      default; otherwise a new one of it. Either way the conversation points
-      to it, even from an environment of another choice: every attacher with
-      the default works in one environment, and a changed default moves only
-      whoever attaches after it.
-    - Its choice is its own (it differs from the default, or ``own``: an
-      agent on its owner's computer, which never takes the conversation's):
-      the environment it is attached to while that one is still of its
-      choice, otherwise a new one. That one takes the conversation's
-      pointer only while the conversation points to nothing usable (`_usable`):
-      a conversation points to the place its work is in, which is the
-      default's when anybody uses it and the one in use otherwise.
+    - Nobody already working somewhere is moved: a session attached to an
+      environment still of its ``choice`` and of the holder's current
+      generation stays there, with its files, whatever the conversation
+      points to.
+    - An attacher with no such environment whose choice is the conversation's
+      ``default`` (compared by value) goes to the environment the
+      conversation points to when that one is of the default, otherwise to a
+      new one of it. So every agent of the default that arrives finds one
+      environment, and a changed default moves only whoever arrives after it.
+    - One whose choice is its own (it differs from the default, or ``own``:
+      an agent on its owner's computer, which never takes the
+      conversation's) gets a new one.
+
+    The conversation points to the place its work is in: an environment of
+    the default whenever one of the current generation is in use, and the
+    one in use otherwise. So an environment of the default takes the pointer
+    unless the conversation already points to one of the default; one of an
+    attacher's own choice takes it only while the conversation points to
+    nothing usable (`_usable`).
 
     A session moved to another environment is attached there under a new
     generation, so nothing minted for the one it left acts for it."""
@@ -310,26 +316,29 @@ async def settle(
         if pointer.environment_id is not None
         else None
     )
-    if not own and choice == default:
+    of_default = not own and choice == default
+    pointed_default = pointed is not None and environment_rows.is_of(
+        pointed, default, where
+    )
+    if attached is not None and environment_rows.is_of(attached, choice, where):
+        target = attached
+    elif of_default and pointed_default:
+        assert pointed is not None  # of the default
         target = pointed
-        if target is None or not environment_rows.is_of(target, default, where):
-            target = environment_rows.new_environment(db, where)
-            await db.flush()
-        pointer.environment_id = target.id
     else:
-        if attached is not None and environment_rows.is_of(attached, choice, where):
-            target = attached
-        else:
-            target = environment_rows.new_environment(db, where)
-            await db.flush()
-        if not await _usable(
-            db,
-            pointed,
-            default,
-            where,
-            besides=EnvironmentAttachment.session_id.is_distinct_from(row.id),
-        ):
+        target = environment_rows.new_environment(db, where)
+        await db.flush()
+    if of_default:
+        if not pointed_default:
             pointer.environment_id = target.id
+    elif not await _usable(
+        db,
+        pointed,
+        default,
+        where,
+        besides=EnvironmentAttachment.session_id.is_distinct_from(row.id),
+    ):
+        pointer.environment_id = target.id
     if attached is not None and attached.id == target.id:
         await db.flush()
         return target
@@ -579,16 +588,34 @@ async def settle_person(
     where: environment_rows.Where,
 ) -> EnvironmentAttachment:
     """Attach a person to where the conversation's work is, and answer the
-    attachment. A person's choice is that place: the environment the
-    conversation points to while it is still the place its work is in
-    (`_usable`), whatever its choice — an own-computer agent's included;
-    otherwise the conversation's ``default``, under the one attach rule: a
-    new environment of it, which the conversation then points to.
+    attachment. The one rule for every attacher (`settle`), for a person,
+    whose choice is that place:
+
+    - Nobody already working somewhere is moved: a person attached to an
+      environment from this conversation that is of the holder's current
+      generation stays there, whatever the conversation points to now.
+    - A person with no such attachment goes to the environment the
+      conversation points to while that is still the place its work is in
+      (`_usable`), whatever its choice — an own-computer agent's included;
+      otherwise to a new one of the conversation's ``default``, which the
+      conversation then points to.
 
     A person is attached to an environment once; attached anew — the
-    conversation's work moved, or the environment was released under it — it
-    gets a new attachment and generation, so nothing minted for the old one
-    acts for it."""
+    environment they were on is of an earlier generation, was released or
+    left — they get a new attachment and generation, so nothing minted for
+    the old one acts for them."""
+    left = await db.scalar(
+        select(EnvironmentAttachment)
+        .where(
+            EnvironmentAttachment.user_id == user_id,
+            EnvironmentAttachment.conversation_id == conversation_id,
+        )
+        .with_for_update()
+    )
+    if left is not None:
+        working = await db.get(Environment, left.environment_id, populate_existing=True)
+        if working is not None and working.room_resource_id == where.generation:
+            return left
     pointer = await environment_rows.pointer(db, conversation_id)
     pointed = (
         await db.get(Environment, pointer.environment_id, populate_existing=True)
@@ -625,14 +652,6 @@ async def settle_person(
     )
     if there is not None:
         return there
-    left = await db.scalar(
-        select(EnvironmentAttachment)
-        .where(
-            EnvironmentAttachment.user_id == user_id,
-            EnvironmentAttachment.conversation_id == conversation_id,
-        )
-        .with_for_update()
-    )
     if left is not None:
         await _let_go_of(db, left, keep=None)
     attached = EnvironmentAttachment(
