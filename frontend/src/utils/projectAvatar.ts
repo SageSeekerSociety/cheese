@@ -47,7 +47,8 @@ export function projectInitials(name?: string | null): string {
   const text = (name ?? '').trim()
   const words = text.match(WORD) ?? []
   if (!words.length) return graphemes(text)[0] ?? '·'
-  return ([...words[0]][0] ?? '·').toUpperCase()
+  const [first = ''] = words
+  return ([...first][0] ?? '·').toUpperCase()
 }
 
 /** 文字占几格。 */
