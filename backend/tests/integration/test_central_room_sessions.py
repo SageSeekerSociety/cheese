@@ -830,10 +830,11 @@ async def test_scoped_execution_and_controls_use_platform_owned_target(
         == 401
     )
 
-    # A room's live session, as the controls see it: reading a file is the
-    # executor's to answer, so it goes to the lease the platform recorded.
+    # A room's live session, as the controls see it (the seat it is of
+    # included): reading a file is the executor's to answer, so it goes to the
+    # machine that session works on, as the platform recorded it.
     async def control_state(_topic, agent=None):
-        return {"id": "session-1", "tasks": {}}
+        return {"id": "session-1", "agent": AGENT, "tasks": {}}
 
     session = SimpleNamespace(
         controls=("read_file",),
