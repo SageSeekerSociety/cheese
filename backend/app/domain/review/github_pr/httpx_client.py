@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import time
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import httpx
@@ -56,6 +57,7 @@ from app.domain.review.pr_signals import (
     ReviewSignal,
     review_comment_signal,
     review_signal,
+    superseded_change_requests,
 )
 from app.domain.review.superseded_runs import actions_job_id, drop_superseded
 
@@ -659,12 +661,21 @@ class HttpxGitHubPrClient:
     ) -> list[ReviewSignal]:
         base = f"{self._api_base}/repos/{owner}/{repo}/pulls/{number}"
         out: list[ReviewSignal] = []
-        for path, builder in (
-            ("reviews", review_signal),
-            *((("comments", review_comment_signal),) if with_comments else ()),
-        ):
-            for item in await self._review_page(f"{base}/{path}", token=token):
-                signal = builder(item)
+        reviews = await self._review_page(f"{base}/reviews", token=token)
+        # A reviewer's earlier CHANGES_REQUESTED stays in the list after they
+        # approve on top of it: it is still delivered, but it no longer blocks
+        # the card (`pr_signals.superseded_change_requests`).
+        replaced = superseded_change_requests(reviews)
+        for item in reviews:
+            signal = review_signal(item)
+            if signal is None:
+                continue
+            if str(item.get("id")) in replaced:
+                signal = replace(signal, superseded=True)
+            out.append(signal)
+        if with_comments:
+            for item in await self._review_page(f"{base}/comments", token=token):
+                signal = review_comment_signal(item)
                 if signal is not None:
                     out.append(signal)
         return out

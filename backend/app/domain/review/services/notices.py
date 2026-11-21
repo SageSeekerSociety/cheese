@@ -466,6 +466,19 @@ async def _dispatch_nudges(
             ):
                 notes.record(card, None, nudge.note)
                 break
+            # 同一件事的另一半：卡上那句是「要求改动」，可那批意见里那条要求
+            # 改动已经被同一位评审人后来的批准／撤销收回了。生成它的时候还看不
+            # 出来，写下的全文正是这一批的旧措辞 —— 认出它才纠正，只改分类。
+            if (
+                nudge.kind is pr_signals.NudgeKind.review
+                and not nudge.capped
+                and nudge.supersedes_return
+                and nudge.note_before_supersession
+                and nudge.note_before_supersession == card.note
+                and ledger.already_sent(nudge.kind, nudge.signature)
+            ):
+                notes.record(card, None, nudge.note)
+                break
     # 卡面那一行说的是「这张卡此刻停在哪」（`notes` 的码），不是「这一轮又新发现
     # 了什么」。所以**卡面空着**时它取全部待发里最重的那条，不取 `fresh`：一条已经
     # 叫过人的理由（签名进了账本，`fresh` 里再也不会出现）在卡面被别的分支清掉之后

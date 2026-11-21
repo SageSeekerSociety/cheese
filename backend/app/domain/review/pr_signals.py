@@ -18,6 +18,7 @@
 import enum
 import hashlib
 import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Final
 
@@ -103,6 +104,10 @@ class ReviewSignal:
     body: str
     #: 行内评论指到哪个文件（没有就空）。
     where: str = ""
+    #: 这条「要求改动」已经被同一位评审人后来的一次评审取代（批准、或那条评审
+    #: 被撤销）：它说的话照旧送到芝士面前，但它不再挡着这张卡（见
+    #: `superseded_change_requests`）。
+    superseded: bool = False
 
     def line(self) -> str:
         """写进消息里的一行。作者名和正文都当外部文本洗过。"""
@@ -110,8 +115,61 @@ class ReviewSignal:
         head = f"{who}（{_REVIEW_KIND_WORDS.get(self.kind, self.kind)}）"
         if self.where:
             head += f" 在 {sanitize_external(self.where)}"
+        if self.superseded:
+            head += "，已被这位评审人此后的评审取代"
         body = sanitize_external(self.body).strip()
         return f"- {head}：{body}" if body else f"- {head}"
+
+
+#: 评审列表里能替一位评审人说话的那几种状态。`COMMENTED` 刻意不算：留一句评论
+#: 不等于撤回了改动要求，只有明确的批准或撤销才算。
+_VERDICT_STATES: Final = frozenset({"CHANGES_REQUESTED", "APPROVED", "DISMISSED"})
+
+
+def superseded_change_requests(
+    items: Sequence[dict],
+    *,
+    states: Mapping[str, str] | None = None,
+) -> set[str]:
+    """这些评审行里，哪几条 `CHANGES_REQUESTED` 已经被同一位评审人后来的评审取代。
+
+    GitHub 的评审列表是追加的：一位评审人先要求改动、后来又批准，那条
+    `CHANGES_REQUESTED` 仍然留在列表里（被顶掉的那条评审在推送后作废时也一样，旧
+    行照旧读作 `CHANGES_REQUESTED`）。把它当成还挡着的阻塞，卡就一直红着 —— 和
+    「一条普通评论永久压住状态」是同一个病。
+
+    只看一位评审人**最后一次表态**：明确的批准或撤销取代早先的改动要求，后来的
+    `COMMENTED` 不算表态、不取代任何东西（留下评论不等于同意合并）。
+
+    时间读不出来（或缺一条）时按「没被取代」处理：猜错的后果是卡多红一会儿，而
+    反过来会把一条真的改动要求清掉。`states` 把各家 forges 的状态词折到
+    `_VERDICT_STATES`（Forgejo 用 `REQUEST_CHANGES` / `APPROVE`）。
+    """
+    latest: dict[str, tuple[str, str]] = {}
+    for item in items:
+        state = str(item.get("state") or "").upper()
+        state = (states or {}).get(state, state)
+        if state not in _VERDICT_STATES:
+            continue
+        author = str((item.get("user") or {}).get("login") or "")
+        at = str(item.get("submitted_at") or "")
+        if not at:
+            # 没有时刻就比不了先后：不拿它去取代谁，也不被谁取代。
+            continue
+        previous = latest.get(author)
+        if previous is None or at >= previous[0]:
+            latest[author] = (at, state)
+    out: set[str] = set()
+    for item in items:
+        state = str(item.get("state") or "").upper()
+        state = (states or {}).get(state, state)
+        if state != "CHANGES_REQUESTED":
+            continue
+        author = str((item.get("user") or {}).get("login") or "")
+        decided = latest.get(author)
+        if decided is not None and decided[1] != "CHANGES_REQUESTED":
+            out.add(str(item.get("id")))
+    return out
 
 
 _REVIEW_KIND_WORDS: Final = {
@@ -195,6 +253,13 @@ class PendingNudge:
     event_type: str = ""
     #: 这一类到顶了没有；到顶的那条只写卡面、不叫芝士。
     capped: bool = False
+    #: 卡面这一句说的是过去：里面那条「要求改动」已被同一位评审人后来的批准／撤销
+    #: 取代。卡上若还留着把它当阻塞的旧分类，可以就地纠正（见
+    #: `superseded_change_requests` 与 `_dispatch_nudges` 的重校块）。
+    supersedes_return: bool = False
+    #: 这一批同样的意见在「还没发现它被取代」时会写出的卡面那一行。重校拿它和卡
+    #: 上原文比：同一批、同样条数、同样措辞，才认得出那张红卡就是这一批留下的。
+    note_before_supersession: str = ""
 
 
 #: 一轮里同时排了好几条待发时，卡面只留优先级最高的那一句 —— 卡面是**一行**，

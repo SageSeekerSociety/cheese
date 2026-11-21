@@ -18,7 +18,7 @@ from app.domain.review.github_pr import (
     OpenedPR,
 )
 from app.domain.review.github_pr_status import PullRequestStatus
-from app.domain.review.pr_signals import ReviewSignal
+from app.domain.review.pr_signals import ReviewSignal, superseded_change_requests
 
 
 def _has_review_comments(row: dict) -> bool:
@@ -332,6 +332,17 @@ class ForgejoClient:
     async def review_signals(self, *, owner, repo, number, token, with_comments=True):
         prefix = f"{self._repo(owner, repo)}/pulls/{number}"
         reviews = await self.pages(prefix + "/reviews", token=token)
+        # Forgejo 的状态词和 GitHub 不同，先后次序同一条规矩：一位评审人后来的
+        # 批准或撤销取代早先的改动要求，那条照旧送来、但不再挡住卡。
+        replaced = superseded_change_requests(
+            reviews,
+            states={
+                "REQUEST_CHANGES": "CHANGES_REQUESTED",
+                "APPROVE": "APPROVED",
+                "APPROVED": "APPROVED",
+                "DISMISSED": "DISMISSED",
+            },
+        )
         result = []
         for row in reviews:
             kind = {"REQUEST_CHANGES": "changes_requested", "COMMENT": "commented"}.get(
@@ -344,6 +355,7 @@ class ForgejoClient:
                         kind=kind,
                         author=row["user"]["login"],
                         body=row["body"],
+                        superseded=str(row["id"]) in replaced,
                     )
                 )
             # 上面那个判断说的是这条评审自己的信号，与它的行内评论无关：空正文

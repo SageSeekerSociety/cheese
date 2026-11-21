@@ -121,3 +121,45 @@ def test_a_new_failed_head_is_not_hidden_by_rechecking_an_old_comment(
 
     assert _card_row(client, cid)["note_code"] is NoteCode.checks_failed
     assert "regression" in _cards(client, room)[0]["note"]
+
+
+def _signal(
+    rid: int, *, kind: str = "changes_requested", body: str, superseded: bool = False
+):
+    from app.domain.review.pr_signals import ReviewSignal
+
+    return ReviewSignal(
+        id=f"review:{rid}",
+        kind=kind,
+        author="bob",
+        body=body,
+        superseded=superseded,
+    )
+
+
+def test_a_withdrawn_change_request_is_delivered_but_stops_blocking(client, app_world):
+    """The reviewer approved on top of their earlier request. The words still
+    reach the teammate; the card is not pressed red by a request that is gone."""
+    fake = app_world["fake"]
+    room, cid, number, _head = _authorized(client, app_world)
+    fake.reviews_by_number[number] = [
+        _signal(1, body="先补空值检查", superseded=True),
+        _signal(2, kind="commented", body="现在可以了"),
+    ]
+
+    _poll(client)
+
+    card = _cards(client, room)[0]
+    assert card["status"] == "pending"
+    assert card["note_level"] != "error"
+    assert "先补空值检查" in _nudges(client, room, "pr_review")[0]["meta"]["detail"]
+
+
+def test_an_unwithdrawn_change_request_still_blocks(client, app_world):
+    fake = app_world["fake"]
+    room, cid, number, _head = _authorized(client, app_world)
+    fake.reviews_by_number[number] = [_signal(2, body="还是得改")]
+
+    _poll(client)
+
+    assert _cards(client, room)[0]["note_level"] == "error"
