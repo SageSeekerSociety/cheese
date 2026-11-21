@@ -3,10 +3,13 @@
 // (`composables/useTaskFiles`) and hands it to the scene, which only draws
 // (`panels/PanelTaskFiles.vue`). It stands outside `components/panels/` for
 // the reason `PanelChangesHost` gives. Given a `path`, it is a cell holding that
-// one file, opened beside the 文件 panel.
+// one file, opened beside the 文件 panel. The task's language servers
+// (`composables/useTaskLanguage`) are reached from here too, shared by every cell
+// of the task.
 import { watch } from 'vue'
 
 import { useTaskFiles } from '../../composables/useTaskFiles'
+import { useTaskLanguage } from '../../composables/useTaskLanguage'
 import PanelTaskFiles from '../panels/PanelTaskFiles.vue'
 
 const props = withDefaults(
@@ -38,6 +41,13 @@ const files = useTaskFiles({
   refreshTick: () => props.refreshTick,
 })
 
+// Go to definition in another file of the checkout opens it in this cell, at that line.
+const { link: language } = useTaskLanguage({
+  taskId: () => props.taskId,
+  machine: () => files.machine.value,
+  open: (path, line) => void files.open(path, { start: line, end: line }),
+})
+
 watch(
   () => props.path,
   (path) => {
@@ -61,6 +71,7 @@ defineExpose({
     :phone="props.phone"
     :agent-name="props.agentName"
     :single="!!props.path"
+    :language="language"
     @open-beside="emit('open-beside', $event)"
   />
 </template>

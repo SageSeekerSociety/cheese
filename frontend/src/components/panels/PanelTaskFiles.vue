@@ -8,6 +8,7 @@
 // actions back to it; nothing here fetches. On a phone the file is shown as
 // text, without loading the editor.
 import type { TaskFilesBundle } from '../../composables/useTaskFiles'
+import type { LanguageLink } from '../../lib/lsp/link'
 
 import { computed, nextTick, ref, watch } from 'vue'
 
@@ -36,8 +37,10 @@ const props = withDefaults(
     agentName?: string
     /** A cell holding one file: no tree, and no finding another file here. */
     single?: boolean
+    /** The task's language servers, for the editor (`composables/useTaskLanguage`). */
+    language?: LanguageLink | null
   }>(),
-  { changed: () => [], readOnly: false, phone: false, agentName: '', single: false }
+  { changed: () => [], readOnly: false, phone: false, agentName: '', single: false, language: null }
 )
 
 const emit = defineEmits<{
@@ -251,6 +254,7 @@ async function confirmRemove() {
               :filename="f.file.value.path"
               :readonly="!editable"
               :lines="f.lines.value"
+              :language="props.language"
               @update:model-value="f.edit($event)"
               @save="f.saveNow()"
               @quick-open="quickOpen = !props.single"

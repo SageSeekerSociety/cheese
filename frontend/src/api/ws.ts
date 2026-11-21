@@ -28,6 +28,14 @@ export function taskTerminalWsUrl(taskId: string, terminalId: string, cols: numb
   return `${connectorWsBase()}/connector/tasks/${encodeURIComponent(taskId)}/terminals/${encodeURIComponent(terminalId)}?${query}`
 }
 
+// A language server on a task's machine, for the 文件 panel's editor: one per page, task and
+// language. Reached the same way as the terminal socket.
+export function taskLanguageWsUrl(taskId: string, language: string): string {
+  const token = authToken()
+  const query = token ? `?token=${encodeURIComponent(token)}` : ''
+  return `${connectorWsBase()}/connector/tasks/${encodeURIComponent(taskId)}/languages/${encodeURIComponent(language)}${query}`
+}
+
 // Dev-only observability hook, same purpose as `window.__queryClient`: the probe
 // scripts under scripts/ open real sockets and issue real fetches from inside
 // the page, and the prefix they need is the one BASE exists to spell ONCE. Four
