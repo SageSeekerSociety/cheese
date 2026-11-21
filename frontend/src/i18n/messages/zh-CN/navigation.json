@@ -204,9 +204,9 @@
     "taskVersions": "历史版本"
   },
   "switcher": {
-    "label": "切换项目或空间",
-    "search": "搜索项目和空间",
-    "empty": "没有叫「{q}」的项目或空间",
+    "search": "搜索项目",
+    "empty": "没有叫「{q}」的项目",
+    "othersAwaiting": "别的项目里有 {n} 件等你处理",
     "actions": "{name} 的操作"
   }
 }

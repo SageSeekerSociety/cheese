@@ -19,8 +19,12 @@
       :title="t('navigation.sidebar.resize')"
       @pointerdown="startResize"
     />
-    <!-- 桌面上侧栏只放当前去处自己的导航：首页、去处、搜索、头像都在顶栏上（appNav.ts）。 -->
+    <!-- 桌面上侧栏头和侧栏底：项目切换器、搜索和「首页」那一行，头像 + 问芝士（appNav.ts）。
+         四处侧栏（项目、首页、空间、后台）都长这两段，左边那一列拿掉后它们住在这里；首页那一格
+         的侧栏不画「首页」那一行（`homeArea`）。 -->
+    <template v-if="frame" #prepend><component :is="frame.top" :home-area="homeArea" /></template>
     <slot></slot>
+    <template v-if="frame" #append><component :is="frame.foot" /></template>
   </v-navigation-drawer>
 </template>
 
@@ -33,6 +37,8 @@ import { setSidebarWidth, SIDEBAR_CELL_WIDTH, sidebarWidth } from '@/composables
 import { useEscapeLayer } from '@/composables/useEscapeStack'
 import { useNavigation } from '@/composables/useNavigation'
 import { focusSidebarToggle, SIDEBAR_DRAWER_ID, useSidebarCollapse } from '@/composables/useSidebarCollapse'
+
+import { useAppNav } from './appNav'
 
 import { t } from '@/i18n'
 import { useNavigationStore } from '@/stores/navigation'
@@ -48,6 +54,8 @@ interface Props {
   border?: string
   // 自定义类名
   customClass?: string
+  // 首页那一格的侧栏（HomeSidebarView）：侧栏头已经写着「首页」，不再画下面那一行「首页」
+  homeArea?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -64,6 +72,10 @@ const { closeSecondaryDrawer } = navigationStore
 
 // 计算是否为桌面端模式
 const isDesktop = computed(() => mdAndUp.value && !props.forceMobile)
+
+// 侧栏头和侧栏底那两行只在桌面画；没有外壳（单测单挂一个侧栏）时不画。
+const appNav = useAppNav()
+const frame = computed(() => (isDesktop.value && appNav ? appNav.frame : null))
 
 // 桌面窄档（960–1180）：这一栏是一只可收起的浮层，顶栏最左那颗开关管它。宽档里它
 // 常驻，手机上是另一套（`isSecondaryDrawerOpen`）。
@@ -148,14 +160,14 @@ const drawerModel = computed({
   set: (value: boolean) => {
     if (permanent.value) return
     // 抽屉自己也会改这个 model —— 点遮罩、换路由，都从这儿走。这些是「这一次」的
-    // 收起，不是人的选择，所以不写进 localStorage：记住的只该是顶栏上那颗开关
+    // 收起，不是人的选择，所以不写进 localStorage：记住的只该是顶栏那颗开关
     // 按下的那一下（`toggle()` 才 persist）。
     if (isDesktop.value) setSidebarExpanded(value, false)
     else navigationStore.setSecondaryDrawerOpen(value)
   },
 })
 
-// 窄档里这一栏是一只可收起的浮层：它开着的时候，按 Esc 关掉它、焦点回到顶栏上打开
+// 窄档里这一栏是一只可收起的浮层：它开着的时候，按 Esc 关掉它、焦点回到打开它那颗开关
 // 它的那颗开关。Vuetify 的抽屉自己不管键盘，而「按 Esc 关掉浮层」这条对键盘和读屏
 // 用户是必须的（宽档常驻、手机上另一套，都不在这里处理）。
 //
@@ -174,13 +186,13 @@ useEscapeLayer(
 // 计算抽屉的 CSS 类
 const drawerClass = computed(() => {
   const classes = ['page-sidebar', 'border-e-0', 'border-b-0']
-  // 手机上抽屉照旧带上沿和左沿；桌面上它从窗口左缘、顶栏那条线下面开始，自己不画线：
-  // 右边那一条是布局区的分隔线（宽档），或抽屉自己的投影（窄档浮层）。
-  if (!isDesktop.value) classes.push('rounded-0')
-  else classes.push('border-t-0', 'border-s-0')
+  if (!isDesktop.value) {
+    classes.push('rounded-0')
+  }
   if (props.customClass) {
     classes.push(props.customClass)
   }
+  if (frame.value) classes.push('page-sidebar--framed')
   if (resizing.value) classes.push('page-sidebar--resizing')
   return classes.join(' ')
 })
@@ -203,9 +215,23 @@ watch(
 </script>
 
 <style>
+/* 有了侧栏头和侧栏底，中间那段要让出它们的高度：Vuetify 给 content 的是 height: 100%，
+   不改的话底下那一行被挤出抽屉。 */
+.page-sidebar .v-navigation-drawer__content {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* 侧栏头那一行（ProjectSwitcher）已经画了 48px 基线和底边线；各侧栏自己的标题行
+   （空间名、后台分区）跟在它下面，不再画第二条线。 */
 /* 拖浮层右缘的这段时间里不走宽度过渡（见 startResize）。 */
 .page-sidebar.page-sidebar--resizing {
   transition: none;
+}
+
+.page-sidebar--framed .v-navigation-drawer__content .sidebar-header {
+  border-block-end: 0;
+  border-top-left-radius: 0;
 }
 </style>
 

@@ -204,9 +204,9 @@
     "taskVersions": "Version history"
   },
   "switcher": {
-    "label": "Switch project or space",
-    "search": "Search projects and spaces",
-    "empty": "No project or space matches “{q}”",
+    "search": "Search projects",
+    "empty": "No project matches “{q}”",
+    "othersAwaiting": "{n} waiting for you in other projects",
     "actions": "Actions for {name}"
   }
 }
