@@ -5,10 +5,11 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import PresentedCredential, require_seated_agent
-from app.api.response import ok
+from app.api.response import Deleted, ok, typed_response
 from app.api.write_access import ROUTE_DECIDES, Can
 from app.core.db import get_db
 from app.core.errors import (
@@ -165,6 +166,15 @@ async def task_workspace(
     )
 
 
+class KeptSnapshot(BaseModel):
+    """The snapshot the platform now keeps for a task: its commit, the commit
+    it was cut from, and the bundle's size in bytes."""
+
+    commit: str
+    cut_from: str
+    size: int
+
+
 # A task's uncommitted work, kept by the platform for a repository that is not
 # its own (`repository.kept_work`): the machine hands its snapshot in as a git
 # bundle and a new checkout fetches it back. Reading it takes what reading the
@@ -174,7 +184,14 @@ async def task_workspace(
 # person's command run there, on the environment's authority.
 
 
-@router.get("/{project_id}/git/tasks/{task_id}/kept")
+@router.get(
+    "/{project_id}/git/tasks/{task_id}/kept",
+    response_class=Response,
+    responses={
+        200: {"content": {"application/octet-stream": {}}},
+        204: {"description": "Nothing uncommitted is kept"},
+    },
+)
 async def task_kept_bundle(
     project_id: uuid.UUID,
     task_id: uuid.UUID,
@@ -192,6 +209,7 @@ async def task_kept_bundle(
 @router.put(
     "/{project_id}/git/tasks/{task_id}/kept",
     dependencies=[Can(Permission.edit_content, at="task_id")],
+    **typed_response(KeptSnapshot),
 )
 async def keep_task_bundle(
     project_id: uuid.UUID,
@@ -220,6 +238,7 @@ async def keep_task_bundle(
 @router.delete(
     "/{project_id}/git/tasks/{task_id}/kept",
     dependencies=[Can(Permission.edit_content, at="task_id")],
+    **typed_response(Deleted),
 )
 async def drop_task_bundle(
     project_id: uuid.UUID,
@@ -230,4 +249,4 @@ async def drop_task_bundle(
     """The task's checkout has nothing uncommitted: its snapshot goes."""
     task = await _task_for(db, project_id, task_id, credential)
     await kept_work.drop_bundle(db, task.id)
-    return ok({})
+    return ok({"deleted": True})
