@@ -186,7 +186,10 @@ async def execute(
         if seat and not await owner_reads.topic_member(db, room_id, seat):
             raise ForbiddenError(say("topicMemberOnly"))
         place_resource, project_id = room.resource_id or room.id, room.project_id
-    lease_generation = None
+    # A credential that names a conversation and no session acts for nobody
+    # in it: nothing says which session's work it may touch, so it is
+    # refused as one whose session is gone.
+    owned = session_id = lease_generation = None
     if "session" in claims:
         try:
             session_id = uuid.UUID(claims["session"])
@@ -199,9 +202,6 @@ async def execute(
         # A credential reaches only a session of its own conversation.
         if owned is not None and owned.conversation_id != topic_id:
             raise ForbiddenError("This credential works another conversation")
-    else:
-        owned = await owner_reads.pointed_execution(db, topic_id)
-        session_id = owned.id if owned is not None else None
     held = attachment(owned) if owned is not None else None
     lease = held.environment if held is not None else None
     # Its sandbox was destroyed or parked since: the environment is still
@@ -212,10 +212,8 @@ async def execute(
         or not lease
         or lease.get("kind") != "device"
         or (lease.get("status", "ready") != "ready" and not released)
-        or (
-            lease_generation is not None
-            and lease.get("generation") != str(lease_generation)
-        )
+        or lease_generation is None
+        or lease.get("generation") != str(lease_generation)
         or not owned.runtime_location
         or owned.runtime_location.get("resource_id") != str(resource_id)
         or claims.get("r") != str(resource_id)
