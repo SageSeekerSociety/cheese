@@ -29,6 +29,7 @@ from tests.integration.conftest import (
     session_auth_headers,
 )
 from tests.support.devices import enrollment_team, place_in_project_team
+from tests.support.environments import attach_anew
 
 pytestmark = pytest.mark.anyio
 
@@ -87,19 +88,22 @@ async def _task(client, *, lease: bool) -> tuple[uuid.UUID, uuid.UUID, str]:
         }
         if lease:
             generation = str(uuid.uuid4())
-            session.execution_request = {"generation": generation}
-            session.work_lease = {
-                "kind": "device",
-                "status": "ready",
-                "session_id": str(session.id),
-                "generation": generation,
-                "resource_id": resource,
-                "room_resource_id": resource,
-                "device_id": device.device_id,
-                "workspace": "/work/task",
-                "mcp_servers": [],
-                "url": f"http://api/topics/{task_id}/execution/session-{resource}",
-            }
+            await attach_anew(
+                db,
+                session,
+                {
+                    "kind": "device",
+                    "status": "ready",
+                    "session_id": str(session.id),
+                    "generation": generation,
+                    "resource_id": resource,
+                    "room_resource_id": resource,
+                    "device_id": device.device_id,
+                    "workspace": "/work/task",
+                    "mcp_servers": [],
+                    "url": f"http://api/topics/{task_id}/execution/session-{resource}",
+                },
+            )
         await db.commit()
     return project_id, task_id, resource
 

@@ -28,14 +28,15 @@ from app.core.device_failures import LinkInterrupted
 from app.domain.agent import execution
 from app.domain.agent.device_contract import DeviceUnreachable
 from app.domain.agent.device_hub import DeviceCallError
-from app.domain.agent_session.models import LOST_KEY, AgentSession
-from app.domain.agent_session.services import AgentSessionService
+from app.domain.agent_session import attachment as attachments
+from app.domain.agent_session.models import AgentSession
 from app.domain.machine import session_work as work_lease
 from app.domain.machine.models import SandboxHome
 from app.domain.topic.models import Topic, TopicStatus
 from tests.executor_release import running
 from tests.integration.test_sandboxes_on_every_machine import _on_alices_computers
 from tests.integration.test_switch_pushes_first import _room
+from tests.support.environments import change_environment, environment_of
 
 pytestmark = pytest.mark.anyio
 
@@ -75,7 +76,7 @@ def _ask(client, room):
 
 async def _lease(client, room):
     async with client.test_factory() as db:
-        return (await AgentSessionService(db).by_id(room.session_id)).work_lease
+        return await environment_of(db, room.session_id)
 
 
 async def _checked(client, monkeypatch):
@@ -216,18 +217,16 @@ async def test_a_call_that_failed_on_the_machine_sends_the_next_ask_through_the_
 async def _change(client, room, **values):
     async with client.test_factory() as db:
         row = await db.get(AgentSession, room.session_id)
-        lease, request = dict(row.work_lease), dict(row.execution_request)
+        lease = dict(await environment_of(db, room.session_id) or {})
         if "checked_ago" in values:
             lease["verified_at"] = (
                 datetime.now(UTC) - values["checked_ago"]
             ).isoformat()
+            await change_environment(db, room.session_id, lease)
         if values.get("lost"):
-            request[LOST_KEY] = True
-        await db.execute(
-            update(AgentSession)
-            .where(AgentSession.id == room.session_id)
-            .values(work_lease=lease, execution_request=request)
-        )
+            # Its agent is owed that its sandbox went, whoever brought the
+            # machine back since.
+            await attachments.lose(db, row, None)
         await db.commit()
 
 

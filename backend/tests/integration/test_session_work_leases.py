@@ -20,6 +20,7 @@ from app.domain.agent.dispatch_log import DispatchRow
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
+from app.domain.environment import services as environment_rows
 from app.domain.identity.services import IdentityService
 from app.domain.machine import lease_claim
 from app.domain.machine import session_work as work_lease
@@ -29,6 +30,7 @@ from app.domain.user.models import User
 from tests.executor_release import running
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.support.devices import enrollment_team, place_in_project_team
+from tests.support.environments import change_environment, environment_of, works_in
 from tests.support.hang import HANG_S
 
 pytestmark = pytest.mark.anyio
@@ -83,7 +85,6 @@ async def test_each_session_in_a_room_acquires_its_own_environments_device(
             session = await AgentSessionService(db).ensure(
                 topic_id, handle, harness="claude-code"
             )
-            session.execution_request = {"generation": str(uuid.uuid4())}
             await AgentSessionService(db).set_environment(
                 topic_id,
                 handle,
@@ -105,7 +106,7 @@ async def test_each_session_in_a_room_acquires_its_own_environments_device(
                 session_id=str(session.id),
             )
             identities.append((session.id, device.device_id, token))
-            assert session.work_lease is None
+            assert await environment_of(db, session.id) is None
         await db.commit()
 
     async def install(device, argv, **kwargs):
@@ -182,12 +183,13 @@ async def test_each_session_in_a_room_acquires_its_own_environments_device(
     # A session from before the address fix still has the wrong URL in its
     # persisted lease. Reacquiring work must repair it before the first ping.
     async with client.test_factory() as db:
-        old_session = await AgentSessionService(db).by_id(identities[0][0])
-        expected_url = old_session.work_lease["url"]
-        old_session.work_lease = {
-            **old_session.work_lease,
-            "url": "http://172.17.0.1/topics/stale/execution/session-stale",
-        }
+        held = await environment_of(db, identities[0][0])
+        expected_url = held["url"]
+        await change_environment(
+            db,
+            identities[0][0],
+            {**held, "url": "http://172.17.0.1/topics/stale/execution/session-stale"},
+        )
         await db.commit()
     remote.reset_mock()
     for session_id, _device, token in identities:
@@ -219,10 +221,7 @@ async def test_each_session_in_a_room_acquires_its_own_environments_device(
     # Each session of the room holds hands where its own environment is, in a
     # workspace of its own.
     async with client.test_factory() as db:
-        leases = [
-            (await AgentSessionService(db).by_id(sid)).work_lease
-            for sid, _, _ in identities
-        ]
+        leases = [await environment_of(db, sid) for sid, _, _ in identities]
     assert [lease["device_id"] for lease in leases] == [
         identities[0][1],
         identities[1][1],
@@ -327,15 +326,6 @@ async def test_each_session_in_a_room_acquires_its_own_environments_device(
         )
         try:
             assert admitted.wait(5)
-            async with client.test_factory() as db:
-                first = await AgentSessionService(db).by_id(first_id)
-                # A legacy recorded lease need not have a generation field.
-                first.work_lease = {
-                    key: value
-                    for key, value in first.work_lease.items()
-                    if key != "generation"
-                }
-                await db.commit()
             response = client.put(
                 switch_path, headers=owner_headers, json={"environment": on_second}
             )
@@ -357,10 +347,9 @@ async def test_each_session_in_a_room_acquires_its_own_environments_device(
     async with client.test_factory() as db:
         # Only the session that was switched gave its hands up; the other keeps
         # the machine it holds.
-        moved = await AgentSessionService(db).by_id(first_id)
-        assert moved.work_lease is None
-        stayed = await AgentSessionService(db).by_id(second_id)
-        assert stayed.work_lease["device_id"] == second_device
+        assert await environment_of(db, first_id) is None
+        stayed = await environment_of(db, second_id)
+        assert stayed is not None and stayed["device_id"] == second_device
         chosen = await AgentSessionService(db).environment(topic_id, "ada")
         assert chosen.environment == on_second
     old_call = client.post(
@@ -383,8 +372,9 @@ async def test_each_session_in_a_room_acquires_its_own_environments_device(
     )
     assert repeated.status_code == 200, repeated.text
     async with client.test_factory() as db:
-        kept = await AgentSessionService(db).by_id(first_id)
-        assert kept.work_lease["generation"] == current_target["generation"]
+        kept = await environment_of(db, first_id)
+        assert kept is not None
+        assert kept["generation"] == current_target["generation"]
     assert (
         client.post(
             f"/topics/{topic_id}/execution/{resource}",
@@ -397,10 +387,11 @@ async def test_each_session_in_a_room_acquires_its_own_environments_device(
         == 409
     )
     async with client.test_factory() as db:
-        first = await AgentSessionService(db).by_id(first_id)
-        assert (
-            first.execution_request["retained_leases"][0]["device_id"] == first_device
+        # The machine it left keeps its directory for the room's cleanup.
+        left = await environment_rows.environments_held(
+            db, room_id=topic_id, device_id=first_device
         )
+        assert left
         assert (await db.get(DispatchRow, dispatch_id)).outcome is None
 
     async with client.test_factory() as db:
@@ -490,7 +481,6 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
             session = await AgentSessionService(db).ensure(
                 topic_id, handle, harness="claude-code"
             )
-            session.execution_request = {"generation": str(uuid.uuid4())}
             await AgentSessionService(db).set_environment(
                 topic_id,
                 handle,
@@ -512,7 +502,7 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
                 session_id=str(session.id),
             )
             identities.append((session.id, device.device_id, token))
-            assert session.work_lease is None
+            assert await environment_of(db, session.id) is None
         await db.commit()
 
     import hashlib
@@ -632,14 +622,17 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
     resource_id = first.json()["data"]["target"]["resource_id"]
     assert hub.exec.await_count == 1
     async with client.test_factory() as db:
-        current = await AgentSessionService(db).by_id(session_id)
-        before = dict(current.work_lease)
-        current.work_lease = {
-            **before,
-            "status": "preparing",
-            "claim": str(uuid.uuid4()),
-            "claim_until": (datetime.now(UTC) + timedelta(minutes=1)).isoformat(),
-        }
+        before = dict(await environment_of(db, session_id) or {})
+        await change_environment(
+            db,
+            session_id,
+            {
+                **before,
+                "status": "preparing",
+                "claim": str(uuid.uuid4()),
+                "claim_until": (datetime.now(UTC) + timedelta(minutes=1)).isoformat(),
+            },
+        )
         await db.commit()
     # Another request of this session holds the installation: this one waits
     # for it and takes what it installed.
@@ -653,8 +646,7 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
         await asyncio.sleep(1.5)
         assert not pending_tool.done(), "The other installer is still preparing"
         async with client.test_factory() as db:
-            current = await AgentSessionService(db).by_id(session_id)
-            current.work_lease = before
+            await change_environment(db, session_id, before)
             await db.commit()
         reserved = pending_tool.result(timeout=20)
     assert reserved.status_code == 200, reserved.text
@@ -702,8 +694,8 @@ async def test_lazy_executor_lifecycle_keeps_the_same_allocation(
             assert hub.exec.await_count == 2
             assert next_tool.json()["data"]["target"]["resource_id"] == resource_id
     async with client.test_factory() as db:
-        current = await AgentSessionService(db).by_id(session_id)
-        assert current.work_lease["resource_id"] == resource_id
+        current = await environment_of(db, session_id)
+        assert current is not None and current["resource_id"] == resource_id
 
 
 async def test_an_agent_may_put_itself_in_a_platform_sandbox(client, monkeypatch):
@@ -764,8 +756,7 @@ async def test_an_agent_may_put_itself_in_a_platform_sandbox(client, monkeypatch
     assert selected.status_code == 200, selected.text
     assert selected.json()["data"]["environment"] == standard
     async with client.test_factory() as db:
-        row = await AgentSessionService(db).by_id(session_id)
-        assert row.work_lease is None
+        assert await environment_of(db, session_id) is None
         chosen = await AgentSessionService(db).environment(topic_id, actor_handle)
         assert chosen.environment == standard
         assert chosen.chosen_by["via"] == "cheese"
@@ -790,17 +781,16 @@ async def test_an_agent_may_put_itself_in_a_platform_sandbox(client, monkeypatch
         )
         db.add(host)
         await db.flush()
-        db.add(
-            SandboxHome(
-                host_id=host.id,
-                spec="standard",
-                project_id=project_id,
-                topic_id=topic_id,
-                room_resource_id=str(topic_id),
-                resource_id=str(uuid.uuid4()),
-                session_id=session_id,
-            )
+        home = SandboxHome(
+            host_id=host.id,
+            spec="standard",
+            project_id=project_id,
+            topic_id=topic_id,
+            room_resource_id=str(topic_id),
+            resource_id=str(uuid.uuid4()),
         )
+        db.add(home)
+        await works_in(db, session_id, home)
         host_id = host.id
         devices = sql_device_service(db)
         code = await devices.start("Available work computer")
@@ -824,9 +814,9 @@ async def test_an_agent_may_put_itself_in_a_platform_sandbox(client, monkeypatch
         homes = list(
             await db.scalars(select(SandboxHome).where(SandboxHome.host_id == host_id))
         )
-        row = await AgentSessionService(db).by_id(session_id)
+        held = await environment_of(db, session_id)
     assert homes == []
-    assert row.work_lease is None
+    assert held is None
     async with client.test_factory() as db:
         chosen = await AgentSessionService(db).environment(topic_id, actor_handle)
     assert chosen.environment == replacement
@@ -883,9 +873,6 @@ async def test_each_dialer_gets_its_configured_base_not_the_request_host(
         session = await AgentSessionService(db).ensure(
             topic_id, "ada", harness="claude-code"
         )
-        session.execution_request = {
-            "generation": str(uuid.uuid4()),
-        }
         await AgentSessionService(db).set_environment(
             topic_id,
             session.agent_handle,
@@ -1494,7 +1481,7 @@ async def test_an_installation_still_running_elsewhere_keeps_its_claim(
     while time.monotonic() < hold_until:
         assert ask(timeout=0.001).get("preparing") is True
         async with client.test_factory() as db:
-            lease = (await AgentSessionService(db).by_id(session_id)).work_lease
+            lease = await environment_of(db, session_id)
         assert lease_claim.still_preparing(lease), lease
         await asyncio.sleep(0.1)
     assert hub.exec.await_count == 1

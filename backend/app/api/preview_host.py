@@ -456,17 +456,11 @@ class PreviewHostMiddleware:
                 return await self.mcp_app(session, place, request, resource)
             if resource and resource["kind"] == "app":
                 await touch_preview_activity(
-                    session,
-                    place.conversation_id,
-                    resource["seat"],
-                    project_id=place.project_id,
+                    session, place.conversation_id, resource["seat"]
                 )
             elif artifact is not None and artifact.mime_type == APP_MIME:
                 await touch_preview_activity(
-                    session,
-                    place.conversation_id,
-                    artifact.author,
-                    project_id=place.project_id,
+                    session, place.conversation_id, artifact.author
                 )
         if target is not None:
             if request.method not in {"GET", "HEAD"}:
@@ -577,7 +571,7 @@ class PreviewHostMiddleware:
         response.headers["Content-Security-Policy"] = _mcp_app_csp(entry)
         return response
 
-    def _touch_on_use(self, conversation_id, seat, project_id, touches: set):
+    def _touch_on_use(self, conversation_id, seat, touches: set):
         """What a live connection to the preview (a dev server's HMR socket)
         calls for each message the page sends that is not a keep-alive: the
         sandbox is touched, at most once per ``PREVIEW_TOUCH_STEP_S``, each
@@ -590,9 +584,7 @@ class PreviewHostMiddleware:
             try:
                 async with self.sessions() as sessions:
                     session = await anext(sessions)
-                    await touch_preview_activity(
-                        session, conversation_id, seat, project_id=project_id
-                    )
+                    await touch_preview_activity(session, conversation_id, seat)
             except Exception:
                 logger.warning(
                     "keeping a previewed sandbox in use failed", exc_info=True
@@ -639,12 +631,7 @@ class PreviewHostMiddleware:
                     if artifact is None or artifact.mime_type != APP_MIME:
                         raise NotFoundError("Preview unavailable")
                     seat = artifact.author
-                await touch_preview_activity(
-                    session,
-                    place.conversation_id,
-                    seat,
-                    project_id=place.project_id,
-                )
+                await touch_preview_activity(session, place.conversation_id, seat)
             # No DB session or read transaction lives for the HMR connection.
             # What the page sends over it keeps the sandbox in use as its HTTP
             # requests do; holding it open does not (`_touch_on_use`).
@@ -655,9 +642,7 @@ class PreviewHostMiddleware:
                     topic_id,
                     seat,
                     **({"instance": resource["instance"]} if resource else {}),
-                    on_use=self._touch_on_use(
-                        place.conversation_id, seat, place.project_id, touches
-                    ),
+                    on_use=self._touch_on_use(place.conversation_id, seat, touches),
                 )
         except (AppError, BaseError, TimeoutError):
             if websocket.application_state != WebSocketState.DISCONNECTED:

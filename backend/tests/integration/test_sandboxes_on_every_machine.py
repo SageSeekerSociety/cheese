@@ -21,9 +21,9 @@ import pytest
 from sqlalchemy import select, update
 
 from app.domain.agent.models import AgentTurn
-from app.domain.agent_session.models import LOST_KEY
+from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.services import AgentSessionService
-from app.domain.machine import lifecycle
+from app.domain.machine import lifecycle, occupants
 from app.domain.machine import session_work as work_lease
 from app.domain.machine.lifecycle import SandboxLifecycle
 from app.domain.machine.models import SandboxHome
@@ -99,8 +99,8 @@ async def test_a_sandbox_on_a_persons_computer_goes_once_idle(client, monkeypatc
     assert destroyed.await_args.args[1:3] == (room.device, "destroy")
     assert await _home(client, room) is None
     async with client.test_factory() as db:
-        session = await AgentSessionService(db).by_id(room.session_id)
-        assert session.execution_request[LOST_KEY] is True
+        held = await attachments.attachment_of(db, room.session_id)
+        assert held is not None and held.notice.lost is True
 
 
 async def test_a_sandbox_in_use_is_kept(client, monkeypatch):
@@ -146,7 +146,10 @@ async def test_a_sandbox_left_behind_is_destroyed_by_the_same_sweep(
     )
     assert moved.status_code == 200, moved.text
     left = await _home(client, room)
-    assert left is not None and left.session_id is None
+    assert left is not None
+    # Nobody works in it any more.
+    async with client.test_factory() as db:
+        assert await occupants.sessions_of(db, left.id) == []
 
     await _last_used(client, room, timedelta(minutes=11))
     destroyed = await _sweep(client, monkeypatch)
