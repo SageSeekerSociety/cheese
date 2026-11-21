@@ -311,6 +311,29 @@ describe('技能面板的 409', () => {
     await fireEvent.click(button)
   }
 
+  // 面板里的市场和全局市场页画的是同一块（SkillMarket）：目录读失败时那颗「重试」
+  // 要真的重读目录，不能只是一颗按了没反应的按钮。
+  it('市场目录读失败后，面板里点重试就重读目录', async () => {
+    listProjectAgents.mockResolvedValue({
+      data: [agent({ id: 'a1', configuration: { body: '', skills: [] }, version: 1 })],
+      total: 1,
+    })
+    listSkillCatalog.mockResolvedValue({ data: [], total: 0 })
+    listProjectSkills.mockResolvedValue({ data: [], total: 0 })
+    listMyDevices.mockResolvedValue({ devices: [DEVICE] })
+    getSkillHealth.mockResolvedValue({ status: 'ok', detail: '' })
+    setAgentEditing.mockResolvedValue({ editing: null })
+    fetchSkillMarket.mockReset().mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(MARKET)
+    mountPage()
+
+    await fireEvent.click(await screen.findByRole('button', { name: '技能' }))
+    const retry = await screen.findByRole('button', { name: t('global.loadError.retry') })
+    await fireEvent.click(retry)
+
+    expect(await screen.findByText('pdf')).toBeTruthy()
+    expect(screen.queryByText(t('work.room.skills.marketFailed'))).toBeNull()
+  })
+
   // 别人先写了 → 这次保存被 409 拦下 → 面板重读名册。重读必须顺手把面板目标换到
   // 新读回来的那一行：名册刷新是整份换新对象，不换的话下一次保存还带着旧 version，
   // 只会再撞 409 —— toast 说的「请再改一次」就成假话（验收时浏览器里 7 连 409 实证）。
