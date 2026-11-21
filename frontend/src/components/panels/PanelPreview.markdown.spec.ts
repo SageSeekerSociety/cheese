@@ -149,6 +149,7 @@ it('选中一段之后「评论」这条出口把它交给评论，而不是发�
   const open = ref(false)
   const bundle = {
     target: computed(() => ({ topicId: 'room', path: 'output/说明.md', version: 'v1' })),
+    writable: computed(() => true),
     open,
     toggle: () => (open.value = !open.value),
     author: 'me',
@@ -196,6 +197,7 @@ it('评论还没回来时再点一次，不会挂出第二条一样的评论', a
   const open = ref(false)
   const bundle = {
     target: computed(() => ({ topicId: 'room', path: 'output/说明.md', version: 'v1' })),
+    writable: computed(() => true),
     open,
     toggle: () => (open.value = !open.value),
     author: 'me',
@@ -230,6 +232,7 @@ it('资料库原件挂不了评论：条上不露「评论」那一条出口', a
   // 一条线程都不挂，还不报错。
   const bundle = {
     target: computed(() => null),
+    writable: computed(() => false),
     open: ref(false),
     toggle: () => {},
     author: 'me',
@@ -256,6 +259,7 @@ it('评论挂不上去时，条上说出来，不是点了没反应', async () =
   const open = ref(false)
   const bundle = {
     target: computed(() => ({ topicId: 'room', path: 'output/说明.md', version: 'v1' })),
+    writable: computed(() => true),
     open,
     toggle: () => (open.value = !open.value),
     author: 'me',
@@ -297,6 +301,7 @@ it('评论发着的时候读者按了取消：回来时不再替他打开评论�
   const open = ref(false)
   const bundle = {
     target: computed(() => ({ topicId: 'room', path: 'output/说明.md', version: 'v1' })),
+    writable: computed(() => true),
     open,
     toggle: () => (open.value = !open.value),
     author: 'me',
@@ -339,6 +344,7 @@ it('换了另一处指认，上一次那句「评论失败」不跟着过来', a
   const open = ref(false)
   const bundle = {
     target: computed(() => ({ topicId: 'room', path: 'output/说明.md', version: 'v1' })),
+    writable: computed(() => true),
     open,
     toggle: () => (open.value = !open.value),
     author: 'me',
@@ -379,6 +385,7 @@ it('发失败时读者已经换了一处：那句失败不落在新的一处上'
   const open = ref(false)
   const bundle = {
     target: computed(() => ({ topicId: 'room', path: 'output/说明.md', version: 'v1' })),
+    writable: computed(() => true),
     open,
     toggle: () => (open.value = !open.value),
     author: 'me',
@@ -518,6 +525,7 @@ function commentsWithOpen(
 ) {
   return {
     target: computed(() => ({ topicId: 'room', path: 'output/说明.md', version: 'v1' })),
+    writable: computed(() => true),
     open,
     toggle: () => (open.value = !open.value),
     author: 'me',
