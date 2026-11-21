@@ -247,3 +247,28 @@ def test_a_watcher_is_told_which_program_runs_in_the_foreground(machine):
         timeout=10,
     )
     term.close()
+
+
+def test_a_replay_never_starts_inside_an_image_cut_by_the_ring(machine):
+    """An image bigger than what is kept for a replay: its start falls out,
+    and what is replayed begins after it, not on one of its lines."""
+    (machine.checkout / "image.py").write_text(
+        "import sys\n"
+        "out = sys.stdout.buffer\n"
+        # Sixel bands, each on a line of its own, as some encoders write them.
+        "out.write(b'before\\n\\x1bPq#0;2;0;0;0' + b'?' * 1000 + b'-\\n' * 1)\n"
+        "out.write((b'?' * 1000 + b'-\\n') * 300 + b'\\x1b\\\\')\n"
+        "out.write(b'\\nafter-image\\n')\n"
+        "out.flush()\n"
+    )
+    first = machine.terminal("alice", "t1").until(_attached)
+    first.type("python3 image.py\n")
+    first.until(lambda t: "after-image" in t.text(), timeout=20)
+    first.close()
+
+    again = machine.terminal("alice", "t1").until(_attached)
+    again.until(lambda t: "after-image" in t.text())
+    replay = bytes(again.output)
+    image = replay.find(b"\x1bPq")
+    assert b"????" not in (replay if image < 0 else replay[:image])
+    again.close()

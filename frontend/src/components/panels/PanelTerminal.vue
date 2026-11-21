@@ -1,12 +1,15 @@
 <script setup lang="ts">
 // One shell's screen: an xterm in the 终端 tab. It draws what it is handed and says what is
 // typed into it; where the bytes come from and go to is the host's (`work/TerminalHost.vue`).
+// Images a program draws show inline, and a web address in the output opens in a new tab.
 // The screen keeps the panel's own surface and type (the approved prototype draws the
 // terminal on `--surface` in the mono face), so it follows the theme like the rest of the panel.
 import '@xterm/xterm/css/xterm.css'
 
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { FitAddon } from '@xterm/addon-fit'
+import { ImageAddon } from '@xterm/addon-image'
+import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 
 const props = defineProps<{
@@ -46,6 +49,31 @@ const ANSI = [
   'brightCyan',
   'brightWhite',
 ] as const
+/**
+ * Images a program draws (Sixel, the iTerm2 inline protocol) are kept within a bound, per
+ * terminal: one image is at most 2048 x 2048 pixels and its sequence at most 8 MB, and what all
+ * of them hold together is at most 16 MB, the oldest dropped first. A shell that prints image
+ * after image cannot grow the page without end.
+ */
+const IMAGES = {
+  pixelLimit: 2048 * 2048,
+  storageLimit: 16,
+  sixelSizeLimit: 8_000_000,
+  iipSizeLimit: 8_000_000,
+}
+
+/** A link in the output opens in a new tab, cut off from this page; only a web address does. */
+function openLink(_event: MouseEvent, uri: string) {
+  let url: URL
+  try {
+    url = new URL(uri)
+  } catch {
+    return
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return
+  window.open(url.href, '_blank', 'noopener,noreferrer')
+}
+
 const kebab = (name: string) => name.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)
 
 function token(name: string): string {
@@ -85,6 +113,8 @@ onMounted(() => {
   })
   fit = new FitAddon()
   term.loadAddon(fit)
+  term.loadAddon(new ImageAddon(IMAGES))
+  term.loadAddon(new WebLinksAddon(openLink))
   term.open(host.value)
   term.onData((data) => emit('type', data))
   refit()

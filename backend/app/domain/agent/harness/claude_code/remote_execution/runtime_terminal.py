@@ -86,6 +86,29 @@ def status(value: dict) -> bytes:
     return frame(STATUS, json.dumps(value).encode())
 
 
+def _string_end(buffer, start):
+    """Where the control string starting at ``start`` (DCS ``ESC P``, as a
+    Sixel image is, or OSC ``ESC ]``, as an inline image is) ends: the index
+    after its terminator, or -1 while it is not terminated yet."""
+    ends = [buffer.find(b"\x1b\\", start + 2)]
+    if buffer[start + 1 : start + 2] == b"]":
+        ends.append(buffer.find(b"\x07", start + 2))
+    found = [end for end in ends if end >= 0]
+    if not found:
+        return -1
+    end = min(found)
+    return end + (2 if buffer[end : end + 1] == b"\x1b" else 1)
+
+
+def _open_string(buffer, before):
+    """The start of a control string still open at ``before``, or -1."""
+    start = max(buffer.rfind(b"\x1bP", 0, before), buffer.rfind(b"\x1b]", 0, before))
+    if start < 0:
+        return -1
+    end = _string_end(buffer, start)
+    return start if end < 0 or end > before else -1
+
+
 def _command_name(pgid):
     """The command name of a process group's leader: what a tab calls the
     program running in a shell's foreground."""
@@ -156,6 +179,9 @@ class Shell:
         self.owner, self.id, self.number = owner, terminal_id, number
         self.lock = threading.Lock()
         self.ring = bytearray()
+        # The kind of control string (``P`` or ``]``) being dropped because
+        # its start fell out of the ring, until it ends.
+        self.dropping, self.dropped_tail = None, b""
         # The program in the shell's foreground, by command name; None at the
         # prompt.
         self.program = None
@@ -255,12 +281,43 @@ class Shell:
         watcher.stop()
 
     def _keep(self, chunk):
+        """Keep what the shell wrote, the last ``RING_BYTES`` of it at most,
+        from a line's start that is not inside a control string: a replay
+        never starts in the middle of an escape sequence or an image, which
+        would leave the screen garbled. An image whose start falls out is
+        dropped whole, the rest of it included as it arrives."""
+        if self.dropping is not None:
+            # Its start is gone: it is dropped up to its end. A terminator split
+            # across two reads is seen by keeping the last byte of the one before.
+            probe = b"\x1b" + self.dropping.encode() + self.dropped_tail + bytes(chunk)
+            end = _string_end(probe, 0)
+            if end < 0:
+                self.dropped_tail = probe[-1:]
+                return
+            chunk = probe[end:]
+            self.dropping, self.dropped_tail = None, b""
         self.ring.extend(chunk)
         excess = len(self.ring) - RING_BYTES
-        if excess > 0:
-            # From a line's start, so a replay does not begin mid-sequence.
-            cut = self.ring.find(b"\n", excess)
-            del self.ring[: cut + 1 if cut >= 0 else excess]
+        if excess <= 0:
+            return
+        at = excess
+        while True:
+            line = self.ring.find(b"\n", at)
+            if line < 0:
+                break
+            start = _open_string(self.ring, line)
+            if start < 0:
+                del self.ring[: line + 1]
+                return
+            end = _string_end(self.ring, start)
+            if end < 0:
+                break
+            at = end
+        # No line starts where a replay could begin: what is open is dropped.
+        start = _open_string(self.ring, len(self.ring))
+        if start >= 0:
+            self.dropping = chr(self.ring[start + 1])
+        self.ring.clear()
 
     def _send(self, data):
         with self.lock:
