@@ -285,7 +285,7 @@ test("没有芝士做过的任务，alice 也能在「文件」里改并存下",
     );
     const files = page.locator(".task-files");
     await files.getByRole("button", { name: "src", exact: true }).click();
-    await files.getByRole("button", { name: "login.txt", exact: true }).click();
+    await files.getByRole("button", { name: /^login\.txt( 已修改)?$/ }).click();
     await expect(files.locator(".monaco-editor")).toContainText(
       "nobody worked here",
     );
