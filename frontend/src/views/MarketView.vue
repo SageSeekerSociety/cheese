@@ -2,11 +2,12 @@
 // 市场（容器）：开页就读技能市场的目录和「我的一台机器」，画面全在同目录的 MarketViewView。
 import type { SkillMarket as SkillMarketData } from '@/api/machineSkills'
 
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
 import { listMyDevices } from '@/api'
 import { fetchMachineSkill, fetchSkillMarket } from '@/api/machineSkills'
 import { t } from '@/i18n'
+import { isForbidden, loadFailureReason } from '@/lib/loadFailure'
 import { pickMyDevice } from '@/lib/myDevice'
 import { toast } from '@/lib/toast'
 import MarketViewView from '@/views/MarketViewView.vue'
@@ -16,16 +17,28 @@ import MarketViewView from '@/views/MarketViewView.vue'
 const market = ref<SkillMarketData | null>(null)
 const marketLoading = ref(false)
 const marketLoaded = ref(false)
+// 目录没读出来时的那个错误：画面据此把「市场读不出来」和一条重试的路留在目录那块
+// （docs/design-system.md §3.10），401/403 不给重试。
+const marketError = ref<unknown>(null)
+const marketFailed = computed(() => marketError.value !== null)
+const marketForbidden = computed(() => isForbidden(marketError.value))
+const marketFailureReason = computed(() => loadFailureReason(marketError.value))
 const deviceId = ref<string | null>(null)
 const scanning = ref(false)
 
+// 开页读一次；目录读失败时由画面上的「重试」再调。正在读时不再发第二份。
 async function loadMarket() {
+  if (marketLoading.value) return
   marketLoading.value = true
+  marketError.value = null
   // 目录与「我有没有机器」互不依赖，一起发；各自失败只丢自己那份。
   const [m] = await Promise.all([
     fetchSkillMarket().then(
       (r) => r,
-      () => null
+      (e: unknown) => {
+        marketError.value = e
+        return null
+      }
     ),
     listMyDevices().then(
       (r) => {
@@ -63,8 +76,12 @@ async function install({ url, kind }: { url: string; kind: 'skill' | 'plugin' })
     :market="market"
     :market-loading="marketLoading"
     :market-loaded="marketLoaded"
+    :market-failed="marketFailed"
+    :market-failure-reason="marketFailureReason"
+    :market-forbidden="marketForbidden"
     :device-id="deviceId"
     :scanning="scanning"
     @install="install"
+    @retry="loadMarket"
   />
 </template>
