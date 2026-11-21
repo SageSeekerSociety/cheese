@@ -60,6 +60,8 @@ _OWN = (
     "runtime_calls",
     # A person's shells (`Executor.terminals`).
     "runtime_terminal",
+    # Language servers beside a task's checkout (`Executor.languages`).
+    "runtime_language",
     "portable",
     "darwin",
     "mcp_process",
@@ -155,6 +157,19 @@ def identity(caller):
         "CHEESE_AUTHOR": caller.get("author"),
     }
     return {name: str(value) for name, value in named.items() if value}
+
+
+def task_checkout(executor, params):
+    """The task's checkout, as `task_fs` reads it: the room's workspace for a
+    task with no checkout of its own (``in_workspace``)."""
+    if params.get("in_workspace"):
+        return executor.root
+    home = Path(executor.env["HOME"]).resolve()
+    root = (
+        home / ".cheese" / "tasks" / str(uuid.UUID(str(params["task_id"])))
+    ).resolve()
+    root.relative_to(home)
+    return root
 
 
 def stamp():

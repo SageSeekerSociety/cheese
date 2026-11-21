@@ -12,6 +12,7 @@ that relays a stream the way the connector does (`cli/internal/host/stream.go`).
 
 import asyncio
 import base64
+import contextlib
 import json
 import socket
 import subprocess
@@ -108,7 +109,12 @@ class _Connector:
         elif kind == "stream.data" and stream_id in self.sockets:
             self.sockets[stream_id].sendall(base64.b64decode(frame["data"]))
         elif kind == "stream.close" and stream_id in self.sockets:
-            self.sockets.pop(stream_id).close()
+            connection = self.sockets.pop(stream_id)
+            # Hung up as a close is in Go: the executor hears it at once, even
+            # with this side's pump still reading.
+            with contextlib.suppress(OSError):
+                connection.shutdown(socket.SHUT_RDWR)
+            connection.close()
 
 
 @pytest.fixture

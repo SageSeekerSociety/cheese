@@ -55,6 +55,7 @@ if __package__:
     from . import runtime_commands as commands
     from . import runtime_context as context
     from . import runtime_core as core
+    from . import runtime_language as language
     from . import runtime_terminal as terminal
 else:
     # Its siblings sit beside it, which a script run has first on `sys.path`
@@ -66,6 +67,7 @@ else:
     import runtime_commands as commands
     import runtime_context as context
     import runtime_core as core
+    import runtime_language as language
     import runtime_terminal as terminal
 
 # This file's own bytes, and the protocol it answers with: the two names that
@@ -262,6 +264,9 @@ class Executor:
         self.db.commit()
         # The shells people opened here (`runtime_terminal`).
         self.terminals = terminal.Terminals(self)
+        # Language servers beside task checkouts (`runtime_language`): they
+        # keep nothing up.
+        self.languages = language.Languages(self)
         self.cli_worker, self.cli_worker_ready = None, False
         worker = self.programs / "remote-execution/cli_worker.py"
         cli = self.programs / "cheese"
@@ -608,6 +613,13 @@ def serve(state):
                         self.connection, self.rfile, value.get("params", {})
                     )
                     return
+                if value["method"] == "language":
+                    # A language server's stdio: the connection is the
+                    # server's from here on (`runtime_language`).
+                    executor.languages.serve(
+                        self.connection, self.rfile, value.get("params", {})
+                    )
+                    return
                 if value["method"] == "shutdown":
                     # A sandboxed pid names the wrong process; Windows has no SIGTERM.
                     stop(None, None)
@@ -699,6 +711,7 @@ def serve(state):
             # A shell's watchers hold their connections' threads, which the
             # server joins as it closes: the shells end first.
             executor.terminals.end_all()
+            executor.languages.end_all()
             if executor.stopping:
                 ended = executor.end_left_behind()
                 with contextlib.suppress(OSError):
