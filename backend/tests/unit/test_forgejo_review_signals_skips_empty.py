@@ -20,15 +20,27 @@ BASE = "https://forge.example/api/v1"
 PREFIX = "/api/v1/repos/acme/docs/pulls/7"
 
 
-def review(rid, state, body, *, dismissed=False, comments_count=0, drop_count=False):
+def review(
+    rid,
+    state,
+    body,
+    *,
+    dismissed=False,
+    comments_count=0,
+    drop_count=False,
+    login=None,
+    submitted_at=None,
+):
     row = {
         "id": rid,
         "state": state,
         "body": body,
         "dismissed": dismissed,
         "comments_count": comments_count,
-        "user": {"login": f"user{rid}"},
+        "user": {"login": login or f"user{rid}"},
     }
+    if submitted_at is not None:
+        row["submitted_at"] = submitted_at
     if drop_count:
         row.pop("comments_count")
     return row
@@ -149,3 +161,64 @@ async def test_with_comments_false_never_asks():
 
     assert fetched == []
     assert [s.id for s in signals] == ["review:1"]
+
+
+@pytest.mark.anyio
+async def test_a_later_approval_by_the_same_reviewer_supersedes_the_request():
+    """The review list is append-only: both rows come back. The earlier
+    REQUEST_CHANGES is still delivered, marked as withdrawn."""
+    reviews = [
+        review(
+            1,
+            "REQUEST_CHANGES",
+            "请改这里",
+            login="bob",
+            submitted_at="2026-01-01T00:00:00Z",
+        ),
+        review(
+            2,
+            "APPROVED",
+            "现在可以了",
+            login="bob",
+            submitted_at="2026-01-02T00:00:00Z",
+        ),
+    ]
+    fetched = []
+    client_ = client(reviews, {}, fetched)
+    signals = await client_.review_signals(
+        owner="acme", repo="docs", number=7, token="project-token"
+    )
+    by_state = {(s.kind, s.body): s for s in signals}
+    assert by_state[("changes_requested", "请改这里")].superseded is True
+    # The approval itself asks for nothing: not returned as a signal.
+    assert all(s.kind != "changes_requested" for s in signals if s.body == "现在可以了")
+
+
+@pytest.mark.anyio
+async def test_a_dismissed_approval_does_not_withdraw_the_request():
+    """Forgejo marks a retracted review with `dismissed`, leaving `state` at
+    APPROVED. An approval that was itself withdrawn is not a verdict, so the
+    real change request keeps blocking."""
+    reviews = [
+        review(
+            1,
+            "REQUEST_CHANGES",
+            "请改这里",
+            login="bob",
+            submitted_at="2026-01-01T00:00:00Z",
+        ),
+        review(
+            2,
+            "APPROVED",
+            "现在可以了",
+            login="bob",
+            dismissed=True,
+            submitted_at="2026-01-02T00:00:00Z",
+        ),
+    ]
+    fetched = []
+    signals = await client(reviews, {}, fetched).review_signals(
+        owner="acme", repo="docs", number=7, token="project-token"
+    )
+    (request,) = [s for s in signals if s.kind == "changes_requested"]
+    assert request.superseded is False

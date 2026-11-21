@@ -176,7 +176,11 @@ async def _review_nudge(
         pr_signals.NudgeKind.review, signature
     )
     body = "\n".join(s.line() for s in signals)
-    asked = sum(1 for s in signals if s.kind == "changes_requested")
+    # 被同一位评审人此后的批准／撤销取代的那条不算还挡着 —— 它照旧说给芝士听，
+    # 但不把卡压成红的（`pr_signals.superseded_change_requests`）。
+    asked = sum(
+        1 for s in signals if s.kind == "changes_requested" and not s.superseded
+    )
     head = say("prReviewChangesRequested") if asked else say("prReviewCommented")
     if capped:
         return pr_signals.PendingNudge(
@@ -210,8 +214,20 @@ async def _review_nudge(
         detail_label=say("labelReviewComments"),
         note=f"{head}（{len(signals)} 条）",
         # A COMMENTED review (including useful inline feedback) is a notice,
-        # not a rejection. Only an explicit request for changes blocks the card.
+        # not a rejection. Only an explicit request for changes blocks the card
+        # — and only one nobody has since approved or dismissed.
         note_code=notes.NoteCode.accept_pr_stalled if asked else None,
+        # 卡面这一句里的「要求改动」已经被人收回了：卡上若还留着旧分类，可以就地
+        # 纠正（只在确认是同一条、同一个提交、来源清楚时）。
+        supersedes_return=any(
+            s.kind == "changes_requested" and s.superseded for s in signals
+        ),
+        # 上一版（还没看出被收回时）写出的那一行：重校拿它认这张红卡。
+        note_before_supersession=(
+            f"{say('prReviewChangesRequested')}（{len(signals)} 条）"
+            if any(s.kind == "changes_requested" for s in signals)
+            else ""
+        ),
         event_type=EVENT_PR_REVIEW,
     )
 
