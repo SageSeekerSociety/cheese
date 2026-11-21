@@ -131,6 +131,16 @@ describe('前端报错上报', () => {
     expect(sent).not.toHaveBeenCalled()
   })
 
+  it('编辑器取消做到一半的事不上报', async () => {
+    const { book, reportError } = await open(ROOM)
+    channel(book, PROJECT, 'helper', TOPIC, 7)
+
+    reportError('Unhandled rejection: Canceled')
+    await vi.advanceTimersByTimeAsync(20_000)
+
+    expect(sent).not.toHaveBeenCalled()
+  })
+
   it('归属在报错那一刻就定下来，之后切项目也不改', async () => {
     const { book, reportError } = await open(ROOM)
     channel(book, PROJECT, 'helper', TOPIC, 7)

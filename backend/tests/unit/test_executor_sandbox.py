@@ -34,6 +34,7 @@ PARTS = (
     "runtime_context",
     "runtime_calls",
     "runtime_terminal",
+    "runtime_language",
 )
 
 

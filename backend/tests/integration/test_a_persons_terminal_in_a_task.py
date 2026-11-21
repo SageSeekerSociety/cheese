@@ -12,6 +12,7 @@ that relays a stream the way the connector does (`cli/internal/host/stream.go`).
 
 import asyncio
 import base64
+import contextlib
 import json
 import socket
 import subprocess
@@ -108,7 +109,12 @@ class _Connector:
         elif kind == "stream.data" and stream_id in self.sockets:
             self.sockets[stream_id].sendall(base64.b64decode(frame["data"]))
         elif kind == "stream.close" and stream_id in self.sockets:
-            self.sockets.pop(stream_id).close()
+            connection = self.sockets.pop(stream_id)
+            # Hung up as a close is in Go: the executor hears it at once, even
+            # with this side's pump still reading.
+            with contextlib.suppress(OSError):
+                connection.shutdown(socket.SHUT_RDWR)
+            connection.close()
 
 
 @pytest.fixture
@@ -137,6 +143,8 @@ def machine(client, tmp_path):
     task = delivery_task(client, room)
     checkout = home / ".cheese" / "tasks" / str(task.id)
     checkout.mkdir(parents=True)
+
+    links: list = []
 
     async def seat():
         async with client.test_factory() as db:
@@ -173,10 +181,17 @@ def machine(client, tmp_path):
             )
             await db.commit()
         connector = _Connector(asyncio.get_running_loop())
+        links.append(connector)
         await device_hub.attach_device(DEVICE, connector)
         await device_hub.on_device_message(
             DEVICE, {"t": "hello", "v": 1, "executor": True, "streams": True}
         )
+
+    async def unlink():
+        # A link left on the shared hub is a machine every later test's sweep
+        # still calls.
+        for connector in links:
+            await device_hub.detach_device(DEVICE, connector)
 
     client.portal.call(seat)
     try:
@@ -187,6 +202,7 @@ def machine(client, tmp_path):
             capture_output=True,
             timeout=30,
         )
+        client.portal.call(unlink)
 
 
 def _headers(handle: str) -> dict:

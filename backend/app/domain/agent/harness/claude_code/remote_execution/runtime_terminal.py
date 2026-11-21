@@ -429,23 +429,13 @@ class Terminals:
         for shell in shells:
             shell.end()
 
-    def _cwd(self, params):
-        """The task's checkout, as `task_fs` reads it: the room's workspace
-        for a task with no checkout of its own."""
-        if params.get("in_workspace"):
-            return self.executor.root
-        home = Path(self.executor.env["HOME"]).resolve()
-        root = (home / ".cheese" / "tasks" / str(params["task_id"])).resolve()
-        root.relative_to(home)
-        return root
-
     def _open(self, owner, terminal_id, params, cols, rows):
         executor = self.executor
         with executor.admission_lock:
             if executor.stopping or executor.upgrading:
                 return None, "stopping"
             executor.active_at = time.monotonic()
-        cwd = self._cwd(params)
+        cwd = core.task_checkout(executor, params)
         if not cwd.is_dir():
             return None, "worktree"
         env = dict(executor.command_env(params.get("caller")))

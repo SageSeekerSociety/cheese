@@ -41,6 +41,7 @@ OWNER_ONLY = {
     APP / "api" / "routes" / "connector" / "devices.py",
     APP / "api" / "routes" / "connector" / "screen.py",
     APP / "api" / "routes" / "connector" / "terminal.py",
+    APP / "api" / "routes" / "connector" / "language.py",
     APP / "domain" / "agent" / "device_hub" / "__init__.py",
     APP / "domain" / "agent" / "device_hub" / "calls.py",
     APP / "domain" / "agent" / "device_hub" / "inbound.py",

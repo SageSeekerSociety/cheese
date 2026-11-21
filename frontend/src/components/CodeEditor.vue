@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type * as Monaco from 'monaco-editor'
+import type { LanguageLink } from '../lib/lsp/link'
 
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
@@ -134,8 +135,14 @@ const props = withDefaults(
     readonly?: boolean
     /** 一枚带行号的 chip 指着的那几行：滚到中间并选中，选区的底色就是标记。 */
     lines?: { start: number; end: number } | null
+    /**
+     * The files are a task's checkout, reachable by its language servers: each file is a model
+     * of its own, and a language with a server gets its diagnostics, completion, hover and go to.
+     * Without one the editor holds one model and swaps its text from file to file.
+     */
+    language?: LanguageLink | null
   }>(),
-  { filename: '', readonly: false, lines: null }
+  { filename: '', readonly: false, lines: null, language: null }
 )
 const emit = defineEmits<{
   (e: 'update:modelValue', v: string): void
@@ -167,6 +174,9 @@ function langFor(name: string): string {
     h: 'c',
     cpp: 'cpp',
     cc: 'cpp',
+    cxx: 'cpp',
+    hpp: 'cpp',
+    hh: 'cpp',
     html: 'html',
     htm: 'html',
     vue: 'html',
@@ -188,14 +198,42 @@ function langFor(name: string): string {
   return map[ext] ?? 'plaintext'
 }
 
+// ---- files of a task's checkout (`language`): one model per file, shared with the other editors
+// showing it, and kept on the task's language servers (`lib/lsp/monaco`, loaded with Monaco).
+// An editor keeps the way it mounted: a link given or taken away later only changes which
+// task's models a linked editor shows.
+let lsp: typeof import('../lib/lsp/monaco') | null = null
+let linked: Monaco.editor.ITextModel | null = null
+let stopOpener: (() => void) | null = null
+
+/** Shows the file's own model in the editor, letting go of the one it showed before. */
+function showLinkedModel() {
+  const link = props.language
+  if (!editor || !monaco || !lsp || !link) return
+  const previous = linked
+  const model = lsp.openDocument(monaco, link, props.filename, langFor(props.filename), props.modelValue)
+  linked = model
+  applying = true
+  if (model.getValue() !== props.modelValue) model.setValue(props.modelValue)
+  if (editor.getModel() !== model) editor.setModel(model)
+  applying = false
+  if (previous) lsp.closeDocument(previous)
+  stopOpener?.()
+  stopOpener = lsp.openerFor(monaco, editor, link)
+}
+
 onMounted(async () => {
-  const monaco = await loadMonaco()
+  const [monaco, lspModule] = await Promise.all([
+    loadMonaco(),
+    props.language ? import('../lib/lsp/monaco') : Promise.resolve(null),
+  ])
+  lsp = lspModule
   // Gone while Monaco was on its way (the reader switched file or tab).
   if (unmounted || !host.value) return
   defineCheesexTheme(monaco, isDark.value) // resolve from live CSS vars now that the DOM/styles exist
+  const linkedFiles = !!(lsp && props.language)
   editor = monaco.editor.create(host.value, {
-    value: props.modelValue,
-    language: langFor(props.filename),
+    ...(linkedFiles ? { model: null } : { value: props.modelValue, language: langFor(props.filename) }),
     theme: THEME_NAME,
     readOnly: props.readonly,
     automaticLayout: true, // follow the drawer's resize
@@ -220,6 +258,7 @@ onMounted(async () => {
   // ⌘/Ctrl-S saves without the browser's save dialog.
   editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => emit('save'))
   editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyP, () => emit('quick-open'))
+  if (linkedFiles) showLinkedModel()
   showLines()
 })
 
@@ -241,11 +280,18 @@ watch(isDark, (dark) => {
   monaco.editor.setTheme(THEME_NAME)
 })
 
-// Switching file → swap content + language, keeping one editor instance.
+// Switching file → swap content + language, keeping one editor instance; with a language link,
+// the file's own model instead.
 watch(
-  () => props.filename,
-  () => {
+  () => [props.filename, props.language] as const,
+  ([filename, link], [prevFilename]) => {
     if (!editor || !monaco) return
+    if (linked) {
+      if (link) showLinkedModel()
+      showLines()
+      return
+    }
+    if (filename === prevFilename) return
     applying = true
     editor.setValue(props.modelValue)
     const model = editor.getModel()
@@ -272,7 +318,9 @@ watch(
 )
 onBeforeUnmount(() => {
   unmounted = true
+  stopOpener?.()
   editor?.dispose()
+  if (linked) lsp?.closeDocument(linked)
 })
 </script>
 

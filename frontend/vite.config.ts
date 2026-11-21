@@ -795,6 +795,14 @@ export default defineConfig({
     // 这需要你安装 happy-dom 作为对等依赖（peer dependency）
     environment: 'happy-dom',
     setupFiles: ['./src/test/setup-i18n.ts', './src/test/setup-network.ts', './src/test/setup-dom.ts'],
+    // vscode-jsonrpc exports its browser build only under the `browser` condition, which
+    // the bundle resolves and vitest (node conditions) does not. The node build would
+    // need Node streams; the browser one is what ships, so the tests run that one.
+    alias: {
+      'vscode-jsonrpc/browser': fileURLToPath(
+        new URL('./node_modules/vscode-jsonrpc/lib/browser/main.js', import.meta.url)
+      ),
+    },
     // Vuetify 的组件包自带 .css 副作用导入，被 externalize 掉就会以
     // "Unknown file extension .css" 崩在收集阶段——挂真实组件的测试需要它走
     // Vite 的 transform 管线。

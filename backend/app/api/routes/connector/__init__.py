@@ -6,6 +6,7 @@
   （``/device/me``、``/agent``）与机器重连时的业务恢复；
 - ``screen.py`` —— 现场 viewer（``/session/{sid}/screen``）；
 - ``terminal.py`` —— 一个人在任务里的终端（``/tasks/{task}/terminals/{id}``）；
+- ``language.py`` —— 任务工作副本旁的语言服务器（``/tasks/{task}/languages/{language}``）；
 - ``connections.py`` —— 「我的设备 / Agent」管理（``/my/*``、``/teams/*``）；
 - ``schemas.py`` —— 线上形状：这些路由的请求与响应模型。
 
@@ -23,6 +24,7 @@ from . import (
     connections,
     credential_login,
     devices,
+    language,
     running_sessions,
     screen,
     terminal,
@@ -35,6 +37,7 @@ router = APIRouter()
 router.include_router(devices.router)
 router.include_router(screen.router)
 router.include_router(terminal.router)
+router.include_router(language.router)
 router.include_router(connections.router)
 router.include_router(credential_login.router)
 
