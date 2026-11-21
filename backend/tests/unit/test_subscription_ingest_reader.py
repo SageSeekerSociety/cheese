@@ -4,6 +4,8 @@ for the next pass. Pure file IO — no DB."""
 import json
 from pathlib import Path
 
+import pytest
+
 from app.domain.usage.subscription_ingest import head_fingerprint, read_new_lines
 
 
@@ -49,10 +51,11 @@ def test_torn_tail_line_is_left_for_the_next_pass(tmp_path):
     assert offset == log.stat().st_size
 
 
-def test_garbage_line_is_consumed_not_wedged_on(tmp_path):
+@pytest.mark.parametrize("garbage", [b"not json at all\n", b'{"model": "\xff"}\n'])
+def test_garbage_line_is_consumed_not_wedged_on(tmp_path, garbage):
     log = tmp_path / "usage.jsonl"
     good = json.dumps({"total_tokens": 3}).encode() + b"\n"
-    _write(log, b"not json at all\n" + good)
+    _write(log, garbage + good)
 
     rows, row_ends, offset = read_new_lines(log, 0)
 

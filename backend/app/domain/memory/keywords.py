@@ -149,6 +149,13 @@ def match_content(terms: list[tuple[str, float]], content: str) -> tuple[float, 
     if not terms:
         return 0.0, 0.0
     lowered = content.lower()
+    words = {
+        raw.strip("._-/+#") for raw in _TOKEN_RE.findall(lowered) if raw[0].isascii()
+    }
     total = sum(weight for _, weight in terms)
-    hit = [weight for term, weight in terms if term in lowered]
+    hit = [
+        weight
+        for term, weight in terms
+        if (term in words if term[0].isascii() else term in lowered)
+    ]
     return (sum(hit) / total if total else 0.0), max(hit, default=0.0)
