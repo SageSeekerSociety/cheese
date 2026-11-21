@@ -541,3 +541,167 @@ def test_the_machine_s_words_never_reach_the_person(task_cloud, monkeypatch):
     assert saved.status_code == 503, saved.text
     message = saved.json()["error"]["message"]
     assert "lstat" not in message and "/home" not in message
+
+
+@pytest.fixture
+def unworked_task(cloud, bucket, monkeypatch):
+    """A task of the second room that no agent has worked in: no session of
+    its own, nothing placed for it."""
+    machines = Machines(cloud)
+    machines._exec = cloud.hosts.exec
+    machines._executor = cloud.hosts.executor
+    monkeypatch.setattr(cloud.hosts, "exec", machines.exec)
+    monkeypatch.setattr(execution, "call", machines.executor)
+    monkeypatch.setattr(task_machine, "ROUND_S", 0.3)
+    monkeypatch.setattr(task_machine, "SAVE_WAIT_S", 10.0)
+    cloud.task = delivery_task(cloud.client, cloud.seats[1].room)
+    cloud.machines = machines
+    cloud.headers = _owner(cloud.client)
+    _a_cloud_machine(cloud, "host-b")
+    return cloud
+
+
+def task_host_comes_up(case, device_id) -> None:
+    """The pool host placed for the task's environment dials in."""
+
+    async def enrol():
+        from app.domain.environment import services as environment_rows
+        from app.domain.machine import occupants
+        from app.domain.machine.repositories import CloudHostRepository
+        from tests.integration.test_sandbox_idle_stop import (
+            AiStatus,
+            MachineStatus,
+            sandbox_image,
+        )
+
+        async with case.client.test_request_factory() as db:
+            environment = await environment_rows.environment_of_conversation(
+                db, case.task.id
+            )
+            home = await occupants.home_of_environment(db, environment.id)
+            if home is None:
+                return False
+            repo = CloudHostRepository(db)
+            host = await repo.get(home.host_id)
+            case.provider.machines[host.machine_id].update(
+                status="running", aiStatus="disabled"
+            )
+            host.status = MachineStatus.running
+            host.ai_status = AiStatus.disabled
+            host.sandbox_image = sandbox_image.default_image()["reference"]
+            from datetime import UTC, datetime
+
+            host.last_seen_at = datetime.now(UTC)
+            await repo.mark_enrolled(
+                host,
+                device_id=device_id,
+                when=datetime.now(UTC),
+                sandbox_disk_gb=host.sandbox_disk_gb,
+            )
+            await db.commit()
+            return True
+
+    # The bring-up places a sandbox for it first, in the background.
+    end = time.monotonic() + 15
+    while not run(case, enrol):
+        assert time.monotonic() < end, "no sandbox was placed for the task"
+        time.sleep(0.1)
+    case.hosts.online.add(device_id)
+
+
+def arrange(case, operation, path, to=None):
+    return case.client.post(
+        f"/projects/{case.project_id}/file/arrange",
+        params={"task": str(case.task.id)},
+        json={"operation": operation, "path": path, "to": to},
+        headers=case.headers,
+    )
+
+
+def test_a_person_edits_the_files_of_a_task_no_agent_worked_in(unworked_task):
+    case = unworked_task
+    assert prepare(case).json()["data"]["started"] is True
+    task_host_comes_up(case, "host-b")
+    assert until_settled(case) == {"machine": "ready", "failed": None}
+    opened = read(case, f"deliveries/{case.task.id}.txt").json()["data"]
+
+    saved = save(
+        case,
+        f"deliveries/{case.task.id}.txt",
+        "edited by a person\n",
+        version=opened["version"],
+        base=opened["content"],
+    )
+    created = arrange(case, "create", "notes/plan.md")
+    moved = arrange(case, "move", "notes/plan.md", "notes/done.md")
+    deleted = arrange(case, "delete", f"deliveries/{case.task.id}.txt")
+
+    for answer in (saved, created, moved, deleted):
+        assert answer.status_code == 200, answer.text
+    listed = case.client.get(
+        f"/projects/{case.project_id}/files",
+        params={"task": str(case.task.id), "source": "live"},
+        headers=case.headers,
+    ).json()["data"]
+    paths = {entry["path"] for entry in listed["data"]}
+    assert "notes/done.md" in paths
+    assert f"deliveries/{case.task.id}.txt" not in paths
+    assert listed["source"] == "live"
+    assert turns(case) == 0
+
+
+def test_someone_not_on_the_project_cannot_bring_the_machine_up(unworked_task):
+    case = unworked_task
+    from tests.integration.conftest import session_auth_headers
+
+    answer = case.client.post(
+        f"/topics/{case.task.id}/machine/prepare",
+        headers=session_auth_headers("mallory"),
+    )
+
+    assert answer.status_code in (403, 404), answer.text
+    assert status(case) == {"machine": None, "failed": None}
+
+
+def test_an_agent_that_comes_later_works_where_the_person_left_their_file(
+    unworked_task,
+):
+    case = unworked_task
+    assert prepare(case).json()["data"]["started"] is True
+    task_host_comes_up(case, "host-b")
+    assert until_settled(case) == {"machine": "ready", "failed": None}
+    assert arrange(case, "create", "from-a-person.md").status_code == 200
+
+    async def seat():
+        async with case.client.test_request_factory() as db:
+            topic = await db.get(Topic, case.task.room_id)
+            agent = await IdentityService(db).ensure_room_agent_user(topic.id)
+            row = await AgentSessionService(db).ensure(
+                case.task.id, "cheese", harness="claude-code"
+            )
+            resource = str(topic.resource_id or topic.id)
+            row.runtime_location = {
+                "device_id": "center",
+                "resource_id": resource,
+                "channel": "device",
+            }
+            token = bind_resource_token(
+                mint_scoped_token(
+                    project_id=str(case.project_id),
+                    topic_id=str(case.task.id),
+                    agent_handle=agent.username,
+                ),
+                resource,
+                session_id=str(row.id),
+            )
+            await db.commit()
+            return SimpleNamespace(room=case.task.id, session=row.id, token=token)
+
+    agent = run(case, seat)
+    hands = tool_call(case, agent)
+
+    assert hands["target"]["device_id"] == "host-b"
+    task_dir = (
+        case.machines.home(hands["target"]) / ".cheese" / "tasks" / str(case.task.id)
+    )
+    assert (task_dir / "from-a-person.md").exists()
