@@ -1180,7 +1180,7 @@ async def _attempt(
             await db.commit()
             return _Preparing(
                 say("environmentPreparing"),
-                partial(lease_claim.moved, db, session_id, lease.get("claim")),
+                partial(lease_claim.moved, db, settled.id, lease.get("claim")),
             )
     devices = sql_device_service(db)
     if lease and await devices.get_device(lease["device_id"]) is None:
@@ -1337,7 +1337,7 @@ async def _attempt(
                 await db.commit()
                 return _Preparing(
                     say("environmentPreparing"),
-                    partial(lease_claim.moved, db, session_id, lease.get("claim")),
+                    partial(lease_claim.moved, db, settled.id, lease.get("claim")),
                 )
         ready = bool(lease and lease.get("status", "ready") == "ready")
     else:
@@ -1552,7 +1552,7 @@ async def _install(
                 else 0
             )
             async with lease_claim.kept(
-                bind, session_id, claim, since=now, most_s=claim_most_s
+                bind, environment_id, claim, since=now, most_s=claim_most_s
             ):
                 thawed = await thaw_if_asked(
                     db,

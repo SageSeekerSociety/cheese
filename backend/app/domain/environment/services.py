@@ -282,10 +282,18 @@ async def release(
 ) -> None:
     """The environment, if on ``device_id``, is released: its sandbox there
     was destroyed, parked or given up, it is checked by nobody since, and the
-    claim of an install that was running on it ended with it. Whoever is
-    attached stays attached; their next call places it again."""
+    claim of an install that was running on it ended with it. The agents
+    attached stay attached, and their next call places it again; a person
+    attached is let go, owed no notice, and attached anew by their next save.
+    """
     environment = await db.get(Environment, environment_id, populate_existing=True)
     if environment is not None and environment.device_id == device_id:
+        await db.execute(
+            delete(EnvironmentAttachment).where(
+                EnvironmentAttachment.environment_id == environment_id,
+                EnvironmentAttachment.user_id.is_not(None),
+            )
+        )
         environment.status = RELEASED
         environment.verified_at = None
         environment.claim = None

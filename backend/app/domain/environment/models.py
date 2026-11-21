@@ -12,7 +12,16 @@ is named here by its id. ``machine`` backs an environment with a sandbox
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint, text
+from sqlalchemy import (
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -126,6 +135,14 @@ class Environment(UuidPk, Timestamps, Base):
     verified_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Why the last bring-up somebody asked for did not finish
+    # (``task_machine.UNAVAILABLE``); cleared when an install claims it again.
+    failure: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # Until when a bring-up somebody asked for is under way: one at a time per
+    # environment, whichever backend process runs it (``task_machine``).
+    preparing_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
 
 class ConversationEnvironment(Base):
@@ -171,15 +188,29 @@ class ConversationEnvironment(Base):
 
 
 class EnvironmentAttachment(Base):
-    """An agent session attached to an environment now: who a command there
-    runs as. Its ``id`` is the name a command carries (``CHEESE_ATTACHMENT``)
-    and its ``generation`` the one the session's credential is bound to (the
-    token's ``lease`` claim), so attaching the session anew ends what its old
-    credential may do there."""
+    """Somebody attached to an environment now: who a command there runs as.
+    Two kinds of attacher, exactly one named: an agent session
+    (``session_id``) or a person (``user_id``). Its ``id`` is the name a
+    command carries (``CHEESE_ATTACHMENT``) — an agent's is its session's id —
+    and its ``generation`` the one a credential minted for it is bound to
+    (the token's ``lease`` claim), new each time it is made, so attaching
+    anew ends what an old credential may do there. ``conversation_id`` is the
+    conversation the attacher works in through this environment."""
 
     __tablename__ = "environment_attachments"
     __table_args__ = (
         UniqueConstraint("session_id", name="uq_environment_attachments_session_id"),
+        CheckConstraint(
+            "num_nonnulls(session_id, user_id) = 1",
+            name="ck_environment_attachments_one_attacher",
+        ),
+        Index(
+            "uq_environment_attachments_environment_id_user_id",
+            "environment_id",
+            "user_id",
+            unique=True,
+            postgresql_where=text("user_id IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
@@ -191,18 +222,38 @@ class EnvironmentAttachment(Base):
         ),
         index=True,
     )
-    session_id: Mapped[uuid.UUID] = mapped_column(
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey(
             "agent_sessions.id",
             ondelete="CASCADE",
             name="fk_environment_attachments_session_id_agent_sessions",
-        )
+        ),
+        nullable=True,
+    )
+    user_id: Mapped[int | None] = mapped_column(
+        Integer,
+        ForeignKey(
+            "user.id",
+            ondelete="CASCADE",
+            name="fk_environment_attachments_user_id_user",
+        ),
+        index=True,
+        nullable=True,
+    )
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "conversations.id",
+            ondelete="CASCADE",
+            name="fk_environment_attachments_conversation_id_conversations",
+        ),
+        index=True,
     )
     generation: Mapped[str] = mapped_column(String(36))
     # The digest of the launch values its executor was last checked against
     # (``session_work._setup_digest``): a change re-checks it.
     setup_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    # The session's last tool call here.
+    # The attacher's last act here: an agent's tool call, a person's read or
+    # save that reached the machine.
     acted_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
