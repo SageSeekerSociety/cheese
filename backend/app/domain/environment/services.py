@@ -81,8 +81,8 @@ def described(*attachment: Any) -> ColumnElement[Any]:
 async def environment_of_conversation(
     db: AsyncSession, conversation_id: uuid.UUID
 ) -> Environment | None:
-    """The environment the conversation points to: the place of its default
-    choice, found from the conversation and never by picking one of its
+    """The environment the conversation points to: the place its work is
+    in, found from the conversation and never by picking one of its
     sessions. None while it points to none."""
     return await db.scalar(
         select(Environment)
