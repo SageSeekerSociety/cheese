@@ -138,8 +138,9 @@ class Environment(UuidPk, Timestamps, Base):
     # Why the last bring-up somebody asked for did not finish
     # (``task_machine.UNAVAILABLE``); cleared when an install claims it again.
     failure: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    # Until when a bring-up somebody asked for is under way: one at a time per
-    # environment, whichever backend process runs it (``task_machine``).
+    # Until when a bring-up somebody asked for stands: renewed by the process
+    # running it, so it lapses shortly after that process is gone. One at a
+    # time per environment, whichever process runs it (``task_machine``).
     preparing_until: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

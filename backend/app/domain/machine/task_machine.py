@@ -37,6 +37,7 @@ it a short while (`prepare_for_write`).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 import uuid
@@ -65,9 +66,15 @@ from app.domain.user.services import user_by_handle
 logger = logging.getLogger(__name__)
 
 #: How long a bring-up keeps asking for a machine still being prepared: a new
-#: Cloud host can take minutes to come up. A bring-up somebody asked for
-#: stands this long (``Environment.preparing_until``) unless it ends first.
+#: Cloud host can take minutes to come up.
 BRING_UP_S = 15 * 60
+#: How long a bring-up somebody asked for stands unrenewed
+#: (``Environment.preparing_until``): the process running it renews it every
+#: ``HOLD_RENEW_S`` while it runs, so one whose process is gone stops saying
+#: "preparing" within this long. It covers what no install claim says yet —
+#: settling, placing, a host still coming up — and the checkout after.
+HOLD_S = 45.0
+HOLD_RENEW_S = 15.0
 #: How long one ask waits for a machine being prepared before asking again.
 ROUND_S = 60.0
 #: How long a save waits for the machine it brought back before it is answered
@@ -137,7 +144,7 @@ async def prepare(
                 Environment.preparing_until <= now,
             ),
         )
-        .values(preparing_until=now + timedelta(seconds=BRING_UP_S), failure=None)
+        .values(preparing_until=now + timedelta(seconds=HOLD_S), failure=None)
         .returning(Environment.id)
     )
     await db.commit()
@@ -192,6 +199,29 @@ async def status(db: AsyncSession, task_id: uuid.UUID) -> Status:
     return Status(machine=None, failed=environment.failure)
 
 
+async def _hold(bind, environment_id: uuid.UUID) -> None:
+    """Keep the bring-up standing while this process runs it: renewed every
+    ``HOLD_RENEW_S``; it lapses ``HOLD_S`` after the last renewal once the
+    process is gone."""
+    while True:
+        await asyncio.sleep(HOLD_RENEW_S)
+        try:
+            async with AsyncSession(bind, expire_on_commit=False) as db:
+                await db.execute(
+                    update(Environment)
+                    .where(
+                        Environment.id == environment_id,
+                        Environment.preparing_until.is_not(None),
+                    )
+                    .values(
+                        preparing_until=datetime.now(UTC) + timedelta(seconds=HOLD_S)
+                    )
+                )
+                await db.commit()
+        except Exception:  # the next beat tries again
+            logger.warning("could not renew the bring-up of %s", environment_id)
+
+
 async def _never_gone() -> bool:
     return False
 
@@ -209,6 +239,7 @@ async def _bring_up(
     on them. Whatever the end, the bring-up is over; a failure is kept on the
     environment for `status`, and what the machine said is logged."""
     failure = None
+    holding = asyncio.ensure_future(_hold(bind, environment_id))
     try:
         deadline = time.monotonic() + BRING_UP_S
         async with AsyncSession(bind, expire_on_commit=False) as db:
@@ -258,6 +289,9 @@ async def _bring_up(
         logger.warning("bringing task %s's machine back failed", task_id, exc_info=True)
         failure = UNAVAILABLE
     finally:
+        holding.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await holding
         async with AsyncSession(bind, expire_on_commit=False) as db:
             await db.execute(
                 update(Environment)

@@ -325,7 +325,7 @@ def _install_case(
     return session_work._install(
         "bind",
         attacher=session_work.Attacher.agent(
-            session_id, uuid.uuid4(), token="launch-token", claims={}, env={}
+            session_id, {}, token="launch-token", env={}
         ),
         attachment_id=session_id,
         token="launch-token",

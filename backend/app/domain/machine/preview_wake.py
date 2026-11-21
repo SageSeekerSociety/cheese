@@ -36,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.redis import get_redis_client
 from app.domain.agent.device_hub import device_hub
 from app.domain.environment import services as environment_rows
+from app.domain.environment.models import EnvironmentAttachment
 from app.domain.machine import lifecycle, occupants
 from app.domain.machine.models import SandboxHome
 from app.domain.machine.services import ACTIVE_STEP, HostPool
@@ -212,7 +213,9 @@ async def thaw_preview_on_machine(bind, *, environment_id: uuid.UUID, hub=None) 
         return False
 
 
-async def wake_for_files(bind, conversation_id: uuid.UUID, *, hub=None) -> None:
+async def wake_for_files(
+    bind, conversation_id: uuid.UUID, *, user_id: int | None = None, hub=None
+) -> None:
     """Thaw the frozen sandbox that holds a conversation's working copy before
     a person's read or save reaches it (`repository.ports.WakeWorkingCopy`).
 
@@ -225,7 +228,9 @@ async def wake_for_files(bind, conversation_id: uuid.UUID, *, hub=None) -> None:
 
     A person reading or saving the files is using the sandbox as its teammate
     does: its idle clock moves to now (at most once per ``ACTIVE_STEP``), so
-    the idle sweep does not take it away under somebody editing in it."""
+    the idle sweep does not take it away under somebody editing in it. The
+    person's attachment there (``user_id``) has acted then too, on the same
+    step."""
     async with AsyncSession(bind, expire_on_commit=False) as db:
         environment = await environment_rows.environment_of_conversation(
             db, conversation_id
@@ -243,6 +248,16 @@ async def wake_for_files(bind, conversation_id: uuid.UUID, *, hub=None) -> None:
             )
             .values(active_at=now)
         )
+        if user_id is not None:
+            await db.execute(
+                update(EnvironmentAttachment)
+                .where(
+                    EnvironmentAttachment.environment_id == environment.id,
+                    EnvironmentAttachment.user_id == user_id,
+                    EnvironmentAttachment.acted_at <= now - ACTIVE_STEP,
+                )
+                .values(acted_at=now)
+            )
         await db.commit()
         if not await _frozen(db, environment.sandbox_home_id):
             return

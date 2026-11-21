@@ -152,6 +152,7 @@ def mint_environment_credential(
     lease_generation: str | None,
     scratch: bool,
     by: str | None = None,
+    preview_seat: str | None = None,
     ttl_s: int = _SCOPED_TTL_S,
 ) -> str:
     """The credential a request from an environment is answered with when no
@@ -163,7 +164,11 @@ def mint_environment_credential(
     (``ActorResolver.acting_agent``) — and never what a person may.
     ``scratch`` is a 支线's environment, whose work is not kept. ``by`` is the
     person whose command it is, for attribution only: no route reads it as
-    whom to authorize."""
+    whom to authorize. ``preview_seat`` (``pv``) is the seat the
+    conversation's app preview is served under when this credential carries
+    the tunnel (``routes/app_preview``): the room's answering teammate, the
+    same one a declaration under this credential is recorded as
+    (``topics_shown``). It keys the tunnel and authorizes nothing."""
     claims: dict[str, str | int | bool | None] = {
         "p": project_id,
         "t": conversation_id,
@@ -177,6 +182,8 @@ def mint_environment_credential(
         claims["scratch"] = True
     if by:
         claims["by"] = by
+    if preview_seat:
+        claims["pv"] = preview_seat
     return credentials.mint(Kind.AGENT, claims, ttl_s=ttl_s)
 
 

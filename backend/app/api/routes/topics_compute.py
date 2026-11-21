@@ -325,13 +325,15 @@ async def acquire_session_work_lease(
                 await session_work.ensure(
                     db,
                     topic_id=holder_id,
-                    session_id=session_id,
-                    claims=claims,
-                    token=token,
-                    env=body.env,
+                    attacher=session_work.Attacher.agent(
+                        session_id,
+                        claims,
+                        token=token,
+                        env=body.env,
+                        tells_agent=body.tells_agent,
+                    ),
                     wait_s=min(session_work.PREPARING_WAIT_S, body.timeout),
                     gone=request.is_disconnected,
-                    tells_agent=body.tells_agent,
                 )
             )
     except TimeoutError:

@@ -43,6 +43,7 @@ from app.domain.membership.roster import roster
 from app.domain.project.services import ProjectService
 from app.domain.room_task.place import session_keeps_work
 from app.domain.topic.services import TopicService
+from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.models import User
 
 #: How long the credential a socket request is served under lives: it is made
@@ -245,13 +246,21 @@ async def credential_of(
         )
         if holder is None:
             return None
+        conversation = uuid.UUID(caller.conversation_id)
         made = await environment_credential(
             db,
             holder,
-            conversation_id=uuid.UUID(caller.conversation_id),
+            conversation_id=conversation,
             environment_id=uuid.UUID(caller.environment_id),
             lease_generation=caller.generation,
             by=caller.handle,
+            # The seat the conversation's preview is served under: the
+            # room's answering teammate, as a declaration made under this
+            # credential records it. A runtime that names no attachment
+            # still has its preview served.
+            preview_seat=await TopicMemberService(db).resolve_agent_handle(
+                await room_of(db, conversation)
+            ),
             ttl_s=ttl_s,
         )
         return for_a_machine(made) if held else made

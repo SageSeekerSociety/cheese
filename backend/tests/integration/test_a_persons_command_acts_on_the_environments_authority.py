@@ -40,15 +40,17 @@ def _owner(monkeypatch):
     monkeypatch.setattr(settings, "device_connection_secret", "owner-secret")
 
 
-def _alice_attached(client, task_id: uuid.UUID) -> tuple[str, str]:
+def _alice_attached(client, conversation_id: uuid.UUID) -> tuple[str, str]:
     """The task's environment, ready on a machine, with alice attached to it
     from the task. Answers the machine and her attachment."""
     device = f"machine-{uuid.uuid4().hex[:8]}"
 
     async def seed():
         async with client.test_factory() as db:
-            task = await db.get(Task, task_id)
-            room = await db.get(Topic, task.room_id)
+            task = await db.get(Task, conversation_id)
+            room = await db.get(
+                Topic, task.room_id if task is not None else conversation_id
+            )
             alice = await db.scalar(select(User).where(User.username == "alice"))
             environment = Environment(
                 id=uuid.uuid4(),
@@ -65,14 +67,14 @@ def _alice_attached(client, task_id: uuid.UUID) -> tuple[str, str]:
             await db.flush()
             db.add(
                 ConversationEnvironment(
-                    conversation_id=task_id, environment_id=environment.id
+                    conversation_id=conversation_id, environment_id=environment.id
                 )
             )
             attachment = EnvironmentAttachment(
                 id=uuid.uuid4(),
                 environment_id=environment.id,
                 user_id=alice.id,
-                conversation_id=task_id,
+                conversation_id=conversation_id,
                 generation=str(uuid.uuid4()),
             )
             db.add(attachment)
@@ -96,7 +98,9 @@ def test_it_cannot_accept_a_hand_in_waiting_on_that_person(client, named):
     project = _make_project(client)
     room = _make_topic(client, project)
     card = _make_card(client, room, "alice")
-    device, attachment = _alice_attached(client, delivery_task_id(client, room))
+    # Attached where the card is decided — the room — so the one thing the
+    # request lacks to accept it is the person's own authority.
+    device, attachment = _alice_attached(client, uuid.UUID(room))
 
     answer = client.post(
         f"/machine/api/accept-cards/{card}/accept",

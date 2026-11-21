@@ -39,6 +39,7 @@ from app.domain.machine.task_machine import prepare_for_write
 from app.domain.project.services import ProjectService
 from app.domain.project_permissions import Permission
 from app.domain.repository.forge_files import ProjectFiles
+from app.domain.repository.ports import WakeWorkingCopy
 from app.domain.review import forge_clients
 from app.domain.review.landed import tasks_that_landed
 from app.domain.room_task.place import Task, TaskStatus, TopicStatus, place_or_404
@@ -129,10 +130,24 @@ async def require_place_access(
     return work
 
 
+async def _wake(db: DbSession, resolver: ActorResolverDep) -> WakeWorkingCopy:
+    """What wakes a task's sandbox before this request reaches it
+    (`preview_wake.wake_for_files`): the person asking, when one is, is the
+    one whose attachment there has acted."""
+    person = await resolver.person()
+    return partial(
+        wake_for_files, db.bind, user_id=person.user_id if person is not None else None
+    )
+
+
+Wake = Annotated[WakeWorkingCopy, Depends(_wake)]
+
+
 @router.get("/{project_id}/files", dependencies=[Depends(require_place_access)])
 async def list_files(
     project_id: uuid.UUID,
     db: DbSession,
+    wake: Wake,
     topic: uuid.UUID | None = None,
     task: uuid.UUID | None = None,
     source: Literal["live", "committed"] = "live",
@@ -145,7 +160,7 @@ async def list_files(
         task,
         release_session=True,
         executor=execution.call,
-        wake=partial(wake_for_files, db.bind),
+        wake=wake,
     ).files(source)
     return ok({**page(files, len(files)), "source": actual_source, "dirs": dirs})
 
@@ -155,6 +170,7 @@ async def read_file(
     project_id: uuid.UUID,
     path: str,
     db: DbSession,
+    wake: Wake,
     topic: uuid.UUID | None = None,
     task: uuid.UUID | None = None,
     source: Literal["live", "committed"] = "live",
@@ -174,7 +190,7 @@ async def read_file(
             task,
             release_session=True,
             executor=execution.call,
-            wake=partial(wake_for_files, db.bind),
+            wake=wake,
         ).text(path, source)
     )
 
@@ -184,6 +200,7 @@ async def read_file_raw(
     project_id: uuid.UUID,
     path: str,
     db: DbSession,
+    wake: Wake,
     topic: uuid.UUID | None = None,
     task: uuid.UUID | None = None,
     download: bool = False,
@@ -198,7 +215,7 @@ async def read_file_raw(
         task,
         release_session=True,
         executor=execution.call,
-        wake=partial(wake_for_files, db.bind),
+        wake=wake,
     ).raw(path, source)
     mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
     # Arbitrary uploads must never execute in the app's origin.
@@ -227,6 +244,7 @@ async def write_file(
     project_id: uuid.UUID,
     body: dict,
     db: DbSession,
+    wake: Wake,
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
     topic: uuid.UUID | None = None,
@@ -263,7 +281,7 @@ async def write_file(
         task,
         release_session=True,
         executor=execution.call,
-        wake=partial(wake_for_files, db.bind),
+        wake=wake,
         # A save brings the task's machine back when none holds its copy.
         prepare=partial(prepare_for_write, db.bind, actor),
     ).save(path, content, version, base if isinstance(base, str) else None)
@@ -314,6 +332,7 @@ async def arrange_file(
     project_id: uuid.UUID,
     body: FileArrangeIn,
     db: DbSession,
+    wake: Wake,
     resolver: ActorResolverDep,
     _edits: Annotated[InProject, Can(Permission.edit_content)],
     task: uuid.UUID | None = None,
@@ -332,7 +351,7 @@ async def arrange_file(
         task,
         release_session=True,
         executor=execution.call,
-        wake=partial(wake_for_files, db.bind),
+        wake=wake,
         prepare=partial(prepare_for_write, db.bind, actor),
     ).arrange(body.operation, body.path.strip(), body.to.strip() if body.to else None)
     return ok({"path": done.get("path", body.path)})
@@ -403,6 +422,7 @@ async def project_history(
 async def git_diff(
     project_id: uuid.UUID,
     db: DbSession,
+    wake: Wake,
     ref: str | None = None,
     topic: uuid.UUID | None = None,
     task: uuid.UUID | None = None,
@@ -417,7 +437,7 @@ async def git_diff(
                 task,
                 release_session=True,
                 executor=execution.call,
-                wake=partial(wake_for_files, db.bind),
+                wake=wake,
                 compare_status=forge_clients.compare_status,
             ).diff(source, ref)
         }

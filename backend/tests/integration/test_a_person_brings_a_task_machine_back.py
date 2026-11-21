@@ -705,3 +705,83 @@ def test_an_agent_that_comes_later_works_where_the_person_left_their_file(
         case.machines.home(hands["target"]) / ".cheese" / "tasks" / str(case.task.id)
     )
     assert (task_dir / "from-a-person.md").exists()
+
+
+def test_a_bring_up_whose_process_is_gone_soon_stops_saying_preparing(
+    task_cloud, monkeypatch
+):
+    """The backend process running a bring-up can die with it; the task does
+    not go on saying its machine is being prepared, and it can be asked for
+    again."""
+    case = task_cloud
+    destroyed_with_work_kept(case)
+    monkeypatch.setattr(task_machine, "HOLD_S", 0.5)
+
+    async def died(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(task_machine, "_bring_up", died)
+    assert prepare(case).json()["data"]["started"] is True
+    assert status(case)["machine"] == "preparing"
+
+    time.sleep(0.7)
+
+    assert status(case) == {"machine": None, "failed": None}
+    assert prepare(case).json()["data"]["started"] is True
+
+
+def test_a_sandbox_a_person_saved_into_is_kept_and_one_open_in_a_tab_is_not(
+    task_cloud,
+):
+    case = task_cloud
+    opened = read(case, "notes.md").json()["data"]
+    time_passes(case, case.seat, timedelta(minutes=11))
+
+    saved = save(
+        case,
+        "notes.md",
+        "saved within the idle time\n",
+        version=opened["version"],
+        base=opened["content"],
+    )
+    assert saved.status_code == 200, saved.text
+    assert sweep(case)["destroyed"] == 0
+    assert home_row(case, case.seat) is not None
+
+    # Open in a tab, nothing asked of it: the panel does not poll.
+    time_passes(case, case.seat, timedelta(minutes=11))
+    assert sweep(case)["destroyed"] == 1
+    assert home_row(case, case.seat) is None
+
+
+def test_a_persons_read_that_reaches_the_machine_is_an_act_of_theirs(
+    unworked_task,
+):
+    case = unworked_task
+    assert prepare(case).json()["data"]["started"] is True
+    task_host_comes_up(case, "host-b")
+    assert until_settled(case) == {"machine": "ready", "failed": None}
+
+    async def acted(*, back: timedelta | None = None):
+        from sqlalchemy import update
+
+        from app.domain.environment.models import EnvironmentAttachment
+
+        async with case.client.test_request_factory() as db:
+            if back is not None:
+                await db.execute(
+                    update(EnvironmentAttachment)
+                    .where(EnvironmentAttachment.user_id.is_not(None))
+                    .values(acted_at=EnvironmentAttachment.acted_at - back)
+                )
+                await db.commit()
+            return await db.scalar(
+                select(EnvironmentAttachment.acted_at).where(
+                    EnvironmentAttachment.user_id.is_not(None)
+                )
+            )
+
+    before = run(case, lambda: acted(back=timedelta(minutes=5)))
+    assert read(case, f"deliveries/{case.task.id}.txt").status_code == 200
+
+    assert run(case, acted) > before + timedelta(minutes=4)

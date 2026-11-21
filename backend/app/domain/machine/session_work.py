@@ -898,15 +898,16 @@ class Attacher:
     def agent(
         cls,
         session_id: uuid.UUID,
-        conversation_id: uuid.UUID | None,
+        claims: dict,
         *,
         token: str,
-        claims: dict,
         env: dict,
         tells_agent: bool = False,
     ) -> "Attacher":
+        """An agent session asking with its credential: ``claims`` as
+        verified, which name the conversation it says it works in."""
         return cls(
-            conversation_id=conversation_id,
+            conversation_id=_uuid_or_none(claims.get("t")),
             session_id=session_id,
             token=token,
             claims=claims,
@@ -1106,38 +1107,22 @@ async def ensure(
     gone,
     hub=None,
     whole_check=False,
-    attacher: Attacher | None = None,
-    session_id=None,
-    claims=None,
-    token=None,
-    env=None,
-    tells_agent=False,
+    attacher: Attacher,
 ) -> dict[str, Any]:
-    """Hands for the ``attacher`` — an agent session (given as ``attacher``,
-    or by ``session_id`` with the ``claims``, ``token`` and ``env`` it asked
-    with), or a person — waiting up to ``wait_s`` while they are prepared.
+    """Hands for the ``attacher`` — an agent session or a person — waiting up
+    to ``wait_s`` while they are prepared.
 
     ``gone`` reports that the caller has left (its command was stopped or
     timed out), which ends the wait without taking anything further.
-    ``tells_agent``: the caller hands a ``notice`` in the answer to the agent
-    beside its tool's result. Only such a caller is given one, and it is given
-    once: a session whose sandbox was lost hears so on the first of its tool
-    calls that has a new one, not on a hook's call that nobody reads.
+    An agent whose caller hands a ``notice`` to it beside its tool's result
+    (``Attacher.tells_agent``) is given one, once: a session whose sandbox was
+    lost hears so on the first of its tool calls that has a new one, not on a
+    hook's call that nobody reads.
     ``whole_check``: hands checked a moment ago are checked again end to end
     (`_verified` reads only the record), so an executor that stopped since is
     started again rather than handed out.
     """
     hub = hub or device_hub
-    if attacher is None:
-        assert session_id is not None and claims is not None
-        attacher = Attacher.agent(
-            session_id,
-            _uuid_or_none(claims.get("t")),
-            token=token or "",
-            claims=claims,
-            env=env or {},
-            tells_agent=tells_agent,
-        )
     held = (
         None
         if whole_check
@@ -1602,6 +1587,7 @@ async def environment_credential(
     environment_id: uuid.UUID,
     lease_generation: str | None,
     by: str | None = None,
+    preview_seat: str | None = None,
     ttl_s: int | None = None,
 ) -> str:
     """The credential minted for an attachment that is no agent — a
@@ -1619,6 +1605,7 @@ async def environment_credential(
         lease_generation=lease_generation,
         scratch=not await conversation_keeps_work(db, conversation_id),
         by=by,
+        preview_seat=preview_seat,
         **({"ttl_s": ttl_s} if ttl_s is not None else {}),
     )
 
