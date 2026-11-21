@@ -70,7 +70,7 @@ async def prepare_task_machine(topic_id: uuid.UUID, at: Edits, db: DbSession) ->
     (`machine.task_machine`). Answers at once; ``status`` says how far it got.
     A task nobody has worked in on a machine is refused."""
     # A machine the record says is ready is checked again end to end too: its
-    # executor may have stopped since (`session_work.hands_for_a_person`).
+    # executor may have stopped since (`task_machine._bring_up`).
     started = await task_machine.prepare(db, _task_of(at), at.actor)
     return ok({"started": started, "reason": None if started else "preparing"})
 

@@ -29,17 +29,29 @@ async def test_finding_a_sandboxs_session_uses_the_environment_device_index(clie
     async with client.test_factory() as db:
         event.listen(Engine, "after_cursor_execute", record)
         try:
-            caller = await caller_of(db, room.old_device, "/old/state")
+            caller = await caller_of(
+                db, room.old_device, "/old/state", str(room.session_id)
+            )
         finally:
             event.remove(Engine, "after_cursor_execute", record)
     assert caller is not None and caller.session_id == str(room.session_id)
 
-    (found,) = [s for s in statements if "FROM agent_sessions" in s[0]][:1]
-    sql, _ = found
+    (found,) = [s for s in statements if "FROM environments" in s[0]][:1]
+    sql, parameters = found
     assert "environments.device_id = " in sql, sql
     # The statement as sent, its device bound, over enough sessions on other
     # devices that reading them all would be the planner's choice without it.
-    bound = re.sub(r"\$1(::VARCHAR)?", "CAST(:device AS varchar)", sql)
+    values = list(parameters)
+    bound = sql
+    for number in range(len(values), 0, -1):
+        value = values[number - 1]
+        bound = re.sub(
+            rf"\${number}(::\w+)?",
+            "CAST(:device AS varchar)"
+            if value == room.old_device
+            else f"CAST('{value}' AS uuid)",
+            bound,
+        )
     async with client.test_factory() as db:
         await db.execute(
             text(

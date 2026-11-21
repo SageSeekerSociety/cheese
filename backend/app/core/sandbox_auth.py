@@ -143,6 +143,43 @@ def bind_resource_token(
     return credentials.mint(Kind.AGENT, claims)
 
 
+def mint_environment_credential(
+    *,
+    project_id: str,
+    conversation_id: str,
+    resource_id: str,
+    environment_id: str,
+    lease_generation: str | None,
+    scratch: bool,
+    by: str | None = None,
+    ttl_s: int = _SCOPED_TTL_S,
+) -> str:
+    """The credential a request from an environment is answered with when no
+    agent session started it: the environment's own authority, or a person's
+    command there. It names the project, the conversation (``t``), the room's
+    resource (``r``), the environment (``env``) and the attachment's
+    generation (``lease``), and no agent (``a``): what it may do is what the
+    environment may do — the room's roster answers for it
+    (``ActorResolver.acting_agent``) — and never what a person may.
+    ``scratch`` is a 支线's environment, whose work is not kept. ``by`` is the
+    person whose command it is, for attribution only: no route reads it as
+    whom to authorize."""
+    claims: dict[str, str | int | bool | None] = {
+        "p": project_id,
+        "t": conversation_id,
+        "r": resource_id,
+        "env": environment_id,
+    }
+    if lease_generation is not None:
+        claims["lease"] = lease_generation
+    if scratch:
+        claims["ro"] = True
+        claims["scratch"] = True
+    if by:
+        claims["by"] = by
+    return credentials.mint(Kind.AGENT, claims, ttl_s=ttl_s)
+
+
 def token_agent_handle(token: str) -> str | None:
     """The 分身 handle a VALID scoped token acts as, or ``None``.
 

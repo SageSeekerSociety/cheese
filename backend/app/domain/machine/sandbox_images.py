@@ -18,10 +18,24 @@ logger = logging.getLogger(__name__)
 
 
 async def image_for_session(db, device_id, session_id):
+    """The image the sandbox of the session's environment on ``device_id``
+    runs (`image_for_environment`)."""
+    return await _image_for(db, device_id, await occupants.home_of(db, session_id))
+
+
+async def image_for_environment(db, device_id, environment_id):
+    """The image the environment's sandbox on ``device_id`` runs: the one its
+    home was first given, kept when its host moves on to another; a new home
+    takes the host's."""
+    return await _image_for(
+        db, device_id, await occupants.home_of_environment(db, environment_id)
+    )
+
+
+async def _image_for(db, device_id, home):
     host = await db.scalar(select(CloudHost).where(CloudHost.device_id == device_id))
     if host is None or host.whole_machine:
         return None
-    home = await occupants.home_of(db, session_id)
     if home is None:
         return host.sandbox_image or None
     if not home.sandbox_image:

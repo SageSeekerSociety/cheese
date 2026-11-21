@@ -72,10 +72,10 @@ SANDBOX_RESUMED = (
 )
 
 
-async def _home_removed(db, session_id) -> bool:
+async def _home_removed(db, environment_id) -> bool:
     """The sandbox being destroyed is gone, so the next attempt places the
-    session in a new one."""
-    home = await occupants.home_of(db, session_id)
+    environment in a new one."""
+    home = await occupants.home_of_environment(db, environment_id)
     return home is None or home.stopped_at is None
 
 

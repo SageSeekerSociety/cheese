@@ -74,12 +74,14 @@ async def open_task_workspace(
     from app.domain.room_task.services import TaskService
 
     task = await _task_for(db, project_id, task_id, credential, opening=True)
-    acting = token_agent_handle(credential)
-    if not acting:
-        raise AuthenticationRequiredError("Opening a task needs an agent identity")
     if task.status == "closed":
         raise ValidationError(say("taskEndedCreateNew"))
-    await TaskService(db).record_author(task, acting)
+    # An agent opening its task is recorded as its author. A command a
+    # person or the environment itself started names no agent, and records
+    # nobody: a person working the files is not the task's author.
+    acting = token_agent_handle(credential)
+    if acting:
+        await TaskService(db).record_author(task, acting)
     if task.branch_name is None and not await TaskService(db).give_branch(task):
         # deferred-import: tests patch this name on app.domain.project.forge
         from app.domain.project.forge import binding_for_project

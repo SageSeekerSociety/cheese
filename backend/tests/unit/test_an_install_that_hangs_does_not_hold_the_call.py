@@ -321,11 +321,15 @@ def _install_case(
                 executor_launch, "payload_for", lambda *a, **k: {"prepared": 1}
             )
         hub = SimpleNamespace(exec=AsyncMock(return_value=result))
+    session_id = uuid.uuid4()
     return session_work._install(
         "bind",
+        attacher=session_work.Attacher.agent(
+            session_id, uuid.uuid4(), token="launch-token", claims={}, env={}
+        ),
+        attachment_id=session_id,
         token="launch-token",
         resource="resource",
-        session_id=uuid.uuid4(),
         environment_id=uuid.uuid4(),
         generation="1",
         env={},

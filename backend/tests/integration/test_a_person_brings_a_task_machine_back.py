@@ -447,19 +447,17 @@ def test_a_save_while_the_machine_is_still_coming_up_says_to_try_again(
     assert later.status_code == 200, later.text
 
 
-def test_a_task_nobody_worked_on_a_machine_is_refused_plainly(cloud):
+def test_a_task_nobody_worked_on_has_its_machine_brought_up(cloud):
+    """A person need not wait for an agent to have worked in a task: asking
+    for its machine starts bringing one up."""
     task = delivery_task(cloud.client, cloud.seats[1].room)
 
     answer = cloud.client.post(
         f"/topics/{task.id}/machine/prepare", headers=_owner(cloud.client)
     )
 
-    assert answer.status_code == 409, answer.text
-    assert answer.json()["error"]["name"] == "NoTaskSession"
-    assert (
-        answer.json()["error"]["message"]
-        == "这个任务还没有准备过环境，暂时无法编辑文件"
-    )
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["data"]["started"] is True
 
 
 @pytest.fixture

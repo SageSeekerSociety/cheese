@@ -12,6 +12,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime, timedelta
 from functools import partial
+from typing import Any
 
 import httpx
 from sqlalchemy import exists, select
@@ -22,7 +23,7 @@ from app.core.errors import ConflictError, ForbiddenError, NotFoundError
 from app.core.sandbox_auth import (
     bind_resource_token,
     for_a_machine,
-    scoped_token_claims,
+    mint_environment_credential,
 )
 from app.core.sentences import say
 from app.domain.addressing import REASON_MACHINE_OWNER, Addressed, Recipient
@@ -33,6 +34,7 @@ from app.domain.agent.device_provider import (
     environment_status,
 )
 from app.domain.agent.environment import VM, Sandbox, SelfHosted, spec_of
+from app.domain.agent.environment import parse as parse_environment
 from app.domain.agent.environment_failures import tell_failed
 from app.domain.agent.harness.channel import ScreenSetupError, mint_session_token
 from app.domain.agent.harness.claude_code import executor_launch as launch
@@ -52,7 +54,7 @@ from app.domain.device import sandbox as device_sandbox
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.environment import services as environment_rows
-from app.domain.environment.models import EnvironmentAttachment
+from app.domain.environment.models import Environment, EnvironmentAttachment
 from app.domain.identity.actor import Actor
 from app.domain.machine import holder as holders
 from app.domain.machine import lease_claim, occupants, root_snapshots
@@ -69,7 +71,10 @@ from app.domain.machine.lifecycle import (
 )
 from app.domain.machine.models import CloudHost, sandbox_image_ready
 from app.domain.machine.progress import publish_line
-from app.domain.machine.sandbox_images import image_for_session
+from app.domain.machine.sandbox_images import (
+    image_for_environment,
+    image_for_session,
+)
 from app.domain.machine.sandbox_wait import (
     DISK_FULL,
     DISK_FULL_NOTICE,
@@ -97,6 +102,7 @@ from app.domain.project.models import Project
 from app.domain.project.services import ProjectService
 from app.domain.repository.kept_work import keeps_work, kept_ref, kept_work
 from app.domain.room_task.models import Task
+from app.domain.room_task.place import conversation_keeps_work
 from app.domain.team.models import Team, TeamUserRelation
 from app.domain.team.protocol import TeamMemberRole
 from app.domain.topic.models import Topic, TopicKind
@@ -628,46 +634,6 @@ async def _launch_values(db, row, topic, project) -> tuple[str, dict]:
     return author, {"CHEESE_ENVIRONMENT": json.dumps(environment)}
 
 
-async def hands_for_a_person(db, row, *, actor: Actor, wait_s: float, hub=None):
-    """The hands of the session ``row`` taken for a person, with no turn
-    behind them: a person opening the task's files for editing brings its
-    machine back. The same admission a tool call goes through (`ensure`),
-    with the credential and variables a session is started again with when
-    no turn starts it (`restart_executor`), and checked end to end, so an
-    executor that stopped since is started again. Placed in ``actor``'s name,
-    whose project pays as it does for its teammate. Nothing is told to the
-    agent: a notice it is owed stays for its own next tool call."""
-    topic = await TopicService(db).get_or_404(await room_of(db, row.conversation_id))
-    project = await ProjectService(db).get_or_404(topic.project_id)
-    holder_id = await holders.holder_of(db, row.conversation_id)
-    author, values = await _launch_values(db, row, topic, project)
-    token = bind_resource_token(
-        mint_session_token(project.id, row.conversation_id, author),
-        str(topic.resource_id or topic.id),
-        session_id=str(row.id),
-    )
-    claims = scoped_token_claims(token)
-    assert claims is not None  # minted just now
-    await db.commit()
-    return await ensure(
-        db,
-        topic_id=holder_id,
-        session_id=row.id,
-        claims=claims,
-        token=token,
-        env=values,
-        wait_s=wait_s,
-        gone=_never_gone,
-        hub=hub,
-        actor=actor,
-        whole_check=True,
-    )
-
-
-async def _never_gone() -> bool:
-    return False
-
-
 async def restart_executor(db, row, lease) -> Restart:
     """How to start again the executor of the session ``row`` on the machine
     its ``lease`` is on, as a tool call there would: with the credential a
@@ -898,7 +864,98 @@ def _setup_digest(env: dict) -> str:
     return hashlib.sha256(json.dumps(env, sort_keys=True).encode()).hexdigest()
 
 
-async def _verified(db, *, topic_id, session_id, claims, token, env, hub):
+@dataclass(frozen=True, slots=True)
+class Attacher:
+    """Who takes hands in an environment: an agent session, asking with its
+    credential for one of its tool calls, or a person bringing a
+    conversation's machine back for its files, with no turn. One path for
+    both (`ensure`); what only an agent has stays the agent's — its
+    credential's claims, the machine its session runs on, the choice it or
+    its chooser made, what its agent is owed and told, and its device owner's
+    notice."""
+
+    #: The conversation the attacher works in through the environment; an
+    #: agent's is read off its session's row, and this is what its
+    #: credential claims.
+    conversation_id: uuid.UUID | None
+    #: An agent's session; None for a person.
+    session_id: uuid.UUID | None = None
+    #: A person's account; None for an agent.
+    user_id: int | None = None
+    #: Who a sandbox placed for this call is started for and paid by
+    #: (``holder.require_use``): the person, or for an agent the one who
+    #: chose its environment when not the session's own.
+    actor: Actor | None = None
+    #: An agent's credential, as presented and as verified.
+    token: str = ""
+    claims: dict = field(default_factory=dict)
+    #: The variables its executor is set up with.
+    env: dict = field(default_factory=dict)
+    #: The caller hands a ``notice`` to the agent beside its tool's result.
+    tells_agent: bool = False
+
+    @classmethod
+    def agent(
+        cls,
+        session_id: uuid.UUID,
+        conversation_id: uuid.UUID | None,
+        *,
+        token: str,
+        claims: dict,
+        env: dict,
+        tells_agent: bool = False,
+    ) -> "Attacher":
+        return cls(
+            conversation_id=conversation_id,
+            session_id=session_id,
+            token=token,
+            claims=claims,
+            env=env,
+            tells_agent=tells_agent,
+        )
+
+    @classmethod
+    def person(cls, actor: Actor, conversation_id: uuid.UUID, env: dict) -> "Attacher":
+        assert actor.user_id is not None  # a signed-in person
+        return cls(
+            conversation_id=conversation_id,
+            user_id=actor.user_id,
+            actor=actor,
+            env=env,
+        )
+
+
+def _uuid_or_none(value) -> uuid.UUID | None:
+    try:
+        return uuid.UUID(str(value))
+    except ValueError:
+        return None
+
+
+async def _held_by(
+    db, attacher: Attacher, attachment_id: uuid.UUID | None, *, lock: bool = False
+) -> attachments.Attachment | None:
+    """The attacher's attachment and the environment it is on, as they
+    stand."""
+    if attacher.session_id is not None:
+        return await attachments.attachment_of(db, attacher.session_id, lock=lock)
+    if attachment_id is None:
+        return None
+    return await attachments.person_attachment(db, attachment_id, lock=lock)
+
+
+async def person_launch_values(db, conversation_id: uuid.UUID) -> dict:
+    """The variables an executor a person brings up is set up with: the
+    room's environment, as a turn there hands it over (`_launch_values`)."""
+    room = await TopicService(db).get_or_404(await room_of(db, conversation_id))
+    return {
+        "CHEESE_ENVIRONMENT": json.dumps(
+            await pin_environment(db, room.project_id, room.id)
+        )
+    }
+
+
+async def _verified(db, *, topic_id, attacher: Attacher, hub):
     """The hands this session already holds, when they were checked within
     ``VERIFIED_FOR`` and nothing since says otherwise; None sends the caller
     through the whole check (`_attempt`), which also gives every refusal.
@@ -916,6 +973,15 @@ async def _verified(db, *, topic_id, session_id, claims, token, env, hub):
     brought the machine back in between), a lease being re-checked or replaced (its ``verified_at`` is dropped, `_attempt`), a
     sandbox being destroyed or not touched for ``ACTIVE_STEP``, and a machine
     the hub does not reach are all left to the whole check."""
+    if attacher.session_id is None:
+        # A person's bring-up is checked whole every time.
+        return None
+    session_id, claims, token, env = (
+        attacher.session_id,
+        attacher.claims,
+        attacher.token,
+        attacher.env,
+    )
     holder = await holders.look(db, topic_id)
     if holder is None:
         return None
@@ -1036,18 +1102,20 @@ async def ensure(
     db,
     *,
     topic_id,
-    session_id,
-    claims,
-    token,
-    env,
     wait_s,
     gone,
     hub=None,
-    tells_agent=False,
-    actor: Actor | None = None,
     whole_check=False,
-):
-    """Hands for this session, waiting up to ``wait_s`` while they are prepared.
+    attacher: Attacher | None = None,
+    session_id=None,
+    claims=None,
+    token=None,
+    env=None,
+    tells_agent=False,
+) -> dict[str, Any]:
+    """Hands for the ``attacher`` — an agent session (given as ``attacher``,
+    or by ``session_id`` with the ``claims``, ``token`` and ``env`` it asked
+    with), or a person — waiting up to ``wait_s`` while they are prepared.
 
     ``gone`` reports that the caller has left (its command was stopped or
     timed out), which ends the wait without taking anything further.
@@ -1055,42 +1123,32 @@ async def ensure(
     beside its tool's result. Only such a caller is given one, and it is given
     once: a session whose sandbox was lost hears so on the first of its tool
     calls that has a new one, not on a hook's call that nobody reads.
-    ``actor``: who a sandbox placed for this call is started for, when that is
-    not the session's own choice (a person bringing a task's machine back).
     ``whole_check``: hands checked a moment ago are checked again end to end
     (`_verified` reads only the record), so an executor that stopped since is
     started again rather than handed out.
     """
     hub = hub or device_hub
+    if attacher is None:
+        assert session_id is not None and claims is not None
+        attacher = Attacher.agent(
+            session_id,
+            _uuid_or_none(claims.get("t")),
+            token=token or "",
+            claims=claims,
+            env=env or {},
+            tells_agent=tells_agent,
+        )
     held = (
         None
         if whole_check
-        else await _verified(
-            db,
-            topic_id=topic_id,
-            session_id=session_id,
-            claims=claims,
-            token=token,
-            env=env,
-            hub=hub,
-        )
+        else await _verified(db, topic_id=topic_id, attacher=attacher, hub=hub)
     )
     if held is not None:
         return held
     clock = asyncio.get_running_loop().time
     deadline = clock() + wait_s
     while True:
-        outcome = await _attempt(
-            db,
-            topic_id=topic_id,
-            session_id=session_id,
-            claims=claims,
-            token=token,
-            env=env,
-            hub=hub,
-            tells_agent=tells_agent,
-            actor=actor,
-        )
+        outcome = await _attempt(db, topic_id=topic_id, attacher=attacher, hub=hub)
         if not isinstance(outcome, _Preparing):
             return outcome
         waited = False
@@ -1134,26 +1192,66 @@ async def _settle(db, holder, row, environment, *, topic_id):
     )
 
 
-async def _attempt(
-    db, *, topic_id, session_id, claims, token, env, hub, tells_agent=False, actor=None
-):
+async def _settle_person(db, holder, attacher: Attacher, *, topic_id):
+    """The environment a person's bring-up works in, the person attached to
+    it (`attachments.settle_person`): where the conversation's work is.
+    Answers the environment, its attachment's id, and the choice it is of,
+    which is what is placed."""
+    assert attacher.user_id is not None and attacher.conversation_id is not None
+    default = (await holder.default_of(db, attacher.conversation_id)).model_dump()
+    attached = await attachments.settle_person(
+        db,
+        user_id=attacher.user_id,
+        conversation_id=attacher.conversation_id,
+        default=default,
+        where=environment_rows.Where(
+            topic_id=topic_id,
+            project_id=holder.project_id,
+            generation=holder.generation,
+            choice=default,
+        ),
+    )
+    settled = await db.get(Environment, attached.environment_id)
+    assert settled is not None  # the attachment's key
+    return settled, attached.id, parse_environment(settled.choice)
+
+
+async def _attempt(db, *, topic_id, attacher: Attacher, hub):
     """The row reservation survives worker death; remote work holds no DB lock."""
     holder = await holders.lock_for_work(db, topic_id)
     sessions = AgentSessionService(db)
-    row = await sessions.by_id(session_id, lock=True)
-    if row is None or await holders.holder_of(db, row.conversation_id) != topic_id:
-        raise NotFoundError("Session not found")
     resource = holder.generation
-    if (
-        claims.get("session") != str(row.id)
-        or claims.get("t") != str(row.conversation_id)
-        or not holder.signed_for(claims)
-    ):
-        raise ForbiddenError("Execution credential does not own this session")
-    environment = await holder.environment(db, row)
-    location = row.runtime_location or {}
-    settled = await _settle(db, holder, row, environment, topic_id=topic_id)
-    held = await attachments.attachment_of(db, row.id, lock=True)
+    row = None
+    if attacher.session_id is not None:
+        session_id = attacher.session_id
+        claims = attacher.claims
+        row = await sessions.by_id(session_id, lock=True)
+        if row is None or await holders.holder_of(db, row.conversation_id) != topic_id:
+            raise NotFoundError("Session not found")
+        if (
+            claims.get("session") != str(row.id)
+            or claims.get("t") != str(row.conversation_id)
+            or not holder.signed_for(claims)
+        ):
+            raise ForbiddenError("Execution credential does not own this session")
+        conversation_id = row.conversation_id
+        environment = await holder.environment(db, row)
+        location = row.runtime_location or {}
+        settled = await _settle(db, holder, row, environment, topic_id=topic_id)
+        attachment_id = row.id
+    else:
+        conversation_id = attacher.conversation_id
+        assert conversation_id is not None  # a person names it
+        if (
+            holder.project_id is None
+            or await holders.holder_of(db, conversation_id) != topic_id
+        ):
+            raise NotFoundError("Conversation not found")
+        location = {}
+        settled, attachment_id, environment = await _settle_person(
+            db, holder, attacher, topic_id=topic_id
+        )
+    held = await _held_by(db, attacher, attachment_id, lock=True)
     assert held is not None and held.generation is not None  # settled above
     lease = held.environment
     attached = generation = held.generation
@@ -1165,10 +1263,11 @@ async def _attempt(
     # 升级路径：注册第二台机器当工作电脑后，或部署在非 development，这条不再触发。
     single_machine = settings.environment == "development"
     if (
+        row is not None
         # A member's own agent may work on the machine its session runs on,
         # its owner's, when that is where its environment is: the session then
         # sees the project where the executor holds it (`owner_provider`).
-        location.get("channel") != OWNER_CHANNEL
+        and location.get("channel") != OWNER_CHANNEL
         and ready
         and (lease or {}).get("device_id") == location.get("device_id")
         and not single_machine
@@ -1192,9 +1291,15 @@ async def _attempt(
             lease = None
         else:
             # A person's machine: the environment there is left for a new one.
-            await attachments.abandon(db, row)
-            settled = await _settle(db, holder, row, environment, topic_id=topic_id)
-            held = await attachments.attachment_of(db, row.id, lock=True)
+            if row is not None:
+                await attachments.abandon(db, row)
+                settled = await _settle(db, holder, row, environment, topic_id=topic_id)
+            else:
+                await attachments.abandon_person(db, attachment_id)
+                settled, attachment_id, environment = await _settle_person(
+                    db, holder, attacher, topic_id=topic_id
+                )
+            held = await _held_by(db, attacher, attachment_id, lock=True)
             assert held is not None and held.generation is not None  # settled
             lease = held.environment
             attached = generation = held.generation
@@ -1225,10 +1330,10 @@ async def _attempt(
         assert isinstance(holder, holders.Room)
         selected = await device_for_spec(
             db,
-            agent_handle=row.agent_handle,
+            agent_handle=row.agent_handle if row is not None else None,
             spec=spec.name,
             project=await ProjectService(db).get_or_404(holder.project_id),
-            task=await holders.task_of(db, holder, row),
+            task=await holders.task_in(db, holder, conversation_id),
             held=(lease or {}).get("device_id"),
             # A machine whose link dropped moments ago is called, and the call
             # waits for it (`_reachable`).
@@ -1250,22 +1355,28 @@ async def _attempt(
             )
         except SandboxRemoving:
             # Its idle sandbox is being destroyed: the next attempt, once it is
-            # gone, places the session in a new one.
+            # gone, places it in a new one.
             await db.commit()
-            return _Preparing(SANDBOX_PREPARING, partial(_home_removed, db, session_id))
+            return _Preparing(SANDBOX_PREPARING, partial(_home_removed, db, settled.id))
     cloud_host = None
     placed_s = None
     if selected is None and not cloud_provisionable(settings):
         await db.commit()
         return {"unavailable": str(say("platformSpecUnavailable"))}
     if selected is None:
-        chosen = await sessions.environment(row.conversation_id, row.agent_handle)
-        chooser = (chosen.chosen_by if chosen is not None else None) or None
-        allocation_actor = actor or (
-            Actor(**chooser)
-            if isinstance(chooser, dict)
-            else Actor(handle=claims.get("a", ""), user_id=None, via="cheese")
-        )
+        if row is not None:
+            chosen = await sessions.environment(row.conversation_id, row.agent_handle)
+            chooser = (chosen.chosen_by if chosen is not None else None) or None
+            allocation_actor = attacher.actor or (
+                Actor(**chooser)
+                if isinstance(chooser, dict)
+                else Actor(
+                    handle=attacher.claims.get("a", ""), user_id=None, via="cheese"
+                )
+            )
+        else:
+            assert attacher.actor is not None  # a person
+            allocation_actor = attacher.actor
         pool = HostPool(db, hub=hub)
         whole_machine = spec is not None and spec.name == VM
         placing = time.monotonic()
@@ -1277,10 +1388,10 @@ async def _attempt(
                 whole_machine=whole_machine,
             )
         except (CloudKeepsFailing, CloudPoolFull, ComputeRefused) as refused:
-            if not isinstance(refused, ComputeRefused):
+            if row is not None and not isinstance(refused, ComputeRefused):
                 await keep_refusal(
                     db,
-                    session_id=session_id,
+                    session_id=row.id,
                     conversation_id=row.conversation_id,
                     reason=(
                         "pool_full"
@@ -1293,9 +1404,9 @@ async def _attempt(
             return {"unavailable": str(refused)}
         except SandboxRemoving:
             # Its idle sandbox is being destroyed: the next attempt, once it is
-            # gone, places the session in a new one.
+            # gone, places it in a new one.
             await db.commit()
-            return _Preparing(SANDBOX_PREPARING, partial(_home_removed, db, session_id))
+            return _Preparing(SANDBOX_PREPARING, partial(_home_removed, db, settled.id))
         placed_s = time.monotonic() - placing
         if (
             not cloud_host.device_id
@@ -1312,24 +1423,26 @@ async def _attempt(
         device_id = cloud_host.device_id
         # Provisioning releases its transaction around external calls.
         holder = await holders.lock_for_work(db, topic_id)
-        row = await sessions.by_id(session_id, lock=True)
+        if row is not None:
+            row = await sessions.by_id(row.id, lock=True)
         now_held = (
-            await attachments.attachment_of(db, session_id, lock=True)
-            if row is not None
+            await _held_by(db, attacher, attachment_id, lock=True)
+            if row is not None or attacher.session_id is None
             else None
         )
         now_attached = now_held.generation if now_held is not None else None
         if (
-            row is None
-            or now_attached != attached
-            or await holder.environment(db, row) != environment
+            now_attached != attached
+            or (row is None and attacher.session_id is not None)
+            or (row is not None and await holder.environment(db, row) != environment)
+            or (now_held is not None and now_held.environment_id != settled.id)
         ):
             raise ConflictError("Execution request changed during provisioning")
         # Placing a new home commits (`HostPool._place_on_free`), and another
-        # attempt of this session — a person's, a parallel tool call — may
-        # have taken the lease's claim meanwhile, or finished with it. The
-        # claim is asked again under the lock that writes it, and the lease
-        # read as it is now: two installations on one lease left the first
+        # attempt in this environment — a person's, a parallel tool call — may
+        # have taken its claim meanwhile, or finished with it. The claim is
+        # asked again under the lock that writes it, and the environment read
+        # as it is now: two installations in one environment left the first
         # one's claim overwritten, and it failed once it was done.
         lease = now_held.environment if now_held is not None else None
         if lease and lease.get("claim_until"):
@@ -1342,15 +1455,20 @@ async def _attempt(
         ready = bool(lease and lease.get("status", "ready") == "ready")
     else:
         device_id = selected.device_id
-    # Placement records the session host before the screen that asks opens.
-    assert row.runtime_location is not None
-    host = row.runtime_location["device_id"]
-    if (
-        device_id == host
-        and row.runtime_location.get("channel") != OWNER_CHANNEL
-        and not single_machine
-    ):
-        raise ForbiddenError("Project tools cannot execute on the session host")
+    if row is not None:
+        # Placement records the session host before the screen that asks opens.
+        assert row.runtime_location is not None
+        host = row.runtime_location["device_id"]
+        if (
+            device_id == host
+            and row.runtime_location.get("channel") != OWNER_CHANNEL
+            and not single_machine
+        ):
+            raise ForbiddenError("Project tools cannot execute on the session host")
+    else:
+        # A person has no session host: the address recorded is the one the
+        # platform's own session host dials, as an agent's there would.
+        host = settings.agent_session_device_id or device_id
     # Each dialer reaches the backend over its own configured base.
     host_api = await device_api_base(db, host, settings.connector_public_base)
     api = await device_api_base(db, device_id, settings.connector_public_base)
@@ -1362,13 +1480,13 @@ async def _attempt(
         lease = {
             **lease,
             "url": (
-                f"{host_api}/topics/{row.conversation_id}/execution/session-{resource}"
+                f"{host_api}/topics/{conversation_id}/execution/session-{resource}"
             ),
         }
     claim = str(uuid.uuid4())
     reservation = {
         "kind": "device",
-        "session_id": str(session_id),
+        **({"session_id": str(row.id)} if row is not None else {}),
         "generation": generation,
         "resource_id": work_resource,
         "room_resource_id": resource,
@@ -1396,8 +1514,14 @@ async def _attempt(
         if lease is not None and ready and lease.get("device_id") == device_id
         else reservation
     )
-    await attachments.attach(db, session_id, holding)
-    if await user_by_handle(db, claims.get("a", "")) is None:
+    await attachments.attach(db, attachment_id, holding)
+    # A bring-up somebody asked for starts again here: whatever stopped the
+    # last one is over.
+    settled.failure = None
+    if (
+        row is not None
+        and await user_by_handle(db, attacher.claims.get("a", "")) is None
+    ):
         raise ForbiddenError("Execution actor no longer exists")
     await db.commit()
     # The claim is taken; what installs under it runs as this process's own
@@ -1411,18 +1535,19 @@ async def _attempt(
     work = asyncio.ensure_future(
         _install(
             db.bind,
-            token=token,
+            attacher=attacher,
+            attachment_id=attachment_id,
+            token=attacher.token,
             resource=resource,
-            session_id=session_id,
             environment_id=settled.id,
             generation=generation,
-            env=env,
+            env=attacher.env,
             api=api,
             host_api=host_api,
             holder=holder,
             # The executor and its progress lines belong to the conversation;
             # its machine and lock to the holder.
-            topic_id=row.conversation_id,
+            topic_id=conversation_id,
             work_resource=work_resource,
             hub=hub,
             lease=lease,
@@ -1437,7 +1562,6 @@ async def _attempt(
             cloud_vm=cloud_host is not None and cloud_host.whole_machine,
             owner_device=selected is not None,
             own=isinstance(environment, Sandbox),
-            tells_agent=tells_agent,
             # Timed only when the call brings up hands it did not hold: a new
             # sandbox, one another host now has, or one woken from a freeze
             # (`infra_records.keep_prepared`). A re-check of ready hands is not.
@@ -1448,7 +1572,7 @@ async def _attempt(
     _INSTALLS.add(work)
     work.add_done_callback(_installed)
     outcome = await asyncio.shield(work)
-    if outcome is _CLOUD_PREPARING:
+    if isinstance(outcome, _CloudPreparing):
         assert cloud_host is not None
         return _Preparing(
             VM_PREPARING if cloud_host.whole_machine else SANDBOX_PREPARING,
@@ -1457,12 +1581,46 @@ async def _attempt(
     return outcome
 
 
+async def environment_credential(
+    db,
+    holder,
+    *,
+    conversation_id: uuid.UUID,
+    environment_id: uuid.UUID,
+    lease_generation: str | None,
+    by: str | None = None,
+    ttl_s: int | None = None,
+) -> str:
+    """The credential minted for an attachment that is no agent — a
+    person's — or for the environment itself: the environment's authority in
+    ``conversation_id``, never a person's own (`mint_environment_credential`).
+    A 支线's conversation keeps no work, so its environment's credential
+    never pushes."""
+    if holder.project_id is None:
+        raise ForbiddenError("An environment in no project acts for nobody")
+    return mint_environment_credential(
+        project_id=str(holder.project_id),
+        conversation_id=str(conversation_id),
+        resource_id=holder.generation,
+        environment_id=str(environment_id),
+        lease_generation=lease_generation,
+        scratch=not await conversation_keeps_work(db, conversation_id),
+        by=by,
+        **({"ttl_s": ttl_s} if ttl_s is not None else {}),
+    )
+
+
 #: Installations a request started and may have stopped waiting for. Held
 #: here so the event loop keeps them until they end.
 _INSTALLS: set[asyncio.Future] = set()
-#: What `_install` answers when a Cloud machine dropped during setup; the
-#: request turns it into a wait on its own session.
-_CLOUD_PREPARING = object()
+
+
+class _CloudPreparing:
+    """What `_install` answers when a Cloud machine dropped during setup; the
+    request turns it into a wait on its own environment."""
+
+
+_CLOUD_PREPARING = _CloudPreparing()
 
 
 def _installed(work: asyncio.Future) -> None:
@@ -1476,9 +1634,10 @@ def _installed(work: asyncio.Future) -> None:
 async def _install(
     bind,
     *,
+    attacher: Attacher,
+    attachment_id,
     token,
     resource,
-    session_id,
     environment_id,
     generation,
     env,
@@ -1503,16 +1662,28 @@ async def _install(
     cloud_vm=False,
     owner_device,
     own,
-    tells_agent=False,
     fresh=False,
     placed_s=None,
-):
-    """Bring the session's executor up under ``claim`` and record the outcome."""
+) -> dict | _Preparing | _CloudPreparing:
+    """Bring the environment's executor up under ``claim`` for the
+    ``attacher`` and record the outcome."""
+    session_id = attacher.session_id
+    tells_agent = attacher.tells_agent and session_id is not None
     async with AsyncSession(bind, expire_on_commit=False) as db:
         sessions = AgentSessionService(db)
-        execution_token = holder.credential(
-            token, session_id=str(session_id), lease_generation=generation
-        )
+        if session_id is not None:
+            execution_token = holder.credential(
+                token, session_id=str(session_id), lease_generation=generation
+            )
+        else:
+            execution_token = await environment_credential(
+                db,
+                holder,
+                conversation_id=topic_id,
+                environment_id=environment_id,
+                lease_generation=generation,
+                by=attacher.actor.handle if attacher.actor is not None else None,
+            )
         namespace = holder.namespace
         setup = _executor_env(
             env,
@@ -1522,12 +1693,12 @@ async def _install(
             work_resource=work_resource,
         )
         if platform_machine and sandbox:
-            setup["CHEESE_SANDBOX_IMAGE"] = await image_for_session(
-                db, device_id, session_id
+            setup["CHEESE_SANDBOX_IMAGE"] = await image_for_environment(
+                db, device_id, environment_id
             )
             await db.commit()
         root_snapshot = (
-            await root_snapshots.for_restore(db, session_id)
+            await root_snapshots.root_to_restore(db, environment_id, session_id)
             if platform_machine and sandbox and setup.get("CHEESE_SANDBOX_IMAGE")
             else None
         )
@@ -1538,7 +1709,7 @@ async def _install(
         # (`install_progress`); a Cloud machine's getting ready is the
         # platform's own, kept out of the conversation (`progress`).
         shown = (
-            InstallProgress(bind, session_id=session_id, device_id=device_id)
+            InstallProgress(bind, conversation_id=topic_id, device_id=device_id)
             if owner_device
             else contextlib.nullcontext()
         )
@@ -1627,10 +1798,10 @@ async def _install(
         except Exception as exc:
             # Setup is resumable at the same physical allocation; it is not a
             # dispatched model operation and must not create a replacement lease.
-            held = await attachments.attachment_of(db, session_id, lock=True)
+            held = await _held_by(db, attacher, attachment_id, lock=True)
             if held and (held.environment or {}).get("claim") == claim:
                 await attachments.attach(
-                    db, session_id, {**holding, "claim_until": now.isoformat()}
+                    db, attachment_id, {**holding, "claim_until": now.isoformat()}
                 )
             await db.commit()
             if isinstance(exc, launch.SandboxRefused):
@@ -1690,10 +1861,14 @@ async def _install(
                 return {"unavailable": str(say("environmentDeviceOffline"))}
             raise
         current = await holders.lock_for_work(db, holder.id)
-        row = await sessions.by_id(session_id, lock=True)
-        held = await attachments.attachment_of(db, session_id, lock=True)
+        row = (
+            await sessions.by_id(session_id, lock=True)
+            if session_id is not None
+            else None
+        )
+        held = await _held_by(db, attacher, attachment_id, lock=True)
         if (
-            row is None
+            (row is None and session_id is not None)
             or held is None
             or (held.environment or {}).get("claim") != claim
             or current.generation != resource
@@ -1708,20 +1883,24 @@ async def _install(
             if tells_agent and target["status"] == "ready"
             else None
         )
-        await attachments.attach(db, session_id, target)
+        await attachments.attach(db, attachment_id, target)
         notice = (
             attachments.take_notice(row)
-            if tells_agent and target["status"] == "ready"
+            if row is not None and tells_agent and target["status"] == "ready"
             else attachments.Notice()
         )
         lost = notice.lost
         resumed = not lost and notice.parked
         stopped = list(notice.stopped)
-        conversation_id = row.conversation_id
+        conversation_id = topic_id
+        # Only an agent's start is told its device's owner: a person bringing
+        # the machine back for its files is not (`tell_device_owner`).
         device = (
-            await sql_device_service(db).get_device(device_id) if owner_device else None
+            await sql_device_service(db).get_device(device_id)
+            if owner_device and row is not None
+            else None
         )
-        if device is not None:
+        if device is not None and row is not None:
             # Only a room's sessions work on people's own machines.
             await tell_device_owner(
                 db,
@@ -1794,6 +1973,7 @@ async def _install(
             "target": target,
             "token": execution_token,
             **({"notice": "\n".join(notices)} if notices else {}),
+            **({"attachment": str(attachment_id)} if session_id is None else {}),
         }
 
 

@@ -6,11 +6,12 @@ stopped for sitting idle — a person editing the task's files should not have
 to wait for the AI teammate to start a turn. Opening the files reads them off
 the forge (`repository.forge_files`); editing them brings the machine back:
 
-- in the environment the task points to, the one machine and the one copy
-  its teammates work in (no second environment, no second copy), acting
-  through a session attached to it (`acting_session`);
+- in the environment where the task's work is, the one machine and the one
+  copy its teammates work in (no second environment, no second copy), or
+  the task's default one when nobody has worked in it yet; the person is
+  attached to it with an identity of their own;
 - through the same admission a tool call goes through
-  (`session_work.hands_for_a_person`): a parked sandbox starts again where its
+  (`session_work.ensure`): a parked sandbox starts again where its
   home is, a destroyed one is placed anew and its executor installed, a frozen
   one is thawed, an executor that stopped is started; two callers at once —
   a person and a turn — are ordered by the environment's claim (`lease_claim`), and
@@ -18,9 +19,10 @@ the forge (`repository.forge_files`); editing them brings the machine back:
 - in the person's name, whose project pays for it as it does for the teammate
   (`holder.Room.require_use`), on the sandbox's usual meter (`metering`);
 - then the task's checkout is opened there (`cheese worktree`, which lays back
-  what the last sandbox kept) as the platform's own call on the executor
-  (`task_checkout.checkout_request`), which is no tool call of the teammate's
-  and nothing said in the conversation.
+  what the last sandbox kept) as the person's command on the executor
+  (`task_checkout.checkout_request`), answered on the environment's authority
+  (`machine.caller`), which is no tool call of the teammate's and nothing
+  said in the conversation.
 
 What the teammate is owed about its sandbox (`Attachment.notice`) is left
 for its own next tool call.
@@ -37,7 +39,7 @@ import asyncio
 import logging
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -49,12 +51,12 @@ from app.domain.agent.task_checkout import (
     checkout_answered,
     checkout_request,
 )
-from app.domain.agent_session.models import AgentSession
 from app.domain.environment import services as environment_rows
 from app.domain.identity.actor import Actor
 from app.domain.machine import holder as holders
 from app.domain.machine import session_work
 from app.domain.machine.lease_claim import still_preparing
+from app.domain.user.services import user_by_handle
 
 logger = logging.getLogger(__name__)
 
@@ -105,35 +107,13 @@ class Status:
     failed: str | None
 
 
-async def acting_session(db: AsyncSession, task_id: uuid.UUID) -> AgentSession | None:
-    """The session a person's bring-up of the task's machine acts through:
-    one attached to the environment the task points to
-    (`environment_rows.environment_of_conversation`), the one that acted
-    there last. A bring-up is admitted, placed and credentialed as a
-    session's tool call is (`session_work.hands_for_a_person`), and a person
-    is no attachment yet, so it needs one; the environment itself is found
-    from the task alone. None while the task points to no environment, or
-    nobody is attached to the one it points to."""
-    environment = await environment_rows.environment_of_conversation(db, task_id)
-    if environment is None:
-        return None
-    for attached in await environment_rows.attachments_of(db, environment.id):
-        row = await db.get(AgentSession, attached.session_id)
-        if row is not None and row.conversation_id == task_id:
-            return row
-    return None
-
-
 async def prepare(
     db: AsyncSession, task_id: uuid.UUID, actor: Actor, *, hub=None
 ) -> bool:
     """Start bringing the task's machine back for ``actor``, unless that is
     already under way here. Answers whether this call started it. Refuses a
-    task with no session, and a person the task's project would not start a
-    sandbox for, before anything is started."""
-    row = await acting_session(db, task_id)
-    if row is None:
-        raise NoTaskSession()
+    person the task's project would not start a sandbox for before anything
+    is started."""
     holder = await holders.look(db, await holders.holder_of(db, task_id))
     if holder is None:
         raise NoTaskSession()
@@ -188,19 +168,38 @@ async def status(db: AsyncSession, task_id: uuid.UUID) -> Status:
     return Status(machine=None, failed=failed)
 
 
+async def _never_gone() -> bool:
+    return False
+
+
 async def _bring_up(bind, task_id: uuid.UUID, actor: Actor, *, hub=None) -> None:
-    """Take the task's session's hands for ``actor`` until they are ready or
-    refused, then open the task's checkout on them. A failure is kept for
-    `status`, in a sentence for the person; what the machine said is logged."""
+    """Attach ``actor`` to where the task's work is and take hands there
+    until they are ready or refused (`session_work.ensure`), then open the
+    task's checkout on them. A failure is kept for `status`, in a sentence
+    for the person; what the machine said is logged."""
     try:
         deadline = time.monotonic() + BRING_UP_S
         async with AsyncSession(bind, expire_on_commit=False) as db:
-            while True:
-                row = await acting_session(db, task_id)
-                if row is None:
+            person = actor
+            if person.user_id is None:
+                user = await user_by_handle(db, actor.handle)
+                if user is None:
                     raise NoTaskSession()
-                outcome = await session_work.hands_for_a_person(
-                    db, row, actor=actor, wait_s=ROUND_S, hub=hub
+                person = replace(actor, user_id=user.id)
+            attacher = session_work.Attacher.person(
+                person, task_id, await session_work.person_launch_values(db, task_id)
+            )
+            holder_id = await holders.holder_of(db, task_id)
+            await db.commit()
+            while True:
+                outcome = await session_work.ensure(
+                    db,
+                    topic_id=holder_id,
+                    attacher=attacher,
+                    wait_s=ROUND_S,
+                    gone=_never_gone,
+                    hub=hub,
+                    whole_check=True,
                 )
                 await db.commit()
                 if "target" in outcome:
@@ -218,11 +217,15 @@ async def _bring_up(bind, task_id: uuid.UUID, actor: Actor, *, hub=None) -> None
             "invoke",
             {
                 **checkout_request(task_id, prefix="person-checkout-"),
-                # Whose the command is: the person, in the task. A person is
-                # no session attached to the machine, so it names no
-                # attachment; what it asks the platform back is answered on
-                # the environment's own authority (`machine.caller`).
-                "caller": {"conversation": str(task_id), "author": actor.handle},
+                # Whose the command is: the person's attachment, in the task.
+                # What it asks the platform back is answered on the
+                # environment's authority in the person's name
+                # (`machine.caller`), never on the person's own.
+                "caller": {
+                    "attachment": outcome["attachment"],
+                    "conversation": str(task_id),
+                    "author": actor.handle,
+                },
             },
             timeout=CHECKOUT_TIMEOUT_MS / 1000 + 30,
         )

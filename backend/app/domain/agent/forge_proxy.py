@@ -366,10 +366,14 @@ class PlatformSocketClient:
         self._cached_until: float = 0.0
         self._reach: dict[str, tuple[float, bool]] = {}
 
-    def _get_json(self, path: str, timeout: float = 30.0) -> dict:
+    def _get_json(
+        self, path: str, timeout: float = 30.0, attachment: str | None = None
+    ) -> dict:
         conn = _UnixHTTPConnection(self.socket_path, timeout=timeout)
         try:
             headers = {"X-Cheese-Proxy-Proof": self.proof} if self.proof else {}
+            if attachment:
+                headers["X-Cheese-Attachment"] = attachment
             conn.request("GET", path, headers=headers)
             resp = conn.getresponse()
             body = resp.read()
@@ -408,8 +412,15 @@ class PlatformSocketClient:
         asked fresh every time: a delivery filed a minute ago counts."""
         return self._get_json("/api/sandbox/forge-held")["data"]
 
-    def proxy_credential(self, timeout: float = 20.0) -> str:
-        data = self._get_json("/proxy-credential", timeout=timeout)
+    def proxy_credential(
+        self, timeout: float = 20.0, attachment: str | None = None
+    ) -> str:
+        """A short-lived credential for what goes outside the sandbox: the
+        environment's own, or — naming the ``attachment`` whose command asks,
+        as a preview does — that attachment's."""
+        data = self._get_json(
+            "/proxy-credential", timeout=timeout, attachment=attachment
+        )
         return str(data["token"])
 
     def reaches(self, url: str) -> bool:
@@ -1298,8 +1309,18 @@ class _PreviewSocketHandler(socketserver.BaseRequestHandler):
         except OSError:
             return
         header_bytes, _, remainder = bytes(head).partition(b"\r\n\r\n")
+        # The preview is the teammate's whose command started it: the helper
+        # names that command's attachment (`preview_tunnel`).
+        attachment = next(
+            (
+                line.split(":", 1)[1].strip()
+                for line in header_bytes.decode("latin-1").split("\r\n")
+                if line.lower().startswith("x-cheese-attachment:")
+            ),
+            None,
+        )
         try:
-            token = proxy.platform.proxy_credential(timeout=15)
+            token = proxy.platform.proxy_credential(timeout=15, attachment=attachment)
         except Exception as exc:
             msg = f"HTTP/1.1 503 Service Unavailable\r\nX-Cheese-Error: {exc}\r\n\r\n"
             with contextlib.suppress(OSError):
@@ -1330,7 +1351,9 @@ class _PreviewSocketHandler(socketserver.BaseRequestHandler):
             lines = [
                 line
                 for line in header_bytes.decode("latin-1").split("\r\n")
-                if not line.lower().startswith("authorization:")
+                if not line.lower().startswith(
+                    ("authorization:", "x-cheese-attachment:")
+                )
             ]
             lines.append(f"Authorization: Bearer {token}")
             rewritten = ("\r\n".join(lines) + "\r\n\r\n").encode("latin-1") + remainder
