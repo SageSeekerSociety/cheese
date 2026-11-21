@@ -58,6 +58,8 @@ _OWN = (
     "runtime_commands",
     "runtime_context",
     "runtime_calls",
+    # A person's shells (`Executor.terminals`).
+    "runtime_terminal",
     "portable",
     "darwin",
     "mcp_process",

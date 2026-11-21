@@ -55,6 +55,7 @@ if __package__:
     from . import runtime_commands as commands
     from . import runtime_context as context
     from . import runtime_core as core
+    from . import runtime_terminal as terminal
 else:
     # Its siblings sit beside it, which a script run has first on `sys.path`
     # and a file loaded by path — `bootstrap` installs one and `predecessor`
@@ -65,6 +66,7 @@ else:
     import runtime_commands as commands
     import runtime_context as context
     import runtime_core as core
+    import runtime_terminal as terminal
 
 # This file's own bytes, and the protocol it answers with: the two names that
 # are about the release rather than about how it is used.
@@ -258,6 +260,8 @@ class Executor:
             "(id TEXT PRIMARY KEY, input TEXT, result TEXT)"
         )
         self.db.commit()
+        # The shells people opened here (`runtime_terminal`).
+        self.terminals = terminal.Terminals(self)
         self.cli_worker, self.cli_worker_ready = None, False
         worker = self.programs / "remote-execution/cli_worker.py"
         cli = self.programs / "cheese"
@@ -462,7 +466,9 @@ class Executor:
         if method == "begin_upgrade":
             with self.admission_lock:
                 busy = not self.upgrading and (
-                    self.active_calls > 0 or bool(self.running)
+                    self.active_calls > 0
+                    or bool(self.running)
+                    or self.terminals.in_use()
                 )
                 result = {
                     "release": params["release"],
@@ -548,6 +554,7 @@ class Executor:
                     "machine_files",
                     "machine_git",
                 ]
+                + (["terminal"] if sys.platform != "win32" else [])
                 + (
                     ["cli_worker"]
                     if self.cli_worker is not None and self.cli_worker.poll() is None
@@ -566,6 +573,10 @@ class Executor:
             return self.task_fs(params)
         if method == "repo_search":
             return self.repo_search(params)
+        if method == "terminal_list":
+            return self.terminals.list(params)
+        if method == "terminal_close":
+            return self.terminals.close(params)
         if method == "mcp":
             return self.client(params["server"], params.get("caller")).call(
                 params["method"], params.get("params")
@@ -590,6 +601,13 @@ def serve(state):
                 return
             try:
                 value = json.loads(self.rfile.readline())
+                if value["method"] == "terminal":
+                    # A watcher of a shell: the connection is the shell's
+                    # from here on, frames both ways (`runtime_terminal`).
+                    executor.terminals.serve(
+                        self.connection, self.rfile, value.get("params", {})
+                    )
+                    return
                 if value["method"] == "shutdown":
                     # A sandboxed pid names the wrong process; Windows has no SIGTERM.
                     stop(None, None)
@@ -678,6 +696,9 @@ def serve(state):
             path.unlink(missing_ok=True)
             if sys.platform != "win32":
                 Path(address).unlink(missing_ok=True)
+            # A shell's watchers hold their connections' threads, which the
+            # server joins as it closes: the shells end first.
+            executor.terminals.end_all()
             if executor.stopping:
                 ended = executor.end_left_behind()
                 with contextlib.suppress(OSError):

@@ -329,12 +329,13 @@ def _sources():
             "runtime.py",
             # The parts of `runtime.py` it imports from beside itself: the
             # primitives every piece reads, the command registry, the project's
-            # context and the tool calls. It is shipped whole and loaded by
-            # path, so it can reach no module of the app.
+            # context, the tool calls and a person's shells. It is shipped
+            # whole and loaded by path, so it can reach no module of the app.
             "runtime_core.py",
             "runtime_commands.py",
             "runtime_context.py",
             "runtime_calls.py",
+            "runtime_terminal.py",
             "context_service.py",
             "forwarded_fs.py",
             # The other direction: this machine's view of the session host's
