@@ -27,12 +27,7 @@ const listMachineSkills = vi.fn()
 const fetchSkillMarket = vi.fn()
 const fetchMachineSkill = vi.fn()
 
-// 地址上的 `?focus=&why=`：频道顶部红行的「重新登录」带过来的。其余用例没有这两个参数。
-const routeState = vi.hoisted(() => ({ query: {} as Record<string, string> }))
-vi.mock('vue-router', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('vue-router')>()),
-  useRoute: () => routeState,
-}))
+// 地址上的 `?focus=&why=` 由视图读，组件收成 props（`src/components` 里不读路由）。
 
 vi.mock('@/api/projectSkills', () => ({
   listSkillCatalog: (...a: unknown[]) => listSkillCatalog(...a),
@@ -101,9 +96,9 @@ async function inMore(label: string, nth = 0) {
   await fireEvent.click(hits[hits.length - 1])
 }
 
-function mountPage() {
+function mountPage(focus?: { focus: string; why: string }) {
   return render(AgentTeamSettings, {
-    props: { projectId: PROJECT },
+    props: { projectId: PROJECT, ...focus },
     global: { plugins: [createVuetify({ components, directives })] },
   })
 }
@@ -524,13 +519,6 @@ describe('技能面板的 409', () => {
 })
 
 describe('账号与登录', () => {
-  beforeEach(() => {
-    routeState.query = {}
-  })
-  afterEach(() => {
-    routeState.query = {}
-  })
-
   it('平时不占地方：登录那块收着，「更多」里有入口', async () => {
     listProjectAgents.mockResolvedValue({ data: [agent({ id: 'a1' })], total: 1 })
     mountPage()
@@ -544,7 +532,6 @@ describe('账号与登录', () => {
   })
 
   it('从红行点「重新登录」过来：那位队友的卡片自己展开红条和做法，别的队友不动', async () => {
-    routeState.query = { focus: 'reviewer-seat', why: 'login_expired' }
     listProjectAgents.mockResolvedValue({
       data: [
         agent({ id: 'a1' }),
@@ -552,7 +539,7 @@ describe('账号与登录', () => {
       ],
       total: 2,
     })
-    mountPage()
+    mountPage({ focus: 'reviewer-seat', why: 'login_expired' })
 
     const panel = await screen.findByTestId('agent-login')
     expect(screen.getAllByTestId('agent-login')).toHaveLength(1)
@@ -562,14 +549,13 @@ describe('账号与登录', () => {
   })
 
   it('点「我已重新登录」：红条换成已重新登录，并重读名册', async () => {
-    routeState.query = { focus: 'reviewer-seat', why: 'login_expired' }
     listProjectAgents.mockResolvedValue({
       data: [
         agent({ id: 'a2', handle: 'reviewer', seat_handle: 'reviewer-seat', display_name: '评审', is_default: false }),
       ],
       total: 1,
     })
-    mountPage()
+    mountPage({ focus: 'reviewer-seat', why: 'login_expired' })
 
     await fireEvent.click(await screen.findByRole('button', { name: '我已重新登录' }))
     await waitFor(() => expect(screen.queryByRole('button', { name: '我已重新登录' })).toBeNull())

@@ -13,7 +13,6 @@
 import type { ProjectAgent } from '@/cx_types'
 
 import { computed, nextTick, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
 
 import { useAgentSkills } from '@/composables/useAgentSkills'
 import { useProjectAgents } from '@/composables/useProjectAgents'
@@ -32,7 +31,9 @@ import { toast } from '@/lib/toast'
 
 defineOptions({ name: 'AgentTeamSettings' })
 
-const props = defineProps<{ projectId: string }>()
+// `focus` / `why` 来自地址上的 `?focus=<队友>&why=login_expired`：频道顶部红行的
+// 「重新登录」带过来的。地址归视图读，组件只收结果（`src/components` 里不读路由）。
+const props = defineProps<{ projectId: string; focus?: string; why?: string }>()
 
 const {
   agents,
@@ -52,10 +53,8 @@ const {
 
 // 从频道顶部的红行点「重新登录」过来：`?focus=<队友>&why=login_expired`。对应那位队友的卡片
 // 滚到眼前、闪一下，展开登录过期的红条；用完不用离开这一页。
-// 没装路由的场合（单组件测试、预览站）没有地址可读，就当没有这两个参数。
-const route = useRoute() as ReturnType<typeof useRoute> | undefined
-const focusHandle = computed(() => String(route?.query.focus ?? ''))
-const focusWhy = computed(() => String(route?.query.why ?? ''))
+const focusHandle = computed(() => props.focus ?? '')
+const focusWhy = computed(() => props.why ?? '')
 /** 展开了「账号与登录」那块的队友（agent.id）。 */
 const loginOpen = ref<Set<string>>(new Set())
 /** 点了「我已重新登录」的队友：红条换成已连接。 */

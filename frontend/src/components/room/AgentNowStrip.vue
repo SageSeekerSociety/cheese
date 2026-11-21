@@ -208,7 +208,7 @@ function title(line: MemberActivityLine): string {
   border: 0;
   border-radius: var(--radius-sm, 6px);
   background: var(--accent);
-  color: var(--accent-on, #fff);
+  color: var(--accent-on);
   font: inherit;
   font-size: 12px;
   cursor: pointer;
