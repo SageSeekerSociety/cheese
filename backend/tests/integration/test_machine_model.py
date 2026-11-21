@@ -45,7 +45,7 @@ def _pool(monkeypatch):
     )
 
 
-def _ask(client, *, device, secret="owner-secret"):
+def _ask(client, *, device, secret="owner-secret", attachment=None):
     return client.post(
         "/machine/llm/v1/messages",
         headers={
@@ -53,6 +53,7 @@ def _ask(client, *, device, secret="owner-secret"):
             "x-machine-device": device,
             "x-machine-state": "/old/state",
             "anthropic-version": "2023-06-01",
+            **({"x-cheese-attachment": attachment} if attachment else {}),
         },
         content=b'{"model":"m","messages":[]}',
     )
@@ -60,7 +61,7 @@ def _ask(client, *, device, secret="owner-secret"):
 
 async def test_the_sandboxs_call_goes_out_on_its_projects_machine_key(client):
     room = await _room(client)
-    answer = _ask(client, device=room.old_device)
+    answer = _ask(client, device=room.old_device, attachment=str(room.session_id))
     assert answer.status_code == 200, answer.text
     assert answer.content == b'{"ok":true}'
     sent = _FakeClient.seen
@@ -73,7 +74,12 @@ async def test_the_sandboxs_call_goes_out_on_its_projects_machine_key(client):
 
 async def test_the_gateway_never_sees_who_vouched_for_the_call(client):
     room = await _room(client)
-    assert _ask(client, device=room.old_device).status_code == 200
+    assert (
+        _ask(
+            client, device=room.old_device, attachment=str(room.session_id)
+        ).status_code
+        == 200
+    )
     seen = {k.lower() for k in _FakeClient.seen["headers"]}
     assert not seen & {
         "x-device-connection-secret",
@@ -88,6 +94,15 @@ async def test_without_the_owner_or_a_lease_there_is_no_call(client):
     _FakeClient.seen = {}
     assert _ask(client, device=room.old_device, secret="guessed").status_code == 401
     assert _ask(client, device=room.new_device).status_code == 403
+    assert _FakeClient.seen == {}
+
+
+async def test_a_command_no_agent_started_makes_no_model_call(client):
+    """A request that names no agent — the environment itself, or a person's
+    command — holds no seat a model call could be made under."""
+    room = await _room(client)
+    _FakeClient.seen = {}
+    assert _ask(client, device=room.old_device).status_code == 403
     assert _FakeClient.seen == {}
 
 
@@ -121,6 +136,7 @@ async def test_a_teammates_sandbox_calls_as_the_seat_it_acts_under(client):
         "x-device-connection-secret": "owner-secret",
         "x-machine-device": team.device_id,
         "x-machine-state": "/opus/state",
+        "x-cheese-attachment": str(session.id),
     }
     who = client.get("/machine/whoami", headers=headers).json()
     assert who["agent"] != team.handles["opus"], who

@@ -15,6 +15,7 @@ The rules, as a person would state them:
 - nobody but the device link owner is anyone here.
 """
 
+import time
 import uuid
 
 import pytest
@@ -74,7 +75,9 @@ async def test_a_token_the_sandbox_sends_is_not_who_it_is_served_as(client):
 async def test_the_credential_names_the_sessions_lease_and_calls_no_model(client):
     room = await _room(client)
     async with client.test_factory() as db:
-        caller = await caller_of(db, room.old_device, "/old/state")
+        caller = await caller_of(
+            db, room.old_device, "/old/state", str(room.session_id)
+        )
         assert caller is not None
         credential = await credential_of(db, caller)
     claims = scoped_token_claims(credential or "")
@@ -142,7 +145,10 @@ async def test_a_credential_handed_out_lasts_a_minute_and_names_the_session(clie
     assert answer.headers["cache-control"] == "no-store"
     claims = scoped_token_claims(answer.json()["token"])
     assert claims is not None
-    assert claims["session"] == str(room.session_id)
+    # Asked from outside the sandbox for no command: the environment's own
+    # credential, which names no agent and no session.
+    assert "session" not in claims and "a" not in claims
+    assert claims["t"] == str(room.conversation_id)
     assert held_by_a_machine(claims)
     assert claims["exp"] - time.time() <= 61
     refused = client.get(
@@ -284,3 +290,36 @@ async def test_the_forge_relay_is_not_reached_from_the_sandbox(client, monkeypat
 
     assert answer.status_code == 403
     assert reached == []
+
+
+async def test_a_runtime_that_names_no_attachment_still_has_its_preview_served(
+    client,
+):
+    """A machine still on an older runtime names no attachment: its preview
+    helper's tunnel is the environment's, and is carried under the seat the
+    room's preview is served under."""
+    from app.domain.agent.preview_hub import preview_hub
+    from app.domain.topic_membership.services import TopicMemberService
+
+    room = await _room(client)
+    handed = client.get(
+        "/machine/proxy-credential",
+        headers={
+            "x-device-connection-secret": "owner-secret",
+            "x-machine-device": room.old_device,
+            "x-machine-state": "/old/state",
+            "x-cheese-proxy-proof": machine_proxy_proof(str(room.project_id)),
+        },
+    )
+    assert handed.status_code == 200, handed.text
+    async with client.test_factory() as db:
+        seat = await TopicMemberService(db).resolve_agent_handle(room.topic_id)
+
+    with client.websocket_connect(
+        "/preview/tunnel",
+        headers={"Authorization": f"Bearer {handed.json()['token']}"},
+    ):
+        deadline = time.monotonic() + 5
+        while not preview_hub.is_online(room.conversation_id, seat):
+            assert time.monotonic() < deadline, "the tunnel was not carried"
+            time.sleep(0.01)

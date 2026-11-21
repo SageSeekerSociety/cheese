@@ -45,10 +45,9 @@ class MachineStatusOut(BaseModel):
     #: ``ready``: a machine holds the task's copy; ``preparing``: one is being
     #: brought back; None: none holds it.
     machine: Literal["ready", "preparing"] | None
-    #: Why the last bring-up did not finish: ``no_session`` (nobody has worked
-    #: in the task on a machine yet), ``unavailable`` (no machine could be had
-    #: for it). None when it did, or none was asked.
-    failed: Literal["no_session", "unavailable"] | None
+    #: Why the last bring-up did not finish: ``unavailable`` (no machine could
+    #: be had for it). None when it did, or none was asked.
+    failed: Literal["unavailable"] | None
 
 
 def _task_of(at: InChannel) -> uuid.UUID:
@@ -68,9 +67,9 @@ async def prepare_task_machine(topic_id: uuid.UUID, at: Edits, db: DbSession) ->
     """Bring the task's machine back for the caller, with no turn: its
     sandbox, the task's checkout on it and the work it kept laid back
     (`machine.task_machine`). Answers at once; ``status`` says how far it got.
-    A task nobody has worked in on a machine is refused."""
+    A task nobody has worked in yet gets its default machine."""
     # A machine the record says is ready is checked again end to end too: its
-    # executor may have stopped since (`session_work.hands_for_a_person`).
+    # executor may have stopped since (`task_machine._bring_up`).
     started = await task_machine.prepare(db, _task_of(at), at.actor)
     return ok({"started": started, "reason": None if started else "preparing"})
 

@@ -40,7 +40,10 @@ def sessions_in(home_id: Any):
     return (
         select(EnvironmentAttachment.session_id)
         .join(Environment, Environment.id == EnvironmentAttachment.environment_id)
-        .where(Environment.sandbox_home_id == home_id)
+        .where(
+            Environment.sandbox_home_id == home_id,
+            EnvironmentAttachment.session_id.is_not(None),
+        )
     )
 
 
@@ -75,7 +78,10 @@ def a_session_in(home_id: Any) -> ColumnElement[uuid.UUID]:
     return (
         select(EnvironmentAttachment.session_id)
         .join(Environment, Environment.id == EnvironmentAttachment.environment_id)
-        .where(Environment.sandbox_home_id == home_id)
+        .where(
+            Environment.sandbox_home_id == home_id,
+            EnvironmentAttachment.session_id.is_not(None),
+        )
         .order_by(EnvironmentAttachment.acted_at, EnvironmentAttachment.session_id)
         .limit(1)
         .scalar_subquery()

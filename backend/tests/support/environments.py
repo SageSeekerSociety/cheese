@@ -115,6 +115,7 @@ async def give_environment(
         id=session.id,
         environment_id=environment.id,
         session_id=session.id,
+        conversation_id=session.conversation_id,
         generation=lease.get("generation") or str(uuid.uuid4()),
         setup_digest=lease.get("setup_digest"),
     )

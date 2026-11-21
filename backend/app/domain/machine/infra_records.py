@@ -152,7 +152,7 @@ async def keep_prepared(
     session: AsyncSession,
     *,
     conversation_id: uuid.UUID,
-    session_id: uuid.UUID,
+    session_id: uuid.UUID | None,
     stages: dict[str, float | None],
     total_s: float,
     waited_s: float | None,

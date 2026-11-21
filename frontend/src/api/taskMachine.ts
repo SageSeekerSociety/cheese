@@ -12,7 +12,7 @@ export interface TaskMachineStatus {
   /** `ready`: a machine holds the task's copy; `preparing`: one is being brought back. */
   machine: 'ready' | 'preparing' | null
   /** Why the last bring-up did not finish. */
-  failed: 'no_session' | 'unavailable' | null
+  failed: 'unavailable' | null
 }
 
 /** Start bringing the task's machine back for the caller; answers at once. */

@@ -417,10 +417,9 @@ def test_a_caller_that_left_stops_the_wait_without_taking_the_machine(
             return await work_lease.ensure(
                 db,
                 topic_id=room_id,
-                session_id=session_id,
-                claims=scoped_token_claims(token),
-                token=token,
-                env={},
+                attacher=work_lease.Attacher.agent(
+                    session_id, scoped_token_claims(token), token=token, env={}
+                ),
                 wait_s=30.0,
                 gone=gone,
             )

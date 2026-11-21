@@ -136,6 +136,13 @@ class SandboxHolder(Protocol):
         conversation points to whenever anybody uses it."""
         ...
 
+    async def default_of(
+        self, db: AsyncSession, conversation_id: uuid.UUID
+    ) -> Sandbox | SelfHosted:
+        """The default of ``conversation_id``, one of the holder's
+        conversations (`default_environment`)."""
+        ...
+
 
 @dataclass(frozen=True, slots=True)
 class Room:
@@ -205,6 +212,11 @@ class Room:
     async def default_environment(
         self, db: AsyncSession, session: AgentSession
     ) -> Sandbox | SelfHosted:
+        return await self.default_of(db, session.conversation_id)
+
+    async def default_of(
+        self, db: AsyncSession, conversation_id: uuid.UUID
+    ) -> Sandbox | SelfHosted:
         # Its task's default, else its room's, its project's or the
         # deployment's (``environments.default_for``).
         topic = await db.get(Topic, self.id)
@@ -212,7 +224,7 @@ class Room:
             raise NotFoundError(say("topicNotFound"))
         project = await ProjectService(db).get_or_404(self.project_id)
         return default_for(
-            topic, await task_of(db, self, session), project.settings
+            topic, await task_in(db, self, conversation_id), project.settings
         ).environment
 
 
@@ -277,6 +289,11 @@ class Personal:
 
     async def default_environment(
         self, db: AsyncSession, session: AgentSession
+    ) -> Sandbox | SelfHosted:
+        return Sandbox(spec=STANDARD)
+
+    async def default_of(
+        self, db: AsyncSession, conversation_id: uuid.UUID
     ) -> Sandbox | SelfHosted:
         return Sandbox(spec=STANDARD)
 
@@ -375,9 +392,17 @@ async def _kind(
 async def task_of(db: AsyncSession, room: Room, session: AgentSession) -> Task | None:
     """The task ``session`` works in, when it works in one of the room's tasks
     rather than in the room itself."""
-    if session.conversation_id == room.id:
+    return await task_in(db, room, session.conversation_id)
+
+
+async def task_in(
+    db: AsyncSession, room: Room, conversation_id: uuid.UUID
+) -> Task | None:
+    """The task ``conversation_id`` is, when it is one of the room's tasks
+    rather than the room itself."""
+    if conversation_id == room.id:
         return None
-    return await db.get(Task, session.conversation_id)
+    return await db.get(Task, conversation_id)
 
 
 async def require_project_member(

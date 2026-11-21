@@ -183,7 +183,12 @@ async def forge_transport(
             return Response(status_code=403)
         # A session whose work is not kept fetches and never pushes. A push is
         # advertised (`info/refs?service=git-receive-pack`) before it is sent.
-        kept = await session_keeps_work(db, claims.get("session"))
+        # A credential naming no session is the environment's (a person's
+        # command, or the environment itself): it says itself whether its
+        # conversation keeps its work (``scratch``).
+        kept = not claims.get("scratch") and await session_keeps_work(
+            db, claims.get("session")
+        )
         pushing = path.endswith("git-receive-pack") or (
             request.query_params.get("service") == "git-receive-pack"
         )
@@ -329,7 +334,12 @@ async def sandbox_forge_token(
     # (`Place.keeps_work`): its token reads the repository, its issues and pull
     # requests, and the forge refuses its pushes and its writes. On GitHub it
     # may also rerun or cancel CI (`GitHubAppTokens.read_permissions`).
-    kept = await session_keeps_work(db, claims.get("session"))
+    # A credential naming no session is the environment's (a person's
+    # command, or the environment itself): it says itself whether its
+    # conversation keeps its work (``scratch``).
+    kept = not claims.get("scratch") and await session_keeps_work(
+        db, claims.get("session")
+    )
     binding = await binding_for_project(project_id, db)
     if binding is not None and getattr(request.state, "from_machine_sandbox", False):
         # A sandbox asking on its platform socket without the host-side proxy

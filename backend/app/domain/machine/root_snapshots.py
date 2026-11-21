@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 
 from app.core.storage import private_storage
+from app.domain.environment.models import EnvironmentAttachment
 from app.domain.machine import occupants
 from app.domain.machine.holder import namespace_of
 from app.domain.machine.models import SandboxHome, SandboxRootSnapshot
@@ -85,6 +86,26 @@ async def save(db, home, device_id, *, hub, run_on_host):
     if old_key:
         await bucket.delete(old_key)
     return answer
+
+
+async def root_to_restore(db, environment_id, session_id=None):
+    """The root a sandbox brought up for the environment restores: the
+    agent's own (``session_id``) when an agent brings it up; for anybody
+    else, that of the agent attached to it that acted last. Nothing when no
+    agent is attached."""
+    if session_id is None:
+        session_id = await db.scalar(
+            select(EnvironmentAttachment.session_id)
+            .where(
+                EnvironmentAttachment.environment_id == environment_id,
+                EnvironmentAttachment.session_id.is_not(None),
+            )
+            .order_by(EnvironmentAttachment.acted_at.desc())
+            .limit(1)
+        )
+    if session_id is None:
+        return None
+    return await for_restore(db, session_id)
 
 
 async def for_restore(db, session_id):

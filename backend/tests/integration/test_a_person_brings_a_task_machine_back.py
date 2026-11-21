@@ -137,6 +137,9 @@ class Machines:
         if method == "task_fs":
             executor = object.__new__(Executor)
             executor.env = {"HOME": str(self.home(target))}
+            # The room's workspace, where a task with no checkout is worked.
+            executor.root = self.home(target) / "room"
+            executor.root.mkdir(parents=True, exist_ok=True)
             return executor.task_fs(params)
         return await self._executor(target, method, params, **kwargs)
 
@@ -378,6 +381,34 @@ def test_a_person_and_a_turn_at_once_get_one_machine(task_cloud, monkeypatch):
     assert len(case.machines.installed) == before + 1
 
 
+def test_two_asks_for_the_machine_bring_up_one_and_agree_how_far_it_got(
+    task_cloud, monkeypatch
+):
+    """How far a bring-up got is a fact about the task's machine, not about
+    the backend process that started it: a second ask, wherever it lands,
+    starts nothing and reads the same state."""
+    case = task_cloud
+    destroyed_with_work_kept(case)
+    installing = case.machines.exec
+
+    async def slow_install(device_id, argv, *, stdin=None, **kwargs):
+        if not (stdin and "def main(cleanup, request)" in stdin):
+            await asyncio.sleep(0.5)
+        return await installing(device_id, argv, stdin=stdin, **kwargs)
+
+    monkeypatch.setattr(case.hosts, "exec", slow_install)
+    before = len(case.machines.installed)
+
+    first = prepare(case).json()["data"]
+    second = prepare(case).json()["data"]
+
+    assert first == {"started": True, "reason": None}
+    assert second == {"started": False, "reason": "preparing"}
+    assert status(case) == {"machine": "preparing", "failed": None}
+    assert until_settled(case) == {"machine": "ready", "failed": None}
+    assert len(case.machines.installed) == before + 1
+
+
 def test_a_save_starts_an_executor_that_stopped_for_sitting_idle(task_cloud):
     case = task_cloud
     opened = read(case, "notes.md").json()["data"]
@@ -447,19 +478,17 @@ def test_a_save_while_the_machine_is_still_coming_up_says_to_try_again(
     assert later.status_code == 200, later.text
 
 
-def test_a_task_nobody_worked_on_a_machine_is_refused_plainly(cloud):
+def test_a_task_nobody_worked_on_has_its_machine_brought_up(cloud):
+    """A person need not wait for an agent to have worked in a task: asking
+    for its machine starts bringing one up."""
     task = delivery_task(cloud.client, cloud.seats[1].room)
 
     answer = cloud.client.post(
         f"/topics/{task.id}/machine/prepare", headers=_owner(cloud.client)
     )
 
-    assert answer.status_code == 409, answer.text
-    assert answer.json()["error"]["name"] == "NoTaskSession"
-    assert (
-        answer.json()["error"]["message"]
-        == "这个任务还没有准备过环境，暂时无法编辑文件"
-    )
+    assert answer.status_code == 200, answer.text
+    assert answer.json()["data"]["started"] is True
 
 
 @pytest.fixture
@@ -515,3 +544,315 @@ def test_the_machine_s_words_never_reach_the_person(task_cloud, monkeypatch):
     assert saved.status_code == 503, saved.text
     message = saved.json()["error"]["message"]
     assert "lstat" not in message and "/home" not in message
+
+
+@pytest.fixture
+def unworked_task(cloud, bucket, monkeypatch):
+    """A task of the second room that no agent has worked in: no session of
+    its own, nothing placed for it."""
+    machines = Machines(cloud)
+    machines._exec = cloud.hosts.exec
+    machines._executor = cloud.hosts.executor
+    monkeypatch.setattr(cloud.hosts, "exec", machines.exec)
+    monkeypatch.setattr(execution, "call", machines.executor)
+    monkeypatch.setattr(task_machine, "ROUND_S", 0.3)
+    monkeypatch.setattr(task_machine, "SAVE_WAIT_S", 10.0)
+    cloud.task = delivery_task(cloud.client, cloud.seats[1].room)
+    cloud.machines = machines
+    cloud.headers = _owner(cloud.client)
+    _a_cloud_machine(cloud, "host-b")
+    return cloud
+
+
+def task_host_comes_up(case, device_id) -> None:
+    """The pool host placed for the task's environment dials in."""
+
+    async def enrol():
+        from app.domain.environment import services as environment_rows
+        from app.domain.machine import occupants
+        from app.domain.machine.repositories import CloudHostRepository
+        from tests.integration.test_sandbox_idle_stop import (
+            AiStatus,
+            MachineStatus,
+            sandbox_image,
+        )
+
+        async with case.client.test_request_factory() as db:
+            environment = await environment_rows.environment_of_conversation(
+                db, case.task.id
+            )
+            home = await occupants.home_of_environment(db, environment.id)
+            if home is None:
+                return False
+            repo = CloudHostRepository(db)
+            host = await repo.get(home.host_id)
+            case.provider.machines[host.machine_id].update(
+                status="running", aiStatus="disabled"
+            )
+            host.status = MachineStatus.running
+            host.ai_status = AiStatus.disabled
+            host.sandbox_image = sandbox_image.default_image()["reference"]
+            from datetime import UTC, datetime
+
+            host.last_seen_at = datetime.now(UTC)
+            await repo.mark_enrolled(
+                host,
+                device_id=device_id,
+                when=datetime.now(UTC),
+                sandbox_disk_gb=host.sandbox_disk_gb,
+            )
+            await db.commit()
+            return True
+
+    # The bring-up places a sandbox for it first, in the background.
+    end = time.monotonic() + 15
+    while not run(case, enrol):
+        assert time.monotonic() < end, "no sandbox was placed for the task"
+        time.sleep(0.1)
+    case.hosts.online.add(device_id)
+
+
+def arrange(case, operation, path, to=None):
+    return case.client.post(
+        f"/projects/{case.project_id}/file/arrange",
+        params={"task": str(case.task.id)},
+        json={"operation": operation, "path": path, "to": to},
+        headers=case.headers,
+    )
+
+
+def test_a_person_edits_the_files_of_a_task_no_agent_worked_in(unworked_task):
+    case = unworked_task
+    assert prepare(case).json()["data"]["started"] is True
+    task_host_comes_up(case, "host-b")
+    assert until_settled(case) == {"machine": "ready", "failed": None}
+    opened = read(case, f"deliveries/{case.task.id}.txt").json()["data"]
+
+    saved = save(
+        case,
+        f"deliveries/{case.task.id}.txt",
+        "edited by a person\n",
+        version=opened["version"],
+        base=opened["content"],
+    )
+    created = arrange(case, "create", "notes/plan.md")
+    moved = arrange(case, "move", "notes/plan.md", "notes/done.md")
+    deleted = arrange(case, "delete", f"deliveries/{case.task.id}.txt")
+
+    for answer in (saved, created, moved, deleted):
+        assert answer.status_code == 200, answer.text
+    listed = case.client.get(
+        f"/projects/{case.project_id}/files",
+        params={"task": str(case.task.id), "source": "live"},
+        headers=case.headers,
+    ).json()["data"]
+    paths = {entry["path"] for entry in listed["data"]}
+    assert "notes/done.md" in paths
+    assert f"deliveries/{case.task.id}.txt" not in paths
+    assert listed["source"] == "live"
+    assert turns(case) == 0
+
+
+def test_someone_not_on_the_project_cannot_bring_the_machine_up(unworked_task):
+    case = unworked_task
+    from tests.integration.conftest import session_auth_headers
+
+    answer = case.client.post(
+        f"/topics/{case.task.id}/machine/prepare",
+        headers=session_auth_headers("mallory"),
+    )
+
+    assert answer.status_code in (403, 404), answer.text
+    assert status(case) == {"machine": None, "failed": None}
+
+
+def test_an_agent_that_comes_later_works_where_the_person_left_their_file(
+    unworked_task,
+):
+    case = unworked_task
+    assert prepare(case).json()["data"]["started"] is True
+    task_host_comes_up(case, "host-b")
+    assert until_settled(case) == {"machine": "ready", "failed": None}
+    assert arrange(case, "create", "from-a-person.md").status_code == 200
+
+    async def seat():
+        async with case.client.test_request_factory() as db:
+            topic = await db.get(Topic, case.task.room_id)
+            agent = await IdentityService(db).ensure_room_agent_user(topic.id)
+            row = await AgentSessionService(db).ensure(
+                case.task.id, "cheese", harness="claude-code"
+            )
+            resource = str(topic.resource_id or topic.id)
+            row.runtime_location = {
+                "device_id": "center",
+                "resource_id": resource,
+                "channel": "device",
+            }
+            token = bind_resource_token(
+                mint_scoped_token(
+                    project_id=str(case.project_id),
+                    topic_id=str(case.task.id),
+                    agent_handle=agent.username,
+                ),
+                resource,
+                session_id=str(row.id),
+            )
+            await db.commit()
+            return SimpleNamespace(room=case.task.id, session=row.id, token=token)
+
+    agent = run(case, seat)
+    hands = tool_call(case, agent)
+
+    assert hands["target"]["device_id"] == "host-b"
+    task_dir = (
+        case.machines.home(hands["target"]) / ".cheese" / "tasks" / str(case.task.id)
+    )
+    assert (task_dir / "from-a-person.md").exists()
+
+
+def test_a_bring_up_whose_process_is_gone_soon_stops_saying_preparing(
+    task_cloud, monkeypatch
+):
+    """The backend process running a bring-up can die with it; the task does
+    not go on saying its machine is being prepared, and it can be asked for
+    again."""
+    case = task_cloud
+    destroyed_with_work_kept(case)
+    monkeypatch.setattr(task_machine, "HOLD_S", 0.5)
+
+    async def died(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(task_machine, "_bring_up", died)
+    assert prepare(case).json()["data"]["started"] is True
+    assert status(case)["machine"] == "preparing"
+
+    time.sleep(0.7)
+
+    assert status(case) == {"machine": None, "failed": None}
+    assert prepare(case).json()["data"]["started"] is True
+
+
+def test_a_sandbox_a_person_saved_into_is_kept_and_one_open_in_a_tab_is_not(
+    task_cloud,
+):
+    case = task_cloud
+    opened = read(case, "notes.md").json()["data"]
+    time_passes(case, case.seat, timedelta(minutes=11))
+
+    saved = save(
+        case,
+        "notes.md",
+        "saved within the idle time\n",
+        version=opened["version"],
+        base=opened["content"],
+    )
+    assert saved.status_code == 200, saved.text
+    assert sweep(case)["destroyed"] == 0
+    assert home_row(case, case.seat) is not None
+
+    # Open in a tab, nothing asked of it: the panel does not poll.
+    time_passes(case, case.seat, timedelta(minutes=11))
+    assert sweep(case)["destroyed"] == 1
+    assert home_row(case, case.seat) is None
+
+
+def test_a_persons_read_that_reaches_the_machine_is_an_act_of_theirs(
+    unworked_task,
+):
+    case = unworked_task
+    assert prepare(case).json()["data"]["started"] is True
+    task_host_comes_up(case, "host-b")
+    assert until_settled(case) == {"machine": "ready", "failed": None}
+
+    async def acted(*, back: timedelta | None = None):
+        from sqlalchemy import update
+
+        from app.domain.environment.models import EnvironmentAttachment
+
+        async with case.client.test_request_factory() as db:
+            if back is not None:
+                await db.execute(
+                    update(EnvironmentAttachment)
+                    .where(EnvironmentAttachment.user_id.is_not(None))
+                    .values(acted_at=EnvironmentAttachment.acted_at - back)
+                )
+                await db.commit()
+            return await db.scalar(
+                select(EnvironmentAttachment.acted_at).where(
+                    EnvironmentAttachment.user_id.is_not(None)
+                )
+            )
+
+    before = run(case, lambda: acted(back=timedelta(minutes=5)))
+    assert read(case, f"deliveries/{case.task.id}.txt").status_code == 200
+
+    assert run(case, acted) > before + timedelta(minutes=4)
+
+
+def test_a_persons_first_file_in_a_task_with_no_repository_lands_in_the_workspace(
+    unworked_task, monkeypatch
+):
+    """A project with no repository: the task has no branch, its files are
+    the room's workspace on a machine, and none is asked of a forge."""
+    from sqlalchemy import delete, update
+
+    from app.domain.project.models import ProjectForge
+    from app.domain.repository import forge_files
+    from app.domain.room_task.models import Task
+
+    case = unworked_task
+
+    async def no_repository():
+        async with case.client.test_request_factory() as db:
+            await db.execute(
+                delete(ProjectForge).where(ProjectForge.project_id == case.project_id)
+            )
+            await db.execute(
+                update(Task)
+                .where(Task.id == case.task.id)
+                .values(branch_name=None, base_branch=None)
+            )
+            await db.commit()
+
+    run(case, no_repository)
+
+    async def no_forge(*_args, **_kwargs):
+        raise AssertionError("a task with no repository asked a forge")
+
+    monkeypatch.setattr(forge_files, "branch_head", no_forge)
+    monkeypatch.setattr(forge_files, "repository_data", no_forge)
+    asked = case.machines.executor
+
+    async def executor(target, method, params, **kwargs):
+        if method == "invoke" and "cheese worktree" in params["args"]["command"]:
+            # What `cheese worktree` says for a project with no repository.
+            return {"value": {"stdout": "taskWithoutRepository\n", "stderr": ""}}
+        return await asked(target, method, params, **kwargs)
+
+    monkeypatch.setattr(execution, "call", executor)
+    listed = case.client.get(
+        f"/projects/{case.project_id}/files",
+        params={"task": str(case.task.id), "source": "live"},
+        headers=case.headers,
+    )
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["data"]["data"] == []
+
+    assert prepare(case).json()["data"]["started"] is True
+    task_host_comes_up(case, "host-b")
+    assert until_settled(case) == {"machine": "ready", "failed": None}
+    created = arrange(case, "create", "findings.md")
+    assert created.status_code == 200, created.text
+
+    async def home_dir():
+        from app.domain.environment import services as environment_rows
+
+        async with case.client.test_request_factory() as db:
+            environment = await environment_rows.environment_of_conversation(
+                db, case.task.id
+            )
+            return await environment_rows.view(db, environment.id)
+
+    target = run(case, home_dir)
+    assert (case.machines.home(target) / "room" / "findings.md").exists()

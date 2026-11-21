@@ -26,11 +26,13 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from sqlalchemy import select
 
+from app.core.config import settings
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
 from app.domain.agent import execution
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
+from app.domain.machine.caller import machine_proxy_proof
 from app.domain.project.github_app import GitHubAppTokens
 from app.domain.topic.models import Topic
 from app.domain.user.models import User
@@ -121,6 +123,7 @@ async def _session(client, place: str, *, own: bool | None = True) -> dict:
                 "room_resource_id": resource,
                 "device_id": device.device_id,
                 "workspace": "/work",
+                "state": "/work/state",
                 "mcp_servers": [],
                 "url": f"http://api/topics/{conversation}/execution/session-{resource}",
                 **({} if own is None else {"own": own}),
@@ -286,6 +289,34 @@ async def test_its_forge_token_reads_and_never_pushes(client, monkeypatch, place
     data = _forge_token(client, monkeypatch, held)
     assert data["token"] == "reads"
     assert data["read_only"] is True
+
+
+@pytest.mark.parametrize("place", ["thread", "task"])
+async def test_the_environments_own_credential_pushes_only_from_a_task(
+    client, monkeypatch, place
+):
+    """The credential an environment is handed for itself — what goes
+    outside its sandbox, or a command nobody named — keeps its
+    conversation's rule: a 支线's never gets the token that pushes."""
+    held = await _session(client, place)
+    async with client.test_factory() as db:
+        project = (await db.get(Topic, uuid.UUID(held["room"]))).project_id
+    monkeypatch.setattr(settings, "device_connection_secret", "owner-secret")
+    handed = client.get(
+        "/machine/proxy-credential",
+        headers={
+            "x-device-connection-secret": "owner-secret",
+            "x-machine-device": held["device"],
+            "x-machine-state": "/work/state",
+            "x-cheese-proxy-proof": machine_proxy_proof(str(project)),
+        },
+    )
+    assert handed.status_code == 200, handed.text
+    data = _forge_token(
+        client, monkeypatch, {**held, "machine": handed.json()["token"]}
+    )
+    assert data["read_only"] is (place == "thread")
+    assert data["token"] == ("reads" if place == "thread" else "pushes")
 
 
 @pytest.mark.parametrize("place", ["task", "became"])

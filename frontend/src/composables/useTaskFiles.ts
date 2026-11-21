@@ -35,7 +35,7 @@ import { heldEdit, heldOnlyInMemory, heldPaths, holdEdit, releaseEdit } from '..
 import { t } from '@/i18n'
 
 /** Where the task's machine is, as far as this panel knows. */
-export type TaskMachineState = 'unknown' | 'ready' | 'preparing' | 'failed' | 'no_session'
+export type TaskMachineState = 'unknown' | 'ready' | 'preparing' | 'failed'
 
 /** The file open in the panel. */
 export interface OpenTaskFile {
@@ -192,8 +192,6 @@ async function saveHeld(tid: string, path: string): Promise<void> {
     if (isRefusal(e, 'MachinePreparing')) {
       task.machine = 'preparing'
       watchBringUp(tid)
-    } else if (isRefusal(e, 'NoTaskSession')) {
-      task.machine = 'no_session'
     } else if (e instanceof ApiError && e.status === 409) {
       const regions = (e.data as MergeConflict | undefined)?.regions
       if (regions) state.merge = e.data as MergeConflict
@@ -218,18 +216,15 @@ async function flushHeld(tid: string) {
 /** Ask for the task's machine for the person's edits, unless that is under way. */
 async function bringUp(tid: string): Promise<void> {
   const task = taskState(tid)
-  if (task.machine === 'preparing' || task.machine === 'no_session') return
+  if (task.machine === 'preparing') return
   task.machine = 'preparing'
   task.error = ''
   try {
     await prepareTaskMachine(tid)
     watchBringUp(tid)
   } catch (e) {
-    if (isRefusal(e, 'NoTaskSession')) task.machine = 'no_session'
-    else {
-      task.machine = 'failed'
-      task.error = e instanceof Error ? e.message : t('apiError.taskMachinePrepareFailed')
-    }
+    task.machine = 'failed'
+    task.error = e instanceof Error ? e.message : t('apiError.taskMachinePrepareFailed')
   }
 }
 
@@ -250,10 +245,6 @@ async function poll(tid: string) {
     if (now.machine === 'ready') {
       task.machine = 'ready'
       await flushHeld(tid)
-      return
-    }
-    if (now.failed === 'no_session') {
-      task.machine = 'no_session'
       return
     }
     if (now.failed === 'unavailable' || (now.machine === null && ++task.idlePolls > IDLE_POLLS)) {
@@ -281,10 +272,6 @@ async function resume(tid: string) {
     if (now.machine === 'preparing') {
       task.machine = 'preparing'
       return watchBringUp(tid)
-    }
-    if (now.failed === 'no_session') {
-      task.machine = 'no_session'
-      return
     }
   } catch {
     // Asked for below.
@@ -356,10 +343,7 @@ export function useTaskFiles(opts: TaskFilesOptions) {
   const saveError = computed(() => current.value?.error || shared.value?.error || '')
   const touched = computed(() => shared.value?.touched ?? new Set<string>())
 
-  const canEdit = computed(
-    () =>
-      !opts.readOnly() && machine.value !== 'no_session' && !!file.value && !file.value.binary && !file.value.tooLarge
-  )
+  const canEdit = computed(() => !opts.readOnly() && !!file.value && !file.value.binary && !file.value.tooLarge)
 
   // ---------------------------------------------------------------- listing
 
@@ -550,7 +534,6 @@ export function useTaskFiles(opts: TaskFilesOptions) {
         watchBringUp(tid)
         return true
       }
-      if (isRefusal(e, 'NoTaskSession')) shared.machine = 'no_session'
       arrangeError.value = e instanceof Error ? e.message : t('global.updateFailed')
       return false
     }

@@ -20,6 +20,11 @@ from app.core.db import async_session_factory
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.harness import harness_for
 from app.domain.agent.harness.claude_code.remote_execution.runtime import Executor
+from app.domain.environment.models import (
+    READY,
+    ConversationEnvironment,
+    Environment,
+)
 from app.domain.project.models import Project
 from app.domain.review.pr_publish import _draft_pr_for_one_task
 from app.domain.room_task.lock_order import lock_task_for_change
@@ -46,6 +51,30 @@ async def poll_approved_device(
                     f"device authorization ended with {device['status']!r}"
                 )
             await asyncio.sleep(interval)
+
+
+async def point_task_here(
+    session, *, task_id, room, project, generation, device_id, home, state
+):
+    """The task's environment, ready on this machine, with nobody attached:
+    what a task no agent has worked in has once a person's bring-up placed it
+    (`task_machine`)."""
+    environment = Environment(
+        id=uuid.uuid4(),
+        topic_id=room,
+        project_id=project,
+        device_id=device_id,
+        resource_id=str(uuid.uuid4()),
+        room_resource_id=generation,
+        choice={"kind": "self_hosted", "device_id": device_id},
+        status=READY,
+        executor={"home": home, "state": state},
+    )
+    session.add(environment)
+    await session.flush()
+    session.add(
+        ConversationEnvironment(conversation_id=task_id, environment_id=environment.id)
+    )
 
 
 async def main():
@@ -169,9 +198,23 @@ async def main():
         assert json.loads(await socket.recv())["t"] == "welcome"
         await socket.send(json.dumps({"t": "hello", "executor": True}))
         async with async_session_factory() as session:
-            # A task's files are read from its own session's machine; here
-            # every task's session took this one.
+            # A task's files are read from the machine its work is on; here
+            # every task's work is on this one. A task no agent worked in
+            # (``session: false``) has no session: the task alone points to
+            # the environment on this machine.
             for task in request["tasks"]:
+                if not task.get("session", True):
+                    await point_task_here(
+                        session,
+                        task_id=uuid.UUID(task["id"]),
+                        room=room_id,
+                        project=uuid.UUID(project),
+                        generation=resource,
+                        device_id=device["device_id"],
+                        home=str(home),
+                        state=str(state),
+                    )
+                    continue
                 await remember_place(
                     session,
                     conversation_id=uuid.UUID(task["id"]),

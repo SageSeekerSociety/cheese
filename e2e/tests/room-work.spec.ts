@@ -233,3 +233,74 @@ test("同名文件按任务打开：在「文件」里改的只存进这一件�
     await exited;
   }
 });
+
+test("没有芝士做过的任务，alice 也能在「文件」里改并存下", async ({
+  page,
+}, testInfo) => {
+  // The fixture clones and pushes one worktree before exercising the UI.
+  test.setTimeout(120_000);
+  await apiLogin(page);
+  await openFirstProject(page);
+  const project = await projectIdOf(page);
+  const stamp = Date.now();
+  const room = await freshRoom(page, `没人做过 ${stamp}`);
+  const task = await dispatch(page, room, `只有人改的任务 ${stamp}`);
+  // No agent session ever worked this task: the fixture points the task to an
+  // environment on its machine and attaches nobody to it.
+  const log = openSync(testInfo.outputPath("machine.log"), "w");
+  const machine = spawn(
+    "uv",
+    ["run", "python", "-m", "scripts.e2e_task_machine"],
+    {
+      cwd: "../backend",
+      stdio: ["pipe", "pipe", log],
+    },
+  );
+  closeSync(log);
+  const exited = once(machine, "exit");
+  try {
+    const ready = new Promise<void>((resolve, reject) => {
+      machine.once("error", reject);
+      machine.once("exit", (code) =>
+        reject(new Error(`Task machine exited: ${code}; see machine.log`)),
+      );
+      machine.stdout.on("data", (chunk) => {
+        if (chunk.toString().includes("ready\n")) resolve();
+      });
+    });
+    machine.stdin.end(
+      JSON.stringify({
+        api: `http://127.0.0.1:${process.env.E2E_BACKEND_PORT ?? "8081"}`,
+        token: await apiToken(page),
+        project,
+        room,
+        home: testInfo.outputPath("machine"),
+        tasks: [{ id: task.id, content: "nobody worked here\n", session: false }],
+      }),
+    );
+    await ready;
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto(
+      `/projects/${project}/topics/${room}/tasks/${task.id}?tab=code`,
+    );
+    const files = page.locator(".task-files");
+    await files.getByRole("button", { name: "src", exact: true }).click();
+    await files.getByRole("button", { name: /^login\.txt( 已修改)?$/ }).click();
+    await expect(files.locator(".monaco-editor")).toContainText(
+      "nobody worked here",
+    );
+    await files.locator(".monaco-editor .view-lines").click();
+    await page.keyboard.press("ControlOrMeta+A");
+    await page.keyboard.type("alice's edit");
+    await expect(files.locator(".task-files__status")).toHaveText("已保存");
+    const saved = await api(
+      page,
+      "get",
+      `/projects/${project}/file?path=src/login.txt&topic=${room}&task=${task.id}`,
+    );
+    expect(saved.content).toBe("alice's edit");
+  } finally {
+    if (machine.exitCode === null) machine.kill();
+    await exited;
+  }
+});
