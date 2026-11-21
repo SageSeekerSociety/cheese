@@ -532,6 +532,7 @@ export const SCENES_MISC_ENTRIES: CatalogEntry[] = [
       isSelfOwner: true,
       canBringPeopleIn: true,
       members: TEAM_MEMBERS,
+      loadingMembers: false,
       failedMembers: false,
       membersError: null,
       joinRequests: TEAM_JOIN_REQUESTS,
