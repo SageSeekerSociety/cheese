@@ -378,6 +378,34 @@ def test_a_person_and_a_turn_at_once_get_one_machine(task_cloud, monkeypatch):
     assert len(case.machines.installed) == before + 1
 
 
+def test_two_asks_for_the_machine_bring_up_one_and_agree_how_far_it_got(
+    task_cloud, monkeypatch
+):
+    """How far a bring-up got is a fact about the task's machine, not about
+    the backend process that started it: a second ask, wherever it lands,
+    starts nothing and reads the same state."""
+    case = task_cloud
+    destroyed_with_work_kept(case)
+    installing = case.machines.exec
+
+    async def slow_install(device_id, argv, *, stdin=None, **kwargs):
+        if not (stdin and "def main(cleanup, request)" in stdin):
+            await asyncio.sleep(0.5)
+        return await installing(device_id, argv, stdin=stdin, **kwargs)
+
+    monkeypatch.setattr(case.hosts, "exec", slow_install)
+    before = len(case.machines.installed)
+
+    first = prepare(case).json()["data"]
+    second = prepare(case).json()["data"]
+
+    assert first == {"started": True, "reason": None}
+    assert second == {"started": False, "reason": "preparing"}
+    assert status(case) == {"machine": "preparing", "failed": None}
+    assert until_settled(case) == {"machine": "ready", "failed": None}
+    assert len(case.machines.installed) == before + 1
+
+
 def test_a_save_starts_an_executor_that_stopped_for_sitting_idle(task_cloud):
     case = task_cloud
     opened = read(case, "notes.md").json()["data"]

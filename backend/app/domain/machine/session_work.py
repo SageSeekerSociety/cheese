@@ -1216,6 +1216,19 @@ async def _settle_person(db, holder, attacher: Attacher, *, topic_id):
     return settled, attached.id, parse_environment(settled.choice)
 
 
+async def attach_person(db, attacher: Attacher) -> uuid.UUID:
+    """Attach a person to where the conversation's work is
+    (`_settle_person`), under the holder's lock, and answer that
+    environment. Flushes; the caller commits."""
+    assert attacher.conversation_id is not None  # a person names it
+    holder_id = await holders.holder_of(db, attacher.conversation_id)
+    holder = await holders.lock_for_work(db, holder_id)
+    if holder.project_id is None:
+        raise NotFoundError("Conversation not found")
+    settled, _, _ = await _settle_person(db, holder, attacher, topic_id=holder_id)
+    return settled.id
+
+
 async def _attempt(db, *, topic_id, attacher: Attacher, hub):
     """The row reservation survives worker death; remote work holds no DB lock."""
     holder = await holders.lock_for_work(db, topic_id)
