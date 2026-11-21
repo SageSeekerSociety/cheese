@@ -78,6 +78,17 @@ def _scope_of(raw: str) -> MemoryFileScope:
     return scope
 
 
+def _owner_in_private(resolver: ActorResolverDep, actor: str, owner: str) -> bool:
+    """private 只给本人，而且只在只有本人读得到的地方（#4985：private 只在一个人
+    和芝士的私聊里用）。替一个人回答项目里的提问的那张凭证（点名了回答的 agent，
+    `document.question.credential`）判下来就是这个人，可答案落在别人也读得到的
+    房间或文档里，所以它碰不到 private：读不到，也写不动。"""
+    if owner != actor:
+        return False
+    delegation = resolver.delegation()
+    return delegation is None or delegation.agent is None
+
+
 async def _readable(
     db: AsyncSession,
     resolver: ActorResolverDep,
@@ -93,7 +104,7 @@ async def _readable(
     """
     actor = await resolver.resolve(project_id=project_id)
     await resolver.authorize_project(actor, project_id=project_id)
-    if owner is not None and owner != actor.handle:
+    if owner is not None and not _owner_in_private(resolver, actor.handle, owner):
         raise ForbiddenError(say("privateMemoryOwnerSees"))
     return actor.handle
 
@@ -115,7 +126,7 @@ async def _writable(
         project_id=project_id,
         permission=Permission.configure_agents if owner is None else None,
     )
-    if owner is not None and owner != actor.handle:
+    if owner is not None and not _owner_in_private(resolver, actor.handle, owner):
         raise ForbiddenError(say("privateMemoryOwnerSees"))
     return actor.handle
 
