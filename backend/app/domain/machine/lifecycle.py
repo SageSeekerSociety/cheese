@@ -53,9 +53,8 @@ person's own computer are not frozen: they keep the lifecycle below.
 are stopped and the home is deleted from its machine (``sandbox_home.destroy``);
 then its row goes, and on a host with it the host's slot. A machine that is
 offline is skipped until it is back. What lasts is the conversation, the
-commits the session pushed, and — in a repository the platform hosts — what
-its task checkouts had not committed, kept beside their branches by the last
-checkpoint or save (``repository.kept_work``) and laid back when a checkout
+commits the session pushed, and what its task checkouts had not committed,
+kept off the sandbox by the last checkpoint or save (``repository.kept_work``) and laid back when a checkout
 of the task is opened again. Installed tools, running processes and the rest
 of the home are gone. The session's next tool call places it in a new
 sandbox, which starts like any new one, and that call's result tells the

@@ -108,9 +108,9 @@ This upgrade path applies to ordinary room executors. Private execution containe
 
 `machine/sandbox_images.py` 每分钟检查已接入的云主机和 ready warm host，每次最多并行准备四台，跳过已经记录当前默认 digest 的主机。主机已有可用 digest 时继续接单，新 sandbox 使用该主机当前记录的镜像；新默认镜像准备成功后更新主机记录。已有 sandbox，包括停放后原地恢复的 sandbox，继续使用自己的镜像和可写层。准备失败保留主机的可用引用，不产生空窗或为这次更新扩容。准入、等待和 warm reserve 共用 `models.sandbox_image_ready`。默认镜像变化本身不改变 VM 的 `image_version`，因此无需修改或重建 MicroCloud 模板。
 
-默认保留两个旧 digest。清理只在新镜像准备完成后运行，保留 sandbox home 引用的镜像，并跳过 bubblewrap 通过 `--sync-fd` 租用的镜像；因此被会话引用的旧版本可以超过两个。会话 home 销毁后，其引用可在后续新镜像准备时回收。已准备主机的每分钟检查跳过缓存清理，也不写回无变化的数据库行。
+默认保留一个旧 digest，供默认镜像退回上一版时直接使用。清理只在新镜像准备完成后运行，保留 sandbox home 引用的镜像，并跳过 bubblewrap 通过 `--sync-fd` 租用的镜像；因此被会话引用的旧版本可以超过一个。会话 home 销毁后，其引用可在后续新镜像准备时回收。已准备主机的每分钟检查跳过缓存清理，也不写回无变化的数据库行。
 
-容量根据 `default.json` 中的实测 rootfs 和导出 tar 大小计算。当前 rootfs 为 1,340,813,312 字节，tar 为 1,305,063,424 字节，普通缓存准备峰值为 `(2 + 2) × 1,340,813,312 + 1,305,063,424 = 6,668,316,672` 字节：当前、两个旧版本、新 rootfs 和导出 tar。加 10% 余量后向上取整为 8 GB。此外每个 sandbox 槽位为其生命周期镜像再预留 2 GB，覆盖仍被 home 引用的旧镜像；原有项目包缓存和 swap 预留继续单独计算。例如 64 GB 数据盘、10 GB 原有预留、8 GB swap、每个 sandbox 4 GB quota 时，磁盘上限为 `floor((64 − 10 − 8 − 8) / (4 + 2)) = 6`。核数和内存还会进一步限制数量。
+容量根据 `default.json` 中的实测 rootfs 和导出 tar 大小计算。当前 rootfs 为 1,627,971,584 字节，tar 为 1,581,302,784 字节，普通缓存准备峰值为 `(1 + 2) × 1,627,971,584 + 1,581,302,784 = 6,465,217,536` 字节：当前、一个旧版本、新 rootfs 和导出 tar。加 10% 余量后向上取整为 8 GB。此外每个 sandbox 槽位为其生命周期镜像再预留 2 GB，覆盖仍被 home 引用的旧镜像；原有项目包缓存和 swap 预留继续单独计算。例如 64 GB 数据盘、10 GB 原有预留、8 GB swap、每个 sandbox 4 GB quota 时，磁盘上限为 `floor((64 − 10 − 8 − 8) / (4 + 2)) = 6`。核数和内存还会进一步限制数量。
 
 准备中的工具下载、镜像导出、解包分别有 610、1200、600 秒进程上限，统计 rootfs 大小最多 60 秒，取得 user namespace 最多 30 秒。归属映射在解包时完成。后台 exec 总预算 3300 秒，接入 bootstrap 预算为该值再加原有 SSH 步骤的 180 秒，共 3480 秒。
 

@@ -216,8 +216,9 @@ class ProjectFiles:
         """The task's kept snapshot (`kept_work`) when a new checkout lays it
         back over the branch: the commit whose tree is the files its last
         machine had, committed or not. None when nothing was kept, when the
-        branch moved on since, or when the forge cannot say: the branch is
-        then what a new checkout holds. Asked once per view."""
+        branch moved on since, when the forge does not hold it, or when the
+        forge cannot say: the branch is then what is read. Asked once per
+        view."""
         if not task.branch_name:
             return None
         if self._kept is None:
@@ -234,7 +235,14 @@ class ProjectFiles:
                     "could not read kept work of task %s", task.id, exc_info=True
                 )
                 kept = None
-            self._kept = (kept.commit if kept is not None and kept.laid_back else "",)
+            # A snapshot the platform keeps for a repository not its own is
+            # a bundle of objects nobody can read files out of here: the
+            # branch stands for it.
+            self._kept = (
+                kept.commit
+                if kept is not None and kept.laid_back and kept.on_forge
+                else "",
+            )
         return self._kept[0] or None
 
     async def _copy_revision(self, task: Any) -> str | None:

@@ -127,7 +127,7 @@ steps:
 
 一位队友第一次要手时（`machine/session_work._attempt`），平台按 任务的默认 → 房间的默认（`topics.default_environment`）→ 项目的默认 → 标准沙箱 取一份写成它自己的（`environments.environment_of`），之后默认再改也不动它。工作目录是执行环境的：一个环境在它那台机器上开一份工作目录和执行器状态（`environments.resource_id`，`device_home_dir`）。选择和对话默认一样的几位队友接在对话指向的同一个环境上，看得见彼此没推送的改动；选择是自己的队友在一个只属于自己的环境里。
 
-换一位队友的环境（`PUT /topics/{id}/sessions/{session}/environment`，人从成员名册改，或芝士用 `cheese_session(action=environment)` 改自己的）只搬这一位：`switch_environment` 让它在离开的那台上做一次尽力而为的 checkpoint（`session_work.checkpoint`，等价 `cheese sync --all`，最多等 `PUSH_WAIT_S`）。checkpoint 推送失败本身不阻止换环境；推不上去的提交随源目录删除而丢失，任务目录里没提交的改动由 checkpoint 另存、新环境打开任务目录时放回（见 [tasks.md](tasks.md)，连接 GitHub 的项目除外）。使用 OCI 镜像的标准云端 sandbox 还会停止执行器、保存根目录 upper；保存失败时保留源 home 并使换环境请求报错，超限则记录状态并继续，规则见[根目录快照](../../remote-execution.md#根目录快照)。checkpoint 前那台上的执行器若还是旧版本，先按新版本重新拉起再做，否则修过的 `cheese sync` 在那台上还是旧的行为。离开平台机器上的沙箱时，它在宿主机上的位置还给池子；离开虚拟机沙箱时那台虚拟机随即删掉。改房间或任务的默认（`PUT /topics/{id}/environment-default`）不搬任何人。
+换一位队友的环境（`PUT /topics/{id}/sessions/{session}/environment`，人从成员名册改，或芝士用 `cheese_session(action=environment)` 改自己的）只搬这一位：`switch_environment` 让它在离开的那台上做一次尽力而为的 checkpoint（`session_work.checkpoint`，等价 `cheese sync --all`，最多等 `PUSH_WAIT_S`）。checkpoint 推送失败本身不阻止换环境；推不上去的提交随源目录删除而丢失，任务目录里没提交的改动由 checkpoint 另存、新环境打开任务目录时放回（见 [tasks.md](tasks.md)）。使用 OCI 镜像的标准云端 sandbox 还会停止执行器、保存根目录 upper；保存失败时保留源 home 并使换环境请求报错，超限则记录状态并继续，规则见[根目录快照](../../remote-execution.md#根目录快照)。checkpoint 前那台上的执行器若还是旧版本，先按新版本重新拉起再做，否则修过的 `cheese sync` 在那台上还是旧的行为。离开平台机器上的沙箱时，它在宿主机上的位置还给池子；离开虚拟机沙箱时那台虚拟机随即删掉。改房间或任务的默认（`PUT /topics/{id}/environment-default`）不搬任何人。
 
 ### 会话按座位分开 {#seats-session}
 

@@ -100,7 +100,7 @@ from app.domain.notification.models import NotificationType
 from app.domain.project.environment import EnvironmentConfig, pin_environment
 from app.domain.project.models import Project
 from app.domain.project.services import ProjectService
-from app.domain.repository.kept_work import keeps_work, kept_ref, kept_work
+from app.domain.repository.kept_work import keeps_work, kept_work
 from app.domain.room_task.models import Task
 from app.domain.room_task.place import conversation_keeps_work
 from app.domain.team.models import Team, TeamUserRelation
@@ -2006,7 +2006,7 @@ async def _lost_notice(db, project_id: uuid.UUID, conversation_id: uuid.UUID) ->
     if kept is None or kept.laid_back:
         return SANDBOX_LOST_KEPT
     return SANDBOX_LOST_KEPT + KEPT_NOT_LAID_BACK.format(
-        at=kept.stamp(), ref=kept_ref(conversation_id), commit=kept.commit[:12]
+        at=kept.stamp(), ref=kept.ref, commit=kept.commit[:12]
     )
 
 

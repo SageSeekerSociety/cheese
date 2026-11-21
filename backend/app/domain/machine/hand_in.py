@@ -11,7 +11,7 @@ The working copy lives in the task's sandbox, so the commit is made there,
 through its executor (`execution.call`), with the platform's own command and
 plain git — a sandbox installed before this change runs it as well. A sandbox
 that is gone takes nothing with it that a commit could be made from: what it
-had not committed was kept on the forge (`repository.kept_work`) and comes back
+had not committed was kept off it (`repository.kept_work`) and comes back
 in the next sandbox, so that is what the person is told. Commits already on
 the branch need no sandbox and are handed in as they are.
 
@@ -143,8 +143,8 @@ async def uncommitted(
     An awake sandbox is asked about the files it tracks (a person's save
     changes one; files a teammate left untracked are not a reason to stop an
     adoption). One that is frozen is not thawed for this, and one that is
-    gone cannot be asked: what the platform kept of it answers (`has_kept`),
-    which is only ever on the platform's own forge. Neither answering is no."""
+    gone cannot be asked: what the platform kept of it answers (`has_kept`).
+    Neither answering is no."""
     if not task.branch_name:
         return False
     found = await _sandbox(session, task)
@@ -189,8 +189,8 @@ async def standing(db: AsyncSession, task: Task) -> Standing:
     Commits are read from the forge: the branch's head against the latest
     version's. Uncommitted files are `uncommitted`'s answer: an awake sandbox
     says; otherwise the kept snapshot, which follows a person's save by about
-    ten seconds and is kept only on the platform's own forge. A version whose
-    head is not known yet (filed a moment ago) counts as holding the branch."""
+    ten seconds. A version whose head is not known yet (filed a moment ago)
+    counts as holding the branch."""
     latest = (await AcceptService(db).latest_by_task([task.id])).get(task.id)
     waiting = latest is not None and latest.status in WAITING
     if task.status != TaskStatus.open or not task.branch_name:
