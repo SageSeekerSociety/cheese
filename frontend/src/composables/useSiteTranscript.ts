@@ -478,16 +478,32 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
     arrived.clear()
   }
 
-  /** 把这一次读回来的、比手上新的几条接在末尾。按 id 去重：往前读的边界取的是
+  /** 把这一次往后读回来的几条合进手上这一窗。按 id 去重：往前读的边界取的是
    *  「那一刻及以后」，和手上可能有重叠。`animate` 时它们才淡入——读者停在末尾，
-   *  这几条正是他此刻在看的；他在历史里时它们落在视口下方，动了也没人看见。 */
+   *  这几条正是他此刻在看的；他在历史里时它们落在视口下方，动了也没人看见。
+   *
+   *  按时间插回各自的位置，不是一律拼在末尾：socket 可能先送来一条较新的行，往后
+   *  读的这一页才把比它早的几条带回来（游标之后、它之前）。拼在末尾就成了「新的在
+   *  上、旧的在下」。和 `receive` 同一条规矩（`placeByTime`）。 */
   function appendSite(rows: Block[], animate: boolean): void {
     if (!rows.length) return
     const known = new Set(transcript.value.map((b) => b.id))
     const fresh = rows.filter((b) => !known.has(b.id))
     if (!fresh.length) return
     if (animate) for (const b of fresh) arrive(b.id)
-    transcript.value = [...transcript.value, ...fresh]
+    const next = transcript.value.slice()
+    for (const b of fresh) placeByTime(next, b)
+    transcript.value = next
+  }
+
+  /** 把一行按时间放进 `rows`（就地改）：从尾往前找第一条不晚于它的，插在它后面。几乎
+   *  总是落在末尾；同一时刻的几条保持各自到达的先后。往后读的页和 socket 的行都走它，
+   *  两条入口排序的规矩只有这一处。 */
+  function placeByTime(rows: Block[], block: Block): void {
+    const time = Date.parse(block.created_at)
+    let i = rows.length
+    while (i > 0 && Date.parse(rows[i - 1].created_at) > time) i -= 1
+    rows.splice(i, 0, block)
   }
 
   /** 把手上这一窗写给下一次打开。 */
@@ -620,12 +636,9 @@ export function useSiteTranscript(hooks: SiteTranscriptHooks) {
     }
     const follow = hooks.following.value
     const anchor = follow ? null : hooks.captureAnchor()
-    const time = Date.parse(block.created_at)
     const next = transcript.value.slice()
     // 几乎总是接在末尾；偶尔晚到的一行按时间插回它的位置（一轮以它记下的时间排）。
-    let i = next.length
-    while (i > 0 && Date.parse(next[i - 1].created_at) > time) i -= 1
-    next.splice(i, 0, block)
+    placeByTime(next, block)
     transcript.value = next
     // 读者停在末尾时这一行就在他眼前落下来，淡入一下说明刚来的是它；他在历史里
     // 时它落在视口下方，没人看见，别动。`hasNewer` 那一路上面已经先返回了。
