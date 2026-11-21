@@ -31,10 +31,11 @@ import pytest
 from sqlalchemy import select, update
 
 from app.core.config import settings
-from app.domain.agent_session.models import THAW_KEY, AgentSession
+from app.domain.agent_session import attachment as attachments
+from app.domain.agent_session.models import AgentSession
 from app.domain.block.models import Block, BlockKind
 from app.domain.event_author import AuthorType
-from app.domain.machine import metering, sandbox_home
+from app.domain.machine import metering, occupants, sandbox_home
 from app.domain.machine import session_work as work_lease
 from app.domain.machine.disk_guard import DiskGuard
 from app.domain.machine.models import CloudHost, SandboxHome, SandboxUsage
@@ -53,6 +54,7 @@ from tests.integration.test_sandbox_idle_stop import (
     tool_call,
     working_on,
 )
+from tests.support.environments import change_environment
 from tests.support.files_bucket import files_bucket
 
 
@@ -82,7 +84,9 @@ def home_row(case, seat) -> SandboxHome | None:
     async def read():
         async with case.client.test_request_factory() as db:
             return await db.scalar(
-                select(SandboxHome).where(SandboxHome.session_id == seat.session)
+                select(SandboxHome).where(
+                    SandboxHome.id == occupants.home_of_session_id(seat.session)
+                )
             )
 
     return run(case, read)
@@ -116,7 +120,7 @@ def frozen_for(case, seat, by: timedelta) -> None:
         async with case.client.test_request_factory() as db:
             await db.execute(
                 update(SandboxHome)
-                .where(SandboxHome.session_id == seat.session)
+                .where(SandboxHome.id == occupants.home_of_session_id(seat.session))
                 .values(frozen_at=datetime.now(UTC) - by)
             )
             await db.commit()
@@ -127,7 +131,10 @@ def frozen_for(case, seat, by: timedelta) -> None:
 def holds(case, seat, device_id: str) -> bool:
     async def read():
         async with case.client.test_request_factory() as db:
-            return await HostPool(db, case.hosts).holds(seat.session, device_id)
+            held = await attachments.attachment_of(db, seat.session)
+            if held is None or held.environment_id is None:
+                return False
+            return await HostPool(db, case.hosts).holds(held.environment_id, device_id)
 
     return run(case, read)
 
@@ -376,17 +383,13 @@ def test_a_tool_call_that_lands_while_it_is_frozen_never_leaves_it_frozen(icy):
         async with icy.client.test_request_factory() as db:
             home = await db.scalar(
                 select(SandboxHome)
-                .where(SandboxHome.session_id == seat.session)
+                .where(SandboxHome.id == occupants.home_of_session_id(seat.session))
                 .with_for_update()
             )
             assert home.frozen_at is not None
             home.frozen_at = None
             home.active_at = datetime.now(UTC)
-            row = await db.get(AgentSession, seat.session)
-            row.execution_request = {
-                **(row.execution_request or {}),
-                THAW_KEY: home.resource_id,
-            }
+            home.thaw_wanted_at = datetime.now(UTC)
             await db.commit()
         woke.append(True)
 
@@ -427,15 +430,18 @@ def test_a_frozen_sandbox_is_not_checkpointed_on_its_way_out(icy, monkeypatch):
 
     async def lease_ready():
         async with icy.client.test_request_factory() as db:
-            row = await db.get(AgentSession, seat.session)
-            row.work_lease = {
-                "kind": "device",
-                "platform": True,
-                "session_id": str(seat.session),
-                "device_id": "host-1",
-                "status": "ready",
-                "state": "/state",
-            }
+            await change_environment(
+                db,
+                seat.session,
+                {
+                    "kind": "device",
+                    "platform": True,
+                    "session_id": str(seat.session),
+                    "device_id": "host-1",
+                    "status": "ready",
+                    "state": "/state",
+                },
+            )
             await db.commit()
 
     run(icy, lease_ready)
@@ -612,7 +618,7 @@ def parked_for(case, seat, by: timedelta) -> None:
         async with case.client.test_request_factory() as db:
             await db.execute(
                 update(SandboxHome)
-                .where(SandboxHome.session_id == seat.session)
+                .where(SandboxHome.id == occupants.home_of_session_id(seat.session))
                 .values(parked_at=datetime.now(UTC) - by)
             )
             await db.commit()
@@ -679,7 +685,7 @@ def test_parked_homes_past_their_hosts_budget_go_oldest_first(icy, monkeypatch):
 
     async def weigh():
         async with icy.client.test_request_factory() as db:
-            row = await CloudHostRepository(db).current_home(seat.session)
+            row = await occupants.home_of(db, seat.session)
             assert row is not None
             await db.merge(SandboxUsage(home_id=row.id, disk_bytes=10**9))
             await db.commit()

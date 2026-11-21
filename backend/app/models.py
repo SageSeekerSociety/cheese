@@ -26,6 +26,7 @@ from app.domain.delivery import models as delivery  # noqa: F401
 from app.domain.device import models as device  # noqa: F401
 from app.domain.discussion import models as discussion  # noqa: F401
 from app.domain.docs_site import models as docs_site  # noqa: F401
+from app.domain.environment import models as environment  # noqa: F401
 from app.domain.feedback import models as feedback  # noqa: F401
 from app.domain.groups import models as groups  # noqa: F401
 from app.domain.happenings import models as happenings  # noqa: F401

@@ -21,6 +21,7 @@ from app.core.device_failures import DeviceOffline
 from app.core.errors import ConflictError
 from app.domain.agent import device_storage
 from app.domain.agent.models import AgentTurn
+from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.block.adapters import platform_line
 from app.domain.delivery.ledger import settle_card
@@ -35,6 +36,7 @@ from app.domain.topic.services import TopicService
 from app.domain.user.tokens import digest_token
 from tests.integration.conftest import project_service, registered
 from tests.support.devices import enrollment_team
+from tests.support.environments import give_environment
 
 pytestmark = pytest.mark.anyio
 
@@ -480,16 +482,18 @@ async def test_inventory_retains_every_session_work_allocation(client, monkeypat
         conversation = await AgentSessionService(session).ensure(
             room_id, "worker", harness="claude-code"
         )
-        conversation.work_lease = {
-            "device_id": "new-hands",
-            "resource_id": current,
-            "kind": "device",
-        }
-        conversation.execution_request = {
-            "retained_leases": [
-                {"device_id": "old-hands", "resource_id": retained, "kind": "device"}
-            ]
-        }
+        # It worked on old-hands first and left it there, then on new-hands.
+        await give_environment(
+            session,
+            conversation,
+            {"device_id": "old-hands", "resource_id": retained, "kind": "device"},
+        )
+        await attachments.detach(session, conversation, keep=True)
+        await give_environment(
+            session,
+            conversation,
+            {"device_id": "new-hands", "resource_id": current, "kind": "device"},
+        )
         await session.commit()
         operation = await session.get(RoomCleanup, cleanup_id)
         entries = await retire._inventory(
@@ -538,7 +542,7 @@ async def _room_with_lease(client, monkeypatch, lease: dict):
         conversation = await AgentSessionService(session).ensure(
             room_id, "worker", harness="claude-code"
         )
-        conversation.work_lease = lease
+        await give_environment(session, conversation, lease)
         await session.commit()
     return cleanup_id
 
@@ -1137,7 +1141,6 @@ async def test_a_rooms_cleanup_gives_back_its_homes_on_a_shared_cloud_host(
                     topic_id=topic,
                     room_resource_id=resource,
                     resource_id=resource,
-                    session_id=uuid.uuid4(),
                 )
             )
         await session.commit()
@@ -1185,11 +1188,11 @@ async def test_a_room_that_became_a_task_is_still_cleaned_up(client, monkeypatch
             room_id, "worker", harness="claude-code"
         )
         resource = str(uuid.uuid4())
-        conversation.work_lease = {
-            "device_id": "released-host",
-            "resource_id": resource,
-            "kind": "device",
-        }
+        await give_environment(
+            session,
+            conversation,
+            {"device_id": "released-host", "resource_id": resource, "kind": "device"},
+        )
         host = CloudHost(
             machine_id=None,
             customer_id=1,
@@ -1215,7 +1218,6 @@ async def test_a_room_that_became_a_task_is_still_cleaned_up(client, monkeypatch
                 topic_id=room_id,
                 room_resource_id=str(operation.resource_id),
                 resource_id=resource,
-                session_id=conversation.id,
             )
         )
         await session.commit()

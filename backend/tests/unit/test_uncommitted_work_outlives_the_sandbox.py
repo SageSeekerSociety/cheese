@@ -197,7 +197,7 @@ async def what_a_person_reads(monkeypatch, platform) -> str:
     )
     monkeypatch.setattr(files, "task", AsyncMock(return_value=task))
     monkeypatch.setattr(
-        forge_files.AgentSessionService,
+        forge_files.environment_rows,
         "working_copy",
         AsyncMock(return_value=({"kind": "device"}, True)),
     )

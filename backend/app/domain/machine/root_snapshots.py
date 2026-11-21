@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 
 from app.core.storage import private_storage
+from app.domain.machine import occupants
 from app.domain.machine.holder import namespace_of
 from app.domain.machine.models import SandboxHome, SandboxRootSnapshot
 
@@ -28,11 +29,16 @@ async def save(db, home, device_id, *, hub, run_on_host):
     A failed transfer raises: idle deletion must retain the only copy and retry.
     An oversized diff records that fact instead of silently restoring older data.
     """
-    if not home.sandbox_image or home.session_id is None or home.host_id is None:
+    if not home.sandbox_image or home.host_id is None:
         return None
-    home_id, session_id, stopped_at = home.id, home.session_id, home.stopped_at
+    # Kept for the session working in it (the one attached longest): what a
+    # session placed in a new sandbox gets back (`for_restore`).
+    session_id = await db.scalar(select(occupants.a_session_in(home.id)))
+    if session_id is None:
+        return None
+    home_id, stopped_at = home.id, home.stopped_at
     bucket = private_storage()
-    key = f"{PREFIX}/{home.session_id}/{int(datetime.now(UTC).timestamp())}-{uuid.uuid4()}.tar.gz"
+    key = f"{PREFIX}/{session_id}/{int(datetime.now(UTC).timestamp())}-{uuid.uuid4()}.tar.gz"
     url = await bucket.presign(key, "put_object", URL_TTL_S)
     answer = await run_on_host(
         hub,
@@ -60,9 +66,10 @@ async def save(db, home, device_id, *, hub, run_on_host):
     source = await db.get(
         SandboxHome, home_id, with_for_update=True, populate_existing=True
     )
-    if source is None or (source.session_id, source.stopped_at) != (
-        session_id,
-        stopped_at,
+    if (
+        source is None
+        or source.stopped_at != stopped_at
+        or await db.scalar(select(occupants.a_session_in(home_id))) != session_id
     ):
         await db.rollback()
         return {"status": "superseded"}

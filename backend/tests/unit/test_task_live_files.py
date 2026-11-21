@@ -32,7 +32,7 @@ async def test_unavailable_live_files_offer_committed_version(monkeypatch, failu
     )
     monkeypatch.setattr(files, "task", AsyncMock(return_value=task))
     monkeypatch.setattr(
-        forge_files.AgentSessionService,
+        forge_files.environment_rows,
         "working_copy",
         AsyncMock(return_value=({"kind": "device"}, False)),
     )
@@ -66,7 +66,7 @@ async def test_live_file_deadline_cancels_the_device_request(monkeypatch):
     files = forge_files.ProjectFiles(session, uuid.uuid4(), task.id, executor=stalled)
     monkeypatch.setattr(files, "task", AsyncMock(return_value=task))
     monkeypatch.setattr(
-        forge_files.AgentSessionService,
+        forge_files.environment_rows,
         "working_copy",
         AsyncMock(return_value=({"kind": "device"}, False)),
     )
@@ -244,7 +244,7 @@ async def test_a_task_with_no_working_copy_yet_has_no_files_and_no_changes(
     files = forge_files.ProjectFiles(session, uuid.uuid4(), task.id, executor=call)
     monkeypatch.setattr(files, "task", AsyncMock(return_value=task))
     monkeypatch.setattr(
-        forge_files.AgentSessionService,
+        forge_files.environment_rows,
         "working_copy",
         AsyncMock(return_value=({"kind": "device"}, False)),
     )

@@ -19,6 +19,7 @@ from tests.integration.conftest import session_auth_headers
 from tests.integration.test_bulk_switch_from_distribution import (
     _project_on_a_device,
 )
+from tests.support.environments import attach_anew
 
 pytestmark = pytest.mark.anyio
 
@@ -37,26 +38,29 @@ async def _more_sessions(client, p, count: int) -> None:
                 topic_id, f"agent-x{i}", harness="claude-code"
             )
             generation = str(uuid.uuid4())
-            session.execution_request = {"generation": generation}
             await AgentSessionService(db).set_environment(
                 topic_id,
                 session.agent_handle,
                 {"kind": "self_hosted", "device_id": p.old},
                 chosen_by=None,
             )
-            session.work_lease = {
-                "kind": "device",
-                "session_id": str(session.id),
-                "generation": generation,
-                "resource_id": str(uuid.uuid4()),
-                "room_resource_id": str(topic_id),
-                "device_id": p.old,
-                "status": "ready",
-                "home": "/old",
-                "state": "/old/state",
-                "workspace": "/old/work",
-                "mcp_servers": [],
-            }
+            await attach_anew(
+                db,
+                session,
+                {
+                    "kind": "device",
+                    "session_id": str(session.id),
+                    "generation": generation,
+                    "resource_id": str(uuid.uuid4()),
+                    "room_resource_id": str(topic_id),
+                    "device_id": p.old,
+                    "status": "ready",
+                    "home": "/old",
+                    "state": "/old/state",
+                    "workspace": "/old/work",
+                    "mcp_servers": [],
+                },
+            )
             await db.commit()
 
 

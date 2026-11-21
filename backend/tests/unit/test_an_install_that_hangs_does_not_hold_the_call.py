@@ -182,16 +182,30 @@ class _Db:
     async def commit(self):
         self.commits += 1
 
-    async def scalar(self, *args, **kwargs):
+    async def execute(self, *args, **kwargs):
         # Whether the session's sandbox is to be thawed first: it is not.
+        return SimpleNamespace(first=lambda: None)
+
+    async def scalar(self, *args, **kwargs):
         return None
 
 
 class _Row:
     def __init__(self):
-        self.work_lease = {"claim": "claim-1"}
-        self.execution_request = None
         self.conversation_id = uuid.uuid4()
+
+
+class _Attachments:
+    """The session's attachment: on an environment whose install holds the
+    claim this installation took."""
+
+    @staticmethod
+    async def attachment_of(db, session_id, *, lock=False):
+        return SimpleNamespace(environment={"claim": "claim-1"})
+
+    @staticmethod
+    async def attach(db, session_id, described):
+        return None
 
 
 class _Holder:
@@ -225,11 +239,11 @@ class _Pool:
     def __init__(self, db, hub=None):
         self.db = db
 
-    async def leave_unusable(self, session_id, host_id):
-        type(self).asked.append((session_id, host_id))
+    async def leave_unusable(self, environment_id, host_id):
+        type(self).asked.append((environment_id, host_id))
         return type(self).answered
 
-    async def tell_ready(self, session_id):
+    async def tell_ready(self, environment_id):
         return None
 
 
@@ -268,6 +282,10 @@ def _install_case(
     monkeypatch.setattr(holders, "bind_resource_token", lambda *a, **k: "scoped-token")
     monkeypatch.setattr(session_work, "for_a_machine", lambda token: token)
     monkeypatch.setattr(lease_claim, "kept", _kept)
+    monkeypatch.setattr(
+        session_work.attachments, "attachment_of", _Attachments.attachment_of
+    )
+    monkeypatch.setattr(session_work.attachments, "attach", _Attachments.attach)
 
     if call_exc is not None:
         # The executor is already on the machine (a lease with a state), so the
@@ -308,6 +326,7 @@ def _install_case(
         token="launch-token",
         resource="resource",
         session_id=uuid.uuid4(),
+        environment_id=uuid.uuid4(),
         generation="1",
         env={},
         api="http://localhost:8000",

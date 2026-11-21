@@ -4,6 +4,9 @@ A sandbox on one of the platform's hosts and one on a person's computer have
 the same lifecycle; only the idle time differs, and that is the spec's
 (``agent.environment.Spec.idle_s``).
 
+The sessions working in a sandbox are those attached to the environment that
+names its home (``occupants``); "its session" below is any of them.
+
 A sandbox is **idle** when its room runs no turn and its session has asked for
 no tool for its spec's idle time — counted from the later of its last
 tool call (``SandboxHome.active_at``) and the end of the last turn in the
@@ -22,8 +25,8 @@ platform is watching for its card
 (``review.queries.waiting_on_checks``) is not idle either, on the same clock:
 the poller wakes its session when they finish, and the sandbox it comes back
 to should be this one rather than a new one and the documents read again. A
-home of no session (a room's directory from
-before session leases) is measured by its own activity alone. A sandbox whose
+home nobody works in (one its environment left, or no environment names) is
+measured by its own activity alone. A sandbox whose
 project has run out
 of credits is destroyed as soon as its room runs no turn (``metering``), idle
 or not.
@@ -56,7 +59,7 @@ checkpoint or save (``repository.kept_work``) and laid back when a checkout
 of the task is opened again. Installed tools, running processes and the rest
 of the home are gone. The session's next tool call places it in a new
 sandbox, which starts like any new one, and that call's result tells the
-agent it is in a new sandbox (``LOST_KEY``).
+agent it is in a new sandbox (`Attachment.notice`).
 
 While the host removes the home, the row is marked stopped (``stopped_at``):
 a tool call that arrives meanwhile waits for it to go (``SandboxRemoving``)
@@ -100,17 +103,13 @@ from app.domain.agent.device_hub import device_hub
 from app.domain.agent.environment import STANDARD, spec_of
 from app.domain.agent.harness.claude_code import executor_launch
 from app.domain.agent.models import AgentTurn
-from app.domain.agent_session.models import (
-    LOST_KEY,
-    LOST_PROCESSES_KEY,
-    PARKED_KEY,
-    THAW_KEY,
-    AgentSession,
-    released_lease,
-)
+from app.domain.agent_session import attachment as attachments
+from app.domain.agent_session.models import AgentSession
 from app.domain.block.models import Block, BlockKind
+from app.domain.environment import services as environment_rows
+from app.domain.environment.models import Environment, EnvironmentAttachment
 from app.domain.machine import holder as holders
-from app.domain.machine import metering, root_snapshots, sandbox_home
+from app.domain.machine import metering, occupants, root_snapshots, sandbox_home
 from app.domain.machine.infra_records import keep_frozen, keep_parked
 from app.domain.machine.models import CloudHost, SandboxHome, SandboxUsage
 from app.domain.machine.progress import publish_line, tell_released, tell_unpaid
@@ -254,18 +253,12 @@ async def _checkpoint(hub, lease: dict, start) -> bool:
 
 
 async def frozen_sessions(db, session_ids) -> set[uuid.UUID]:
-    """Which of these sessions' homes are frozen. A frozen sandbox cannot run
-    the checkpoint a room's cleanup or an environment switch would ask it for:
-    it was checkpointed before it was frozen and nothing ran since
+    """Which of these sessions work in a frozen sandbox. A frozen sandbox
+    cannot run the checkpoint a room's cleanup or an environment switch would
+    ask it for: it was checkpointed before it was frozen and nothing ran since
     (`session_work.checkpoint_room`, `switch_environment`)."""
-    return set(
-        await db.scalars(
-            select(SandboxHome.session_id).where(
-                SandboxHome.session_id.in_(list(session_ids)),
-                SandboxHome.frozen_at.is_not(None),
-            )
-        )
-    )
+    homes = await occupants.homes_of(db, session_ids)
+    return {sid for sid, home in homes.items() if home.frozen_at is not None}
 
 
 async def previewed_sessions(db, session_ids) -> set[uuid.UUID]:
@@ -306,8 +299,30 @@ async def previewed_sessions(db, session_ids) -> set[uuid.UUID]:
     return found
 
 
-async def thaw_if_asked(db, hub, *, session_id, device_id: str, work_resource) -> bool:
-    """Wake a sandbox a tool call has already asked for (`THAW_KEY`), before
+async def previewed_homes(db, home_ids) -> set[uuid.UUID]:
+    """Which of these homes a session working in serves an app preview from
+    right now (`previewed_sessions`)."""
+    wanted = list(home_ids)
+    if not wanted:
+        return set()
+    rows = (
+        await db.execute(
+            select(Environment.sandbox_home_id, EnvironmentAttachment.session_id)
+            .join(
+                EnvironmentAttachment,
+                EnvironmentAttachment.environment_id == Environment.id,
+            )
+            .where(Environment.sandbox_home_id.in_(wanted))
+        )
+    ).all()
+    previewed = await previewed_sessions(db, [session_id for _, session_id in rows])
+    return {home_id for home_id, session_id in rows if session_id in previewed}
+
+
+async def thaw_if_asked(
+    db, hub, *, environment_id, device_id: str, work_resource
+) -> bool:
+    """Wake a sandbox a tool call has already asked for (``thaw_wanted_at``), before
     its executor is asked anything (`session_work._install`, under the claim,
     with no database lock held).
 
@@ -317,21 +332,18 @@ async def thaw_if_asked(db, hub, *, session_id, device_id: str, work_resource) -
     and the next one tries again, which is better than an executor nobody can
     reach for a minute. Answers whether it thawed one.
     """
-    marker = await db.scalar(
-        select(AgentSession.execution_request).where(AgentSession.id == session_id)
-    )
+    home = await occupants.home_of_environment(db, environment_id)
     await db.commit()
-    thawing = (marker or {}).get(THAW_KEY)
-    if not thawing or str(thawing) != str(work_resource):
+    if (
+        home is None
+        or home.resource_id != str(work_resource)
+        or home.thaw_wanted_at is None
+    ):
         return False
     await thaw_on_host(hub, device_id, str(work_resource))
-    row = await db.scalar(
-        select(AgentSession).where(AgentSession.id == session_id).with_for_update()
+    await db.execute(
+        update(SandboxHome).where(SandboxHome.id == home.id).values(thaw_wanted_at=None)
     )
-    if row is not None and (row.execution_request or {}).get(THAW_KEY) == thawing:
-        left = dict(row.execution_request or {})
-        left.pop(THAW_KEY, None)
-        row.execution_request = left
     await db.commit()
     return True
 
@@ -401,15 +413,6 @@ def frozen_eviction_key(home, previewed: bool = False) -> tuple:
 STALE_TURN = timedelta(hours=2)
 
 
-def _of_session(session_id, column, correlate):
-    """``column`` of the session ``session_id`` names, as a scalar subquery:
-    for the two things a turn has to be of to be this session's work."""
-    query = select(column).where(AgentSession.id == session_id)
-    if correlate is not None:
-        query = query.correlate(correlate)
-    return query.scalar_subquery()
-
-
 def _mine(conversation, seat) -> ColumnElement[bool]:
     """The clauses saying a turn belongs to the session ``conversation`` and
     ``seat`` name.
@@ -424,15 +427,6 @@ def _mine(conversation, seat) -> ColumnElement[bool]:
     return and_(
         AgentTurn.conversation_id == conversation,
         or_(AgentTurn.agent_handle.is_(None), AgentTurn.agent_handle == seat),
-    )
-
-
-def _own_turns(session_id, *, correlate=None) -> ColumnElement[bool]:
-    """``_mine`` for the session ``session_id`` names, for a query already over
-    the homes."""
-    return _mine(
-        _of_session(session_id, AgentSession.conversation_id, correlate),
-        _of_session(session_id, AgentSession.agent_handle, correlate),
     )
 
 
@@ -458,12 +452,19 @@ class SandboxLifecycle:
         for home in await metering.unpaid_sandboxes(self._session):
             if self._hub.is_online(home.device_id) and await self._destroy(
                 home.id,
-                home.topic_id if home.session_id is not None else None,
+                await self._holder_of(home),
                 home.device_id,
                 None,
             ):
                 destroyed += 1
         return {"destroyed": destroyed}
+
+    async def _holder_of(self, home) -> uuid.UUID | None:
+        """The holder whose lock a home is changed under: its own, while an
+        environment names it, as a tool call into it takes that lock first.
+        None for a home nobody can call into any more."""
+        named = await occupants.environment_named(self._session, home.id)
+        return home.topic_id if named is not None else None
 
     async def _release_frozen_on_draining_hosts(self) -> int:
         """A host being rebuilt (`reaper._drain_one`) waits for its active
@@ -504,11 +505,12 @@ class SandboxLifecycle:
                     )
                 )
             )
+            holders_of = {home.id: await self._holder_of(home) for home in rows}
             await self._session.commit()
             for home in rows:
                 if await self._destroy(
                     home.id,
-                    home.topic_id if home.session_id is not None else None,
+                    holders_of[home.id],
                     host.device_id,
                     now - home.active_at,
                     idle_for=DRAIN_GAP,
@@ -529,13 +531,10 @@ class SandboxLifecycle:
                 )
             )
         )
+        holders_of = {home.id: await self._holder_of(home) for home in rows}
         await self._session.commit()
         for home in rows:
-            await self._park(
-                home.id,
-                home.topic_id if home.session_id is not None else None,
-                device_id,
-            )
+            await self._park(home.id, holders_of[home.id], device_id)
 
     async def destroy_idle(self) -> int:
         """Destroy every idle sandbox, and finish every removal left
@@ -554,7 +553,7 @@ class SandboxLifecycle:
         session_active = (
             select(AgentTurn.id)
             .where(
-                _own_turns(SandboxHome.session_id, correlate=SandboxHome),
+                occupants.turns_in(SandboxHome.id),
                 or_(
                     and_(
                         AgentTurn.stopped_at.is_(None),
@@ -571,7 +570,7 @@ class SandboxLifecycle:
         rows = await self._session.execute(
             select(
                 SandboxHome.id,
-                SandboxHome.session_id,
+                occupants.environment_of_home(SandboxHome.id).label("environment_id"),
                 SandboxHome.topic_id,
                 SandboxHome.host_id,
                 SandboxHome.active_at,
@@ -603,15 +602,13 @@ class SandboxLifecycle:
                     SandboxHome.stopped_at < now - STOP_HOLD,
                     (SandboxHome.stopped_at.is_(None))
                     & (SandboxHome.active_at < now - narrow)
-                    & or_(SandboxHome.session_id.is_(None), ~session_active),
+                    & ~session_active,
                 ),
             )
             .order_by(SandboxHome.active_at)
         )
         candidates = list(rows.all())
-        previewed = await self._previewed(
-            [home.session_id for home in candidates if home.session_id is not None]
-        )
+        previewed = await self._previewed([home.id for home in candidates])
         # Hosts a frozen sandbox past its keep time may be parked on: taking
         # sandboxes (not short of disk, not being rebuilt).
         parkable = {host.id for host in await self._repo.live() if accepting(host)}
@@ -622,7 +619,7 @@ class SandboxLifecycle:
                 break
             if not self._hub.is_online(home.device_id):
                 continue
-            current = home.session_id is not None
+            current = home.environment_id is not None
             holder_id = home.topic_id if current else None
             if home.stopped_at is not None:
                 # An unfinished removal: done again, whatever it is now.
@@ -659,7 +656,7 @@ class SandboxLifecycle:
                 # parked homes it is destroyed; before that it waits for its
                 # session or for a slot to be needed elsewhere. One whose
                 # conversation previews an app is kept frozen the longer time.
-                if now - home.frozen_at < _frozen_keep(home.session_id in previewed):
+                if now - home.frozen_at < _frozen_keep(home.id in previewed):
                     continue
                 if settings.cloud_sandbox_park and home.host_id in parkable:
                     await self._park(home.id, holder_id, home.device_id)
@@ -725,8 +722,8 @@ class SandboxLifecycle:
         await self._session.commit()
         return not any(free_slots(host, load) for host in hosts if accepting(host))
 
-    async def _previewed(self, session_ids: list[uuid.UUID]) -> set[uuid.UUID]:
-        return await previewed_sessions(self._session, session_ids)
+    async def _previewed(self, home_ids: list[uuid.UUID]) -> set[uuid.UUID]:
+        return await previewed_homes(self._session, home_ids)
 
     @staticmethod
     def _held_for(home, pressed: bool) -> timedelta:
@@ -758,30 +755,42 @@ class SandboxLifecycle:
             self._recovering is not None and self._recovering(conversation_id)
         )
 
-    async def _session_recovering(self, session_id: uuid.UUID | None) -> bool:
-        if session_id is None or self._recovering is None:
-            return False
-        conversation = await self._session.scalar(
-            select(AgentSession.conversation_id).where(AgentSession.id == session_id)
+    async def _conversations_in(self, home_id: uuid.UUID) -> list[uuid.UUID]:
+        """The conversations the sessions working in the home work in."""
+        return list(
+            await self._session.scalars(
+                select(AgentSession.conversation_id)
+                .where(AgentSession.id.in_(occupants.sessions_in(home_id)))
+                .distinct()
+            )
         )
-        return conversation is not None and self._recovering(conversation)
+
+    async def _recovering_in(self, home_id: uuid.UUID) -> bool:
+        """Whether a session working in the home is being recovered."""
+        if self._recovering is None:
+            return False
+        return any(
+            self._recovering(conversation)
+            for conversation in await self._conversations_in(home_id)
+        )
 
     async def _idle_since(
         self, home, now: datetime, idle_for: timedelta
     ) -> datetime | None:
-        """Since when the session has been idle for at least ``idle_for``, or
-        None while it is not."""
+        """Since when the sessions working in the home have been idle for at
+        least ``idle_for``, or None while they are not. A home nobody works
+        in is measured by its own activity alone."""
 
-        if home.session_id is None:
+        working = await occupants.sessions_of(self._session, home.id)
+        await self._session.commit()
+        if not working:
             return home.active_at
         if self._recovering is not None:
-            recovering = await self._session_recovering(home.session_id)
+            recovering = await self._recovering_in(home.id)
             await self._session.commit()
             if recovering:
                 return None
-        open_turns, last_end = await self._turns_of(
-            home.session_id, now, home.active_at
-        )
+        open_turns, last_end = await self._turns_of(home.id, now, home.active_at)
         await self._session.commit()
         if open_turns:
             return None
@@ -798,9 +807,8 @@ class SandboxLifecycle:
             # something outside the machine — so a card nobody looks at again
             # cannot keep a host for a day.
             return None
-        lease = await self._session.scalar(
-            select(AgentSession.work_lease).where(AgentSession.id == home.session_id)
-        )
+        held = await attachments.attachment_of(self._session, working[0].id)
+        lease = held.environment if held is not None else None
         await self._session.commit()
         until = (lease or {}).get("claim_until")
         if until and datetime.fromisoformat(until) > now:
@@ -831,7 +839,7 @@ class SandboxLifecycle:
                 # ping is a round trip): a session at work keeps even a command
                 # it just started.
                 open_turns, _ = await self._turns_of(
-                    home.session_id, datetime.now(UTC), home.active_at
+                    home.id, datetime.now(UTC), home.active_at
                 )
                 await self._session.commit()
                 if open_turns:
@@ -858,10 +866,11 @@ class SandboxLifecycle:
         return since
 
     async def _turns_of(
-        self, session_id, now: datetime, active_at: datetime | None = None
+        self, home_id, now: datetime, active_at: datetime | None = None
     ) -> tuple[int, datetime | None]:
-        """How many turns of the session hold its sandbox, and when its last
-        one stopped: the two things that say whether it is at work.
+        """How many turns of the sessions working in the home hold its
+        sandbox, and when their last one stopped: the two things that say
+        whether it is at work.
 
         An open turn holds it while it started, or the sandbox was last used,
         within ``_turn_hold``. A turn that runs for hours and works in its
@@ -878,7 +887,7 @@ class SandboxLifecycle:
                         AgentTurn.stopped_at.is_(None), AgentTurn.started_at > hold
                     ),
                     func.max(AgentTurn.stopped_at),
-                ).where(_own_turns(session_id))
+                ).where(occupants.turns_in(home_id))
             )
         ).one()
         used = active_at is None or active_at > hold
@@ -923,23 +932,21 @@ class SandboxLifecycle:
         return True
 
     async def _waiting_on_checks(self, home) -> bool:
-        """Whether the task this home's session works in is waiting on the
-        checks the platform is watching for its card.
+        """Whether a task a session working in this home works in is waiting
+        on the checks the platform is watching for its card.
 
         The conversation first, then the card: which conversation a session
         works in is this layer's question (``agent_session``, and a task of a
         room works in its own), and which card says CI is running is
         ``review``'s — asked of it by task id rather than by joining across.
         """
-        conversation = await self._session.scalar(
-            select(AgentSession.conversation_id).where(
-                AgentSession.id == home.session_id
-            )
-        )
+        conversations = await self._conversations_in(home.id)
         await self._session.commit()
-        if conversation is None:
-            return False
-        answer = await waiting_on_checks(self._session, conversation)
+        answer = False
+        for conversation in conversations:
+            if await waiting_on_checks(self._session, conversation):
+                answer = True
+                break
         # The read above opened a transaction; the host call or the destroy
         # that follows must not hold it.
         await self._session.commit()
@@ -969,27 +976,24 @@ class SandboxLifecycle:
             return False
         lease: dict = {}
         start = None
-        if row.session_id is not None:
-            session_row = await self._session.scalar(
-                select(AgentSession)
-                .where(AgentSession.id == row.session_id)
-                .with_for_update()
-                .execution_options(populate_existing=True)
-            )
+        working = await occupants.sessions_of(self._session, home_id, lock=True)
+        if working:
+            session_row = working[0]
             if session_row is not None:
-                lease = session_row.work_lease or {}
+                held_by = await attachments.attachment_of(
+                    self._session, session_row.id, lock=True
+                )
+                lease = (held_by.environment if held_by is not None else None) or {}
                 until = lease.get("claim_until")
                 if until and datetime.fromisoformat(until) > now:
                     # A tool call is starting it right now.
                     await self._session.commit()
                     return False
-                open_turns, last_end = await self._turns_of(
-                    row.session_id, now, row.active_at
-                )
+                open_turns, last_end = await self._turns_of(home_id, now, row.active_at)
                 if open_turns or (last_end is not None and now - last_end < held):
                     await self._session.commit()
                     return False
-                if await self._session_recovering(row.session_id):
+                if await self._recovering_in(home_id):
                     await self._session.commit()
                     return False
                 if lease.get("status", "ready") == "ready" and lease.get("state"):
@@ -1002,11 +1006,12 @@ class SandboxLifecycle:
                     except Exception:
                         logger.warning(
                             "no checkpoint for session %s before freezing",
-                            row.session_id,
+                            session_row.id,
                             exc_info=True,
                         )
         active_seen = row.active_at
-        session_id, topic_id = row.session_id, row.topic_id
+        session_id = working[0].id if working else None
+        topic_id = row.topic_id
         await self._session.commit()
         began = time.monotonic()
         checkpoint_s = None
@@ -1025,13 +1030,10 @@ class SandboxLifecycle:
             # clock): the sandbox is not idle any more.
             await self._session.commit()
             return False
-        if row.session_id is not None:
-            open_turns, last_end = await self._turns_of(
-                row.session_id, now, row.active_at
-            )
-            if open_turns or (last_end is not None and now - last_end < held):
-                await self._session.commit()
-                return False
+        open_turns, last_end = await self._turns_of(home_id, now, row.active_at)
+        if open_turns or (last_end is not None and now - last_end < held):
+            await self._session.commit()
+            return False
         resource = row.resource_id
         marked = now
         row.frozen_at = marked
@@ -1165,9 +1167,7 @@ class SandboxLifecycle:
         if host_id is not None:
             query = query.where(SandboxHome.host_id == host_id)
         rows = list(await self._session.scalars(query.order_by(SandboxHome.frozen_at)))
-        previewed = await self._previewed(
-            [home.session_id for home in rows if home.session_id is not None]
-        )
+        previewed = await self._previewed([home.id for home in rows])
         await self._session.commit()
         if not self._hub.is_online(device_id):
             return 0
@@ -1176,7 +1176,7 @@ class SandboxLifecycle:
             key=lambda home: (
                 home.parked_at is None,
                 home.parked_at or home.frozen_at,
-                frozen_eviction_key(home, home.session_id in previewed),
+                frozen_eviction_key(home, home.id in previewed),
             )
         )
         destroyed = 0
@@ -1222,15 +1222,13 @@ class SandboxLifecycle:
                 )
             )
         )
-        previewed = await self._previewed(
-            [home.session_id for home in rows if home.session_id is not None]
-        )
+        previewed = await self._previewed([home.id for home in rows])
         await self._session.commit()
         if not rows:
             return False
         home = min(
             rows,
-            key=lambda home: frozen_eviction_key(home, home.session_id in previewed),
+            key=lambda home: frozen_eviction_key(home, home.id in previewed),
         )
         # Both were selected for: on one of these hosts, and frozen.
         assert home.host_id is not None and home.frozen_at is not None
@@ -1292,27 +1290,19 @@ class SandboxLifecycle:
             return False
         home.stopped_at = None
         home.parked_at = datetime.now(UTC)
-        if home.session_id is not None:
-            row = await self._session.scalar(
-                select(AgentSession)
-                .where(AgentSession.id == home.session_id)
-                .with_for_update()
-                .execution_options(populate_existing=True)
-            )
-            if row is not None:
-                request = {
-                    key: value
-                    for key, value in (row.execution_request or {}).items()
-                    if key != THAW_KEY
-                }
-                request[PARKED_KEY] = running
-                row.execution_request = request
-                if (row.work_lease or {}).get("device_id") == device_id:
-                    row.work_lease = released_lease(row.work_lease)
+        working = await occupants.sessions_of(self._session, home.id, lock=True)
+        for row in working:
+            await attachments.park(self._session, row, device_id, running)
+        if (
+            named := await occupants.environment_named(self._session, home.id)
+        ) is not None:
+            await environment_rows.release(self._session, named, device_id)
+        # Its processes are stopped for good: a wake asked for it is moot.
+        home.thaw_wanted_at = None
         await keep_parked(
             self._session,
             conversation_id=home.topic_id,
-            session_id=home.session_id,
+            session_id=working[0].id if working else None,
             total_s=time.monotonic() - began,
         )
         await self._session.commit()
@@ -1434,20 +1424,13 @@ class SandboxLifecycle:
         ):
             await self._session.commit()
             return False
-        if (
-            home.stopped_at is None
-            and idle is not None
-            and not was_frozen
-            and home.session_id is not None
-        ):
+        if home.stopped_at is None and idle is not None and not was_frozen:
             # The home was picked from a look taken before this lock. A turn
             # may have started since — the sweep that picked it ran a second
             # before the session woke to a background command's result — and a
             # session at work keeps its sandbox however long it was idle when
             # the look was taken.
-            open_turns, last_end = await self._turns_of(
-                home.session_id, now, home.active_at
-            )
+            open_turns, last_end = await self._turns_of(home.id, now, home.active_at)
             if open_turns or (last_end is not None and now - last_end < held):
                 await self._session.commit()
                 return False
@@ -1460,11 +1443,7 @@ class SandboxLifecycle:
             # A root upload may still be running after the ordinary destroy deadline.
             await self._session.commit()
             return False
-        if (
-            idle is not None
-            and not was_frozen
-            and await self._session_recovering(home.session_id)
-        ):
+        if idle is not None and not was_frozen and await self._recovering_in(home.id):
             await self._session.commit()
             return False
         unpaid = home.stopped_at is None and idle is None
@@ -1503,26 +1482,12 @@ class SandboxLifecycle:
             return False
         line = None
         topic_id = home.topic_id
-        if home.session_id is not None:
-            # Its next tool call lands in a new sandbox, and is told so.
-            row = await self._session.scalar(
-                select(AgentSession)
-                .where(AgentSession.id == home.session_id)
-                .with_for_update()
-                .execution_options(populate_existing=True)
-            )
-            if row is not None:
-                request = {
-                    key: value
-                    for key, value in (row.execution_request or {}).items()
-                    if key != LOST_PROCESSES_KEY
-                }
-                request[LOST_KEY] = True
-                if running:
-                    request[LOST_PROCESSES_KEY] = running
-                row.execution_request = request
-                if (row.work_lease or {}).get("device_id") == device_id:
-                    row.work_lease = released_lease(row.work_lease)
+        named = await occupants.environment_named(self._session, home.id)
+        if named is not None:
+            # Whoever works in it lands in a new sandbox on their next tool
+            # call, and is told so.
+            for row in await occupants.sessions_of(self._session, home.id, lock=True):
+                await attachments.lose(self._session, row, device_id, stopped=running)
                 # The platform has just taken this session's machine away, and
                 # it is the one authority that knows a runner will never report
                 # the end of the turn that was running on it. Recording that
@@ -1541,6 +1506,7 @@ class SandboxLifecycle:
                     native_session_id=row.resume_token,
                     at=now,
                 )
+            await environment_rows.release(self._session, named, device_id)
             line = (
                 await tell_unpaid(self._session, home)
                 if unpaid

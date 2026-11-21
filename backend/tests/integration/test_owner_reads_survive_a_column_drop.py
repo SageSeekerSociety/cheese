@@ -95,7 +95,6 @@ def test_loading_the_whole_room_is_what_the_incident_was(db_session, _portal):
 def test_an_execution_session_is_found_by_its_id_and_conversation(db_session, _portal):
     """The owner finds the session a credential names by its id and its
     conversation; which room a session works in is not its question."""
-    import json
 
     async def ask():
         project = await _project(db_session)
@@ -105,17 +104,31 @@ def test_an_execution_session_is_found_by_its_id_and_conversation(db_session, _p
             text(
                 "INSERT INTO agent_sessions"
                 " (id, conversation_id, agent_handle, harness,"
-                " work_lease, created_at, updated_at)"
-                " VALUES (:id, :room, 'cheese', 'claude_code',"
-                " CAST(:lease AS json), now(), now())"
+                " created_at, updated_at)"
+                " VALUES (:id, :room, 'cheese', 'claude_code', now(), now())"
             ),
-            {"id": session_id, "room": room, "lease": json.dumps({"kind": "device"})},
+            {"id": session_id, "room": room},
+        )
+        # Attached to an environment, named column by column as the owner's
+        # own reads are.
+        await db_session.execute(
+            text(
+                "INSERT INTO environments (id, topic_id, device_id, resource_id,"
+                " room_resource_id, choice, created_at, updated_at)"
+                " VALUES (:id, :room, 'd', 'r', 'r', '{}'::jsonb, now(), now())"
+            ),
+            {"id": session_id, "room": room},
+        )
+        await db_session.execute(
+            text(
+                "INSERT INTO environment_attachments"
+                " (id, environment_id, session_id, generation, acted_at)"
+                " VALUES (:id, :id, :id, 'g', now())"
+            ),
+            {"id": session_id},
         )
         named = await owner_reads.session_execution(db_session, session_id)
         assert named is not None and named.conversation_id == room
-        legacy = await owner_reads.legacy_execution(db_session, room)
-        assert legacy is not None and legacy.id == session_id
-        assert await owner_reads.legacy_execution(db_session, uuid.uuid4()) is None
 
     _portal.call(ask)
 

@@ -41,7 +41,7 @@ from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine import holder as holders
-from app.domain.machine import session_work as work_lease
+from app.domain.machine import session_work
 from app.domain.machine.environments import (
     check_allowed,
     default_for,
@@ -257,7 +257,7 @@ async def set_session_environment(
         raise NotFoundError("Session not found")
     environment = parse(body.environment)
     await check_allowed(db, project, environment, actor, task=task)
-    await work_lease.switch_environment(
+    await session_work.switch_environment(
         db,
         topic_id=topic.id,
         session_id=session_id,
@@ -319,17 +319,17 @@ async def acquire_session_work_lease(
         # will not wait asks with ~0, which still gets one attempt's time
         # (ANSWER_S, never more than a waiting call is held): bounded by ~0
         # itself, a ready machine answered 504.
-        floor = min(work_lease.ANSWER_S, work_lease.PREPARING_WAIT_S)
+        floor = min(session_work.ANSWER_S, session_work.PREPARING_WAIT_S)
         async with asyncio.timeout(max(body.timeout, floor)):
             return ok(
-                await work_lease.ensure(
+                await session_work.ensure(
                     db,
                     topic_id=holder_id,
                     session_id=session_id,
                     claims=claims,
                     token=token,
                     env=body.env,
-                    wait_s=min(work_lease.PREPARING_WAIT_S, body.timeout),
+                    wait_s=min(session_work.PREPARING_WAIT_S, body.timeout),
                     gone=request.is_disconnected,
                     tells_agent=body.tells_agent,
                 )

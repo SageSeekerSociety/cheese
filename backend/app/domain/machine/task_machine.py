@@ -1,18 +1,19 @@
 """A person brings a task's machine back for its files, with no turn.
 
-A task's working copy is in the sandbox of the task's own agent session. When
+A task's working copy is in the environment the task points to. When
 that sandbox is gone — destroyed or parked by the idle sweep, or its executor
 stopped for sitting idle — a person editing the task's files should not have
 to wait for the AI teammate to start a turn. Opening the files reads them off
 the forge (`repository.forge_files`); editing them brings the machine back:
 
-- through the task's own session and its lease, the one machine and the one
-  copy its teammate works in (no second session, no second copy);
+- in the environment the task points to, the one machine and the one copy
+  its teammates work in (no second environment, no second copy), acting
+  through a session attached to it (`acting_session`);
 - through the same admission a tool call goes through
   (`session_work.hands_for_a_person`): a parked sandbox starts again where its
   home is, a destroyed one is placed anew and its executor installed, a frozen
   one is thawed, an executor that stopped is started; two callers at once —
-  a person and a turn — are ordered by the lease's claim (`lease_claim`), and
+  a person and a turn — are ordered by the environment's claim (`lease_claim`), and
   the one that waits gets the machine the other brought up;
 - in the person's name, whose project pays for it as it does for the teammate
   (`holder.Room.require_use`), on the sandbox's usual meter (`metering`);
@@ -21,7 +22,7 @@ the forge (`repository.forge_files`); editing them brings the machine back:
   (`task_checkout.checkout_request`), which is no tool call of the teammate's
   and nothing said in the conversation.
 
-What the teammate is owed about its sandbox (`LOST_KEY`, `PARKED_KEY`) is left
+What the teammate is owed about its sandbox (`Attachment.notice`) is left
 for its own next tool call.
 
 The bring-up runs in the background, one per task in this process, so a person
@@ -38,7 +39,6 @@ import time
 import uuid
 from dataclasses import dataclass
 
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, UpstreamUnavailableError
@@ -50,6 +50,7 @@ from app.domain.agent.task_checkout import (
     checkout_request,
 )
 from app.domain.agent_session.models import AgentSession
+from app.domain.environment import services as environment_rows
 from app.domain.identity.actor import Actor
 from app.domain.machine import holder as holders
 from app.domain.machine import session_work
@@ -104,21 +105,23 @@ class Status:
     failed: str | None
 
 
-async def task_session(db: AsyncSession, task_id: uuid.UUID) -> AgentSession | None:
-    """The task's own agent session: the one that holds a machine lease, else
-    the one placed last. None while no session of it was ever placed."""
-    rows = list(
-        await db.scalars(
-            select(AgentSession)
-            .where(
-                AgentSession.conversation_id == task_id,
-                AgentSession.runtime_location.is_not(None),
-            )
-            .order_by(AgentSession.updated_at.desc())
-        )
-    )
-    leased = [row for row in rows if (row.work_lease or {}).get("kind") == "device"]
-    return (leased or rows or [None])[0]
+async def acting_session(db: AsyncSession, task_id: uuid.UUID) -> AgentSession | None:
+    """The session a person's bring-up of the task's machine acts through:
+    one attached to the environment the task points to
+    (`environment_rows.environment_of_conversation`), the one that acted
+    there last. A bring-up is admitted, placed and credentialed as a
+    session's tool call is (`session_work.hands_for_a_person`), and a person
+    is no attachment yet, so it needs one; the environment itself is found
+    from the task alone. None while the task points to no environment, or
+    nobody is attached to the one it points to."""
+    environment = await environment_rows.environment_of_conversation(db, task_id)
+    if environment is None:
+        return None
+    for attached in await environment_rows.attachments_of(db, environment.id):
+        row = await db.get(AgentSession, attached.session_id)
+        if row is not None and row.conversation_id == task_id:
+            return row
+    return None
 
 
 async def prepare(
@@ -128,7 +131,7 @@ async def prepare(
     already under way here. Answers whether this call started it. Refuses a
     task with no session, and a person the task's project would not start a
     sandbox for, before anything is started."""
-    row = await task_session(db, task_id)
+    row = await acting_session(db, task_id)
     if row is None:
         raise NoTaskSession()
     holder = await holders.look(db, await holders.holder_of(db, task_id))
@@ -174,8 +177,10 @@ async def status(db: AsyncSession, task_id: uuid.UUID) -> Status:
     failed = _failed.get(task_id)
     if task_id in _running:
         return Status(machine="preparing", failed=None)
-    row = await task_session(db, task_id)
-    lease = (row.work_lease if row is not None else None) or {}
+    environment = await environment_rows.environment_of_conversation(db, task_id)
+    lease = (
+        await environment_rows.view(db, environment.id) if environment else None
+    ) or {}
     if still_preparing(lease):
         return Status(machine="preparing", failed=failed)
     if lease.get("kind") == "device" and lease.get("status", "ready") == "ready":
@@ -191,7 +196,7 @@ async def _bring_up(bind, task_id: uuid.UUID, actor: Actor, *, hub=None) -> None
         deadline = time.monotonic() + BRING_UP_S
         async with AsyncSession(bind, expire_on_commit=False) as db:
             while True:
-                row = await task_session(db, task_id)
+                row = await acting_session(db, task_id)
                 if row is None:
                     raise NoTaskSession()
                 outcome = await session_work.hands_for_a_person(

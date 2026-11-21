@@ -34,6 +34,7 @@ from app.domain.delivery.input_holds import seat_has_unfinished_input
 from app.domain.delivery.input_identity import InputEffects, InputIdentity
 from app.domain.delivery.receipts import held_blocks, register_input
 from app.domain.event_author import AuthorType
+from app.domain.machine import services
 from app.domain.machine.services import HostPool
 from tests.integration.test_a_runner_report_is_applied_once import (
     HARNESS,
@@ -41,6 +42,7 @@ from tests.integration.test_a_runner_report_is_applied_once import (
     SESSION,
     _Seat,
 )
+from tests.support.environments import give_environment
 from tests.turn_log import a_topic, open_turn
 from tests.unit.test_a_host_that_stopped_answering_is_left import _host, _Hub, _Repo
 
@@ -185,7 +187,9 @@ async def test_an_input_whose_process_exited_no_longer_holds(business_db_factory
 
 
 @pytest.mark.anyio
-async def test_an_input_stays_held_when_the_work_host_is_given_up(business_db_factory):
+async def test_an_input_stays_held_when_the_work_host_is_given_up(
+    business_db_factory, monkeypatch
+):
     """会话进程跑在会话机上，干活用的那台机器不应答、被平台换掉（不是销毁）：会话
     进程还在，还留着这条没读的输入，座位照旧按住。"""
     seat = await _seat(business_db_factory)
@@ -198,7 +202,6 @@ async def test_an_input_stays_held_when_the_work_host_is_given_up(business_db_fa
             agent_handle=SEAT,
             harness=HARNESS,
             resume_token=SESSION,
-            work_lease={"status": "ready", "device_id": quiet.device_id},
             runtime_location={
                 "device_id": "session-host",
                 "channel": "device",
@@ -206,15 +209,27 @@ async def test_an_input_stays_held_when_the_work_host_is_given_up(business_db_fa
             },
         )
         session.add(pointer)
+        await session.flush()
+        attached = await give_environment(
+            session, pointer, {"status": "ready", "device_id": quiet.device_id}
+        )
         await session.commit()
         pointer_id = pointer.id
-    home = SimpleNamespace(id=uuid.uuid4(), host_id=quiet.id, session_id=pointer_id)
+    home = SimpleNamespace(
+        id=uuid.uuid4(), host_id=quiet.id, environment_id=attached.environment_id
+    )
+
+    async def working_there(db, home_id, *, lock=False):
+        # The pointer is the one session working in the fake host's sandbox.
+        return [await db.get(AgentSession, pointer_id)]
+
+    monkeypatch.setattr(services.occupants, "sessions_of", working_there)
     async with seat.factory() as session:
         pool = HostPool.__new__(HostPool)
         pool._session = session
         pool._repo = _Repo(home, [quiet, other])
         pool._hub = _Hub({other.device_id})
-        assert await pool.leave_unusable(pointer_id, quiet.id)
+        assert await pool.leave_unusable(attached.environment_id, quiet.id)
         await session.commit()
 
     assert await _held(seat, message) == (True, True), (
