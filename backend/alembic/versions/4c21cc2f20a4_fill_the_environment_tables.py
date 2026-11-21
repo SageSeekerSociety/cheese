@@ -30,6 +30,9 @@ by ``sandbox_homes.session_id``. From this release they are rows of their own
   when none is, the environment still answering of the session placed last,
   an agent on its owner's computer included. The host a session asked to
   leave is the pointer's.
+- A private chat's lease is no environment: it is the scratch container of
+  the session's own process, kept with where that process runs
+  (``runtime_location["scratch"]``) for the turns already running.
 - The directories a session left on people's machines
   (``retained_leases``) become environments nobody is attached to and no
   conversation points to, for the room's cleanup to find.
@@ -186,6 +189,7 @@ SELECT todo.environment_id,
   FROM environment_backfill_todo todo
   LEFT JOIN sandbox_homes home ON home.id = todo.home_id
  WHERE todo.lease ->> 'device_id' IS NOT NULL
+   AND coalesce(todo.lease ->> 'kind', 'device') = 'device'
 """
 
 ATTACHMENTS = """
@@ -200,6 +204,7 @@ SELECT todo.session_id,
        coalesce(todo.updated_at, now())
   FROM environment_backfill_todo todo
  WHERE todo.lease ->> 'device_id' IS NOT NULL
+   AND coalesce(todo.lease ->> 'kind', 'device') = 'device'
 """
 
 #: `LOST_KEY`, `LOST_PROCESSES_KEY`, `PARKED_KEY` of the previous release.
@@ -293,6 +298,22 @@ SELECT gen_random_uuid(),
  WHERE kept ->> 'device_id' IS NOT NULL
 """
 
+#: A private chat's lease (``kind: private``) is no environment: it is the
+#: scratch container of the session's own process, which a turn now keeps
+#: with where that process runs (``runtime_location["scratch"]``) and writes
+#: again whenever it starts. Kept there for the turns already running.
+SCRATCH = """
+UPDATE agent_sessions s
+   SET runtime_location = (
+         s.runtime_location::jsonb || jsonb_build_object('scratch', todo.lease)
+       )::json
+  FROM environment_backfill_todo todo
+ WHERE s.id = todo.session_id
+   AND todo.lease ->> 'kind' = 'private'
+   AND jsonb_typeof(nullif(s.runtime_location::jsonb, 'null'::jsonb)) = 'object'
+   AND NOT (s.runtime_location::jsonb ? 'scratch')
+"""
+
 MARK = """
 INSERT INTO environment_backfill_marks (session_id)
 SELECT session_id FROM environment_backfill_todo
@@ -300,7 +321,17 @@ ON CONFLICT DO NOTHING
 """
 
 #: In order: what a statement reads, an earlier one wrote.
-RECONCILE = (TODO, ENVIRONMENTS, ATTACHMENTS, NOTICES, THAWS, POINTERS, RETAINED, MARK)
+RECONCILE = (
+    TODO,
+    ENVIRONMENTS,
+    ATTACHMENTS,
+    NOTICES,
+    THAWS,
+    POINTERS,
+    RETAINED,
+    SCRATCH,
+    MARK,
+)
 
 
 def upgrade() -> None:

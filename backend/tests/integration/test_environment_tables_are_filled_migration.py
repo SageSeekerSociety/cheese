@@ -18,6 +18,9 @@ The rules, as they stood before the migration was written:
 - a directory a session left on a person's machine is still there for the
   cleanup to find, and nobody works in it;
 - a thaw a tool call asked for is still asked for;
+- a private chat's scratch container is no environment, and its running turn
+  still finds it; what an install left that the platform does not name comes
+  back as it was;
 - running the reconciliation again changes nothing it already did, takes a
   session the previous release placed after it ran, and does not bring back
   an environment a session has left since.
@@ -164,7 +167,32 @@ def test_every_session_keeps_working_where_its_lease_said():
         task = seed_task(db, project, room)
         # Two agents of the room's default choice, one placed after the
         # other, and an agent on its owner's computer placed last of all.
-        earlier = _session(db, room, "earlier", lease=_lease("box-1", "g1"), placed=now)
+        earlier = _session(
+            db,
+            room,
+            "earlier",
+            # What an install left that the platform does not name comes back
+            # as it was.
+            lease=_lease(
+                "box-1",
+                "g1",
+                context_tree={"files": 3},
+                resolver="pypi",
+                mcp_path="/mcp",
+            ),
+            placed=now,
+        )
+        # A private chat's scratch container: no environment, still where
+        # its running turn finds it.
+        scratch = {
+            "kind": "private",
+            "device_id": "center",
+            "home": "/scratch",
+            "command": ["run"],
+            "topic": str(room),
+            "image": "scratch:1",
+        }
+        private = _session(db, room, "private", lease=scratch, placed=now)
         later = _session(
             db,
             room,
@@ -231,6 +259,19 @@ def test_every_session_keeps_working_where_its_lease_said():
             assert found["generation"] == generation
             assert found["status"] == "ready"
         assert _attachment(db, earlier)["device_id"] == "box-1"
+        kept = json.loads(_attachment(db, earlier)["executor"])
+        assert (kept["context_tree"], kept["resolver"], kept["mcp_path"]) == (
+            {"files": 3},
+            "pypi",
+            "/mcp",
+        )
+        assert _attachment(db, private) is None
+        location = json.loads(
+            db.fetchval(
+                "SELECT runtime_location FROM agent_sessions WHERE id = $1", private
+            )
+        )
+        assert location["scratch"] == scratch
         assert json.loads(_attachment(db, later)["executor"])["url"] == "http://box-2"
         assert _attachment(db, later)["sandbox_home_id"] == home
         assert json.loads(_attachment(db, owner)["choice"]) == {
