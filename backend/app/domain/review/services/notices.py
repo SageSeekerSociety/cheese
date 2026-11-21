@@ -469,9 +469,14 @@ async def _dispatch_nudges(
             # 同一件事的另一半：卡上那句是「要求改动」，可那批意见里那条要求
             # 改动已经被同一位评审人后来的批准／撤销收回了。生成它的时候还看不
             # 出来，写下的全文正是这一批的旧措辞 —— 认出它才纠正，只改分类。
+            #
+            # 必须先要求这一批**已经没有**还挡着的要求改动（`note_code is None`）：
+            # 同一批里既有被收回的、又有仍然有效的时，这句话照旧是「要求改动」，
+            # 清掉它的码就等于把剩下那条真的要求也放了。
             if (
                 nudge.kind is pr_signals.NudgeKind.review
                 and not nudge.capped
+                and nudge.note_code is None
                 and nudge.supersedes_return
                 and nudge.note_before_supersession
                 and nudge.note_before_supersession == card.note

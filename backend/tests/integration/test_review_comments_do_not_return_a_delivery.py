@@ -163,3 +163,20 @@ def test_an_unwithdrawn_change_request_still_blocks(client, app_world):
     _poll(client)
 
     assert _cards(client, room)[0]["note_level"] == "error"
+
+
+def test_a_mixed_batch_keeps_the_live_request_blocking(client, app_world):
+    """One reviewer withdrew their request by approving; another still wants
+    changes. The card must stay blocked — the old stop is not cleared by the
+    presence of a withdrawn one."""
+    fake = app_world["fake"]
+    room, cid, number, _head = _authorized(client, app_world)
+    withdrawn = _signal(1, body="先补空值检查", superseded=True)
+    live = _signal(3, body="还要加测试")
+    fake.reviews_by_number[number] = [withdrawn, live]
+
+    _poll(client)
+
+    card = _cards(client, room)[0]
+    assert card["note_level"] == "error"
+    assert "还要加测试" in _nudges(client, room, "pr_review")[0]["meta"]["detail"]

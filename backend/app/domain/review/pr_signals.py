@@ -141,9 +141,10 @@ def superseded_change_requests(
     只看一位评审人**最后一次表态**：明确的批准或撤销取代早先的改动要求，后来的
     `COMMENTED` 不算表态、不取代任何东西（留下评论不等于同意合并）。
 
-    时间读不出来（或缺一条）时按「没被取代」处理：猜错的后果是卡多红一会儿，而
-    反过来会把一条真的改动要求清掉。`states` 把各家 forges 的状态词折到
-    `_VERDICT_STATES`（Forgejo 用 `REQUEST_CHANGES` / `APPROVE`）。
+    时间读不出来或缺作者时按「没被取代」处理：猜错的后果是卡多红一会儿，而反过来
+    会把一条真的改动要求清掉。`states` 把各家 forges 的状态词折到
+    `_VERDICT_STATES`（Forgejo 用 `REQUEST_CHANGES` / `APPROVED`，它的撤销是行上
+    的 `dismissed` 布尔，调用方先滤掉）。
     """
     latest: dict[str, tuple[str, str]] = {}
     for item in items:
@@ -152,6 +153,10 @@ def superseded_change_requests(
         if state not in _VERDICT_STATES:
             continue
         author = str((item.get("user") or {}).get("login") or "")
+        # 没有作者就没有「同一位评审人」可言：几条读不出作者的评审不能被当成同一个人，
+        # 否则一条无名的批准会替另一条无名评审撤掉要求（两个方向都不动它）。
+        if not author:
+            continue
         at = str(item.get("submitted_at") or "")
         if not at:
             # 没有时刻就比不了先后：不拿它去取代谁，也不被谁取代。
@@ -166,6 +171,10 @@ def superseded_change_requests(
         if state != "CHANGES_REQUESTED":
             continue
         author = str((item.get("user") or {}).get("login") or "")
+        # 第二条循环得和第一条同样保守：读不出作者或时刻的那条照旧算「没被取代」，
+        # 否则一条有时间戳的批准会撤掉一条没有时间戳的要求 —— 正好错在危险的那边。
+        if not author or not str(item.get("submitted_at") or ""):
+            continue
         decided = latest.get(author)
         if decided is not None and decided[1] != "CHANGES_REQUESTED":
             out.add(str(item.get("id")))

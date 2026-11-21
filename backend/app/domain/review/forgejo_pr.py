@@ -333,15 +333,14 @@ class ForgejoClient:
         prefix = f"{self._repo(owner, repo)}/pulls/{number}"
         reviews = await self.pages(prefix + "/reviews", token=token)
         # Forgejo 的状态词和 GitHub 不同，先后次序同一条规矩：一位评审人后来的
-        # 批准或撤销取代早先的改动要求，那条照旧送来、但不再挡住卡。
+        # 批准取代早先的改动要求，那条照旧送来、但不再挡住卡。
+        #
+        # 撤销在 Forgejo 上不是一个状态词，而是那条评审自己的 `dismissed` 布尔
+        # （`state` 照旧读作 `APPROVED`）。先把被撤销的行滤掉：一条自己已被撤回的
+        # 批准不算表态，否则它会把一条真的要求改动放过去。
         replaced = superseded_change_requests(
-            reviews,
-            states={
-                "REQUEST_CHANGES": "CHANGES_REQUESTED",
-                "APPROVE": "APPROVED",
-                "APPROVED": "APPROVED",
-                "DISMISSED": "DISMISSED",
-            },
+            [row for row in reviews if not row.get("dismissed")],
+            states={"REQUEST_CHANGES": "CHANGES_REQUESTED", "APPROVED": "APPROVED"},
         )
         result = []
         for row in reviews:
