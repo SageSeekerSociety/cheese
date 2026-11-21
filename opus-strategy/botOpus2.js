@@ -22,18 +22,25 @@ export const COMPS = {
 };
 // 任何阵容都要的通用卡：魔王（核心盟约 +20）、两张整备区也生效的助力引擎
 const UNIVERSAL = { 魔王: 7, 夏栎: env('OPUS2_XL', 6), 星源: env('OPUS2_XY', 7) };
-// 每回合给主盟约加多少层（普通卡；精锐约翻倍）：前期层数比精锐更管用（R7 主盟约 30→150 层，清怪率 0.5→0.8）
+// 这里只记录会在休整期或战斗中持续加层的卡；普通卡的数值，精锐约翻倍。
+// “获得时”卡只在获得/合成时触发，不能当作每回合叠层，但仍是有效的叠层目标。
 export const STACKERS = {
-  sira: { 拉普兰德: 4, 复奏: 4, 安洁莉娜: 4, 伺夜: 4, 荒芜拉普兰德: 10 },
-  preci: { 灰喉: 4, 雪猎: 8, 迷迭香: 10, 黑键: 4, 鸿雪: 8, 空弦: 3, 霍尔海雅: 4 },
+  sira: { 复奏: 4, 安洁莉娜: 4, 伺夜: 4, 荒芜拉普兰德: 10 },
+  preci: { 迷迭香: 10, 黑键: 4, 鸿雪: 8, 空弦: 3, 霍尔海雅: 4 },
   ursus: { 烈夏: 4, 折桠: 2, 乌啾: 3, 赫拉格: 4, 冻河: 8, 塔露拉: 6 },
   kazi: { 野鬃: 2, 砾: 6, 瑕光: 3, 耀骑士临光: 6, 焰尾: 5 },
-  yan: { 拜松: 4, 矩: 6, 风絮: 8, 仇白: 6, 余: 4, 黍: 8, 夕: 12, 烛煌: 6 },
+  yan: { 矩: 6, 风絮: 8, 余: 4, 夕: 12, 烛煌: 6 },
   sarg: { 艾丝黛尔: 2, 泡泡: 4, 森蚺: 4, 鸿雪: 8, 佩佩: 4 },
   leth: { 地灵: 2, 折光: 8, 复奏: 4, 黑键: 4, 纯烬艾雅法拉: 10 },
 };
+export const ON_GAIN = {
+  sira: { 拉普兰德: 4 },
+  preci: { 灰喉: 4, 雪猎: 8 },
+  yan: { 拜松: 4, 仇白: 6, 黍: 8 },
+};
 const UNI_STACK = { 夏栎: 2, 星源: 4, 魔王: 10 };
 const stackOf = (ps, n) => (STACKERS[st(ps).comp]?.[n]) || UNI_STACK[n] || 0;
+const stackTargetOf = (ps, n) => stackOf(ps, n) || ON_GAIN[st(ps).comp]?.[n] || 0;
 const BENCH_ENGINE = new Set(['夏栎', '星源']);   // 整备区也生效：放整备区，给层数最多的已激活盟约（主盟约）加层
 const SEAT_PREF = (process.env.OPUS2_PREF || 'mix') === 'mix'
   ? [['sarg', 'leth', 'ursus'], ['leth', 'sarg', 'ursus'], ['sarg', 'leth', 'ursus'], ['leth', 'ursus', 'sarg']]
@@ -144,7 +151,7 @@ function mayOpenTarget(m, ps, name, h, tier) {
   const limit = m.round <= 6 ? 5 : 6;
   if (targets.size >= limit) return false;
   // 新开的非核心卡必须是叠层卡；否则它只能在已有对子时补。
-  return stackOf(ps, name) > 0 && tier <= 4;
+  return stackTargetOf(ps, name) > 0 && tier <= 4;
 }
 // 买卡评分：合成 > 本阵容卡（已有张数越多越高）> 空位填充；本阵容 5~6 阶卡单张也要
 function buyScore(m, ps, slot, h, room) {
