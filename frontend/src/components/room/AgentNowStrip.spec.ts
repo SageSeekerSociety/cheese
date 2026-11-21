@@ -69,4 +69,35 @@ describe('AI now: the strip at the top of a channel', () => {
     expect(container.querySelector('.mdi-alert-circle')).not.toBeNull()
     expect(container.textContent).toContain('retrying automatically')
   })
+
+  it('a teammate stopped on an expired login: a red row with the reason and a sign-in button', async () => {
+    const failure = {
+      handle: 'fir',
+      name: 'Fir',
+      code: 'login_expired',
+      since: new Date(NOW_S * 1000 - 40 * 60_000).toISOString(),
+    }
+    const { container, emitted } = render(AgentNowStrip, { props: { lines: [], failures: [failure] } })
+    const row = container.querySelector('.agent-now__row--failed') as HTMLElement
+    expect(row.getAttribute('data-code')).toBe('login_expired')
+    expect(row.textContent).toContain('Fir')
+    expect(row.textContent).toContain('Login expired')
+    expect(row.getAttribute('title')).toContain('expired login')
+    const button = container.querySelector('[data-testid="agent-now-relogin"]') as HTMLButtonElement
+    button.click()
+    expect(emitted().relogin).toEqual([['fir']])
+  })
+
+  it('a model error is red too, but offers no sign-in button', () => {
+    const failure = {
+      handle: 'fir',
+      name: 'Fir',
+      code: 'model_error',
+      since: new Date(NOW_S * 1000 - 600_000).toISOString(),
+    }
+    const { container } = render(AgentNowStrip, { props: { lines: [], failures: [failure] } })
+    expect(container.querySelector('.agent-now__row--failed')).not.toBeNull()
+    expect(container.querySelector('.mdi-alert-circle')).not.toBeNull()
+    expect(container.querySelector('[data-testid="agent-now-relogin"]')).toBeNull()
+  })
 })

@@ -6,6 +6,7 @@
 // list of events is neither.
 import type { PostedMessage } from '../api/messages'
 import type { AgentControlState, Block, ProjectMemberRow, Topic } from '../cx_types'
+import type { AgentFailureLine } from '../lib/agentFailures'
 import type { DocReviewRequest } from '../lib/docReview'
 import type { OpenedDocument } from '../lib/docReview'
 import type { MemberActivityLine } from '../lib/memberActivity'
@@ -48,6 +49,9 @@ export interface ChatPanelEmit {
   // 此刻谁在这个房间里忙（打字的人、干活的队友），已经配好名字和此刻那一步。
   // 现场那一格画同一份（`MemberActivity`）。
   (e: 'activity', lines: MemberActivityLine[]): void
+  // 停在一次失败上、还没人回来接的队友（登录过期、模型出错…）：顶部「AI 现在在干什么」
+  // 把它们画成红底的断开行。
+  (e: 'failures', lines: AgentFailureLine[]): void
   // 会话状态（任务、模型）动了：socket 上的这一帧转给现场那格的会话详情。
   (e: 'agent-control', state: AgentControlState): void
   // 现场那格的时间线上多了一行，或者已有的一行变了（挂了、重试次数涨了）。socket

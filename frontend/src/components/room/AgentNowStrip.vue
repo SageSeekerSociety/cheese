@@ -4,23 +4,29 @@
 // 时间线上的阶段，再没有就说「正在工作」；图标和输入框上方那一行是同一套：在跑＝绿色旋转圈，
 // 很久没新动静＝不转的空心环加橙点，平台在等自动重试＝黄色警示。悬停出详情。
 // 只凭 props 画；没人在干活时这一块不存在。
+import type { AgentFailureLine } from '@/lib/agentFailures'
 import type { MemberActivityLine } from '@/lib/memberActivity'
 
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { t } from '@/i18n'
+import { needsRelogin } from '@/lib/agentFailures'
 import { lineStale } from '@/lib/memberActivity'
+import { waitedFor } from '@/lib/replyWait'
 import { formatSpan } from '@/lib/siteLog'
 import { STALE_AFTER_MS } from '@/lib/taskState'
 
-const props = defineProps<{ lines: MemberActivityLine[] }>()
+const props = withDefaults(defineProps<{ lines: MemberActivityLine[]; failures?: AgentFailureLine[] }>(), {
+  failures: () => [],
+})
+const emit = defineEmits<{ (e: 'relogin', handle: string): void }>()
 
 const working = computed(() => props.lines.filter((l) => l.kind !== 'typing'))
 
 const now = ref(Date.now())
 let ticker: ReturnType<typeof setInterval> | undefined
 watch(
-  () => working.value.length > 0,
+  () => working.value.length + props.failures.length > 0,
   (on) => {
     clearInterval(ticker)
     now.value = Date.now()
@@ -29,6 +35,24 @@ watch(
   { immediate: true }
 )
 onBeforeUnmount(() => clearInterval(ticker))
+
+function kindOf(f: AgentFailureLine): 'Login' | 'Model' | 'Other' {
+  return f.code === 'login_expired' ? 'Login' : f.code === 'model_error' ? 'Model' : 'Other'
+}
+function failureText(f: AgentFailureLine): string {
+  return t(`work.room.activity.failure.failed${kindOf(f)}`, { time: waitedFor(f.since, now.value) })
+}
+function failureTitle(f: AgentFailureLine): string {
+  const k = kindOf(f)
+  return [
+    t(`work.room.activity.failure.reason${k}`),
+    f.name,
+    waitedFor(f.since, now.value),
+    t(`work.room.activity.failure.hint${k}`),
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
 
 function stale(line: MemberActivityLine): boolean {
   return lineStale(line, now.value, STALE_AFTER_MS)
@@ -60,7 +84,33 @@ function title(line: MemberActivityLine): string {
 </script>
 
 <template>
-  <div v-if="working.length" class="agent-now" data-testid="agent-now" role="status">
+  <div v-if="working.length || failures.length" class="agent-now" data-testid="agent-now" role="status">
+    <div
+      v-for="f in failures"
+      :key="`failed-${f.handle}`"
+      class="agent-now__row agent-now__row--failed"
+      data-kind="failed"
+      :data-code="f.code ?? ''"
+      :title="failureTitle(f)"
+    >
+      <span class="agent-now__mark agent-now__mark--failed" aria-hidden="true">
+        <i
+          class="mdi agent-now__glyph"
+          :class="f.code === 'model_error' ? 'mdi-alert-circle' : 'mdi-cloud-off-outline'"
+        />
+      </span>
+      <span class="agent-now__name">{{ f.name }}</span>
+      <span class="agent-now__text agent-now__text--failed">{{ failureText(f) }}</span>
+      <button
+        v-if="needsRelogin(f)"
+        type="button"
+        class="agent-now__action"
+        data-testid="agent-now-relogin"
+        @click="emit('relogin', f.handle)"
+      >
+        {{ t('work.room.activity.failure.relogin') }}
+      </button>
+    </div>
     <div
       v-for="line in working"
       :key="line.handle"
@@ -142,6 +192,26 @@ function title(line: MemberActivityLine): string {
   border-radius: 50%;
   background: var(--warn);
   box-shadow: 0 0 0 1.5px var(--surface);
+}
+.agent-now__row--failed {
+  background: var(--danger-wash);
+}
+.agent-now__mark--failed {
+  color: var(--danger);
+}
+.agent-now__text--failed {
+  color: var(--danger-ink);
+}
+.agent-now__action {
+  flex: none;
+  padding: 2px 10px;
+  border: 0;
+  border-radius: var(--radius-sm, 6px);
+  background: var(--accent);
+  color: var(--accent-on, #fff);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
 }
 .agent-now__name {
   flex: none;

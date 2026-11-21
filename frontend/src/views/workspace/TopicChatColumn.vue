@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { AgentControlState, Block, ChatAttachment, ProjectMemberRow, RoomTask, Topic } from '@/cx_types'
+import type { AgentFailureLine } from '@/lib/agentFailures'
 import type { DocReviewRequest } from '@/lib/docReview'
 import type { OpenedDocument } from '@/lib/docReview'
 import type { MemberActivityLine } from '@/lib/memberActivity'
@@ -8,6 +9,7 @@ import type { ChapterRow } from '@/types/chapters'
 import type { SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
 import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 
 import { getAvatarUrl } from '@/utils/materials'
@@ -228,7 +230,17 @@ async function join() {
 const linkDown = computed(() => !!chatRef.value?.linkDown)
 const submitQuestion: SubmitPreviewQuestion = (request) => chatRef.value?.submitQuestion(request) ?? false
 
+const router = useRouter()
 const agentLines = ref<MemberActivityLine[]>([])
+const agentFailureLines = ref<AgentFailureLine[]>([])
+// 「重新登录」：回到项目设置里那位队友的卡片，卡片上写原因和怎么做。
+function reloginTeammate(handle: string) {
+  void router.push({
+    name: 'project-settings',
+    params: { projectId: props.topic.project_id, section: 'agents' },
+    query: { focus: handle, why: 'login_expired' },
+  })
+}
 function onActivity(lines: MemberActivityLine[]) {
   agentLines.value = lines
   emit('activity', lines)
@@ -247,7 +259,7 @@ defineExpose({
 <template>
   <div class="chat-col">
     <!-- 进频道或支线页就能看到：每位 AI 此刻在干什么（和输入框上方那一行同一份数据）。 -->
-    <AgentNowStrip :lines="agentLines" />
+    <AgentNowStrip :lines="agentLines" :failures="agentFailureLines" @relogin="reloginTeammate" />
     <ChatPanel
       ref="chatRef"
       :topic="topic"
@@ -278,6 +290,7 @@ defineExpose({
       @site-block="emit('site-block', $event)"
       @site-turns="emit('site-turns', $event)"
       @activity="onActivity"
+      @failures="agentFailureLines = $event"
       @state-changed="(resource: string, id?: string) => emit('state-changed', resource, id)"
       @preview-shown="emit('preview-shown')"
       @delivery-arrived="emit('delivery-arrived', $event)"

@@ -19,5 +19,12 @@
   "setDefaultFailed": "Couldn't set the default",
   "title": "AI teammates",
   "typeGeneral": "General",
-  "unsupported": "Managing AI teammates isn't supported yet"
+  "unsupported": "Managing AI teammates isn't supported yet",
+  "more": "More",
+  "accountLogin": "Account and login",
+  "loginExpired": "Login expired",
+  "loginWhy": "The Claude account it runs on has an expired login that could not be refreshed. Once you sign in again it carries on with the work that was cut short; you do not need to resend anything.",
+  "loginHow": "Signing in has to happen on your own computer (the platform cannot click it for you). In a terminal on that computer, run:",
+  "loginDoneButton": "I have signed in again",
+  "loginDone": "Signed in again. It carries on the next time it is called; you can also call on it in the channel to have it carry on now."
 }
