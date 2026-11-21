@@ -111,6 +111,11 @@ class HubDevice:
     # (``machine.MachineStream``; not imported here, which would make the two
     # modules a cycle.)
     machine_streams: dict[str, Any] = field(default_factory=dict)
+    # Whether the connector on THIS connection opens streams the server asks
+    # for (`hello`), and the streams open on it by id (``streams.HubStream``,
+    # not imported here for the same reason).
+    streams: bool = False
+    open_streams: dict[str, Any] = field(default_factory=dict)
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     connection_generation: int = 0
 
@@ -188,6 +193,10 @@ class HubDevice:
             if stream.task is not None:
                 stream.task.cancel()
         self.machine_streams.clear()
+        # A stream the server opened lives on this link too.
+        for stream in list(self.open_streams.values()):
+            stream.end("the machine's link was lost")
+        self.open_streams.clear()
         return True
 
 
