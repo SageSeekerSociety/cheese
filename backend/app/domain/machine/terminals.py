@@ -38,8 +38,6 @@ from app.domain.environment.models import (
 )
 from app.domain.team.models import Team
 
-#: What an executor that holds shells offers (`runtime.Executor` ``ping``).
-CAPABILITY = "terminal"
 #: What an executor older than shells answers the request for one.
 UNKNOWN_METHOD = "Unknown executor method"
 
