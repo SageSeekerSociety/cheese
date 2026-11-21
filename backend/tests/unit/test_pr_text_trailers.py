@@ -169,6 +169,28 @@ def test_a_feedback_number_in_the_card_body_joins_the_trailer_block():
     assert trailers.splitlines()[0] == "Fixes-feedback: FB-12"
 
 
+def test_crlf_body_trailers_join_the_real_credits_without_duplication():
+    """Windows line endings must preserve feedback and replace pasted credits."""
+    body = pr_text.merge_commit_message(
+        _topic(),
+        "carol",
+        _card(
+            change_body=(
+                "Because.\r\n\r\n"
+                "Fixes-feedback: FB-12\r\n"
+                "Reviewed-by: mallory <m@example.com>"
+            )
+        ),
+        _who(),
+    )
+    paragraphs = body.replace("\r\n", "\n").split("\n\n")
+    assert paragraphs[0] == "Because."
+    assert "Fixes-feedback: FB-12" in paragraphs[-1].splitlines()
+    assert [line for line in body.splitlines() if line.startswith("Reviewed-by:")] == [
+        "Reviewed-by: carol <carol@zhishi.local>"
+    ]
+
+
 def test_a_body_paragraph_that_only_looks_like_a_trailer_is_kept():
     text = "Because it was asked for.\n\nNote that this is prose, not a trailer."
     assert pr_text.pr_body(_topic(), "", _card(change_body=text), _who()).startswith(
