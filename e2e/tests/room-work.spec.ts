@@ -212,7 +212,9 @@ test("同名文件按任务打开：在「文件」里改的只存进这一件�
       `/projects/${project}/topics/${room}/tasks/${second.id}?tab=code`,
     );
     await files.getByRole("button", { name: "src", exact: true }).click();
-    await files.getByRole("button", { name: "login.txt", exact: true }).click();
+    // The tree marks a file the task changed (「已修改」) once the task's work
+    // summary has arrived, and that mark is part of the button's name.
+    await files.getByRole("button", { name: /^login\.txt( 已修改)?$/ }).click();
     await expect(files.locator(".monaco-editor")).toContainText("second task");
     const saved = await api(
       page,
