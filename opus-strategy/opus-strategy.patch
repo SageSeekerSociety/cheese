@@ -1,0 +1,36 @@
+--- a/server/match/bot.js
++++ b/server/match/bot.js
+@@ -1112,7 +1112,12 @@
+   const hand = [...ps.hand.filter((p) => p && !inSet.has(p.uid)), ...withdrawn];
+   const bonds = computeBonds(gd, { board, hand, layers: ps.layers, bondCountBonus: ps.bondCountBonus });
+   let v = 0;
+-  for (const p of set) v += unitBase(m, p, ctx);
++  for (const p of set) {
++    v += unitBase(m, p, ctx);
++    // Strategy-specific lineup preference is opt-in and additive; the default
++    // planner remains unchanged when no policy is supplied.
++    if (ctx.policy?.lineupBonus) v += ctx.policy.lineupBonus(m, ps, p, ctx) || 0;
++  }
+   for (const [id, b] of Object.entries(bonds)) {
+     // every deployed focus member counts on the way to the next threshold (a swap alone never reaches the 6-member tier)
+     if (id === ctx.focus) {
+@@ -3047,8 +3052,8 @@
+ }
+-
++
+ /** arrange as a step generator (yields inside the layout planning, see planLayoutSteps). */
+-export function* arrangeSteps(m, ps, { final = false, defer = false, delegate = false, pooled = false, candidatePlans = null, adaptive = false } = {}) {
+-  const ctx = context(m, ps);
++export function* arrangeSteps(m, ps, { final = false, defer = false, delegate = false, pooled = false, candidatePlans = null, adaptive = false, policy = null } = {}) {
++  const ctx = context(m, ps, policy);
+   let chosen = chooseLineup(m, ps, ctx).set;
+   let chosenSet = new Set(chosen.map((p) => p.uid));
+   // withdraw board chess that are not chosen (to free cap) when the hand has space
+@@ -4745,6 +4750,7 @@
+     buyLoopSteps: (m, ps, opts) => buyLoopSteps(m, ps, { ...opts, policy }),
+     levelUp: (m, ps, opts) => levelUp(m, ps, { ...opts, policy }),
+     maybeFreeze: (m, ps) => maybeFreeze(m, ps, policy),
++    arrangeSteps: (m, ps, opts = {}) => arrangeSteps(m, ps, { ...opts, policy }),
+   } : {};
+   return createPrepSteps({ ...LEGACY_PREP_ACTIONS, ...economic, ...actions },
+     { maxRefreshes: MAX_REFRESHES, arrangeBeforeLevel: !!policy });

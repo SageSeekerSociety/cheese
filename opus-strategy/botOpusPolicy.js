@@ -98,7 +98,14 @@ function compScore(m, ps, key, h) {
   // 只读当前可见商店：R2~R5 先跟发牌走，不能只按座位固定偏好锁盟约。
   s += visibleCompHits(m, ps, c) * env('OPUS2_VISIBLEW', 8);
   const pref = SEAT_PREF[ps.seat % 4] || []; const i = pref.indexOf(key); if (i >= 0) s += (3 - i) * env('OPUS2_PREFW', 10);
-  for (const q of m.players?.values?.() || []) if (q !== ps && q.alive && q.botStrategyState?.opus2?.comp === key) s -= (process.env.OPUS2_SHARE ?? 'sarg,leth').split(',').includes(key) ? 0 : env('OPUS2_CLASH', 40);
+  // Co-op competition is inferred only from the teammates' public bond snapshot;
+  // never inspect another bot's private strategy state.
+  for (const q of m.players?.values?.() || []) {
+    const b = q !== ps && q.alive ? q.bonds?.[c.main] : null;
+    if (b?.active && (b.count || 0) >= 3) {
+      s -= (process.env.OPUS2_SHARE ?? 'sarg,leth').split(',').includes(key) ? 0 : env('OPUS2_CLASH', 40);
+    }
+  }
   return s;
 }
 function chooseComp(m, ps) {
@@ -119,17 +126,27 @@ function carrySeat(m) {
   if (S.round === m.round) return S.pid; S.round = m.round;
   let best = null, bs = -Infinity;
   for (const q of m.players?.values?.() || []) {
-    if (!q.alive || !q.botStrategyState?.opus2) continue; const gd = q.gd || m.gd;
-    let v = 0; for (const p of q.board.values()) if (p && p.kind === 'chess') v += (gd.tierOf(p.id) || 1) * (gd.isGolden(p.id) ? 3 : 1);
-    v += q.lp * 0.3 + (q.playerId === S.pid ? 8 : 0);
+    if (!q.alive) continue;
+    // Use only public co-op state: active bond tiers and team LP.
+    let v = q.lp * 0.3 + (q.playerId === S.pid ? 8 : 0);
+    for (const comp of Object.values(COMPS)) {
+      const b = q.bonds?.[comp.main];
+      if (b?.active) v += (b.tier || 0) * 8 + Math.min(6, b.count || 0);
+    }
     if (v > bs) { bs = v; best = q.playerId; }
   }
   S.pid = best; return best;
 }
 function yieldsToCarry(m, ps, name) {
   const c = carrySeat(m); if (!c || c === ps.playerId) return false;
-  const q = m.players.get ? m.players.get(c) : null; const comp = q?.botStrategyState?.opus2?.comp;
-  return !!(comp && COMPS[comp]?.cards[name] >= 5);
+  const q = m.players.get ? m.players.get(c) : null;
+  if (!q) return false;
+  // Public-only handoff signal: an active public bond plus this card's
+  // advertised value in that bond. Never inspect the other bot's strategy.
+  return Object.values(COMPS).some((comp) => {
+    const b = q.bonds?.[comp.main];
+    return b?.active && (b.count || 0) >= 3 && comp.cards[name] >= 5;
+  });
 }
 // 领袖战专用卡：雪猎、承曦格雷伊是 2 阶卡、打领袖最猛（拉表 60 秒 136 万 / 81 万），R3 起每个座位囤一种，凑精锐留到 R14
 const BOSS_CARDS = ['雪猎', '承曦格雷伊'];
@@ -359,9 +376,10 @@ function opusSearchTargets(m, ps) {
     if ((target.stage || 1) > ps.shop.level || held.elite.has(gd.chess(target.base)?.name)) continue;
     const count = held.normal.get(gd.chess(target.base)?.name) || 0;
     if (count >= target.copies) continue;
+    // The shared pool count is hidden state. A target enters the search plan only
+    // when the player can currently see one in their shop.
     const visible = ps.shop.slots.some((s) => s && !s.sold && s.kind === 'chess' && gd.baseIdOf(s.id) === target.base);
-    const stock = m.pool?.left?.(target.base) || 0;
-    if (visible || stock > 0) out.push(target);
+    if (visible) out.push(target);
   }
   return out;
 }
@@ -386,6 +404,16 @@ function opusBuyBonus(m, ps, id, ctx = {}) {
   const comp = COMPS[st(ps).comp];
   if (comp && !copies && (c.bonds || []).includes(comp.main)) score += Math.max(0, 6 - mainMembers(gd, ps, comp.main)) * 10;
   return score;
+}
+
+// The external simulator's R14 lineup planner can consume this additive hook.
+// It uses only the owned piece and the static, public carry table.
+function opusLineupBonus(m, ps, piece) {
+  if (m.round !== m.gd.bossRound) return 0;
+  const gd = ps.gd || m.gd;
+  const c = gd.chess(piece.id);
+  const carry = c && OPUS_CARRY[c.name];
+  return carry && carry.boss > 0 ? carry.boss * env('OPUS2_FABONUS', 12) : 0;
 }
 
 function opusCanLevel(m, ps) {
@@ -413,6 +441,7 @@ const OPUS_POLICY = Object.freeze({
   searchTargets: opusSearchTargets,
   buyBonus: opusBuyBonus,
   canLevel: opusCanLevel,
+  lineupBonus: opusLineupBonus,
 });
 const prep = createBotPrepSteps({}, OPUS_POLICY);
 const BAND_PREF = (process.env.OPUS_BANDS || 'band_sarkazb,band_amiya,band_ioleta,band_weakness,band_bonus,band_upgrade,band_copy,band_high,band_cannot,band_equipment').split(',').filter(Boolean);

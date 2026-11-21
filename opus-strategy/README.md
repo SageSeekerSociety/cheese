@@ -7,6 +7,7 @@
 - `botOpus2.js`：旧版接口的动态选盟约、买卡、刷新、冻结、升本、卖卡和阵容评分。
 - `botOpusPolicy.js`：新版 `createBotPrepSteps(actions, policy)` 的采购适配层；把阵容目标、精锐合成、逐卡拉表和升本门槛接入 `core`、`target`、`searchTargets`、`buyBonus`、`canLevel`。
 - `botOpusCarry.js`：逐卡拉表的 `mid`、`late`、`boss` 数据。`mid`/`late` 是 R8/R13 边际清怪率，`boss` 是精锐、445 层、60 秒领袖战边际伤害（百万）。
+- `opus-strategy.patch`：给新版 `bot.js` 增加 policy 的阵容评分传递和 `lineupBonus` 钩子；不改游戏规则，只改变机器人决策。
 
 ## 接入方式
 
@@ -28,14 +29,15 @@ createBotPrepSteps({}, {
   searchTargets,
   buyBonus,
   canLevel,
+  lineupBonus,
 })
 ```
 
-新版适配层只使用公开的采购、冻结和升本 policy 钩子；新版 `bot.js` 的默认阵容、站位和领袖战排练仍由模拟器负责。新版没有 `setUnitBonus` 时，不要把旧文件直接当成兼容版本运行。目标模式的完整整局验证和 90% 胜率尚未完成，不能把模型估算或小样本结果写成验收结论。
+`lineupBonus` 需要先应用 `opus-strategy.patch`；它只在新版 `bot.js` 的阵容评分中读取自有棋子和静态领袖拉表。新版适配层其余部分使用公开的采购、冻结和升本 policy 钩子；未应用补丁时，默认阵容、站位和领袖战排练仍由模拟器负责。新版没有 `setUnitBonus` 时，不要把旧文件直接当成兼容版本运行。目标模式的完整整局验证和 90% 胜率尚未完成，不能把模型估算或小样本结果写成验收结论。
 
 ## 运行边界
 
-策略只读取自己的持有、可见商店、公开库存、队友公开盟约和当前回合公开敌人信息，不读取隐藏信息，也不修改游戏规则。
+策略只读取自己的持有、可见商店、公开盟约状态和当前回合公开敌人信息；不读取共享卡池余量或队友的内部策略状态，也不修改游戏规则。
 
 触发分类：
 
