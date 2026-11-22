@@ -17,7 +17,8 @@
     "edit": "Edit answers",
     "editNote": "Reopens the whole group; submit again when done",
     "failed": "Could not submit — try again",
-    "listSeparator": ", "
+    "listSeparator": ", ",
+    "takenByOther": "Someone else answered this one"
   },
   "fold": {
     "whoNamed": "{asker} asks {people}",
@@ -63,6 +64,7 @@
       "people": "Asks {people}",
       "all": "Asks everyone",
       "anyone": "Question"
-    }
+    },
+    "earlier": "{name} said before: {text}"
   }
 }

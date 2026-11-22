@@ -135,7 +135,10 @@ def test_another_persons_answer_cannot_be_overwritten():
 
 
 def test_the_answerer_can_change_their_own_answer():
-    """答过的人改得动自己那条：撤掉旧的、写上新的一条。"""
+    """答过的人改得动自己那条：撤掉旧的、写上新的一条。
+
+    整组这条路是「改答案」按钮点出来的一次重交，卡上不画历史，所以旧的换掉而不是
+    追加（和单答那条路不同——那边每句都是房间里的一条消息）。"""
     answered = question()
     answered.meta = {**answered.meta, "answer_log": [_entry("alice", "按自然周")]}
 
@@ -178,6 +181,7 @@ def test_editing_leaves_another_persons_skip_alone():
 
     log = answered.meta["answer_log"]
     assert [e["kind"] for e in log] == ["skipped", "option"]
+    assert log[0]["by"] == "bob"
     assert log[1]["option"] == "按滚动 7 天"
 
 

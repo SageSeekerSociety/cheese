@@ -65,7 +65,7 @@ import type { Block } from '../../cx_types'
 import { computed, ref, watch } from 'vue'
 
 import { t } from '../../i18n'
-import { askAnswers, askClosedByAsker, askOptions } from '../../lib/blockDisplay'
+import { askAnswers, askClosedByAsker, askEarlierAnswers, askFinalAnswer, askOptions } from '../../lib/blockDisplay'
 import BaseButton from '../base/BaseButton.vue'
 import ConfirmDialog from '../base/ConfirmDialog.vue'
 
@@ -103,8 +103,11 @@ const responses = computed(() => askAnswers(props.block))
 /** 提问方把题收起来了：撤回（不再等人答）或过期（还能答）。 */
 const closedByAsker = computed(() => askClosedByAsker(props.block))
 const withdrawn = computed(() => closedByAsker.value === 'withdrawn')
-/** 真正的回答（不是跳过）：有一条，题就对所有人了结了。 */
+/** 真正的回答（不是跳过）。最后一条算数；前面那几条是同一个人先说过的。判据在
+ *  `lib/blockDisplay` 里，和整组卡读同一份。 */
 const answers = computed(() => responses.value.filter((a) => !a.skipped))
+const finalAnswer = computed(() => askFinalAnswer(props.block))
+const earlierAnswers = computed(() => askEarlierAnswers(props.block))
 const skips = computed(() => responses.value.filter((a) => a.skipped))
 // 点名的人都跳过了：题对谁都了结了。问所有人的题不会这样了结。
 const skippedByAll = computed(
@@ -283,20 +286,31 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
         @click="emit('skip')"
       />
     </header>
-    <ul v-if="answers.length" class="ask-replies__answers">
-      <li v-for="(answer, index) in answers" :key="index" class="ask-replies__row">
+    <!-- 算数的那一条在最上面；同一个人先说过的降一档列在下面，不静默消失。
+         撤回只撤算数的那一条；先前那几句已经不算数了，留在卡上只是让人知道自己说过。 -->
+    <ul v-if="finalAnswer" class="ask-replies__answers">
+      <li class="ask-replies__row">
         <span class="ask-replies__answer">{{
-          t('ask.replies.answered', { name: names[answer.by] ?? answer.by, text: answer.text })
+          t('ask.replies.answered', { name: names[finalAnswer.by] ?? finalAnswer.by, text: finalAnswer.text })
         }}</span>
         <button
-          v-if="answer.by === viewer"
+          v-if="finalAnswer.by === viewer"
           type="button"
           class="ask-replies__withdraw"
-          :aria-label="t('ask.replies.withdrawAria', { text: answer.text })"
+          :aria-label="t('ask.replies.withdrawAria', { text: finalAnswer.text })"
           @click="confirming = true"
         >
           {{ t('ask.replies.withdraw') }}
         </button>
+      </li>
+      <li
+        v-for="(answer, index) in earlierAnswers"
+        :key="`said-${index}`"
+        class="ask-replies__row ask-replies__row--earlier"
+      >
+        <span class="ask-replies__answer">{{
+          t('ask.replies.earlier', { name: names[answer.by] ?? answer.by, text: answer.text })
+        }}</span>
       </li>
     </ul>
     <template v-else>
@@ -579,6 +593,14 @@ const recommended = (text: string) => text.endsWith(RECOMMENDED)
   background: none;
   border: 0;
   text-decoration: underline;
+}
+/* 被后来的动作盖过的那几句：13px、--muted，和撤回按钮同一档。它们说的是「你先前说
+   过什么」，不是算数的答案，所以比上面那一条淡一档，但不消失。 */
+.ask-replies__row--earlier {
+  padding-top: 0;
+  font-size: 13px;
+  line-height: var(--lh-13);
+  color: var(--muted);
 }
 .ask-replies__withdraw:hover {
   color: var(--text);
