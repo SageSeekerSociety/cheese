@@ -263,6 +263,26 @@
   --terminal-ansi-bright-cyan: #00788a;
   --terminal-ansi-bright-white: var(--text);
 
+  /* ---- A task's 文件: the mark of each kind of file (`fileMark`) ----
+     A mark beside a name in the tree and on a tab: decoration, so the floor is
+     3:1 on every ground it sits on (--canvas, --surface, the selected row's
+     --line-2). The syntax inks clear it in both themes; the header purple is
+     the one colour of its own (4.7:1 on --line-2). */
+  --file-kind-c: var(--code-keyword);
+  --file-kind-header: #7c4dcc;
+  --file-kind-python: var(--code-type);
+  --file-kind-javascript: var(--code-function);
+  --file-kind-typescript: var(--signal-blue);
+  --file-kind-java: var(--code-string);
+  --file-kind-go: var(--code-type);
+  --file-kind-rust: var(--code-deletion);
+  --file-kind-markdown: var(--code-number);
+  --file-kind-config: var(--muted);
+  --file-kind-makefile: var(--warn-ink);
+  --file-kind-shell: var(--ok-ink);
+  --file-kind-git: var(--code-string);
+  --file-kind-file: var(--faint);
+
   /* ---- Video picture ground ----
      The box a recording is drawn in (the conversation card, the preview panel)
      is dark in both themes, for the reason the picture viewer is: a picture is
@@ -633,6 +653,23 @@
   --terminal-ansi-bright-magenta: #e6a8f0;
   --terminal-ansi-bright-cyan: #8fe3ef;
   --terminal-ansi-bright-white: var(--ink);
+
+  /* A task's 文件 (see the light block): the syntax inks are lifted for this
+     ground already; the header purple is lifted with them (4.4:1 on --line-2). */
+  --file-kind-c: var(--code-keyword);
+  --file-kind-header: #b98fff;
+  --file-kind-python: var(--code-type);
+  --file-kind-javascript: var(--code-function);
+  --file-kind-typescript: var(--signal-blue);
+  --file-kind-java: var(--code-string);
+  --file-kind-go: var(--code-type);
+  --file-kind-rust: var(--code-deletion);
+  --file-kind-markdown: var(--code-number);
+  --file-kind-config: var(--muted);
+  --file-kind-makefile: var(--warn-ink);
+  --file-kind-shell: var(--ok-ink);
+  --file-kind-git: var(--code-string);
+  --file-kind-file: var(--faint);
 
   /* Same as light, deliberately: a recording is drawn on the same dark box in both themes. */
   --video-ground: #1b1d20;

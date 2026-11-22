@@ -196,7 +196,10 @@ test("同名文件按任务打开：在「文件」里改的只存进这一件�
       .click();
     await expect(changes.locator(".changes-bar__path")).toHaveText("src/login.txt");
     await changes.getByRole("button", { name: "编辑", exact: true }).click();
-    await expect(files.locator(".task-files__path")).toHaveText("src/login.txt");
+    await expect(files.locator(".task-files__path")).toHaveAttribute(
+      "title",
+      "src/login.txt",
+    );
     await files.locator(".monaco-editor .view-lines").click();
     await page.keyboard.press("ControlOrMeta+A");
     await page.keyboard.type("my edit");

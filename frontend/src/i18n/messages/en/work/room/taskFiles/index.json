@@ -1,9 +1,16 @@
 {
   "changed": "Changed",
+  "closeTab": "Close {name}",
+  "collapseAll": "Collapse all",
   "deleteTitle": "Delete {name}?",
+  "find": "Find a file by name",
+  "findTitle": "Find a file by name (Ctrl+P)",
   "name": "Name",
   "newFile": "New file",
   "newFolder": "New folder",
+  "noOpenFile": "No open files",
   "openBeside": "Open to the side",
-  "preparing": "Preparing the environment"
+  "openFiles": "Open files",
+  "preparing": "Preparing the environment",
+  "treeWidth": "File tree width"
 }

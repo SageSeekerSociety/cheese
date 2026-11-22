@@ -85,7 +85,7 @@ vi.mock('@/api', async () => {
 vi.mock('../CodeEditor.vue', () => ({
   default: {
     name: 'CodeEditorStub',
-    props: ['modelValue', 'filename', 'readonly', 'lines'],
+    props: ['modelValue', 'filename', 'readonly', 'lines', 'language', 'keep'],
     emits: ['update:modelValue', 'save', 'quick-open'],
     template:
       '<textarea data-testid="editor" :value="modelValue" :readonly="readonly" :data-lines="lines ? `${lines.start}-${lines.end}` : undefined" @input="$emit(\'update:modelValue\', $event.target.value)" />',
@@ -158,7 +158,7 @@ describe('a person edits a task file while its machine is being brought back', (
     first.unmount()
     mount()
     await settle()
-    await screen.findByText('src/queue.c', { selector: '.task-files__path' })
+    await screen.findByRole('button', { name: '关闭 queue.c' })
     expect(((await screen.findByTestId('editor')) as HTMLTextAreaElement).value).toBe(MINE)
   })
 
@@ -291,6 +291,96 @@ describe('a file link opens in the panel when the task has the file', () => {
     const view = mount()
     await settle()
     expect(await view.open('docs/old.md')).toBe(false)
+  })
+})
+
+describe('files open as tabs in the panel', () => {
+  const STACK = 'void push(int x) {}\n'
+  const editorText = async () => ((await screen.findByTestId('editor')) as HTMLTextAreaElement).value
+
+  it('opening a second file keeps the first as a tab, and closing the second shows the first again', async () => {
+    put('src/stack.c', STACK)
+    const view = mount()
+    await settle()
+    await view.open('src/queue.c')
+    await view.open('src/stack.c')
+    await settle()
+    expect(screen.getByRole('button', { name: '关闭 queue.c' })).toBeTruthy()
+    expect(await editorText()).toBe(STACK)
+
+    await fireEvent.click(screen.getByRole('button', { name: '关闭 stack.c' }))
+    await settle()
+    expect(screen.queryByRole('button', { name: '关闭 stack.c' })).toBeNull()
+    expect(await editorText()).toBe('int main(void) { return 0; }\n')
+  })
+
+  it('closing the last tab leaves no file open', async () => {
+    const view = mount()
+    await settle()
+    await view.open('src/queue.c')
+    await fireEvent.click(await screen.findByRole('button', { name: '关闭 queue.c' }))
+    await settle()
+    expect(screen.queryByTestId('editor')).toBeNull()
+    expect(screen.getByText('暂无打开的文件')).toBeTruthy()
+  })
+
+  it('closing a tab before its text is saved does not lose the text', async () => {
+    server.machine = 'ready'
+    const view = mount()
+    await settle()
+    await view.open('src/queue.c')
+    await type(MINE)
+    await fireEvent.click(screen.getByRole('button', { name: '关闭 queue.c' }))
+    await settle(1000)
+    expect(server.files.get('src/queue.c')!.content).toBe(MINE)
+  })
+
+  it('closing a tab while the machine is still coming up saves its text once the machine is ready', async () => {
+    put('src/stack.c', STACK)
+    const view = mount()
+    await settle()
+    await view.open('src/queue.c')
+    await type(MINE)
+    await settle()
+    await view.open('src/stack.c')
+    await fireEvent.click(screen.getByRole('button', { name: '关闭 queue.c' }))
+    server.machine = 'ready'
+    await settle(2500)
+    expect(server.files.get('src/queue.c')!.content).toBe(MINE)
+  })
+
+  it('reopening the task brings back its tabs and the file that was shown', async () => {
+    put('src/stack.c', STACK)
+    const first = mount()
+    await settle()
+    await first.open('src/stack.c')
+    await first.open('src/queue.c')
+    await first.open('src/stack.c')
+    await settle()
+    first.unmount()
+
+    mount()
+    await settle()
+    expect(await screen.findByRole('button', { name: '关闭 queue.c' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '关闭 stack.c' })).toBeTruthy()
+    expect(await editorText()).toBe(STACK)
+  })
+
+  it('a remembered tab whose file is gone is dropped', async () => {
+    put('src/stack.c', STACK)
+    const first = mount()
+    await settle()
+    await first.open('src/queue.c')
+    await first.open('src/stack.c')
+    await settle()
+    first.unmount()
+    server.files.delete('src/stack.c')
+
+    mount()
+    await settle()
+    expect(await editorText()).toBe('int main(void) { return 0; }\n')
+    expect(screen.getByRole('button', { name: '关闭 queue.c' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '关闭 stack.c' })).toBeNull()
   })
 })
 

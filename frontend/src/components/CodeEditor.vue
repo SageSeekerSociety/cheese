@@ -141,8 +141,13 @@ const props = withDefaults(
      * Without one the editor holds one model and swaps its text from file to file.
      */
     language?: LanguageLink | null
+    /**
+     * Files of the checkout (`language`) this editor keeps while it shows another — a cell's
+     * tabs: going back to one finds its undo history and where it was scrolled as it left them.
+     */
+    keep?: readonly string[]
   }>(),
-  { filename: '', readonly: false, lines: null, language: null }
+  { filename: '', readonly: false, lines: null, language: null, keep: () => [] }
 )
 const emit = defineEmits<{
   (e: 'update:modelValue', v: string): void
@@ -204,23 +209,69 @@ function langFor(name: string): string {
 // task's models a linked editor shows.
 let lsp: typeof import('../lib/lsp/monaco') | null = null
 let linked: Monaco.editor.ITextModel | null = null
+/** The file `linked` is. */
+let linkedPath: string | null = null
+/** Models of the files in `keep` this editor showed and still holds, by path. */
+const kept = new Map<string, Monaco.editor.ITextModel>()
+/** Where each kept file was scrolled, its cursor and folds, by path. */
+const views = new Map<string, Monaco.editor.ICodeEditorViewState>()
+/** For each kept file, the text it was last given from outside (`modelValue`), by path. */
+const given = new Map<string, string>()
 let stopOpener: (() => void) | null = null
 
-/** Shows the file's own model in the editor, letting go of the one it showed before. */
+/** Shows the file's own model in the editor, keeping or letting go of the one it showed before. */
 function showLinkedModel() {
   const link = props.language
   if (!editor || !monaco || !lsp || !link) return
   const previous = linked
-  const model = lsp.openDocument(monaco, link, props.filename, langFor(props.filename), props.modelValue)
+  const previousPath = linkedPath
+  const switching = previousPath !== null && previousPath !== props.filename
+  if (switching && previous) {
+    const view = editor.saveViewState()
+    if (view && props.keep.includes(previousPath)) views.set(previousPath, view)
+  }
+  let held = kept.get(props.filename) ?? null
+  kept.delete(props.filename)
+  // Kept for another task's checkout (the cell moved to another task): not this file.
+  if (held && held.uri.authority !== lsp.modelUri(monaco, link.scope, props.filename).authority) {
+    lsp.closeDocument(held)
+    held = null
+  }
+  const model = held ?? lsp.openDocument(monaco, link, props.filename, langFor(props.filename), props.modelValue)
   linked = model
+  linkedPath = props.filename
   applying = true
-  if (model.getValue() !== props.modelValue) model.setValue(props.modelValue)
+  // A kept model holds what the person typed since: it is rewritten only when the text
+  // given from outside is not the one it was given before (the file changed elsewhere).
+  // Rewriting it drops its undo history and where it was scrolled.
+  const stale = held ? given.get(props.filename) !== props.modelValue : model.getValue() !== props.modelValue
+  if (stale && model.getValue() !== props.modelValue) model.setValue(props.modelValue)
+  given.set(props.filename, props.modelValue)
   if (editor.getModel() !== model) editor.setModel(model)
   applying = false
-  if (previous) lsp.closeDocument(previous)
+  const view = switching ? views.get(props.filename) : undefined
+  if (view) editor.restoreViewState(view)
+  if (previous) {
+    if (switching && previous !== model && props.keep.includes(previousPath)) kept.set(previousPath, previous)
+    else lsp.closeDocument(previous)
+  }
   stopOpener?.()
   stopOpener = lsp.openerFor(monaco, editor, link)
 }
+
+// A file leaves `keep` (its tab closed): its model and view are let go.
+watch(
+  () => props.keep,
+  (keep) => {
+    for (const [path, model] of [...kept]) {
+      if (keep.includes(path)) continue
+      kept.delete(path)
+      lsp?.closeDocument(model)
+    }
+    for (const path of [...views.keys()]) if (!keep.includes(path)) views.delete(path)
+    for (const path of [...given.keys()]) if (!keep.includes(path) && path !== linkedPath) given.delete(path)
+  }
+)
 
 onMounted(async () => {
   const [monaco, lspModule] = await Promise.all([
@@ -312,6 +363,10 @@ watch(
 watch(
   () => props.modelValue,
   (v) => {
+    // The text of another file, arriving a moment before its name: that file's own model
+    // takes it (`showLinkedModel`), not the one still on screen.
+    if (linked && props.filename !== linkedPath) return
+    if (linkedPath !== null) given.set(linkedPath, v)
     if (editor && v !== editor.getValue()) {
       applying = true
       editor.setValue(v)
@@ -324,6 +379,8 @@ onBeforeUnmount(() => {
   stopOpener?.()
   editor?.dispose()
   if (linked) lsp?.closeDocument(linked)
+  for (const model of kept.values()) lsp?.closeDocument(model)
+  kept.clear()
 })
 </script>
 

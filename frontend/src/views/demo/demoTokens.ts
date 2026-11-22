@@ -252,7 +252,7 @@ const COLOR_SECTIONS: ReadonlyArray<{ name: string; note: string; prefixes: stri
   {
     name: '代码色',
     note: '代码块在两套主题下都是反色的：深底浅字。行内代码用 --fill，不是反色块。设备实时终端同理，两套主题同一个深底。',
-    prefixes: ['--code-', '--terminal-'],
+    prefixes: ['--code-', '--terminal-', '--file-kind-'],
   },
   {
     name: '头像',

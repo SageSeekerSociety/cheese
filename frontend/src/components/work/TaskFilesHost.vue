@@ -39,6 +39,8 @@ const files = useTaskFiles({
   readOnly: () => props.readOnly,
   active: () => props.active,
   refreshTick: () => props.refreshTick,
+  // A cell holding one file keeps no tabs.
+  tabs: () => !props.path,
 })
 
 // Go to definition in another file of the checkout opens it in this cell, at that line.
