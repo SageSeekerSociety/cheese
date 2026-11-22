@@ -49,7 +49,7 @@ from app.domain.agent.mentions import _MENTION_RE
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.repositories import AgentTurnRepository
 from app.domain.agent_instance.services import AgentInstanceService
-from app.domain.block.asked import PENDING, asked_of, settled, skipped_by
+from app.domain.block.asked import asked_of, settled, skipped_by
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.repositories import BlockRepository
 from app.domain.block.schemas import BlockOut
@@ -318,9 +318,11 @@ async def answer_questions(
     """``reply`` 答掉了哪几道题：记在题上、结掉题的通知，并把它送到提问的那位手上。
 
     点选项就是回一句话（选项文字，回复那道题），打字也是回一句话，两条走的是同一扇
-    门；哪几道题算被这句话答了由 `BlockRepository.questions_a_reply_answers` 定，和
-    看板读的是同一条判据。每一句回答都追加进题上的 `answer_log`，几个人都答了就记
-    几条。
+    门，**并且同样是作答**：那句话记成 ``note``，题就此结掉，卡上写出是谁说的什么
+    （2026-11-22 蔡松洋定的）。哪几道题算被这句话答了由
+    `BlockRepository.questions_a_reply_answers` 定，和看板读的是同一条判据。每一句
+    回答都追加进题上的 `answer_log`；同一个人再答一次时以最后一句为准，先前那句留在
+    同一份记录里（`block.asked.earlier_answers`），卡上不静默丢掉。
 
     这句话没点任何 agent 的名、却答了题，它就是说给提问的那位听的：``recipient``
     （这条消息的 `agent_recipient`，原地改）指到那个席位并记为点了名，于是它开的
@@ -342,11 +344,13 @@ async def answer_questions(
         meta["answer_log"] = [
             *(meta.get("answer_log") or []),
             {
-                # One of its options (what a click sends) answers it. Words of
-                # his own are only a reply for now: whether they answer it or
-                # just talk about it is the asking agent's call
-                # (`block.questions.confirm_pending`), so the question stays open.
-                "kind": "option" if picked else PENDING,
+                # An option (what a click sends) and a person's own words answer
+                # alike (2026-11-22, caisongyang's call): the card shows what he
+                # said, and there is nobody left to confirm it. A later answer
+                # from the same person replaces this one on the card
+                # (`block.asked.final_answer`), and what he said before stays as
+                # `earlier_answers`.
+                "kind": "option" if picked else "note",
                 "option": picked,
                 "note": None if picked else said,
                 "by": reply.author,
@@ -355,16 +359,9 @@ async def answer_questions(
             },
         ]
         question.meta = meta
-    settled_now = [q for q in questions if _offered(dict(q.meta or {})).get(said)]
-    if settled_now:
-        await finish_answering(
-            session, reply=reply, questions=settled_now, said=said, recipient=recipient
-        )
-    else:
-        # Only pending replies: nothing is settled, the asker still reads it.
-        await _point_at_asker(
-            session, reply=reply, questions=questions, recipient=recipient
-        )
+    await finish_answering(
+        session, reply=reply, questions=questions, said=said, recipient=recipient
+    )
     return questions
 
 
