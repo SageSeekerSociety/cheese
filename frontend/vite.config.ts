@@ -695,6 +695,13 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
+      // vscode-jsonrpc exports its browser build only under the `browser` condition. The
+      // dev server resolves with it; the production build and vitest resolve with node
+      // conditions and find no such export. The browser build is the one that ships, so
+      // every one of them is pointed at its file.
+      'vscode-jsonrpc/browser': fileURLToPath(
+        new URL('./node_modules/vscode-jsonrpc/lib/browser/main.js', import.meta.url)
+      ),
     },
     extensions: ['.js', '.json', '.jsx', '.mjs', '.ts', '.tsx', '.vue'],
   },

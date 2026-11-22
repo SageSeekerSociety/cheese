@@ -19,7 +19,7 @@ from app.domain.agent.harness.driven.runner import Runner
 
 def _executor(recorded):
     class Executor:
-        def hooks(self, *args):
+        def hooks(self, *args, **kwargs):
             return None
 
         def invoke(self, params):

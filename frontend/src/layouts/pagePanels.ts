@@ -49,6 +49,8 @@ export interface PagePanels {
   onClose?: (id: string) => void
   /** The reader double-clicked the tab of a temporary panel: keep it. */
   onKeep?: (id: string) => void
+  /** The reader picked, under "+", a kind of panel the page opens anew each time: open one. */
+  onSpawn?: (id: string) => void
   /** Height of the tab strips, when they sit beside a header of the page's own. */
   tabStripHeight?: string
 }

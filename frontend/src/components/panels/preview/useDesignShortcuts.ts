@@ -33,6 +33,13 @@ export interface DesignShortcutsOptions {
   deleteSelected: () => void
   /** 光标交还默认的框选。 */
   exitSelection: () => void
+  /**
+   * 撤掉图上框着的那一块，撤掉了就报 true。
+   *
+   * 有定位卡的地方（房间里的预览）框出来的那一块归卡管，卡自己接 Esc；没有卡的地方
+   * （资料库、交付版本这些只读预览）没有谁替它接，不给这一条，框住之后按什么都撤不掉。
+   */
+  exitRegion: () => boolean
 }
 
 export function useDesignShortcuts(options: DesignShortcutsOptions) {
@@ -53,6 +60,7 @@ export function useDesignShortcuts(options: DesignShortcutsOptions) {
     cancelGesture,
     deleteSelected,
     exitSelection,
+    exitRegion,
   } = options
 
   function isTyping(target: EventTarget | null) {
@@ -68,8 +76,8 @@ export function useDesignShortcuts(options: DesignShortcutsOptions) {
    * Esc 退出正在进行的操作，做掉了就报 true。
    *
    * 正在图上打字：这次文字作废，画笔留着，方便重打。否则是画到一半（或只是挑着一支
-   * 画笔）：手里的这一笔作废，光标交还默认的框选。已经框好的那一块不在这里动——它归
-   * 外面那条统一的定位卡管（`PreviewLocator` 自己接 Esc）。
+   * 画笔）：手里的这一笔作废，光标交还默认的框选。手上什么也没有时，撤掉框着的那一块
+   * （`exitRegion` 只在这一格自己拿得住它时才报得出来，有定位卡的地方由卡先接走）。
    */
   function exitCurrent(): boolean {
     if (textEditing.value) {
@@ -83,7 +91,8 @@ export function useDesignShortcuts(options: DesignShortcutsOptions) {
         selectedStroke.value = null
         return true
       }
-      return false
+      // 再一下撤掉框着的那一块：撤掉之后就没得撤了。
+      return exitRegion()
     }
     cancelCanvas()
     exitSelection()

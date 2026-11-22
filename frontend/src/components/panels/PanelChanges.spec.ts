@@ -13,14 +13,13 @@
  */
 import type { Component } from 'vue'
 
-import { defineComponent, h, ref } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ApiError, RequestTimeoutError } from '@/api'
+import { RequestTimeoutError } from '@/api'
 import { setLocale } from '@/i18n'
 
 // 断言读的是中文界面上的那一行字，语言钉在中文上。
@@ -306,22 +305,15 @@ describe('树上有什么，点开的是什么', () => {
       total: 3,
       source: 'live',
     })
-    // 对话里一枚 chip 指着一份这件任务没改过的文件。
-    const panel = ref<{ openFile: (path: string) => Promise<void> } | null>(null)
-    const Host = defineComponent({
-      setup: () => () =>
-        h(PanelChangesHost as unknown as Component, {
-          ref: panel,
-          topicId: 'room-1',
-          taskId: 't-1',
-          projectId: 'p1',
-          active: true,
-        }),
-    })
-    render(Host, { global: { plugins: [vuetify] } })
+    // 「打开其他文件」是一只对话框：Vuetify 的浮层要摸这个浏览器 API。
+    vi.stubGlobal('visualViewport', Object.assign(new EventTarget(), { width: 1024, height: 768, scale: 1 }))
+    mount()
     await openSection('src/app.ts')
     expect(await screen.findByText('差异')).toBeTruthy()
-    await panel.value?.openFile('notes.txt')
+    // 「打开其他文件」里挑一份这件任务没改过的文件。
+    await fireEvent.click(screen.getByRole('button', { name: '返回全部改动' }))
+    await fireEvent.click(await screen.findByText('打开其他文件'))
+    await fireEvent.click(await screen.findByText('notes.txt', { selector: '.open-file__path' }))
     await waitFor(() => expect(readFile).toHaveBeenLastCalledWith('p1', 'notes.txt', 'room-1', 't-1', 'live'))
     expect(screen.queryByText('差异')).toBeNull()
     expect(document.querySelector('.editor-stub__path')?.textContent).toBe('notes.txt')
@@ -337,94 +329,12 @@ describe('这一支的活', () => {
     expect(getGitDiff).toHaveBeenCalledWith('p1', 'room-1', 't-1', 'live')
   })
 
-  it('改文件保存：把内容连同读到的那一版一起写回去', async () => {
-    mount()
-    await openSection('src/app.ts')
-    await waitFor(() => expect(readFile).toHaveBeenCalled())
-    // 打开时看差异，所以先切到「编辑」（活还开着，这一面是能改的）。
-    await fireEvent.click(await screen.findByText('编辑'))
-    await fireEvent.click(await screen.findByText('改'))
-    await fireEvent.click(screen.getByText('保存'))
-    await waitFor(() =>
-      expect(writeFile).toHaveBeenCalledWith(
-        'p1',
-        'src/app.ts',
-        'const a = 1\n// edit',
-        'room-1',
-        'v1',
-        't-1',
-        'const a = 1\n'
-      )
-    )
-  })
-
-  it('和芝士改到同一处：逐处选版本，存的是选出来的那一份，基于芝士那一版', async () => {
-    writeFile.mockRejectedValueOnce(
-      new ApiError(409, '重叠了', undefined, undefined, undefined, {
-        regions: [
-          { kind: 'same', text: 'const a = 1\n' },
-          { kind: 'conflict', base: '', mine: '// edit', theirs: '// 芝士的' },
-        ],
-        version: 'v9',
-        base: 'const a = 1\n// 芝士的',
-      })
-    )
-    writeFile.mockResolvedValueOnce({ path: 'src/app.ts', version: 'v10' })
-    mount()
-    await openSection('src/app.ts')
-    await waitFor(() => expect(readFile).toHaveBeenCalled())
-    await fireEvent.click(await screen.findByText('编辑'))
-    await fireEvent.click(await screen.findByText('改'))
-    await fireEvent.click(screen.getByText('保存'))
-    // 三栏里选芝士那一栏，再存。
-    const theirs = await waitFor(() => {
-      const cols = document.querySelectorAll('.merge-picker__col--pick')
-      expect(cols.length).toBe(2)
-      return cols[1] as HTMLElement
-    })
-    await fireEvent.click(theirs)
-    const save = Array.from(document.querySelectorAll('.merge-picker button')).find(
-      (b) => b.textContent?.trim() === '保存'
-    ) as HTMLElement
-    await fireEvent.click(save)
-    await waitFor(() =>
-      expect(writeFile).toHaveBeenLastCalledWith(
-        'p1',
-        'src/app.ts',
-        'const a = 1\n// 芝士的',
-        'room-1',
-        'v9',
-        't-1',
-        'const a = 1\n// 芝士的'
-      )
-    )
-  })
-
   it('待审阅时不能直接改文件', async () => {
     listRoomTasks.mockResolvedValue({ data: [{ ...openTask(), card: { id: 'c-1', status: 'pending' } }], total: 1 })
-    mount()
+    mount({ canEdit: true })
     await openSection('src/app.ts')
     await waitFor(() => expect(readFile).toHaveBeenCalled())
     expect(screen.queryByText('编辑')).toBeNull()
-  })
-
-  it('保存撞上 409：说清冲突，两条出路都由人点', async () => {
-    writeFile.mockRejectedValue(new ApiError(409, '这个文件已经被改过了'))
-    mount()
-    await openSection('src/app.ts')
-    await waitFor(() => expect(readFile).toHaveBeenCalled())
-    await fireEvent.click(await screen.findByText('编辑'))
-    await fireEvent.click(await screen.findByText('改'))
-    await fireEvent.click(screen.getByText('保存'))
-    expect(await screen.findByText(/这个文件已被修改/)).toBeTruthy()
-    // 冲突不是报错：那一格没有挂红。
-    expect(screen.queryByText('这个文件已经被改过了')).toBeNull()
-
-    readFile.mockClear()
-    await fireEvent.click(screen.getByText('载入最新版本'))
-    // 「载入最新版本」= 丢掉自己的改动，重读这一版。
-    await waitFor(() => expect(readFile).toHaveBeenCalledWith('p1', 'src/app.ts', 'room-1', 't-1', 'live'))
-    await waitFor(() => expect(screen.queryByText(/这个文件已被修改/)).toBeNull())
   })
 
   it('现场工作区超时：先给已提交版本，不把整格换成请求超时', async () => {

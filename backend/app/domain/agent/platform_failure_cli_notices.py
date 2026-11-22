@@ -194,3 +194,27 @@ def is_compaction_refused(text: str | None) -> bool:
     if not said:
         return False
     return bool(_COMPACT_REFUSED.search(said))
+
+
+#: The login the session runs on has expired and could not be refreshed, in the
+#: words the build puts on the turn's ending: `Failed to authenticate: OAuth
+#: session expired and could not be refreshed (authentication_failed)`.
+#:
+#: Anchored at the start like every line this module reads. A retry cannot get
+#: past it: the same login is used again, so the only thing that helps is the
+#: person signing in again on the machine the teammate runs on. Read after
+#: ``is_compaction_refused``, which also begins `Failed to authenticate` when
+#: the summarising call is the one refused.
+_LOGIN_EXPIRED = re.compile(
+    r"^Failed to authenticate\b[^\n]*"
+    r"(?:\bOAuth (?:session|token)\b[^\n]*\bexpired\b|\bauthentication_failed\b)",
+    re.I,
+)
+
+
+def is_login_expired(text: str | None) -> bool:
+    """Whether this failure is a login that expired and cannot be refreshed."""
+    said = (text or "").strip()
+    if not said:
+        return False
+    return bool(_LOGIN_EXPIRED.search(said))

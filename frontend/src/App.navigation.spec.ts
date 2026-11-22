@@ -90,7 +90,6 @@ async function mountApp(path: string, width: number) {
       { path: '/', component: blank },
       { path: '/spaces', component: blank },
       { path: '/inbox', component: blank },
-      { path: '/admin/queue', component: blank },
       { path: '/projects/p1', name: 'workspace-project', component: List },
       {
         path: '/projects/p1/topics/t1',
@@ -158,7 +157,8 @@ it('keeps the room header usable when the app changes between desktop and mobile
 })
 
 it('desktop project pages reach 待办 in one click from the 首页 entry', async () => {
-  // 回首页是顶栏上那一处「首页」，每一页都在同一个位置。
+  // 项目页侧栏头写的是这个项目：回首页靠侧栏头下面那一行「首页」，侧栏看不见时它住在顶栏。
+  // 这里的路由不带侧栏，所以是顶栏那一处。
   for (const path of ['/projects/p1/topics/t1', '/projects/p1']) {
     const app = await mountApp(path, 1280)
     try {
@@ -195,20 +195,3 @@ it.each(['/projects/p1', '/projects/p1/topics/t1'])(
     }
   }
 )
-
-it('the desktop bar names the admin area as the place you are in, and names nothing in the home area', async () => {
-  const admin = await mountApp('/admin/queue', 1280)
-  try {
-    expect(admin.failures).toEqual([])
-    expect(admin.container.querySelector('[data-testid="project-switcher"]')?.textContent).toContain('管理后台')
-  } finally {
-    admin.dispose()
-  }
-  const home = await mountApp('/inbox', 1280)
-  try {
-    expect(home.failures).toEqual([])
-    expect(home.container.querySelector('[data-testid="project-switcher"]')).toBeNull()
-  } finally {
-    home.dispose()
-  }
-})

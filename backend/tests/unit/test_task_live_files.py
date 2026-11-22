@@ -32,7 +32,7 @@ async def test_unavailable_live_files_offer_committed_version(monkeypatch, failu
     )
     monkeypatch.setattr(files, "task", AsyncMock(return_value=task))
     monkeypatch.setattr(
-        forge_files.AgentSessionService,
+        forge_files.environment_rows,
         "working_copy",
         AsyncMock(return_value=({"kind": "device"}, False)),
     )
@@ -66,7 +66,7 @@ async def test_live_file_deadline_cancels_the_device_request(monkeypatch):
     files = forge_files.ProjectFiles(session, uuid.uuid4(), task.id, executor=stalled)
     monkeypatch.setattr(files, "task", AsyncMock(return_value=task))
     monkeypatch.setattr(
-        forge_files.AgentSessionService,
+        forge_files.environment_rows,
         "working_copy",
         AsyncMock(return_value=({"kind": "device"}, False)),
     )
@@ -244,14 +244,68 @@ async def test_a_task_with_no_working_copy_yet_has_no_files_and_no_changes(
     files = forge_files.ProjectFiles(session, uuid.uuid4(), task.id, executor=call)
     monkeypatch.setattr(files, "task", AsyncMock(return_value=task))
     monkeypatch.setattr(
-        forge_files.AgentSessionService,
+        forge_files.environment_rows,
         "working_copy",
         AsyncMock(return_value=({"kind": "device"}, False)),
     )
     # Nothing pushed yet: the forge has no branch for it.
     monkeypatch.setattr(forge_files, "branch_head", AsyncMock(return_value=None))
 
-    assert await files.files("live") == ([], "live")
+    assert await files.files("live") == ([], "live", [])
     assert await files.diff("live") == ""
     with pytest.raises(NotFoundError):
         await files.live("read", path="README.md")
+
+
+def test_a_person_creates_renames_and_deletes_files_and_folders(live, monkeypatch):
+    from app.domain.agent.harness.claude_code.remote_execution import runtime_context
+
+    monkeypatch.setattr(runtime_context, "keep_soon", lambda *args, **kwargs: None)
+    root, call = live
+
+    assert call("mkdir", path="notes")["path"] == "notes"
+    assert call("tree")["dirs"] == ["notes"]
+    created = call("create", path="notes/plan.md")
+    assert (root / "notes" / "plan.md").read_bytes() == b""
+    assert call("tree") == {
+        "files": [{"path": "notes/plan.md", "bytes": 0}],
+        "dirs": [],
+    }
+    saved = call(
+        "write", path="notes/plan.md", version=created["version"], content="v1"
+    )
+    assert saved["version"]
+
+    # Nothing is replaced: a name in use is refused, and the file keeps its text.
+    assert call("create", path="notes/plan.md") == {"error": "exists"}
+    (root / "README.md").write_text("readme")
+    assert call("move", path="notes/plan.md", to="README.md") == {"error": "exists"}
+    assert (root / "notes" / "plan.md").read_text() == "v1"
+
+    assert call("move", path="notes", to="docs")["path"] == "docs"
+    assert (root / "docs" / "plan.md").read_text() == "v1"
+    assert not (root / "notes").exists()
+
+    assert call("delete", path="docs")["path"] == "docs"
+    assert not (root / "docs").exists()
+    assert call("delete", path="docs") == {"error": "not_found", "missing": "file"}
+
+
+def test_arranging_cannot_reach_outside_the_copy(live, tmp_path):
+    root, call = live
+    (tmp_path / "outside.txt").write_text("keep")
+    (root / "link").symlink_to(tmp_path)
+
+    for operation, params in (
+        ("create", {"path": "../escape.txt"}),
+        ("mkdir", {"path": ".git/hooks2"}),
+        ("create", {"path": "link/escape.txt"}),
+        ("move", {"path": "link", "to": "../moved"}),
+    ):
+        with pytest.raises(ValueError):
+            call(operation, **params)
+    with pytest.raises(ValueError):
+        call("delete", path="link/outside.txt")
+    # Deleting the link removes the link, never what it points at.
+    call("delete", path="link")
+    assert (tmp_path / "outside.txt").read_text() == "keep"

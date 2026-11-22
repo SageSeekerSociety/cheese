@@ -228,7 +228,7 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
   }
 
   /** 挂在频道下面的一条活的状态记号和它下面那一行（`lib/taskState.ts`），和全部任务、
-   *  任务页头同一个样子。这份行没有 `session_running`，「在做」转不转看 `moving`。 */
+   *  任务页头同一个样子。会话是不是真的在跑，都读 `session_running`。 */
   function taskStateOf(task: RailTask): TaskState {
     const agent = task.agent_handle ? agentNameMap.value.get(task.agent_handle) : undefined
     return taskState(task, {

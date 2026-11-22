@@ -30,6 +30,7 @@ from tests.integration.conftest import (
     shared_team_of,
 )
 from tests.support.devices import enrollment_team, place_in_project_team
+from tests.support.environments import environment_of, give_environment
 
 pytestmark = pytest.mark.anyio
 
@@ -90,26 +91,29 @@ async def _project_on_a_device(client):
                 topic_id, f"agent-{title[:3].lower()}", harness="claude-code"
             )
             generation = str(uuid.uuid4())
-            session.execution_request = {"generation": generation}
             await AgentSessionService(db).set_environment(
                 topic_id,
                 session.agent_handle,
                 {"kind": "self_hosted", "device_id": old},
                 chosen_by=None,
             )
-            session.work_lease = {
-                "kind": "device",
-                "session_id": str(session.id),
-                "generation": generation,
-                "resource_id": str(uuid.uuid4()),
-                "room_resource_id": str(topic_id),
-                "device_id": old,
-                "status": "ready",
-                "home": "/old",
-                "state": "/old/state",
-                "workspace": "/old/work",
-                "mcp_servers": [],
-            }
+            await give_environment(
+                db,
+                session,
+                {
+                    "kind": "device",
+                    "session_id": str(session.id),
+                    "generation": generation,
+                    "resource_id": str(uuid.uuid4()),
+                    "room_resource_id": str(topic_id),
+                    "device_id": old,
+                    "status": "ready",
+                    "home": "/old",
+                    "state": "/old/state",
+                    "workspace": "/old/work",
+                    "mcp_servers": [],
+                },
+            )
             sessions[title] = session.id
         db.add(
             AgentTurn(
@@ -212,10 +216,10 @@ async def test_a_bulk_switch_moves_an_idle_session_and_skips_one_mid_turn(
         sessions = AgentSessionService(db)
         moved = await sessions.environment(p.rooms["Idle"], "agent-idl")
         kept = await sessions.environment(p.rooms["Busy"], "agent-bus")
-        busy = await sessions.by_id(p.sessions["Busy"])
+        busy = await environment_of(db, p.sessions["Busy"])
     assert moved.environment["device_id"] == p.new
     assert kept.environment["device_id"] == p.old
-    assert busy.work_lease["device_id"] == p.old
+    assert busy is not None and busy["device_id"] == p.old
     listed = client.get(
         f"/projects/{p.project_id}/devices/{p.old}/sessions", headers=p.alice
     ).json()["data"]["sessions"]

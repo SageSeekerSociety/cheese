@@ -132,7 +132,7 @@ test.describe("房间里的任务", () => {
   });
 });
 
-test("同名文件按任务打开，换到另一件任务再回来草稿仍在", async ({
+test("同名文件按任务打开：在「文件」里改的只存进这一件任务", async ({
   page,
 }, testInfo) => {
   // This case also clones and pushes two worktrees before exercising the UI.
@@ -187,75 +187,118 @@ test("同名文件按任务打开，换到另一件任务再回来草稿仍在",
     const taskPage = (task: { id: string }) =>
       `/projects/${project}/topics/${room}/tasks/${task.id}?tab=changes`;
     await page.goto(taskPage(first));
-    const panel = page.locator(".panel-changes");
-    // 草稿记在这一次打开的页面里：换任务走侧栏，不重新载入页面。
-    const switchTo = async (task: { number: number }, title: string) => {
-      await page.locator(".rail-task", { hasText: title }).click();
-      // Resolving the task's short address is asynchronous; the old page's tabs
-      // remain clickable until that navigation lands.
-      await expect(page).toHaveURL(new RegExp(`/tasks/${task.number}(\\?|$)`));
-      await expect(page.locator(".task-header__title")).toHaveText(title);
-      await page.getByRole("tab", { name: /改动/ }).click();
-    };
-    // 「改动」只看这一件任务：全部改动里是它改过的文件，点那一段的「打开」单独看它。
-    const openLogin = () =>
-      panel
-        .locator('.diff-file[data-path="src/login.txt"]')
-        .getByRole("button", { name: "打开", exact: true })
-        .click();
-    // 全部改动里每一段的差异默认收着，点段头才铺开：那一段的字在差异正文里，
-    // 断言之前先铺开它，不然面板上只有段头那一行的路径和增删数。
-    const expandLogin = () =>
-      panel
-        .locator('.diff-file[data-path="src/login.txt"]')
-        .locator(".diff-file__toggle")
-        .click();
-    await openLogin();
-    await expect(panel.locator(".changes-bar__path")).toHaveText(
-      "src/login.txt",
-    );
-    await panel.getByRole("button", { name: "编辑", exact: true }).click();
-    await panel.locator(".monaco-editor .view-lines").click();
+    const changes = page.locator(".panel-changes");
+    const files = page.locator(".task-files");
+    // 「改动」只看这一件任务改过的文件，只读；「编辑」把这一份开到「文件」那一格里改。
+    await changes
+      .locator('.diff-file[data-path="src/login.txt"]')
+      .getByRole("button", { name: "打开", exact: true })
+      .click();
+    await expect(changes.locator(".changes-bar__path")).toHaveText("src/login.txt");
+    await changes.getByRole("button", { name: "编辑", exact: true }).click();
+    await expect(files.locator(".task-files__path")).toHaveText("src/login.txt");
+    await files.locator(".monaco-editor .view-lines").click();
     await page.keyboard.press("ControlOrMeta+A");
-    await page.keyboard.type("my unsaved draft");
-    await expect(
-      panel.getByRole("button", { name: "保存", exact: true }),
-    ).toBeEnabled();
-    await switchTo(second, secondTitle);
-    // 换过来的这一面同样是那一件任务改过的文件，每一段收着。这里要看的是它的
-    // 正文，所以先铺开这一段再断言。
-    await expandLogin();
-    await expect(panel).toContainText("second task");
-    await switchTo(first, firstTitle);
-    // 回来时又是全部改动那一面；打开那份文件，没保存的草稿还在，直接是编辑那一面。
-    await openLogin();
-    await expect(panel.locator(".monaco-editor")).toContainText(
-      "my unsaved draft",
-    );
-    await expect(
-      panel.getByRole("button", { name: "保存", exact: true }),
-    ).toBeEnabled();
+    await page.keyboard.type("my edit");
+    // 打字停下就存：机器在，状态从「有未保存的改动」走到「已保存」。
+    await expect(files.locator(".task-files__status")).toHaveText("已保存");
     await page.emulateMedia({ colorScheme: "dark" });
     // The evidence is this editor panel; a full-page capture can stall in Chromium.
-    await panel.screenshot({
-      path: testInfo.outputPath("task-files-draft-dark.png"),
+    await files.screenshot({
+      path: testInfo.outputPath("task-files-dark.png"),
     });
-    await panel.getByRole("button", { name: "保存", exact: true }).click();
-    await expect(
-      panel.getByRole("button", { name: "保存", exact: true }),
-    ).toBeDisabled();
+    // 另一件任务的「文件」里，同一个路径是它自己的那一份。
+    await page.goto(
+      `/projects/${project}/topics/${room}/tasks/${second.id}?tab=code`,
+    );
+    await files.getByRole("button", { name: "src", exact: true }).click();
+    // The tree marks a file the task changed (「已修改」) once the task's work
+    // summary has arrived, and that mark is part of the button's name.
+    await files.getByRole("button", { name: /^login\.txt( 已修改)?$/ }).click();
+    await expect(files.locator(".monaco-editor")).toContainText("second task");
     const saved = await api(
       page,
       "get",
       `/projects/${project}/file?path=src/login.txt&topic=${room}&task=${first.id}`,
     );
-    expect(saved.content).toBe("my unsaved draft");
+    expect(saved.content).toBe("my edit");
     const untouched = await api(
       page,
       "get",
       `/projects/${project}/file?path=src/login.txt&topic=${room}&task=${second.id}`,
     );
     expect(untouched.content).toBe("second task\n");
+  } finally {
+    if (machine.exitCode === null) machine.kill();
+    await exited;
+  }
+});
+
+test("没有芝士做过的任务，alice 也能在「文件」里改并存下", async ({
+  page,
+}, testInfo) => {
+  // The fixture clones and pushes one worktree before exercising the UI.
+  test.setTimeout(120_000);
+  await apiLogin(page);
+  await openFirstProject(page);
+  const project = await projectIdOf(page);
+  const stamp = Date.now();
+  const room = await freshRoom(page, `没人做过 ${stamp}`);
+  const task = await dispatch(page, room, `只有人改的任务 ${stamp}`);
+  // No agent session ever worked this task: the fixture points the task to an
+  // environment on its machine and attaches nobody to it.
+  const log = openSync(testInfo.outputPath("machine.log"), "w");
+  const machine = spawn(
+    "uv",
+    ["run", "python", "-m", "scripts.e2e_task_machine"],
+    {
+      cwd: "../backend",
+      stdio: ["pipe", "pipe", log],
+    },
+  );
+  closeSync(log);
+  const exited = once(machine, "exit");
+  try {
+    const ready = new Promise<void>((resolve, reject) => {
+      machine.once("error", reject);
+      machine.once("exit", (code) =>
+        reject(new Error(`Task machine exited: ${code}; see machine.log`)),
+      );
+      machine.stdout.on("data", (chunk) => {
+        if (chunk.toString().includes("ready\n")) resolve();
+      });
+    });
+    machine.stdin.end(
+      JSON.stringify({
+        api: `http://127.0.0.1:${process.env.E2E_BACKEND_PORT ?? "8081"}`,
+        token: await apiToken(page),
+        project,
+        room,
+        home: testInfo.outputPath("machine"),
+        tasks: [{ id: task.id, content: "nobody worked here\n", session: false }],
+      }),
+    );
+    await ready;
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto(
+      `/projects/${project}/topics/${room}/tasks/${task.id}?tab=code`,
+    );
+    const files = page.locator(".task-files");
+    await files.getByRole("button", { name: "src", exact: true }).click();
+    await files.getByRole("button", { name: /^login\.txt( 已修改)?$/ }).click();
+    await expect(files.locator(".monaco-editor")).toContainText(
+      "nobody worked here",
+    );
+    await files.locator(".monaco-editor .view-lines").click();
+    await page.keyboard.press("ControlOrMeta+A");
+    await page.keyboard.type("alice's edit");
+    await expect(files.locator(".task-files__status")).toHaveText("已保存");
+    const saved = await api(
+      page,
+      "get",
+      `/projects/${project}/file?path=src/login.txt&topic=${room}&task=${task.id}`,
+    );
+    expect(saved.content).toBe("alice's edit");
   } finally {
     if (machine.exitCode === null) machine.kill();
     await exited;

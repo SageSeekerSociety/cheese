@@ -13,15 +13,18 @@ import asyncio
 import uuid
 
 import pytest
-from sqlalchemy import text, update
+from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
+from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.models import AgentSession
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.device import owner_reads
 from tests.conftest import TEST_DATABASE_URL
 from tests.integration.conftest import new_project, session_auth_headers
+from tests.support.environments import give_environment
 
 
 def _session(client) -> uuid.UUID:
@@ -36,20 +39,24 @@ def _session(client) -> uuid.UUID:
 
     async def seed() -> None:
         async with client.test_request_factory() as db:
-            db.add(
-                AgentSession(
-                    id=session_id,
-                    conversation_id=uuid.UUID(room),
-                    agent_handle="agent",
-                    harness="claude-code",
-                    work_lease={
-                        "kind": "device",
-                        "generation": generation,
-                        "resource_id": generation,
-                        "device_id": "machine-1",
-                        "status": "ready",
-                    },
-                )
+            row = AgentSession(
+                id=session_id,
+                conversation_id=uuid.UUID(room),
+                agent_handle="agent",
+                harness="claude-code",
+            )
+            db.add(row)
+            await db.flush()
+            await give_environment(
+                db,
+                row,
+                {
+                    "kind": "device",
+                    "generation": generation,
+                    "resource_id": generation,
+                    "device_id": "machine-1",
+                    "status": "ready",
+                },
             )
             await db.commit()
 
@@ -90,12 +97,12 @@ def test_a_lease_change_waits_for_the_call_that_checked_it(client):
             async with sessions() as call, sessions() as lease:
                 assert await owner_reads.session_execution(call, session_id)
                 await lease.execute(text("SET LOCAL lock_timeout = '500ms'"))
+                # Moving the session off its environment starts by taking its
+                # row, as a switch does (`session_work.switch_environment`).
                 with pytest.raises(DBAPIError, match="lock timeout"):
-                    await lease.execute(
-                        update(AgentSession)
-                        .where(AgentSession.id == session_id)
-                        .values(work_lease=None)
-                    )
+                    row = await AgentSessionService(lease).by_id(session_id, lock=True)
+                    assert row is not None
+                    await attachments.detach(lease, row)
                 await lease.rollback()
                 await call.commit()
         finally:

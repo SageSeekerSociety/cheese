@@ -32,6 +32,7 @@ from app.domain.user.models import User
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.integration.test_central_room_sessions import screen_for, sessions
 from tests.support.devices import enrollment_team, place_in_project_team
+from tests.support.environments import environment_of, remember_place
 
 INSTALLED = {
     "workspace": "/project",
@@ -235,7 +236,7 @@ async def test_a_room_that_moves_keeps_what_it_said(client, room, monkeypatch):
         row = await AgentSessionService(db).ensure(
             topic, "ada", harness=harness_for(None)
         )
-        before_resource = row.work_lease["resource_id"]
+        before_resource = (await environment_of(db, row.id) or {})["resource_id"]
     moved = client.put(
         f"/topics/{topic}/sessions/{row.id}/environment",
         headers=session_auth_headers("alice"),
@@ -269,10 +270,11 @@ async def test_a_room_that_moves_keeps_what_it_said(client, room, monkeypatch):
     async with client.test_factory() as db:
         sessions = AgentSessionService(db)
         before = await sessions.place(topic, "ada", harness=harness_for(None))
-        await sessions.remember_place(
+        await remember_place(
+            db,
             conversation_id=topic,
             agent_handle="ada",
-            work_lease=before.lease,
+            environment=before.lease,
             runtime_location={
                 "device_id": "center-two",
                 "resource_id": before.resource_id,
@@ -300,10 +302,11 @@ async def test_a_room_with_no_resume_token_yet_has_not_run(business_db_factory, 
     del project
     async with business_db_factory() as db:
         sessions = AgentSessionService(db)
-        await sessions.remember_place(
+        await remember_place(
+            db,
             conversation_id=topic,
             agent_handle="ada",
-            work_lease=None,
+            environment=None,
             runtime_location={
                 "device_id": "center",
                 "resource_id": str(topic),
@@ -344,11 +347,12 @@ async def test_a_room_that_switched_harness_is_claimed_by_one_channel(
     project, topic = room
     for harness in ("claude-code", "pi"):
         async with client.test_factory() as db:
-            await AgentSessionService(db).remember_place(
+            await remember_place(
+                db,
                 conversation_id=topic,
                 agent_handle="ada",
                 harness=harness,
-                work_lease=None,
+                environment=None,
                 runtime_location={
                     "device_id": "center",
                     "resource_id": str(topic),

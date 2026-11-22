@@ -82,9 +82,10 @@ export function listFiles(
   topicId?: string | null,
   taskId?: string | null,
   source: FileSource = 'live'
-): Promise<ListPayload<WorkspaceFile> & { source: FileSource }> {
+): Promise<ListPayload<WorkspaceFile> & { source: FileSource; dirs?: string[] }> {
   const t = `?${new URLSearchParams({ source, ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
-  return request<ListPayload<WorkspaceFile> & { source: FileSource }>(
+  // `dirs`: folders of a machine's copy that hold no file yet.
+  return request<ListPayload<WorkspaceFile> & { source: FileSource; dirs?: string[] }>(
     `/projects/${encodeURIComponent(projectId)}/files${t}`
   )
 }

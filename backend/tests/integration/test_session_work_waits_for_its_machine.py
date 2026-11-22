@@ -21,6 +21,7 @@ from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
 from app.domain.agent import execution, sandbox_image
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.services import IdentityService
+from app.domain.machine import occupants
 from app.domain.machine import session_work as work_lease
 from app.domain.machine.models import (
     MAX_ENROLL_ATTEMPTS,
@@ -37,6 +38,7 @@ from app.domain.topic.models import Topic
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.microcloud import FakeMicroCloud
 from tests.support.devices import enrollment_team
+from tests.support.environments import environment_of
 
 
 @pytest.fixture
@@ -169,7 +171,7 @@ def _session_machine(case, session_id) -> CloudHost | None:
     async def read():
         async with case.client.test_request_factory() as db:
             repo = CloudHostRepository(db)
-            home = await repo.current_home(session_id)
+            home = await occupants.home_of(db, session_id)
             return None if home is None else await repo.get(home.host_id)
 
     return case.client.portal.call(read)
@@ -181,7 +183,7 @@ def _machine_is_up(case, session_id, device_id):
     async def enrol():
         async with case.client.test_request_factory() as db:
             repo = CloudHostRepository(db)
-            home = await repo.current_home(session_id)
+            home = await occupants.home_of(db, session_id)
             host = await repo.get(home.host_id)
             case.cloud.machines[host.machine_id].update(
                 status="running", aiStatus="disabled"
@@ -415,10 +417,9 @@ def test_a_caller_that_left_stops_the_wait_without_taking_the_machine(
             return await work_lease.ensure(
                 db,
                 topic_id=room_id,
-                session_id=session_id,
-                claims=scoped_token_claims(token),
-                token=token,
-                env={},
+                attacher=work_lease.Attacher.agent(
+                    session_id, scoped_token_claims(token), token=token, env={}
+                ),
                 wait_s=30.0,
                 gone=gone,
             )
@@ -433,7 +434,7 @@ def test_a_caller_that_left_stops_the_wait_without_taking_the_machine(
 
     async def lease():
         async with case.client.test_request_factory() as db:
-            return (await AgentSessionService(db).by_id(session_id)).work_lease
+            return await environment_of(db, session_id)
 
     assert case.client.portal.call(lease) is None
 

@@ -36,6 +36,9 @@ type Msg struct {
 	// Machine: this connector listens on a session's platform socket and relays
 	// what the sandbox sends there as machine.* streams (host/machine.go).
 	Machine bool `json:"machine,omitempty"`
+	// Streams: this connector opens the byte streams the server asks for
+	// with stream.open and relays them with credit (host/stream.go).
+	Streams bool `json:"streams,omitempty"`
 	// Which binary is speaking, sent up in `hello`: Build is the sha256 of this
 	// connector's own executable, Target its `<os>-<arch>`. V cannot carry this
 	// — it moves only for a breaking change, so a build missing a compatibly
@@ -68,6 +71,11 @@ type Msg struct {
 	// recorded it ("$HOME/..."): the connector derives the runner's socket
 	// from it.
 	Path string `json:"path,omitempty"`
+	// Header is the first line a stream.open writes to the executor, which
+	// says what the stream is for; Bytes is how much of a stream's output a
+	// stream.ack says was taken.
+	Header string `json:"header,omitempty"`
+	Bytes  int64  `json:"bytes,omitempty"`
 	// One-shot command execution: exec (request) / exec.cancel / exec.result,
 	// and exec.output while it runs when the request set Stream.
 	Cwd       string `json:"cwd,omitempty"`
@@ -167,7 +175,7 @@ func (c *Conn) runOnce(ctx context.Context, onMsg func(Msg)) (connected bool) {
 		c.mu.Unlock()
 	}()
 
-	_ = c.Send(Msg{T: "hello", V: Version, Build: c.build, Target: c.target, Executor: true, Profiles: true, Machine: true})
+	_ = c.Send(Msg{T: "hello", V: Version, Build: c.build, Target: c.target, Executor: true, Profiles: true, Machine: true, Streams: true})
 	// Say it heartbeats immediately, not at the first tick. The backend starts
 	// its silence clock only after a heartbeat has been heard
 	// (`DeviceHub.silence_allowed`), so until the first one a machine that went

@@ -2,7 +2,7 @@
 
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
 
@@ -32,6 +32,7 @@ from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block
 from app.domain.delivery.mention import mentioned_handles, record_mentions
 from app.domain.identity.handles import (
+    agent_instance_handle,
     looks_like_agent_handle,
     names_a_person,
     recipient_seat,
@@ -175,6 +176,10 @@ class Addressing:
     people: list[str]
     place: str
     task_status: str | None
+    #: 这条消息会叫起来的**全部**队友，第一位是 `agent`（有的话），按正文里点到的
+    #: 先后排。一条消息给点到的每一位队友各记一条投递（`delivery/mention.py`），不只
+    #: 第一位，所以输入框要说“会交给谁”就得说全：只说第一位，屏幕上就少了一位。
+    teammates: list[dict] = field(default_factory=list)
 
     def as_json(self) -> dict:
         return {
@@ -183,6 +188,7 @@ class Addressing:
             "people": self.people,
             "place": self.place,
             "task_status": self.task_status,
+            "teammates": self.teammates,
         }
 
 
@@ -240,6 +246,39 @@ async def preview_addressing(
                 if f"<@{admission.addressed}>" in prepared.content
                 else "reply"
             )
+    # 这条会叫起来的全部队友：正文里点到、又在这间房的每一个席位各记一条投递
+    # （`delivery/mention.py` 的 `named_seats`），所以名单按正文里点到的先后排，同一位
+    # 只算一次。第一位同时是 `agent`（为它开一轮的那位）；`record_mentions` 会跳过它。
+    seats = [
+        h
+        for h in dict.fromkeys(mentioned_handles(prepared.content))
+        if h in set(prepared.agent_handles) and h != author
+    ]
+    # 名字取自这封信自己已经读过的那张名册（`person_mentions` 为每个被 @ 到的席位都写了
+    # 一行）：这里是输入框每次停顿都会问一次的地方，再读一遍实例表就是白读。
+    #
+    # 只列**这个项目里真有实例**的席位（`named_seats` 就是那张表）：还挂着共用 `cheese`
+    # 席位的老房间、或者只坐在名册上却没有实例的座位，`record_mentions` 叫不起来，列进来
+    # 就是说这条会交给一个不会醒的队友。私聊里名册是空的（`person_mentions` 不给），那时
+    # 名字从实例表补——不拿 handle 顶，那是人看不到的一串。
+    # 显示名可能是空的（模型默认就是空串）：那一位仍叫得出名字才写名字，否则留 handle。
+    names = {row["handle"]: row["name"] for row in prepared.roster if row.get("name")}
+    missing = [
+        seat for seat in seats if seat in prepared.named_seats and seat not in names
+    ]
+    if missing:
+        # 同一个服务类的读法是缓存的（`person_mentions` 几行前刚读过这张表），
+        # 私聊里名册永远是空的，这条就是每次预览都走的那一下。
+        instances = await AgentInstanceService(session).list_for_project(project.id)
+        for instance in instances:
+            handle = agent_instance_handle(instance.id)
+            if handle in missing and instance.display_name:
+                names[handle] = instance.display_name
+    teammates = [
+        {"handle": seat, "name": names.get(seat) or seat}
+        for seat in seats
+        if seat in prepared.named_seats
+    ]
     agent = None
     if recipient["mentioned"] and may_summon:
         instance = await AgentInstanceService(session).get_in_project(
@@ -249,6 +288,12 @@ async def preview_addressing(
             "handle": recipient_seat(recipient),
             "name": instance.display_name,
         }
+    # 一句谁也没 @ 的话，也可能被规矩叫起一位（回复它、任务里、交给过它的支线里）：
+    # 那一位同样是这条会叫到的，`teammates` 要是空的就是在少报。
+    if agent is not None and all(t["handle"] != agent["handle"] for t in teammates):
+        teammates = [agent, *teammates]
+    if not may_summon:
+        teammates = []
     people = [
         h
         for h in dict.fromkeys(mentioned_handles(prepared.content))
@@ -266,6 +311,7 @@ async def preview_addressing(
             else "channel"
         ),
         task_status=place.task.status.value if place.task is not None else None,
+        teammates=teammates,
     )
 
 

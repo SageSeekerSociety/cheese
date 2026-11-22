@@ -20,7 +20,7 @@ from app.api.doc_access import require_role
 from app.api.place import rooms_seen
 from app.api.request_deps import DbSession
 from app.api.response import ok, page, typed_response
-from app.api.write_access import ROUTE_DECIDES
+from app.api.write_access import ROUTE_DECIDES, Can, InProject
 from app.auth.project_access import may_read_project
 from app.core.errors import (
     AuthenticationRequiredError,
@@ -35,9 +35,11 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.file_edits import announce_edit
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.machine.preview_wake import wake_for_files
+from app.domain.machine.task_machine import prepare_for_write
 from app.domain.project.services import ProjectService
 from app.domain.project_permissions import Permission
 from app.domain.repository.forge_files import ProjectFiles
+from app.domain.repository.ports import WakeWorkingCopy
 from app.domain.review import forge_clients
 from app.domain.review.landed import tasks_that_landed
 from app.domain.room_task.place import Task, TaskStatus, TopicStatus, place_or_404
@@ -121,53 +123,54 @@ async def require_place_access(
             raise NotFoundError(say("topicNotFound"))
         actor = await resolver.resolve(project_id=project_id, topic_id=room.id)
         await resolver.authorize_topic(actor, project_id=project_id, topic_id=room.id)
-        if request.method == "PUT" and room.status == TopicStatus.archived:
+        if request.method != "GET" and room.status == TopicStatus.archived:
             raise ValidationError(say("roomArchivedFilesReadOnly"))
-    if work is not None and request.method == "PUT" and work.status != TaskStatus.open:
+    if work is not None and request.method != "GET" and work.status != TaskStatus.open:
         raise ValidationError(say("taskEndedFilesReadOnly"))
     return work
 
 
-async def require_project_access(
-    work: Annotated[Task | None, Depends(require_place_access)],
-) -> None:
-    """Access, plus a task's own worktree for the routes that read and write it.
-
-    A task that arrived without a branch gets one only when a machine first
-    opens it (`give_branch`), so until then it has no files of its own to serve.
-    Asking what work it holds is not reading them: the work summary takes
-    `require_place_access` alone and answers "nothing changed yet".
-    """
-    if work is not None and work.branch_name is None:
-        raise NotFoundError(say("taskNoOwnFileVersion"))
+async def _wake(db: DbSession, resolver: ActorResolverDep) -> WakeWorkingCopy:
+    """What wakes a task's sandbox before this request reaches it
+    (`preview_wake.wake_for_files`): the person asking, when one is, is the
+    one whose attachment there has acted."""
+    person = await resolver.person()
+    return partial(
+        wake_for_files, db.bind, user_id=person.user_id if person is not None else None
+    )
 
 
-@router.get("/{project_id}/files", dependencies=[Depends(require_project_access)])
+Wake = Annotated[WakeWorkingCopy, Depends(_wake)]
+
+
+@router.get("/{project_id}/files", dependencies=[Depends(require_place_access)])
 async def list_files(
     project_id: uuid.UUID,
     db: DbSession,
+    wake: Wake,
     topic: uuid.UUID | None = None,
     task: uuid.UUID | None = None,
     source: Literal["live", "committed"] = "live",
 ) -> dict:
     await ProjectService(db).get_or_404(project_id)
     # A selected task owns its worktree; otherwise show the project base.
-    files, actual_source = await ProjectFiles(
+    files, actual_source, dirs = await ProjectFiles(
         db,
         project_id,
         task,
         release_session=True,
         executor=execution.call,
-        wake=partial(wake_for_files, db.bind),
+        wake=wake,
     ).files(source)
-    return ok({**page(files, len(files)), "source": actual_source})
+    return ok({**page(files, len(files)), "source": actual_source, "dirs": dirs})
 
 
-@router.get("/{project_id}/file", dependencies=[Depends(require_project_access)])
+@router.get("/{project_id}/file", dependencies=[Depends(require_place_access)])
 async def read_file(
     project_id: uuid.UUID,
     path: str,
     db: DbSession,
+    wake: Wake,
     topic: uuid.UUID | None = None,
     task: uuid.UUID | None = None,
     source: Literal["live", "committed"] = "live",
@@ -187,16 +190,17 @@ async def read_file(
             task,
             release_session=True,
             executor=execution.call,
-            wake=partial(wake_for_files, db.bind),
+            wake=wake,
         ).text(path, source)
     )
 
 
-@router.get("/{project_id}/file/raw", dependencies=[Depends(require_project_access)])
+@router.get("/{project_id}/file/raw", dependencies=[Depends(require_place_access)])
 async def read_file_raw(
     project_id: uuid.UUID,
     path: str,
     db: DbSession,
+    wake: Wake,
     topic: uuid.UUID | None = None,
     task: uuid.UUID | None = None,
     download: bool = False,
@@ -211,7 +215,7 @@ async def read_file_raw(
         task,
         release_session=True,
         executor=execution.call,
-        wake=partial(wake_for_files, db.bind),
+        wake=wake,
     ).raw(path, source)
     mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
     # Arbitrary uploads must never execute in the app's origin.
@@ -234,12 +238,13 @@ async def read_file_raw(
 
 
 @router.put(
-    "/{project_id}/file", dependencies=[ROUTE_DECIDES, Depends(require_project_access)]
+    "/{project_id}/file", dependencies=[ROUTE_DECIDES, Depends(require_place_access)]
 )
 async def write_file(
     project_id: uuid.UUID,
     body: dict,
     db: DbSession,
+    wake: Wake,
     resolver: ActorResolverDep,
     chat: Annotated[ChatService, Depends(get_chat_service)],
     topic: uuid.UUID | None = None,
@@ -276,7 +281,9 @@ async def write_file(
         task,
         release_session=True,
         executor=execution.call,
-        wake=partial(wake_for_files, db.bind),
+        wake=wake,
+        # A save brings the task's machine back when none holds its copy.
+        prepare=partial(prepare_for_write, db.bind, actor),
     ).save(path, content, version, base if isinstance(base, str) else None)
     row = await TaskService(db).get(task)
     if row is not None and actor.authenticated and actor.via != "cheese":
@@ -303,6 +310,53 @@ async def write_file(
     )
 
 
+class FileArrangeIn(BaseModel):
+    #: ``create`` a file, ``mkdir`` a folder, ``move`` (rename) or ``delete``
+    #: a file or folder.
+    operation: Literal["create", "mkdir", "move", "delete"]
+    path: str
+    #: The new name, for ``move``.
+    to: str | None = None
+
+
+class FileArrangeOut(BaseModel):
+    path: str
+
+
+@router.post(
+    "/{project_id}/file/arrange",
+    dependencies=[Depends(require_place_access)],
+    **typed_response(FileArrangeOut),
+)
+async def arrange_file(
+    project_id: uuid.UUID,
+    body: FileArrangeIn,
+    db: DbSession,
+    wake: Wake,
+    resolver: ActorResolverDep,
+    _edits: Annotated[InProject, Can(Permission.edit_content)],
+    task: uuid.UUID | None = None,
+) -> dict:
+    """A person creating, renaming or deleting a file or folder of a task's
+    copy, as they save one (`write_file`): with the same permission, and
+    bringing the task's machine back when none holds the copy."""
+    if task is None:
+        raise ValidationError(say("chooseTaskToEdit"))
+    if body.operation == "move" and not body.to:
+        raise ValidationError(say("pathEmpty"))
+    actor = await resolver.resolve(project_id=project_id, topic_id=task)
+    done = await ProjectFiles(
+        db,
+        project_id,
+        task,
+        release_session=True,
+        executor=execution.call,
+        wake=wake,
+        prepare=partial(prepare_for_write, db.bind, actor),
+    ).arrange(body.operation, body.path.strip(), body.to.strip() if body.to else None)
+    return ok({"path": done.get("path", body.path)})
+
+
 class LandedTaskOut(BaseModel):
     id: str
     title: str
@@ -323,7 +377,7 @@ class ProjectHistoryOut(BaseModel):
 
 @router.get(
     "/{project_id}/history",
-    dependencies=[Depends(require_project_access)],
+    dependencies=[Depends(require_place_access)],
     **typed_response(ProjectHistoryOut),
 )
 async def project_history(
@@ -364,10 +418,11 @@ async def project_history(
     return ok({"commits": out})
 
 
-@router.get("/{project_id}/git/diff", dependencies=[Depends(require_project_access)])
+@router.get("/{project_id}/git/diff", dependencies=[Depends(require_place_access)])
 async def git_diff(
     project_id: uuid.UUID,
     db: DbSession,
+    wake: Wake,
     ref: str | None = None,
     topic: uuid.UUID | None = None,
     task: uuid.UUID | None = None,
@@ -382,7 +437,7 @@ async def git_diff(
                 task,
                 release_session=True,
                 executor=execution.call,
-                wake=partial(wake_for_files, db.bind),
+                wake=wake,
                 compare_status=forge_clients.compare_status,
             ).diff(source, ref)
         }

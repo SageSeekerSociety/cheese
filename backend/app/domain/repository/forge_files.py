@@ -13,7 +13,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
 from app.core.db import release_read_session
-from app.core.device_failures import DeviceCallError, DeviceOffline
+from app.core.device_failures import (
+    EXECUTOR_UNREACHABLE,
+    DeviceCallError,
+    DeviceOffline,
+)
 from app.core.errors import (
     ConflictError,
     GatewayUnavailableError,
@@ -23,16 +27,22 @@ from app.core.errors import (
 )
 from app.core.redis import get_redis_client
 from app.core.sentences import say
-from app.domain.agent_session.services import AgentSessionService
+from app.domain.environment import services as environment_rows
 from app.domain.project.forge import (
     binding_for_project,
     branch_head,
     default_branch,
+    default_branch_if_any,
     repository_data,
 )
 from app.domain.repository import merge3, task_rows
 from app.domain.repository.kept_work import kept_work
-from app.domain.repository.ports import CompareStatus, ExecutorCall, WakeWorkingCopy
+from app.domain.repository.ports import (
+    CompareStatus,
+    ExecutorCall,
+    PrepareWorkingCopy,
+    WakeWorkingCopy,
+)
 from app.domain.textfile import (
     MAX_TEXT_BYTES,
     PREVIEW_TEXT_BYTES,
@@ -105,6 +115,14 @@ _WHOLE_COPY = ("tree", "diff")
 #: The operations that only read the task's files: answered from the forge
 #: while no machine holds them.
 _READS = ("tree", "diff", "read")
+#: The operations that change the task's files: a person's save, and their
+#: creating, renaming and deleting files and folders.
+_WRITES = ("write", "write_bytes", "create", "mkdir", "move", "delete")
+
+
+class _ExecutorAbsent(Exception):
+    """No executor answered on the machine holding the task's copy: the
+    connector found no state directory or socket for it (`EXECUTOR_UNREACHABLE`)."""
 
 
 class _NoWorkingCopy(NotFoundError):
@@ -123,6 +141,7 @@ class ProjectFiles:
         executor: ExecutorCall | None = None,
         compare_status: CompareStatus | None = None,
         wake: WakeWorkingCopy | None = None,
+        prepare: PrepareWorkingCopy | None = None,
     ):
         """``executor`` 是在任务那台机器上跑一次文件操作的东西（`ports.ExecutorCall`）；
         ``compare_status`` 是问托管方「这个提交交付过没有」那一次调用
@@ -139,6 +158,10 @@ class ProjectFiles:
         self._compare_status = compare_status
         # 叫醒冻住的环境（`ports.WakeWorkingCopy`）；不给就不叫醒。
         self._wake = wake
+        # Brings the task's copy onto a machine for a person's write
+        # (`ports.PrepareWorkingCopy`); without it a write goes only to a
+        # machine that holds the copy already.
+        self._prepare = prepare
         # The task's laid-back kept snapshot, once asked (`_laid_back`).
         self._kept: tuple[str] | None = None
 
@@ -185,16 +208,17 @@ class ProjectFiles:
         room = await self.session.get(Topic, task.room_id)
         if room is None:
             return None
-        return await AgentSessionService(self.session).working_copy(
-            task.id, str(room.resource_id or room.id)
+        return await environment_rows.working_copy(
+            self.session, task.id, str(room.resource_id or room.id)
         )
 
     async def _laid_back(self, task: Any) -> str | None:
         """The task's kept snapshot (`kept_work`) when a new checkout lays it
         back over the branch: the commit whose tree is the files its last
         machine had, committed or not. None when nothing was kept, when the
-        branch moved on since, or when the forge cannot say: the branch is
-        then what a new checkout holds. Asked once per view."""
+        branch moved on since, when the forge does not hold it, or when the
+        forge cannot say: the branch is then what is read. Asked once per
+        view."""
         if not task.branch_name:
             return None
         if self._kept is None:
@@ -211,22 +235,44 @@ class ProjectFiles:
                     "could not read kept work of task %s", task.id, exc_info=True
                 )
                 kept = None
-            self._kept = (kept.commit if kept is not None and kept.laid_back else "",)
+            # A snapshot the platform keeps for a repository not its own is
+            # a bundle of objects nobody can read files out of here: the
+            # branch stands for it.
+            self._kept = (
+                kept.commit
+                if kept is not None and kept.laid_back and kept.on_forge
+                else "",
+            )
         return self._kept[0] or None
 
     async def _copy_revision(self, task: Any) -> str | None:
         """The commit a new checkout of the task starts as: its laid-back kept
-        snapshot, else the head it landed or its branch's head. None while the
-        forge has nothing of it."""
+        snapshot, else its committed one (`_committed_revision`). None while
+        the forge has nothing of it."""
         laid_back = await self._laid_back(task)
         if laid_back:
             return laid_back
+        return await self._committed_revision(task)
+
+    async def _committed_revision(self, task: Any) -> str | None:
+        """The task's commits as a checkout would hold them: the head it
+        landed, else its branch's head, else — a task nothing was pushed for
+        yet, or one with no branch of its own — the head of the branch its
+        checkout would start from (`cheese worktree`): its base, or the
+        project's default. None when the project has no repository to read."""
         landed = _landed_head(task)
         if landed:
             return landed
-        if not task.branch_name:
+        if task.branch_name:
+            head = await self._head(self.project_id, self.session, task.branch_name)
+            if head:
+                return head
+        base = task.base_branch or await default_branch_if_any(
+            self.project_id, self.session
+        )
+        if not base:
             return None
-        return await self._head(self.project_id, self.session, task.branch_name)
+        return await self._head(self.project_id, self.session, base)
 
     async def _forge_source(self, task: Any) -> str:
         """How a copy read off the forge is named: the task's own files
@@ -260,6 +306,8 @@ class ProjectFiles:
         task = await self.task()
         if task is None:
             raise ValidationError(say("taskRequired"))
+        if operation in _WRITES and self._prepare is not None:
+            return await self._write(task, operation, params)
         found = await self._working_copy(task)
         if (
             found is not None
@@ -267,16 +315,66 @@ class ProjectFiles:
             and (operation not in _READS or not await self._pushed(task))
         ):
             # Its sandbox was destroyed with its home (idle, or given up with
-            # its host) or parked with its processes stopped, and the lease
-            # still names it until the task's next tool call places it again.
-            # What it held is read from the forge; nothing is written to it,
-            # and a task with nothing there is told what became of its work.
+            # its host) or parked with its processes stopped, and its lease
+            # says so until a placement replaces it. What it held is read from
+            # the forge; a task with nothing there is told what became of its
+            # work.
             raise UpstreamUnavailableError(await self._released(task))
         if found is None or found[1]:
             # No machine holds a working copy of it: the same as a machine
             # without one.
             return await self._without_working_copy(task, operation)
-        target = found[0]
+        try:
+            result = await self._on_machine(task, found[0], operation, params)
+        except _ExecutorAbsent as exc:
+            raise GatewayUnavailableError(say("taskMachineNotResponding")) from exc
+        if result.get("error") == "not_found":
+            if result.get("missing") == "worktree" or operation in _WHOLE_COPY:
+                return await self._without_working_copy(task, operation)
+            raise NotFoundError(say("taskFileNotOnMachine"))
+        return result
+
+    async def _write(self, task: Any, operation: str, params: dict):
+        """A person's write, to the machine holding the task's copy.
+
+        A copy no machine holds yet — none was ever placed, its sandbox was
+        destroyed or parked, or the machine has no checkout of the task — and
+        an executor that is not there to answer (it stopped for sitting idle)
+        are all the same to the person: the copy is brought onto a machine
+        for them first (`ports.PrepareWorkingCopy`), and then written. Bringing
+        it takes a while; one not ready within the time a save waits is
+        answered as a machine still being prepared, which the save can be
+        sent again after."""
+        assert self._prepare is not None
+        found = await self._working_copy(task)
+        if found is not None and not found[1]:
+            try:
+                result = await self._on_machine(task, found[0], operation, params)
+                if result.get("missing") != "worktree":
+                    return self._written(result)
+            except _ExecutorAbsent:
+                pass
+        await self._release()
+        await self._prepare(task.id)
+        found = await self._working_copy(task)
+        if found is None or found[1]:
+            raise UpstreamUnavailableError(await self._released(task))
+        try:
+            result = await self._on_machine(task, found[0], operation, params)
+        except _ExecutorAbsent as exc:
+            raise GatewayUnavailableError(say("taskMachineNotResponding")) from exc
+        return self._written(result)
+
+    def _written(self, result: dict) -> dict:
+        if result.get("error") == "not_found":
+            raise NotFoundError(say("taskFileNotOnMachine"))
+        return result
+
+    async def _on_machine(
+        self, task: Any, target: dict, operation: str, params: dict
+    ) -> dict:
+        """One file operation on the task's copy, on the machine ``target``
+        names. Raises ``_ExecutorAbsent`` when no executor there answered it."""
         if self._executor is None:  # pragma: no cover - 接线漏了才会走到
             # i18n-exempt: developer miswiring, not a refusal a reader can act on
             raise RuntimeError("executor was not handed in")
@@ -308,11 +406,9 @@ class ProjectFiles:
             logger.warning(
                 "task %s: %s on its machine failed: %s", task.id, operation, exc
             )
+            if exc.failure_code == EXECUTOR_UNREACHABLE:
+                raise _ExecutorAbsent from exc
             raise GatewayUnavailableError(say("taskMachineNotResponding")) from exc
-        if result.get("error") == "not_found":
-            if result.get("missing") == "worktree" or operation in _WHOLE_COPY:
-                return await self._without_working_copy(task, operation)
-            raise NotFoundError(say("taskFileNotOnMachine"))
         if result.get("error") == "conflict":
             raise ConflictError(say("taskFileChangedReload"))
         return result
@@ -343,14 +439,12 @@ class ProjectFiles:
 
     async def revision(self):
         task = await self.task()
-        landed = _landed_head(task) if task else None
-        if landed:
-            return landed
-        branch = (
-            task.branch_name
-            if task
-            else await default_branch(self.project_id, self.session)
-        )
+        if task is not None:
+            found = await self._committed_revision(task)
+            if not found:
+                raise NotFoundError(say("taskNothingCommitted"))
+            return found
+        branch = await default_branch(self.project_id, self.session)
         if not branch:
             raise NotFoundError(say("taskNoOwnFileVersion"))
         head = await self._head(self.project_id, self.session, branch)
@@ -359,10 +453,13 @@ class ProjectFiles:
         return head
 
     async def files(self, source: str):
+        """The copy's files, the source they were read from, and the folders
+        that hold no file yet (only a machine's copy has those)."""
         source = await self.source(source)
         if source == "live":
-            return (await self.live("tree"))["files"], source
-        return await self._listing(await self.revision()), source
+            tree = await self.live("tree")
+            return tree["files"], source, tree.get("dirs", [])
+        return await self._listing(await self.revision()), source, []
 
     async def _listing(self, revision: str) -> list[dict]:
         """Every file one commit has, as the 文件 panel lists them."""
@@ -946,6 +1043,21 @@ class ProjectFiles:
             )
         saved = await self.write(path, merged, theirs_version)
         return {**saved, "previous": theirs, "merged": True, "content": merged}
+
+    async def arrange(self, operation: str, path: str, to: str | None = None) -> dict:
+        """A person creating (``create``, ``mkdir``), renaming (``move``) or
+        deleting (``delete``) a file or folder of the task's copy. Nothing is
+        replaced: an entry already at the name is refused."""
+        task = await self.task()
+        if task is None or not task_rows.is_open(task):
+            raise ValidationError(say("taskFinishedFilesReadOnly"))
+        params = {"path": clean_path(path)}
+        if to is not None:
+            params["to"] = clean_path(to)
+        result = await self.live(operation, **params)
+        if result.get("error") == "exists":
+            raise ConflictError(say("taskFileExists"))
+        return result
 
     async def write_bytes(self, path: str, data: bytes, version: str):
         task = await self.task()

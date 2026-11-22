@@ -1,12 +1,7 @@
 <template>
   <SecondaryNavigation>
-    <!-- 手机抽屉的头：‹ 回到首页，后面是这个空间。桌面上这两样在顶栏（首页、去处）。 -->
-    <router-link
-      v-if="!mdAndUp"
-      :to="{ name: 'inbox' }"
-      class="sidebar-header space-head"
-      :aria-label="t('spaces.sidebar.back')"
-    >
+    <!-- 侧栏头：‹ 回到首页，后面是这个空间。和右边的标题行等高，底线连成一条。 -->
+    <router-link :to="{ name: 'inbox' }" class="sidebar-header space-head" :aria-label="t('spaces.sidebar.back')">
       <v-icon size="18" class="space-head__back">mdi-chevron-left</v-icon>
       <UserAvatar kind="org" :avatar="getAvatarUrl(space?.avatarId)" :name="space?.name" size="20" />
       <span class="space-head__name t-title" data-user-content>{{ space?.name }}</span>

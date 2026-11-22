@@ -172,12 +172,12 @@ app/domain/<包>/
 
 ### 会话工作租约今天的样子 {#lease-today}
 
-`agent_sessions.work_lease`（`agent_session/models.py:126`）一个 JSON 列里叠着两件事：
+执行环境是一张表里的行（`environments`，`app.domain.environment`），对话指向它（`conversation_environments`），会话接在它上面（`environment_attachments`）。一行里有两件事：
 
-- **分配**：这个会话的工作在哪台机器、这一代工作区是哪个（`device_id`、`resource_id`、`room_resource_id`、`generation`、`home`、`workspace`、`url`…）。它被 SQL 按 JSON 路径读 11 处（例如 `session_work.py:253` 按 `work_lease["device_id"]` 查），会话结束后的清理也要读它。
-- **安装认领**：谁正在装执行器（`claim`、`claim_until`）。认领和状态正交：一个可用的租约被复查时带着认领、状态仍是可用（`session_work.py:1213`）。
+- **分配**：这个环境在哪台机器、哪个目录、哪一代房间（`device_id`、`resource_id`、`room_resource_id`，各是一列），执行器装下了什么（`executor`：`home`、`workspace`、`url`…）。
+- **安装认领**：谁正在装执行器（`claim`、`claim_until`）。认领和状态正交：一个可用的环境被复查时带着认领、状态仍是可用。
 
-写入只有 10 处、在 5 个文件里。领取在锁住频道行和会话行之后、在 Python 里比较 JSON（`session_work.py:1008`）；续约是每次安装一个 asyncio 任务，每 10 秒开会话、锁行、改 JSON（`lease_claim.py:67`）；没有回收，读的人自己比 `claim_until`。时间来自**各后端进程自己的时钟**（`lease_claim.py:46`），滚动发布时两个进程读同一行，时钟差直接变成 TTL 误差。三个常数（30 秒心跳超时、10 秒续一次、660 秒总时限）和 Temporal 的心跳超时、start-to-close 一一对得上，参数没问题，问题在存储形状。
+领取在锁住频道行和会话行之后、在 Python 里比较（`session_work._attempt`）；续约是每次安装一个 asyncio 任务，每 10 秒开会话、锁行、改这一行（`lease_claim.py`）；没有回收，读的人自己比 `claim_until`。时间来自**各后端进程自己的时钟**（`lease_claim.py:46`），滚动发布时两个进程读同一行，时钟差直接变成 TTL 误差。三个常数（30 秒心跳超时、10 秒续一次、660 秒总时限）和 Temporal 的心跳超时、start-to-close 一一对得上，参数没问题，问题在存储形状。
 
 仓库里已经有目标形状的先例：`review/services/poll_claim.py` 用 `poll_claim` / `poll_claimed_until` 两列一条 `UPDATE ... WHERE poll_claimed_until IS NULL OR < now()` 领取；`notification/outbox.py`、`routine/service/`、`usage/compute.py` 等用 `FOR UPDATE SKIP LOCKED`，`routine/service/archive.py:68` 的注释明说两个进程同时扫。
 

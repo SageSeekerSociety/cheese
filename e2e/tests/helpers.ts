@@ -105,12 +105,11 @@ export async function apiLogin(page: Page, language: "zh-CN" | "en" = "zh-CN") {
     { accessToken: loginData.accessToken, user: loginData.user, language },
   );
   await page.goto("/inbox");
-  // The app shell is up when the top bar's 首页 is there (desktop); on a phone
-  // there is no top bar, so the bottom tabs' 待办 is what to wait on.
+  // The app shell is up when the sidebar head (the project switcher's row) is
+  // there. /inbox is in the home area, whose sidebar has no 首页 row under the
+  // head (its own 待办 row leads there), so the head is what to wait on.
   await page
-    .getByTestId("bar-home")
-    .or(page.locator(".v-bottom-navigation"))
-    .first()
+    .getByTestId("sidebar-frame-top")
     .waitFor();
 }
 
@@ -160,27 +159,19 @@ export async function projectIdOf(page: Page): Promise<string> {
 export async function openProjectSwitcher(page: Page) {
   const rows = page.getByTestId("project-switcher-row");
   if (await rows.first().isVisible().catch(() => false)) return rows;
-  // The place switcher is in the top bar only inside a project or a space; from
-  // the home area, step into the first project of its sidebar first.
-  const switcher = page.getByTestId("project-switcher");
-  // Right after a load neither is drawn yet: wait for one of them before choosing.
-  await switcher.or(page.getByTestId("home-nav-project")).first().waitFor();
-  if (!(await switcher.isVisible())) await clickFirstProject(page);
-  await switcher.click();
+  await page.getByTestId("project-switcher").click();
   await rows.first().waitFor();
   return rows;
 }
 
-// Opens the first project in the home area's sidebar (the page apiLogin lands
-// on). Retries the click: the list is drawn from the cached project list first
-// and redrawn when the server's copy lands, and a click landing between the two
-// hits a node that is gone.
+// Opens the first project in the switcher list. Retries the click: the list is
+// drawn from the cached project list first and redrawn when the server's copy
+// lands, and a click landing between the two hits a node that is gone.
 export async function clickFirstProject(page: Page) {
-  const first = page.getByTestId("home-nav-project").first();
-  await first.waitFor();
+  await page.getByTestId("project-switcher").waitFor();
   await expect(async () => {
-    await first.click({ timeout: 2_000 });
-    await page.getByTestId("project-switcher").waitFor({ timeout: 2_000 });
+    const rows = await openProjectSwitcher(page);
+    await rows.first().click({ timeout: 2_000 });
   }).toPass({ timeout: 30_000 });
 }
 

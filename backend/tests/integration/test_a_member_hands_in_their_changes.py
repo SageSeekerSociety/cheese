@@ -17,10 +17,11 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.core.device_failures import DeviceCallError
 from app.domain.agent import execution
 from app.domain.agent.chat import ChatService
 from app.domain.agent.harness.claude_code.remote_execution import runtime_context
-from app.domain.agent_session.services import AgentSessionService
+from app.domain.environment import services as environment_rows
 from app.domain.review import pr_publish
 from app.domain.review.repositories import AcceptCardRepository
 from tests.delivery import delivery_task_id
@@ -129,10 +130,10 @@ def world(client, app_world, monkeypatch, tmp_path):
     sandbox = Sandbox(tmp_path, uuid.UUID(pid), task_id, app_world["fake"])
     monkeypatch.setattr(execution, "call", sandbox.call)
 
-    async def held(self, conversation_id, generation):
+    async def held(db, conversation_id, generation):
         return {"kind": "device", "device_id": "box-1"}, False
 
-    monkeypatch.setattr(AgentSessionService, "working_copy", held)
+    monkeypatch.setattr(environment_rows, "working_copy", held)
     return SimpleNamespace(pid=pid, tid=tid, task_id=task_id, sandbox=sandbox)
 
 
@@ -249,6 +250,27 @@ def test_a_reviewer_who_adjusted_a_waiting_version_adopts_the_adjusted_one(
         world.sandbox.repo, "show", f"{card.pr_head_sha}:{_note(world)}"
     )
     assert shown == "Tweaked by the reviewer\n"
+
+
+def test_a_sandbox_that_does_not_answer_is_said_without_its_internals(
+    client, world, monkeypatch
+):
+    # The executor's socket is gone: the person is told the environment did
+    # not answer, and that their saved changes are still there.
+    _save(client, world, _note(world), "Hello from alice\n")
+
+    async def gone(target, method, params, **_):
+        raise DeviceCallError(
+            "dial unix /tmp/cheese-execution-1000-ab12.sock: connect: no such file"
+        )
+
+    monkeypatch.setattr(execution, "call", gone)
+
+    r = _hand_in(client, world)
+
+    assert r.status_code == 503, r.text
+    assert r.json()["error"]["i18n"]["key"] == "handInMachineNotResponding"
+    assert "sock" not in r.json()["error"]["message"]
 
 
 def test_adopting_ones_own_hand_in_completes_once_the_forge_says_it_merges(

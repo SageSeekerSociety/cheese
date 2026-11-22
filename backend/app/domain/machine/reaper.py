@@ -29,10 +29,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.errors import ValidationError
 from app.core.sentences import say
-from app.domain.agent_session.models import LEASE_DEVICE, LOST_KEY, AgentSession
+from app.domain.agent_session import attachment as attachments
+from app.domain.agent_session.models import AgentSession
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import Supply
-from app.domain.machine import enrollment, host_refresh
+from app.domain.environment import services as environment_rows
+from app.domain.machine import enrollment, host_refresh, occupants
 from app.domain.machine.infra_records import keep_host_lost
 from app.domain.machine.microcloud import MicroCloudClient, MicroCloudError
 from app.domain.machine.models import (
@@ -592,7 +594,9 @@ class PoolSweep:
         ):
             return False
         working = await self._session.scalar(
-            select(AgentSession.id).where(LEASE_DEVICE == host.device_id).limit(1)
+            select(AgentSession.id)
+            .where(attachments.attached_on(host.device_id))
+            .limit(1)
         )
         return working is None
 
@@ -645,7 +649,7 @@ class PoolSweep:
             row.id: row
             for row in await self._session.scalars(
                 select(AgentSession)
-                .where(LEASE_DEVICE == device_id)
+                .where(attachments.attached_on(device_id))
                 .with_for_update()
                 .execution_options(populate_existing=True)
             )
@@ -677,7 +681,7 @@ class PoolSweep:
 
         Called holding the pool. Each session is placed again on its next tool
         call. One whose sandbox was there (``worked``, its locked session rows
-        by id) is told on that call that it is in a new sandbox (``LOST_KEY``),
+        by id) is told on that call that it is in a new sandbox (`Attachment.notice`),
         and its room hears that the sandbox was replaced and what was not
         pushed is gone. A room that was told a sandbox no session used yet is
         being prepared hears why it takes longer. The provider delete follows
@@ -692,12 +696,19 @@ class PoolSweep:
         lines = []
         lost = replaced = 0
         for home in await self._repo.homes_on(host.id):
-            row = (worked or {}).get(home.session_id)
-            if row is not None:
-                row.execution_request = {
-                    **(row.execution_request or {}),
-                    LOST_KEY: True,
-                }
+            rows = [
+                (worked or {})[session_id]
+                for session_id in await self._session.scalars(
+                    occupants.sessions_in(home.id)
+                )
+                if session_id in (worked or {})
+            ]
+            for row in rows:
+                await attachments.lose(self._session, row, host.device_id)
+            named = await occupants.environment_named(self._session, home.id)
+            if named is not None:
+                await environment_rows.release(self._session, named, host.device_id)
+            if rows:
                 lost += 1
                 lines.append((home.topic_id, await tell_lost(self._session, home)))
             elif home.waiting_since is not None:

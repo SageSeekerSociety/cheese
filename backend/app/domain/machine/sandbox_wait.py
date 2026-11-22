@@ -1,14 +1,12 @@
 """What a tool call waiting on its session's cloud sandbox, or its whole cloud
 VM, watches, and what it is told meanwhile (``session_work._attempt``)."""
 
-from sqlalchemy import select
-
+from app.domain.machine import occupants
 from app.domain.machine.models import (
     GONE,
     MAX_ENROLL_ATTEMPTS,
     CloudHost,
     MachineStatus,
-    SandboxHome,
     sandbox_image_ready,
 )
 
@@ -30,15 +28,15 @@ VM_PREPARING = "虚拟机沙箱正在准备，要几分钟；对话和平台工�
 VM_ERROR = "虚拟机沙箱出错：供应方报告错误。对话和平台工具仍可用。"
 # What a session is told, once, with the first tool call that succeeds in a
 # new sandbox: its old one was destroyed when idle (``lifecycle``) or given up
-# with its host (``HostPool._fail``). Either records it under ``LOST_KEY`` in
-# the session's ``execution_request``.
+# with its host (``HostPool._fail``). Either owes it to the session
+# (`agent_session.attachment.lose`).
 SANDBOX_LOST = (
     "沙箱环境已换成新的。只有推上去的提交还在，在任务分支上，用 "
     'cd "$(cheese worktree <任务 id>)" 重新打开任务目录。没提交的改动、没推的'
     "提交、依赖和缓存、/tmp、正在运行的进程都不在了，需要的重新做、重新安装、"
     "重新启动。"
 )
-# The same, in a project whose repository the platform hosts: what a task
+# The same, in a project with a repository: what a task
 # checkout had not committed was kept off the sandbox (`repository.kept_work`)
 # and comes back with the checkout.
 SANDBOX_LOST_KEPT = (
@@ -74,13 +72,11 @@ SANDBOX_RESUMED = (
 )
 
 
-async def _home_removed(db, session_id) -> bool:
+async def _home_removed(db, environment_id) -> bool:
     """The sandbox being destroyed is gone, so the next attempt places the
-    session in a new one."""
-    stopped = await db.scalar(
-        select(SandboxHome.stopped_at).where(SandboxHome.session_id == session_id)
-    )
-    return stopped is None
+    environment in a new one."""
+    home = await occupants.home_of_environment(db, environment_id)
+    return home is None or home.stopped_at is None
 
 
 async def _cloud_progress(db, hub, host_id) -> str | bool:

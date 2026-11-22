@@ -624,7 +624,11 @@ async def machine_model(
 
     The sandbox holds no token; the caller is the session leasing it now
     (``machine_caller``). The credential the checks below read is made here,
-    for this one call, and never leaves this process."""
+    for this one call, and never leaves this process. A command a person or
+    the environment itself started holds no seat a model call could be made
+    under, and is refused."""
+    if caller.agent_handle is None:
+        raise ForbiddenError()
     token = mint_scoped_token(
         project_id=caller.project_id,
         topic_id=caller.conversation_id,

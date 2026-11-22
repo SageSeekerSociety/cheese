@@ -19,7 +19,7 @@ import uuid
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.errors import BaseError, ValidationError
-from app.domain.agent import own_limit, runner_reports, turn_inputs
+from app.domain.agent import own_limit, runner_reports, session_state, turn_inputs
 
 # 兼容门面：`ChatService` 的四块职责分在同目录的四个 mixin 里，类继承顺序即下面
 # 这一列。方法体里的 `self.` 一格没动，所以子类覆盖、类属性读取和测试的
@@ -311,6 +311,17 @@ class ChatService(
         """Apply what a seat's runner reported, once (`runner_reports`): False
         when it was applied and followed through before."""
         return await runner_reports.apply(self, report)
+
+    async def process_gone(self, session: SessionRef, epoch: int) -> None:
+        """The process ``session``'s seat registered under ``epoch`` is gone
+        unreported (`runner_reports.gone`)."""
+        await runner_reports.gone(
+            self,
+            session_state.SeatKey(
+                session.conversation_id, session.agent_handle, session.harness
+            ),
+            epoch,
+        )
 
     async def inputs_replaced(
         self,

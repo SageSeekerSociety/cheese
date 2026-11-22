@@ -778,3 +778,45 @@ async def test_status_still_answers_when_github_never_works_it_out():
     )
 
     assert status.mergeable_state == "unknown"
+
+
+@pytest.mark.anyio
+async def test_a_change_request_the_same_reviewer_later_approved_stops_blocking():
+    """Live GitHub keeps the old row: a reviewer who switches to APPROVED leaves
+    the earlier CHANGES_REQUESTED in the list, still saying CHANGES_REQUESTED.
+    Both are delivered; only the withdrawn one is marked superseded."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/comments"):
+            return httpx.Response(200, json=[])
+        assert request.url.path.endswith("/reviews")
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "id": 1,
+                    "user": {"login": "bob"},
+                    "state": "CHANGES_REQUESTED",
+                    "body": "先补测试",
+                    "submitted_at": "2026-01-01T00:00:00Z",
+                },
+                {
+                    "id": 2,
+                    "user": {"login": "bob"},
+                    "state": "APPROVED",
+                    "body": "现在可以了",
+                    "submitted_at": "2026-01-02T00:00:00Z",
+                },
+            ],
+        )
+
+    client = HttpxGitHubPrClient(transport=httpx.MockTransport(handler))
+    signals = await client.review_signals(
+        owner="acme", repo="widgets", number=7, token="t"
+    )
+
+    by_id = {s.id: s for s in signals}
+    assert by_id["review:1"].kind == "changes_requested"
+    assert by_id["review:1"].superseded is True
+    # The approval itself asks for nothing: it is not returned as a signal.
+    assert "review:2" not in by_id

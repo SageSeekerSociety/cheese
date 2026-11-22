@@ -238,6 +238,31 @@
   --terminal-status-ink: #9aa0a6;
   --terminal-status-fill: rgba(0, 0, 0, 0.5);
 
+  /* ---- A task's 终端: the 16 ANSI colours ----
+     The task terminal is drawn on --surface and follows the theme, so the
+     colours a program asks for (red, green, …, and their bright forms) follow
+     it too: the status and code inks where they exist, a magenta and a bright
+     cyan of their own where they do not. Every one is text, and each clears
+     4.5:1 on --surface (#ffffff): black 17.4, red 6.5, green 6.2, yellow 6.1,
+     blue 6.7, magenta 6.3, cyan 4.6, white 6.5; bright black 6.5, red 5.7,
+     green 5.4, yellow 4.9, blue 5.2, magenta 6.0, cyan 5.2, white 11.8. */
+  --terminal-ansi-black: var(--ink);
+  --terminal-ansi-red: var(--danger-ink);
+  --terminal-ansi-green: var(--ok-ink);
+  --terminal-ansi-yellow: var(--warn-ink);
+  --terminal-ansi-blue: var(--code-keyword);
+  --terminal-ansi-magenta: #9c27b0;
+  --terminal-ansi-cyan: var(--code-type);
+  --terminal-ansi-white: var(--muted);
+  --terminal-ansi-bright-black: var(--muted);
+  --terminal-ansi-bright-red: var(--code-deletion);
+  --terminal-ansi-bright-green: var(--code-number);
+  --terminal-ansi-bright-yellow: var(--code-function);
+  --terminal-ansi-bright-blue: var(--signal-blue);
+  --terminal-ansi-bright-magenta: #a2349f;
+  --terminal-ansi-bright-cyan: #00788a;
+  --terminal-ansi-bright-white: var(--text);
+
   /* ---- Video picture ground ----
      The box a recording is drawn in (the conversation card, the preview panel)
      is dark in both themes, for the reason the picture viewer is: a picture is
@@ -426,8 +451,7 @@
 
 /* ---- 窗口按钮让位 ----
    macOS 桌面版把标题栏叠在页面上，红黄绿三颗由系统画在网页上层：离窗口左缘 12、
-   在 40px 的顶栏里上下居中，三颗一共到 64（desktop/src-tauri/src/main.rs 的
-   traffic_light_position）。
+   上 16，三颗一共到 64（desktop/src-tauri/src/main.rs 的 traffic_light_position）。
    整屏铺开、左上角直接有控件的层（设置、全屏编辑器、放映、画布、文档里的应用、顶栏、
    跳转链接）都要把这一段让出来，写法一律是
    `max(这一层自己的内距, var(--window-buttons-inset))`——不在这个桌面版里它恒为 0，
@@ -587,6 +611,28 @@
   --terminal-ground: #1e1e1e;
   --terminal-status-ink: #9aa0a6;
   --terminal-status-fill: rgba(0, 0, 0, 0.5);
+
+  /* A task's 终端 (see the light block). On --surface (#1b1d20): black 8.1,
+     red 7.7, green 9.7, yellow 10.3, blue 7.7, magenta 7.8, cyan 9.0, white
+     11.6; bright black 8.1, red 5.3, green 8.4, yellow 9.2, blue 6.6, magenta
+     9.0, cyan 11.6, white 15.4. Black is the muted ink here: on a dark ground
+     the light theme's --ink would be the brightest text of all. */
+  --terminal-ansi-black: var(--muted);
+  --terminal-ansi-red: var(--danger-ink);
+  --terminal-ansi-green: var(--ok-ink);
+  --terminal-ansi-yellow: var(--warn-ink);
+  --terminal-ansi-blue: var(--code-keyword);
+  --terminal-ansi-magenta: #d49be6;
+  --terminal-ansi-cyan: var(--code-type);
+  --terminal-ansi-white: var(--text);
+  --terminal-ansi-bright-black: var(--muted);
+  --terminal-ansi-bright-red: var(--code-deletion);
+  --terminal-ansi-bright-green: var(--code-number);
+  --terminal-ansi-bright-yellow: var(--code-function);
+  --terminal-ansi-bright-blue: var(--signal-blue);
+  --terminal-ansi-bright-magenta: #e6a8f0;
+  --terminal-ansi-bright-cyan: #8fe3ef;
+  --terminal-ansi-bright-white: var(--ink);
 
   /* Same as light, deliberately: a recording is drawn on the same dark box in both themes. */
   --video-ground: #1b1d20;

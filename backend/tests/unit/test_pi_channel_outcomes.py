@@ -17,6 +17,7 @@ from app.domain.agent.harness.driven.runner import LONG_POLL
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.agent_session.services import AgentSessionService
+from tests.support.environments import remember_place
 from tests.support.machine_path import resolved
 from tests.turn_log import a_topic
 
@@ -50,11 +51,12 @@ async def _place(db_factory, topic, agent, state, sid, machine=DEVICE) -> None:
             harness=PI,
             generation=0,
         )
-        await service.remember_place(
+        await remember_place(
+            session,
             conversation_id=topic,
             agent_handle=agent,
             harness=PI,
-            work_lease=None,
+            environment=None,
             runtime_location={
                 "device_id": machine,
                 "resource_id": f"r-{agent}",

@@ -43,7 +43,8 @@ imports by *this* module:
 Where each moved piece went: ``link`` (one link's record — ``HubDevice``, its
 write and its drop), ``sessions`` (screens), ``calls`` (``exec`` and
 ``call_executor``), ``local_fs`` (本机目录授权), ``viewers`` (browser viewers) and
-``inbound`` (frames coming back). A forwarding method takes no decision — that is
+``inbound`` (frames coming back), and ``streams`` (byte streams held open to an
+executor, which a person's terminal rides). A forwarding method takes no decision — that is
 what keeps the two copies from drifting apart, and it is why every body that does
 decide stayed put. The forwarders carry no docstring of their own, for the same
 reason: the prose lives on the module function they call (``feedback/services``
@@ -81,7 +82,14 @@ from app.domain.agent.device_contract import (
     ViewerTransport,
     offline_headers,  # noqa: F401
 )
-from app.domain.agent.device_hub import calls, inbound, local_fs, sessions, viewers
+from app.domain.agent.device_hub import (
+    calls,
+    inbound,
+    local_fs,
+    sessions,
+    streams,
+    viewers,
+)
 from app.domain.agent.device_hub.link import DeviceTransport, HubDevice
 
 # The failures, the screen shape, the call timings and ``offline_headers`` are
@@ -170,6 +178,7 @@ class DeviceHub:
         device.connection_generation += 1
         device.executor = False
         device.profiles = False
+        device.streams = False
         if name:
             device.name = name
         device.update_pushed = ""
@@ -417,6 +426,13 @@ class DeviceHub:
             timeout=timeout,
             trace_id=trace_id,
         )
+
+    # -- streams (server <-> an executor, held open) -----------------------
+
+    async def open_executor_stream(
+        self, device_id: str, state: str, header: str
+    ) -> streams.HubStream:
+        return await streams.open_executor_stream(self, device_id, state, header)
 
     # -- viewers (browser <-> device screen) -------------------------------
 

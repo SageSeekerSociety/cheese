@@ -13,9 +13,8 @@ from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.agent_session.attachment import place, place_of
 from app.domain.agent_session.models import (
-    LOST_KEY,
-    PARKED_KEY,
     AgentSession,
     SessionPlace,
 )
@@ -28,6 +27,7 @@ from app.domain.agent_session.repositories import (
 
 class AgentSessionService:
     def __init__(self, session: AsyncSession):
+        self._session = session
         self._repo = AgentSessionRepository(session)
         self._reads = AgentReadRepository(session)
 
@@ -176,7 +176,7 @@ class AgentSessionService:
     ) -> SessionPlace | None:
         """Where this agent's conversation here is — its machines, resolved."""
         row = await self._repo.get(conversation_id, agent_handle, harness)
-        return row.place() if row is not None else None
+        return await place_of(self._session, row) if row is not None else None
 
     async def last_used_on(
         self, channel: str, machines: list[str]
@@ -188,8 +188,8 @@ class AgentSessionService:
         """The people's machines the room's sessions (its tasks' included) hold
         a lease on now: a sandbox on one of the platform's machines is not one."""
         held: list[str] = []
-        for row in await self._repo.placed_in_room(room_id):
-            lease = row.work_lease or {}
+        for _row, environment in await self._repo.placed_in_room(room_id):
+            lease = environment or {}
             device_id = lease.get("device_id")
             if device_id and not lease.get("platform") and device_id not in held:
                 held.append(device_id)
@@ -232,63 +232,24 @@ class AgentSessionService:
         conversation_id: uuid.UUID,
         agent_handle: str,
         harness: str,
-        work_lease: dict | None,
         runtime_location: dict,
     ) -> None:
-        """Record the machines this session took."""
+        """Record the machine this session's process took."""
         await self._repo.save_place(
             conversation_id=conversation_id,
             agent_handle=agent_handle,
             harness=harness,
-            work_lease=work_lease,
             runtime_location=runtime_location,
         )
 
     async def places_in_room(self, room_id: uuid.UUID) -> list[SessionPlace]:
         """Every place a session in this room is sitting on."""
         rows = await self._repo.placed_in_room(room_id)
-        return [place for row in rows if (place := row.place()) is not None]
-
-    async def working_copy(
-        self, conversation_id: uuid.UUID, generation: str
-    ) -> tuple[dict, bool] | None:
-        """The machine lease holding this task's (or 支线's) working copy on the
-        room's current ``generation``, and whether nothing on it answers for
-        that copy now: its cloud sandbox was destroyed (``LOST_KEY``), or
-        parked with its processes stopped (``PARKED_KEY``). Either way the
-        session's next tool call places it again.
-
-        Each session works in a home of its own (``SandboxHome``), so a
-        task's files are in its own session's home and in no other session's
-        of the same room. None while no session of it has taken a machine:
-        nothing holds a working copy of it yet.
-
-        A lease that is not ready and names no executor has not taken its
-        machine either: it is a reservation whose executor is still being
-        installed there, or whose installation failed and waits for the next
-        tool call to retry, and there is nothing on the machine to ask. One
-        that is not ready but already records where its executor is (an
-        installation that got that far) does hold the machine's copy, and that
-        copy may carry work nobody has pushed, so it is still read."""
-        for row in await self._repo.placed_in_conversation(conversation_id):
-            place = row.place()
-            if place is None or place.resource_id != generation:
-                continue
-            lease = place.lease
-            if (
-                lease is not None
-                and lease.get("kind") == "device"
-                and (
-                    lease.get("status", "ready") == "ready"
-                    or lease.get("state")
-                    or lease.get("home")
-                )
-            ):
-                request = row.execution_request or {}
-                return lease, bool(
-                    request.get(LOST_KEY) or request.get(PARKED_KEY) is not None
-                )
-        return None
+        return [
+            found
+            for row, environment in rows
+            if (found := place(row.runtime_location, environment)) is not None
+        ]
 
     async def harness_in_room(self, room_id: uuid.UUID) -> str | None:
         """Which harness the room's one pane belongs to, if anything is on it.
@@ -300,7 +261,7 @@ class AgentSessionService:
         front of a person and take the 施工记录 timeline away to do it.
         """
         placed = await self._repo.placed_in_room(room_id)
-        return placed[0].harness if placed else None
+        return placed[0][0].harness if placed else None
 
     async def placed_sessions(
         self, *, harness: str | None = None, device_id: str | None = None

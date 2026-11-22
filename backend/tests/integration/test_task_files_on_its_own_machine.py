@@ -18,14 +18,14 @@ from app.domain.agent import execution
 from app.domain.agent.device_contract import DeviceCallError
 from app.domain.agent.harness import harness_for
 from app.domain.agent.harness.claude_code.remote_execution.runtime import Executor
-from app.domain.agent_session.models import LOST_KEY, PARKED_KEY
+from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.repositories import AgentSessionRepository
-from app.domain.agent_session.services import AgentSessionService
 from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic
 from tests.delivery import delivery_task
 from tests.integration.test_file_panel_safety import _mkproject, _owner
 from tests.machine_work import machine_commits, machine_keeps
+from tests.support.environments import remember_place
 
 GONE = "dial unix /tmp/cheese-execution-3f2a.sock: connect: no such file or directory"
 
@@ -80,12 +80,18 @@ def _seat(
         async with client.test_factory() as session:
             room = await session.get(Topic, task.room_id)
             current = str(room.resource_id or room.id)
-            await AgentSessionService(session).remember_place(
+            await remember_place(
+                session,
                 conversation_id=task.id,
                 agent_handle="cheese",
-                work_lease=lease
+                environment=lease
                 or (
-                    {"kind": "device", "device_id": device}
+                    {
+                        "kind": "device",
+                        "device_id": device,
+                        # The room generation its environment was made for.
+                        **({"room_resource_id": generation} if generation else {}),
+                    }
                     if device is not None
                     else None
                 ),
@@ -100,9 +106,12 @@ def _seat(
                 row = await AgentSessionRepository(session).get(
                     task.id, "cheese", harness_for(None)
                 )
-                row.execution_request = (
-                    {LOST_KEY: True} if lost else {PARKED_KEY: ["npm run dev"]}
-                )
+                # What the sweep leaves: the lease says nothing answers on it,
+                # and the agent is owed a notice.
+                if lost:
+                    await attachments.lose(session, row, device)
+                else:
+                    await attachments.park(session, row, device, ["npm run dev"])
             await session.commit()
 
     asyncio.run(place())
@@ -337,28 +346,6 @@ def test_a_file_reads_from_the_branch_while_its_machine_has_no_copy_of_it(
     assert "working" in asked
 
 
-def test_a_task_with_no_copy_on_its_machine_takes_no_writes(client, machines):
-    pid, room, task = _channel_with_released_older_task(client)
-    machine_commits(pid, task.id, {"backend/usage/models.py": "POOL = 1\n"})
-    _published(client, task)
-    _seat(client, task, device="working")
-
-    saved = client.put(
-        f"/projects/{pid}/file",
-        params={"topic": str(room), "task": str(task.id)},
-        json={
-            "path": "backend/usage/models.py",
-            "content": "POOL = 2\n",
-            "version": "0" * 16,
-            "base": "POOL = 1\n",
-        },
-        headers=_owner(client),
-    )
-
-    assert saved.status_code == 404, saved.text
-    assert saved.json()["error"]["message"] == "环境里还没有这个任务文件"
-
-
 def test_a_file_missing_from_a_present_copy_is_not_read_from_the_branch(
     client, machines
 ):
@@ -436,15 +423,6 @@ def test_a_failing_machine_is_not_reported_as_released(client, machines, device)
     assert "index.lock" not in message and "sock" not in message
 
 
-def _save(client, pid, room, task, path, content, version):
-    return client.put(
-        f"/projects/{pid}/file",
-        params={"topic": str(room), "task": str(task.id)},
-        json={"path": path, "content": content, "version": version},
-        headers=_owner(client),
-    )
-
-
 @pytest.mark.parametrize("gone", ["lost", "parked"])
 def test_a_task_whose_machine_is_gone_reads_its_kept_work_from_the_forge(
     client, machines, gone
@@ -513,27 +491,6 @@ def test_kept_work_the_branch_moved_past_is_not_shown_as_the_tasks_files(
     assert read.status_code == 200, read.text
     assert read.json()["data"]["content"] == "POOL = 3\n"
     assert read.json()["data"]["source"] == "committed"
-    assert asked == []
-
-
-@pytest.mark.parametrize("gone", ["lost", "parked"])
-def test_a_save_to_a_task_whose_machine_is_gone_says_what_became_of_it(
-    client, machines, gone
-):
-    _, asked = machines
-    pid, room, task = _channel_with_released_older_task(client)
-    machine_commits(pid, task.id, {"backend/usage/models.py": "POOL = 1\n"})
-    _published(client, task)
-    _seat(client, task, device="gone", **{gone: True})
-    version = _read(client, pid, room, task, "backend/usage/models.py").json()["data"][
-        "version"
-    ]
-
-    saved = _save(client, pid, room, task, "backend/usage/models.py", "X\n", version)
-
-    assert saved.status_code == 503, saved.text
-    assert "已释放" in saved.json()["error"]["message"]
-    assert "sock" not in saved.json()["error"]["message"]
     assert asked == []
 
 

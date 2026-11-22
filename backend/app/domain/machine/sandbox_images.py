@@ -11,18 +11,31 @@ from app.core.config import settings
 from app.domain.agent import sandbox_image, toolchain
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.machine_address import device_api_base
+from app.domain.machine import occupants
 from app.domain.machine.models import CloudHost, SandboxHome, WarmMachine
 
 logger = logging.getLogger(__name__)
 
 
 async def image_for_session(db, device_id, session_id):
+    """The image the sandbox of the session's environment on ``device_id``
+    runs (`image_for_environment`)."""
+    return await _image_for(db, device_id, await occupants.home_of(db, session_id))
+
+
+async def image_for_environment(db, device_id, environment_id):
+    """The image the environment's sandbox on ``device_id`` runs: the one its
+    home was first given, kept when its host moves on to another; a new home
+    takes the host's."""
+    return await _image_for(
+        db, device_id, await occupants.home_of_environment(db, environment_id)
+    )
+
+
+async def _image_for(db, device_id, home):
     host = await db.scalar(select(CloudHost).where(CloudHost.device_id == device_id))
     if host is None or host.whole_machine:
         return None
-    home = await db.scalar(
-        select(SandboxHome).where(SandboxHome.session_id == session_id)
-    )
     if home is None:
         return host.sandbox_image or None
     if not home.sandbox_image:

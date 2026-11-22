@@ -51,6 +51,7 @@ claude_shell = core.claude_shell
 native_path = core.native_path
 resolve_program = core.resolve_program
 write_json = core.write_json
+identity = core.identity
 
 
 def shell_argv(self, script):
@@ -70,10 +71,11 @@ def shell_argv(self, script):
     ]
 
 
-def command_env(self):
-    """The environment every command starts from: the room's, with the
-    platform CLI first on PATH, and the build that runs here named where a
-    native session names it for its commands (the snapshot's `rg` reads it)."""
+def command_env(self, caller=None):
+    """The environment a command starts from: the room's, with the platform
+    CLI first on PATH, the build that runs here named where a native session
+    names it for its commands (the snapshot's `rg` reads it), and the identity
+    of the call that starts it (`identity`) over all of it."""
     if self.cli_worker is not None:
         # Commands reach the CLI through it, so it has to be up first.
         self._ready_cli_worker()
@@ -85,6 +87,7 @@ def command_env(self):
     )
     if self.config.get("claude"):
         env["CLAUDE_CODE_EXECPATH"] = str(self.config["claude"])
+    env.update(identity(caller))
     return env
 
 
@@ -381,8 +384,9 @@ def idle_stop(self, idle_s):
 
     Idle is nothing of its own going on: no request in flight and none for
     `idle_s` (a `ping` is a question about it, not work for it), no command
-    still running — a Bash sent to the background included — and no preview
-    the room declared (`_preview_declared`). Then it stops taking requests
+    still running — a Bash sent to the background included — no shell of a
+    person's being watched or running a program (`Terminals.in_use`), and
+    no preview the room declared (`_preview_declared`). Then it stops taking requests
     and answers True; `serve` shuts down and, once its socket is gone, ends
     what the commands left behind (`end_left_behind`)."""
     if _preview_declared(self):
@@ -392,6 +396,7 @@ def idle_stop(self, idle_s):
         if (
             self.active_calls
             or self.running
+            or self.terminals.in_use()
             or time.monotonic() - self.active_at < idle_s
         ):
             return False
@@ -545,6 +550,9 @@ def shell(self, params):
                 for name, value in (params.get("env") or {}).items()
                 if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name)
             )
+            # Last: whose the command is, as the platform said, over anything
+            # the session's own variables named.
+            env.update(identity(params.get("caller")))
             if params.get("kind") == "bash":
                 argv = self.shell_argv(
                     params["body"] + " && pwd -P >| " + shlex.quote(str(record / "cwd"))
@@ -595,7 +603,7 @@ def shell(self, params):
     raise ValueError("Unknown shell operation")
 
 
-def bash(self, args, key=None):
+def bash(self, args, key=None, caller=None):
     """This executor's own Bash tool, for the callers that have no shell of
     their own here: the Codex harness and the platform's own commands.
 
@@ -609,7 +617,7 @@ def bash(self, args, key=None):
     command_id = "task-" + uuid.uuid4().hex[:16]
     record = self._record(command_id)
     cwd = self.bash_cwd if self.bash_cwd.is_dir() else self.root
-    env = self.command_env()
+    env = self.command_env(caller)
     # A platform call may name variables for this one command (`checkpoint`'s
     # turn). Its own key, so a Bash argument from anywhere else cannot set one.
     if isinstance(args.get("platform_env"), dict):

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 改动面板里「打开着的那一份文件」的正文：文档、逐文件 diff、图、放不下的二进制、
-// 或者编辑器，五选一。
+// 或者全文，五选一。全文只读：编辑在任务的「文件」那一格。
 //
 // 从 `PanelChangesView` 里分出来的（那个文件到了行数上限）。这一支只认「哪一份、以
 // 什么形态看」，和另外两面（顶部横条、全部改动）没有关系。
@@ -8,8 +8,6 @@ import type { DocumentRevisionsBundle } from '../../composables/useDocumentRevis
 import type { DiffLine } from '../../lib/diff'
 import type { FileKind } from '../../lib/fileKind'
 import type { OfficeComparison, ReviewBundle } from '../../types/reviewComment'
-
-import { useDisplay } from 'vuetify'
 
 import { fmtBytes } from '../../lib/changesTree'
 import CodeEditor from '../CodeEditor.vue'
@@ -40,7 +38,7 @@ const props = defineProps<{
   comparison?: OfficeComparison | null
   comparisonLoading?: boolean
   comparisonError?: string
-  effectiveView: 'diff' | 'edit'
+  effectiveView: 'diff' | 'text'
   openDiffLines: DiffLine[]
   openIsImage: boolean
   openImageSrc: string
@@ -49,18 +47,13 @@ const props = defineProps<{
   fileBinary: boolean
   fileTooLarge: boolean
   fileBytes: number
-  fileDraft: string
-  fileReadOnly: boolean
+  fileText: string
 }>()
 
 const emit = defineEmits<{
   download: []
-  save: []
-  'draft-changed': [content: string]
   'toggle-compare': []
 }>()
-
-const { mdAndUp } = useDisplay()
 </script>
 
 <template>
@@ -143,16 +136,8 @@ const { mdAndUp } = useDisplay()
       {{ t('work.room.changes.downloadOriginal') }}
     </BaseButton>
   </div>
-  <!-- Read-only on a phone: a soft keyboard with Monaco is not a combination
-       worth saving; saying so plainly beats an editor nobody can use. -->
-  <CodeEditor
-    v-else-if="props.openPath"
-    :model-value="props.fileDraft"
-    :filename="props.openPath"
-    :readonly="!mdAndUp || props.fileReadOnly"
-    @update:model-value="emit('draft-changed', $event)"
-    @save="emit('save')"
-  />
+  <!-- The whole text, to read: editing it is the task's 文件 panel's. -->
+  <CodeEditor v-else-if="props.openPath" :model-value="props.fileText" :filename="props.openPath" readonly />
 </template>
 
 <style scoped>

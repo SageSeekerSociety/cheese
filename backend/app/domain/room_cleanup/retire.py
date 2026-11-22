@@ -31,10 +31,10 @@ from app.domain.agent.device_storage import (
     transcripts_upload_url,
 )
 from app.domain.agent.models import AgentTurn
-from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room
 from app.domain.device.wiring import sql_device_service
+from app.domain.environment import services as environment_rows
 from app.domain.machine.services import HostPool
 from app.domain.repository import service as ws
 from app.domain.room_task.services import TaskService
@@ -216,49 +216,37 @@ async def _inventory(session, operation: RoomCleanup, inventory: dict) -> list[d
         for task in await TaskService(session).list_in_room(operation.topic_id)
     )
     entries = {}
-    sessions = list(
-        await session.scalars(
-            select(AgentSession).where(
-                of_room(AgentSession.conversation_id, operation.topic_id)
-            )
-        )
-    )
     devices = sql_device_service(session)
-    for conversation in sessions:
-        leases = [
-            *(conversation.execution_request or {}).get("retained_leases", []),
-            *([conversation.work_lease] if conversation.work_lease else []),
-        ]
-        for lease in leases:
-            resource_id = lease.get("resource_id")
-            device_id = lease.get("device_id")
-            if resource_id:
-                resource_ids.add(resource_id)
-            # A machine whose record is gone was removed: nothing can connect
-            # as it again, so nothing of the room is left on it to stop or
-            # remove, and waiting for it to come online failed the cleanup on
-            # every sweep, forever. An offline machine that still has its
-            # record may come back, and is waited for.
-            if (
-                not device_id
-                or await devices.get_device(device_id) is None
-                or await HostPool(session).destroyed(device_id, resource_id)
-            ):
-                continue
-            if not device_hub.is_online(device_id) or device_id not in inventory:
-                raise RuntimeError(
-                    "session work device is offline or its inventory failed"
-                )
-            if not resource_id:
-                # A lease written before leases named their home. The room's
-                # homes on this machine are still found below, by the room's
-                # resource ids in its inventory.
-                continue
-            entries[(device_id, resource_id)] = {
-                "kind": "device",
-                "device_id": device_id,
-                "resource_id": resource_id,
-            }
+    for held in await environment_rows.environments_held(
+        session, room_id=operation.topic_id
+    ):
+        resource_id = held.resource_id
+        device_id = held.device_id
+        if resource_id:
+            resource_ids.add(resource_id)
+        # A machine whose record is gone was removed: nothing can connect
+        # as it again, so nothing of the room is left on it to stop or
+        # remove, and waiting for it to come online failed the cleanup on
+        # every sweep, forever. An offline machine that still has its
+        # record may come back, and is waited for.
+        if (
+            not device_id
+            or await devices.get_device(device_id) is None
+            or await HostPool(session).destroyed(device_id, resource_id)
+        ):
+            continue
+        if not device_hub.is_online(device_id) or device_id not in inventory:
+            raise RuntimeError("session work device is offline or its inventory failed")
+        if not resource_id:
+            # A lease written before leases named their home. The room's
+            # homes on this machine are still found below, by the room's
+            # resource ids in its inventory.
+            continue
+        entries[(device_id, resource_id)] = {
+            "kind": "device",
+            "device_id": device_id,
+            "resource_id": resource_id,
+        }
     room = await session.get(Topic, operation.topic_id)
     places = (
         await AgentSessionService(session).places_in_room(operation.topic_id)

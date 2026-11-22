@@ -55,6 +55,8 @@ if __package__:
     from . import runtime_commands as commands
     from . import runtime_context as context
     from . import runtime_core as core
+    from . import runtime_language as language
+    from . import runtime_terminal as terminal
 else:
     # Its siblings sit beside it, which a script run has first on `sys.path`
     # and a file loaded by path — `bootstrap` installs one and `predecessor`
@@ -65,6 +67,8 @@ else:
     import runtime_commands as commands
     import runtime_context as context
     import runtime_core as core
+    import runtime_language as language
+    import runtime_terminal as terminal
 
 # This file's own bytes, and the protocol it answers with: the two names that
 # are about the release rather than about how it is used.
@@ -258,6 +262,11 @@ class Executor:
             "(id TEXT PRIMARY KEY, input TEXT, result TEXT)"
         )
         self.db.commit()
+        # The shells people opened here (`runtime_terminal`).
+        self.terminals = terminal.Terminals(self)
+        # Language servers beside task checkouts (`runtime_language`): they
+        # keep nothing up.
+        self.languages = language.Languages(self)
         self.cli_worker, self.cli_worker_ready = None, False
         worker = self.programs / "remote-execution/cli_worker.py"
         cli = self.programs / "cheese"
@@ -287,8 +296,8 @@ class Executor:
 
     # --- the calls -----------------------------------------------------------
 
-    def client(self, server):
-        return calls.client(self, server)
+    def client(self, server, caller=None):
+        return calls.client(self, server, caller)
 
     def _ready_cli_worker(self):
         return calls._ready_cli_worker(self)
@@ -296,25 +305,29 @@ class Executor:
     def invoke(self, params):
         return calls.invoke(self, params)
 
-    def execute(self, tool, args, key, server="native", cwd=None, tool_hooks=True):
-        return calls.execute(self, tool, args, key, server, cwd, tool_hooks)
+    def execute(
+        self, tool, args, key, server="native", cwd=None, tool_hooks=True, caller=None
+    ):
+        return calls.execute(self, tool, args, key, server, cwd, tool_hooks, caller)
 
-    def hooks(self, event, tool, args, key, result=None, cwd=None, fire=True):
-        return calls.hooks(self, event, tool, args, key, result, cwd, fire)
+    def hooks(
+        self, event, tool, args, key, result=None, cwd=None, fire=True, caller=None
+    ):
+        return calls.hooks(self, event, tool, args, key, result, cwd, fire, caller)
 
     def tool_hooks(self, params):
         return calls.tool_hooks(self, params)
 
-    def execute_core(self, tool, args, key, server="native"):
-        return calls.execute_core(self, tool, args, key, server)
+    def execute_core(self, tool, args, key, server="native", caller=None):
+        return calls.execute_core(self, tool, args, key, server, caller)
 
     # --- the commands --------------------------------------------------------
 
     def shell_argv(self, script):
         return commands.shell_argv(self, script)
 
-    def command_env(self):
-        return commands.command_env(self)
+    def command_env(self, caller=None):
+        return commands.command_env(self, caller)
 
     def shell_snapshot(self):
         return commands.shell_snapshot(self)
@@ -420,8 +433,8 @@ class Executor:
                 if meta.get("watched") and time.time() - last > kept:
                     shutil.rmtree(record, ignore_errors=True)
 
-    def bash(self, args, key=None):
-        return commands.bash(self, args, key)
+    def bash(self, args, key=None, caller=None):
+        return commands.bash(self, args, key, caller)
 
     def control(self, params):
         return calls.control(self, params)
@@ -458,7 +471,9 @@ class Executor:
         if method == "begin_upgrade":
             with self.admission_lock:
                 busy = not self.upgrading and (
-                    self.active_calls > 0 or bool(self.running)
+                    self.active_calls > 0
+                    or bool(self.running)
+                    or self.terminals.in_use()
                 )
                 result = {
                     "release": params["release"],
@@ -544,6 +559,7 @@ class Executor:
                     "machine_files",
                     "machine_git",
                 ]
+                + (["terminal"] if sys.platform != "win32" else [])
                 + (
                     ["cli_worker"]
                     if self.cli_worker is not None and self.cli_worker.poll() is None
@@ -562,8 +578,12 @@ class Executor:
             return self.task_fs(params)
         if method == "repo_search":
             return self.repo_search(params)
+        if method == "terminal_list":
+            return self.terminals.list(params)
+        if method == "terminal_close":
+            return self.terminals.close(params)
         if method == "mcp":
-            return self.client(params["server"]).call(
+            return self.client(params["server"], params.get("caller")).call(
                 params["method"], params.get("params")
             )
         raise ValueError("Unknown executor method")
@@ -586,6 +606,20 @@ def serve(state):
                 return
             try:
                 value = json.loads(self.rfile.readline())
+                if value["method"] == "terminal":
+                    # A watcher of a shell: the connection is the shell's
+                    # from here on, frames both ways (`runtime_terminal`).
+                    executor.terminals.serve(
+                        self.connection, self.rfile, value.get("params", {})
+                    )
+                    return
+                if value["method"] == "language":
+                    # A language server's stdio: the connection is the
+                    # server's from here on (`runtime_language`).
+                    executor.languages.serve(
+                        self.connection, self.rfile, value.get("params", {})
+                    )
+                    return
                 if value["method"] == "shutdown":
                     # A sandboxed pid names the wrong process; Windows has no SIGTERM.
                     stop(None, None)
@@ -674,6 +708,10 @@ def serve(state):
             path.unlink(missing_ok=True)
             if sys.platform != "win32":
                 Path(address).unlink(missing_ok=True)
+            # A shell's watchers hold their connections' threads, which the
+            # server joins as it closes: the shells end first.
+            executor.terminals.end_all()
+            executor.languages.end_all()
             if executor.stopping:
                 ended = executor.end_left_behind()
                 with contextlib.suppress(OSError):

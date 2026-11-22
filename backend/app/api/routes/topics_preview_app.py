@@ -45,9 +45,8 @@ from app.core.sentences import say
 from app.domain.agent.chat import ChatService
 from app.domain.agent.runtime import AgentWorkRunner, addressed_to_agent
 from app.domain.machine.preview_wake import (
-    find_seat_session,
-    has_sandbox,
     is_preview_waking,
+    sandbox_to_wake,
     schedule_preview_wake,
 )
 from app.domain.machine.session_reports import conversation_sessions
@@ -217,12 +216,7 @@ async def wake_preview_app(
         place.conversation_id
     ):
         return ok({"started": False, "reason": "working"})
-    session_row = await find_seat_session(
-        db,
-        project_id=place.project_id,
-        conversation_id=place.conversation_id,
-        seat=seat,
-    )
+    environment_id = await sandbox_to_wake(db, place.conversation_id)
     redis = get_redis_client()
     key = f"preview-wake:{_snapshot_key(place, art)}"
     if redis is not None:
@@ -248,13 +242,13 @@ async def wake_preview_app(
             ),
         )
 
-    if session_row is not None and await has_sandbox(db, session_row.id):
+    if environment_id is not None:
         # The app's sandbox is still there: waking it is enough. A frozen one
         # thaws with its processes as they were, and the app goes on running.
         schedule_preview_wake(
             db.bind,
             place=place,
-            session_id=session_row.id,
+            environment_id=environment_id,
             fallback=_submit_turn,
             dedup_key=key,
         )

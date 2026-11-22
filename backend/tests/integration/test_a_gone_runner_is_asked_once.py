@@ -23,6 +23,7 @@ from app.domain.agent.harness import CLAUDE_CODE
 from app.domain.agent_session.services import AgentSessionService
 from tests.integration import test_central_room_sessions as central_sessions
 from tests.integration.test_central_room_sessions import AGENT, channel, sessions
+from tests.support.environments import remember_place
 
 #: A project with its agent and one room in it.
 room = central_sessions.room
@@ -36,11 +37,12 @@ GONE = DeviceCallError(
 async def _place(factory, channel_name, topic) -> None:
     async with factory() as db:
         service = AgentSessionService(db)
-        await service.remember_place(
+        await remember_place(
+            db,
             conversation_id=topic,
             agent_handle=AGENT,
             harness=CLAUDE_CODE,
-            work_lease=None,
+            environment=None,
             runtime_location={
                 "device_id": "center",
                 "resource_id": str(topic),

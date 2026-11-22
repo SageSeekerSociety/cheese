@@ -284,11 +284,12 @@ class CloudHost(UuidPk, Timestamps, Base):
 
 
 class SandboxHome(UuidPk, Timestamps, Base):
-    """One session's home: its sandbox's directory on a machine, one of the
-    platform's hosts (``host_id``) or a person's computer (``device_id``).
+    """A sandbox's home: its directory on a machine, one of the platform's
+    hosts (``host_id``) or a person's computer (``device_id``), named by the
+    environment it backs (``Environment.sandbox_home_id``).
 
-    Written when the session is placed, before anything is on the disk, so a
-    session waiting for its host keeps its place. On a host it holds one of
+    Written when the environment is placed, before anything is on the disk,
+    so one waiting for its host keeps its place. On a host it holds one of
     the host's slots for as long as it exists.
 
     Every sandbox has the same lifecycle, whoever's machine it is on: it is
@@ -302,12 +303,6 @@ class SandboxHome(UuidPk, Timestamps, Base):
     __tablename__ = "sandbox_homes"
     sandbox_image: Mapped[str | None] = mapped_column(String(255), nullable=True)
     __table_args__ = (
-        Index(
-            "uq_sandbox_homes_current_session",
-            "session_id",
-            unique=True,
-            postgresql_where=text("session_id IS NOT NULL"),
-        ),
         CheckConstraint(
             "(host_id IS NULL) <> (device_id IS NULL)",
             name="ck_sandbox_homes_one_machine",
@@ -362,8 +357,6 @@ class SandboxHome(UuidPk, Timestamps, Base):
     room_resource_id: Mapped[str] = mapped_column(String(36))
     # The directory's resource on the host (the lease's ``resource_id``).
     resource_id: Mapped[str] = mapped_column(String(36))
-    # NULL only for a room's directory from before session leases.
-    session_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     # When the room was told this session's sandbox is being prepared; cleared
     # once it is told the sandbox is ready.
     waiting_since: Mapped[datetime | None] = mapped_column(
@@ -385,6 +378,12 @@ class SandboxHome(UuidPk, Timestamps, Base):
     # session to start again there (`lifecycle._park`). `frozen_at` stays set
     # with it: a parked sandbox is a frozen one that holds no slot.
     parked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Since when a tool call has asked for the frozen sandbox to be woken
+    # (`HostPool._wake_frozen`): the install thaws it before its executor is
+    # asked anything, and a park makes the request moot. NULL while nobody has.
+    thaw_wanted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     # Since when the sandbox is being destroyed: its home is being deleted

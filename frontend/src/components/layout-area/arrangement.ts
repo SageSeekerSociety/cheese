@@ -267,6 +267,44 @@ export function placeInGroup(
   return mapCells(arrangement, (cell) => (cell === home ? { ...cell, panels: [...cell.panels, panelId] } : cell))
 }
 
+/**
+ * Places a panel that has just appeared in a cell of its own, to the right of the cell
+ * holding `nearPanelId`: beside it in that row, or in a new row with it. With that panel
+ * not placed it goes where `placePanel` would put it. A panel already placed stays put.
+ */
+export function placeBeside(arrangement: LayoutArrangement, panelId: string, nearPanelId: string): LayoutArrangement {
+  if (placedPanels(arrangement).includes(panelId)) return arrangement
+  const near = cellOfPanel(arrangement, nearPanelId)
+  if (!near || !arrangement.root) return placePanel(arrangement, panelId)
+  const fresh: LayoutCell = { panels: [panelId], active: panelId }
+  const visit = (node: LayoutNode): LayoutNode => {
+    if (!isSplit(node)) return node === near ? { direction: 'row', children: [node, fresh], size: node.size } : node
+    const at = node.children.indexOf(near)
+    if (at >= 0 && node.direction === 'row') {
+      const children = [...node.children]
+      children.splice(at + 1, 0, fresh)
+      return { ...node, children }
+    }
+    return { ...node, children: node.children.map(visit) }
+  }
+  return { root: visit(arrangement.root) }
+}
+
+/**
+ * The cell a panel opened for a spawning panel lands in, by id: beside the panel it names,
+ * in its group's home cell, or where a newly placed panel goes when the group has none.
+ * Undefined when that is a cell that does not exist yet.
+ */
+export function spawnLanding(
+  arrangement: LayoutArrangement,
+  spawner: { id: string; group?: string; beside?: string },
+  groupOf: (id: string) => string | undefined
+): string | undefined {
+  if (spawner.beside) return cellOfPanel(arrangement, spawner.beside)?.id
+  const home = homeCell(arrangement, spawner.group, groupOf)
+  return (home ?? cellOfPanel(placePanel(arrangement, spawner.id), spawner.id))?.id
+}
+
 /** A group's home: the cell holding most of its panels (the first such, in reading order). */
 export function homeCell(
   arrangement: LayoutArrangement,

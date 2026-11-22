@@ -36,18 +36,15 @@ from app.core.errors import (
     ValidationError,
 )
 from app.domain.agent import environment
-from app.domain.agent_session.models import (
-    LEFT_HOST_KEY,
-    LOST_KEY,
-    THAW_KEY,
-    AgentSession,
-)
+from app.domain.agent_session import attachment as attachments
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
+from app.domain.environment import services as environment_rows
+from app.domain.environment.models import Environment
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
-from app.domain.machine import enrollment
+from app.domain.machine import enrollment, occupants
 from app.domain.machine import holder as holders
 from app.domain.machine.holder import SandboxHolder
 from app.domain.machine.lifecycle import SandboxLifecycle, SandboxRemoving
@@ -137,23 +134,23 @@ class HostPool(PoolSweep):
 
     async def place(
         self,
-        session_id: uuid.UUID,
+        environment_id: uuid.UUID,
         *,
         actor: Actor,
         resource_id: str,
         whole_machine: bool = False,
     ) -> CloudHost:
-        """The host this session's sandbox is on, placing it if it has none.
+        """The host this environment's sandbox is on, placing it if it has
+        none.
 
-        ``resource_id`` names the directory the session will work in there. A
-        host the provider failed before it was enrolled holds nothing of the
-        session's, so the session is placed again; any other host keeps it
-        until the pool sweep gives up on it (``maintain``).
+        ``resource_id`` names the directory the environment is there. A host
+        the provider failed before it was enrolled holds nothing of the
+        environment's, so it is placed again; any other host keeps it until
+        the pool sweep gives up on it (``maintain``).
 
-        Raises ``SandboxRemoving`` while the session's idle sandbox is being
-        destroyed (``lifecycle``). With ``whole_machine`` a session with no
-        home is given a whole cloud VM of its own instead of a slot on a
-        shared host.
+        Raises ``SandboxRemoving`` while its idle sandbox is being destroyed
+        (``lifecycle``). With ``whole_machine`` an environment with no home is
+        given a whole cloud VM of its own instead of a slot on a shared host.
 
         Starting a sandbox, or creating a whole VM, is charged as cloud
         compute: it raises ``ComputeRefused`` when no price is set for it or
@@ -161,26 +158,24 @@ class HostPool(PoolSweep):
         running is not refused, so the turn using it finishes.
         """
 
-        agent_session = await self._session.get(AgentSession, session_id)
-        if agent_session is None:
+        placed = await self._session.get(Environment, environment_id)
+        if placed is None:
             raise NotFoundError("agent session not found")
-        # A frozen sandbox is being woken (`THAW_KEY`): it is not in use yet,
-        # though its row no longer says frozen, so every look goes through the
-        # pool until its executor answers again.
-        thawing = bool((agent_session.execution_request or {}).get(THAW_KEY))
-        holder_id = await holders.holder_of(
-            self._session, agent_session.conversation_id
-        )
+        # A frozen sandbox is being woken (``thaw_wanted_at``): it is not in use
+        # yet, though its row no longer says frozen, so every look goes
+        # through the pool until its executor answers again.
+        holder_id = placed.topic_id
         holder = await self._lock_holder(holder_id)
         await holder.require_use(self._session, actor)
 
-        home = await self._repo.current_home(session_id)
+        home = await self._repo.current_home(environment_id)
+        thawing = home is not None and home.thaw_wanted_at is not None
         if home is not None and home.stopped_at is not None:
             raise SandboxRemoving()
         if home is not None and home.host_id is None:
             # Its sandbox was on a person's computer; that one is left to the
-            # idle sweep, and the session is placed on a host below.
-            await self.leave(session_id)
+            # idle sweep, and the environment is placed on a host below.
+            await self.leave(environment_id)
             home = None
         if (
             home is not None
@@ -217,7 +212,7 @@ class HostPool(PoolSweep):
             # minutes (`leave_unusable`).
             if _keeps(host):
                 if self._answers(host) or not await self.leave_unusable(
-                    session_id, host.id
+                    environment_id, host.id
                 ):
                     _touch(home)
                     return host
@@ -228,7 +223,7 @@ class HostPool(PoolSweep):
             # (``_place_on_own_vm``).
             await admit_start(self._session, await holder.payer(self._session))
         await self._repo.lock_pool()
-        home = await self._repo.current_home(session_id)
+        home = await self._repo.current_home(environment_id)
         if home is not None:
             # Locked: a sweep destroying it takes the row's lock.
             home = await self._repo.lock_home(home.id)
@@ -246,7 +241,7 @@ class HostPool(PoolSweep):
                 # Parked: its home is on the host, nothing of it runs. Started
                 # again there when the host has room for it; otherwise its
                 # home goes and the session gets a new sandbox below.
-                if await self._unpark(home, host, session_id):
+                if await self._unpark(home, host, environment_id):
                     host.idle_since = None
                     await self._session.flush()
                     return host
@@ -256,26 +251,21 @@ class HostPool(PoolSweep):
                 )
                 await self._lock_holder(holder_id)
                 return await self.place(
-                    session_id,
+                    environment_id,
                     actor=actor,
                     resource_id=resource_id,
                     whole_machine=whole_machine,
                 )
             elif _keeps(host):
-                request = await self._session.scalar(
-                    select(AgentSession.execution_request).where(
-                        AgentSession.id == session_id
-                    )
-                )
-                if home.frozen_at is not None or (request or {}).get(THAW_KEY):
+                if home.frozen_at is not None or home.thaw_wanted_at is not None:
                     # Frozen, or already asked to wake: hand it back now and
                     # let the install thaw it with no lock held.
-                    await self._wake_frozen(home, session_id)
+                    await self._wake_frozen(home)
                     host.idle_since = None
                     await self._session.flush()
                     return host
                 if self._answers(host) or not await self.leave_unusable(
-                    session_id, host.id
+                    environment_id, host.id
                 ):
                     _touch(home)
                     host.idle_since = None
@@ -287,7 +277,7 @@ class HostPool(PoolSweep):
                 await self._fail(host)
                 # The locks were let go around the provider; look again.
                 return await self.place(
-                    session_id,
+                    environment_id,
                     actor=actor,
                     resource_id=resource_id,
                     whole_machine=whole_machine,
@@ -296,11 +286,11 @@ class HostPool(PoolSweep):
             "spec": environment.VM if whole_machine else environment.STANDARD,
             **holder.home(),
             "resource_id": resource_id,
-            "session_id": session_id,
+            "environment_id": environment_id,
         }
         if whole_machine:
-            return await self._place_on_own_vm(session_id, holder, home)
-        avoid = await self._moved_off(session_id)
+            return await self._place_on_own_vm(environment_id, holder, home)
+        avoid = await self._moved_off(environment_id)
         host = await self._place_on_free(home, avoid)
         if host is None and settings.cloud_sandbox_freeze:
             # No host has room: a frozen sandbox on a host that could take one
@@ -313,9 +303,9 @@ class HostPool(PoolSweep):
             ).evict_one_frozen()
             await self._lock_holder(holder_id)
             await self._repo.lock_pool()
-            if await self._repo.current_home(session_id) is not None:
+            if await self._repo.current_home(environment_id) is not None:
                 return await self.place(
-                    session_id, actor=actor, resource_id=resource_id
+                    environment_id, actor=actor, resource_id=resource_id
                 )
             if evicted:
                 host = await self._place_on_free(home, avoid)
@@ -330,21 +320,23 @@ class HostPool(PoolSweep):
         body, data_disk, image_version = await self._host_body()
         await self._lock_holder(holder_id)
         await self._repo.lock_pool()
-        if await self._repo.current_home(session_id) is not None:
-            return await self.place(session_id, actor=actor, resource_id=resource_id)
+        if await self._repo.current_home(environment_id) is not None:
+            return await self.place(
+                environment_id, actor=actor, resource_id=resource_id
+            )
         host = await self._place_on_free(home, avoid)
         if host is not None:
             return host
         await self._require_room_to_grow()
         return await self._acquire(body, home, data_disk, image_version=image_version)
 
-    async def current_home(self, session_id: uuid.UUID) -> SandboxHome | None:
-        return await self._repo.current_home(session_id)
+    async def current_home(self, environment_id: uuid.UUID) -> SandboxHome | None:
+        return await self._repo.current_home(environment_id)
 
     async def _place_on_own_vm(
-        self, session_id: uuid.UUID, holder: SandboxHolder, home: dict
+        self, environment_id: uuid.UUID, holder: SandboxHolder, home: dict
     ) -> CloudHost:
-        """Create a whole cloud VM for the session, with its home on it. Called
+        """Create a whole cloud VM for the environment, with its home on it. Called
         holding the holder and the pool; the provider is read with neither
         held."""
         await self._require_room_to_grow(whole_machine=True)
@@ -358,9 +350,9 @@ class HostPool(PoolSweep):
         )
         await self._lock_holder(holder.id)
         await self._repo.lock_pool()
-        existing = await self._repo.current_home(session_id)
+        existing = await self._repo.current_home(environment_id)
         if existing is not None and existing.host_id is not None:
-            # Another tool call of the session placed it meanwhile.
+            # Another tool call in the environment placed it meanwhile.
             host = await self._repo.get(existing.host_id)
             assert host is not None
             await self._session.commit()
@@ -424,7 +416,7 @@ class HostPool(PoolSweep):
         host = min(free, key=rank)
         await self._repo.put_home(host.id, home)
         host.idle_since = None
-        await self._placed_off(home["session_id"])
+        await attachments.placed_off(self._session, home["environment_id"])
         await self._session.commit()
         return host
 
@@ -637,62 +629,67 @@ class HostPool(PoolSweep):
             await self._client.topup(account_id, floor, remark=CUSTOMER_REF)
         return customer_id, account_id
 
-    async def leave(self, session_id: uuid.UUID) -> CloudHost | None:
-        """The session moves off its machine. Its home stays where it is, no
-        session's, for the idle sweep to destroy like any sandbox
-        (``lifecycle``); on a host it holds its slot until then, since the
-        sandbox runs there until then. A home with nothing on the machine yet
-        (its host not enrolled) goes at once, and so does a whole VM's, which
-        the pool releases once no home is on it.
+    async def leave(self, environment_id: uuid.UUID) -> CloudHost | None:
+        """The environment moves off its sandbox. Its home stays where it is,
+        named by no environment, for the idle sweep to destroy like any
+        sandbox nobody uses (``lifecycle``); on a host it holds its slot
+        until then, since the sandbox runs there until then. A home with
+        nothing on the machine yet (its host not enrolled) goes at once, and
+        so does a whole VM's, which the pool releases once no home is on it.
+        Whoever is attached to the environment finds it released, and their
+        next call places it again.
 
-        Answers the shared host it left that home on, which the session may be
-        placed on again; None when it left nothing there. A caller that moved
-        the session off on purpose asks for its next sandbox to be somewhere
-        else (`_moved_off`)."""
+        Answers the shared host it left that home on, which the environment
+        may be placed on again; None when it left nothing there. A caller
+        that moved it off on purpose asks for its next sandbox to be
+        somewhere else (`_moved_off`)."""
         await self._repo.lock_pool()
-        home = await self._repo.current_home(session_id)
+        home = await self._repo.current_home(environment_id)
         if home is None:
             return None
         host = None if home.host_id is None else await self._repo.get(home.host_id)
+        await environment_rows.release(
+            self._session,
+            environment_id,
+            home.device_id if host is None else host.device_id,
+        )
         if host is not None and (host.device_id is None or host.whole_machine):
             await self._repo.delete_home(home)
             return None
-        home.session_id = None
+        await self._repo.name_home(environment_id, None)
         await self._session.flush()
         return host
 
-    async def _moved_off(self, session_id: uuid.UUID) -> uuid.UUID | None:
-        """The host this session asked to be moved off, if it has not been
-        placed somewhere since: it asked for the sandbox it already had again
-        (``session_work.switch_environment``), which means another one. Placing
-        it back on that host — the one it just left, with the fewest free slots
-        — would answer that request with the machine it was asking to get away
-        from."""
-        row = await self._session.get(AgentSession, session_id)
-        raw = ((row.execution_request or {}) if row is not None else {}).get(
-            LEFT_HOST_KEY
+    async def host_of(self, environment_id: uuid.UUID) -> CloudHost | None:
+        """The shared host the environment's sandbox is on; None when it has
+        none there."""
+        home = await self._repo.current_home(environment_id)
+        host = (
+            None
+            if home is None or home.host_id is None
+            else await self._repo.get(home.host_id)
         )
+        if host is None or host.device_id is None or host.whole_machine:
+            return None
+        return host
+
+    async def _moved_off(self, environment_id: uuid.UUID) -> uuid.UUID | None:
+        """The host this environment's conversation asked to be moved off, if
+        it has not been placed somewhere since: it asked for the sandbox it
+        already had again (``session_work.switch_environment``), which means
+        another one. Placing it back on that host — the one it just left,
+        with the fewest free slots — would answer that request with the
+        machine it was asking to get away from."""
+        raw = await attachments.left_host_of(self._session, environment_id)
         try:
             return uuid.UUID(raw) if raw else None
         except (TypeError, ValueError):
             return None
 
-    async def _placed_off(self, session_id: uuid.UUID) -> None:
-        """Forget the host a switch moved this session off: it has a sandbox
-        again, this one. Written only when there is one to forget, since this
-        runs on every placement."""
-        row = await self._session.get(AgentSession, session_id)
-        if row is None:
-            return
-        request = row.execution_request or {}
-        if LEFT_HOST_KEY not in request:
-            return
-        row.execution_request = {
-            key: value for key, value in request.items() if key != LEFT_HOST_KEY
-        }
-
-    async def leave_unusable(self, session_id: uuid.UUID, host_id: uuid.UUID) -> bool:
-        """Move the session off a host that cannot run its sandbox, when
+    async def leave_unusable(
+        self, environment_id: uuid.UUID, host_id: uuid.UUID
+    ) -> bool:
+        """Move the environment off a host that cannot run its sandbox, when
         another host of the pool can: an install there timed out or its
         connector went away (`session_work._install`), or the host stopped
         answering at all (`place`).
@@ -703,16 +700,16 @@ class HostPool(PoolSweep):
         being prepared, and so is every call after it while the session stays
         there. Its sandbox is disposable — what counts is what was pushed — so
         it is placed on a host that answers instead of waiting the sweep out.
-        One that had been working there is told it is in a new sandbox
-        (``LOST_KEY``), as when the sweep gives the host up (``_fail``).
+        Whoever had been working there is told they are in a new sandbox
+        (`attachments.lose`), as when the sweep gives the host up (``_fail``).
 
-        Answers whether the session was moved. False when it has no sandbox on
+        Answers whether it was moved. False when it has no sandbox on
         ``host_id``, when that host is a whole VM's — the session's own, waited
         for where it is — or when the pool has nowhere else to put it: leaving
         would not get it a sandbox any sooner.
         """
         await self._repo.lock_pool()
-        home = await self._repo.current_home(session_id)
+        home = await self._repo.current_home(environment_id)
         host = await self._repo.get(host_id)
         if (
             home is None
@@ -726,14 +723,15 @@ class HostPool(PoolSweep):
             return False
         # Read without a lock, and before the pool: a tool call holds the
         # session's row and then the pool, and this runs from both sides of it.
-        row = await self._session.get(AgentSession, session_id)
-        lease = (row.work_lease if row is not None else None) or {}
-        if row is not None and (
-            lease.get("status", "ready") == "ready"
-            and lease.get("device_id") == host.device_id
-        ):
-            row.execution_request = {**(row.execution_request or {}), LOST_KEY: True}
-        await self.leave(session_id)
+        for row in await occupants.sessions_of(self._session, home.id):
+            held = await attachments.attachment_of(self._session, row.id)
+            lease = (held.environment if held is not None else None) or {}
+            if (
+                lease.get("status", "ready") == "ready"
+                and lease.get("device_id") == host.device_id
+            ):
+                await attachments.lose(self._session, row, host.device_id)
+        await self.leave(environment_id)
         return True
 
     async def _elsewhere(self, host: CloudHost) -> bool:
@@ -753,20 +751,20 @@ class HostPool(PoolSweep):
 
     async def keep_on_device(
         self,
-        session_id: uuid.UUID,
+        environment_id: uuid.UUID,
         *,
         holder: SandboxHolder,
         device_id: str,
         spec: str,
         resource_id: str,
     ) -> None:
-        """The session's sandbox is on ``device_id``, a person's computer: its
-        home there is kept up to date, or made. Every tool call of the session
-        comes through here, as it does through ``place`` on a host, with its
-        ``holder`` already locked. Raises ``SandboxRemoving`` while its
+        """The environment's sandbox is on ``device_id``, a person's
+        computer: its home there is kept up to date, or made. Every tool call
+        in it comes through here, as it does through ``place`` on a host, with
+        its ``holder`` already locked. Raises ``SandboxRemoving`` while its
         previous sandbox is being destroyed."""
 
-        home = await self._repo.current_home(session_id)
+        home = await self._repo.current_home(environment_id)
         if home is not None:
             home = await self._repo.lock_home(home.id)
         if home is not None and home.stopped_at is not None:
@@ -775,19 +773,19 @@ class HostPool(PoolSweep):
             _touch(home)
             return
         if home is not None:
-            await self.leave(session_id)
+            await self.leave(environment_id)
         await self._repo.put_device_home(
             device_id,
             {
                 "spec": spec,
                 **holder.home(),
                 "resource_id": resource_id,
-                "session_id": session_id,
+                "environment_id": environment_id,
             },
         )
 
-    async def holds(self, session_id: uuid.UUID, device_id: str) -> bool:
-        """Whether the session's sandbox is on ``device_id`` as the last tool
+    async def holds(self, environment_id: uuid.UUID, device_id: str) -> bool:
+        """Whether the environment's sandbox is on ``device_id`` as the last tool
         call left it, read without a lock and without moving anything: its
         home is there, nothing is destroying it, its host is kept, and a tool
         call touched it within ``ACTIVE_STEP``. Only a sandbox that is all of
@@ -795,7 +793,7 @@ class HostPool(PoolSweep):
         (``session_work._verified``); one touched longer ago goes through them,
         so its idle clock is moved exactly as often as when every call did."""
 
-        home = await self._repo.current_home(session_id)
+        home = await self._repo.current_home(environment_id)
         if (
             home is None
             or home.stopped_at is not None
@@ -804,10 +802,7 @@ class HostPool(PoolSweep):
             or datetime.now(UTC) - home.active_at >= ACTIVE_STEP
         ):
             return False
-        request = await self._session.scalar(
-            select(AgentSession.execution_request).where(AgentSession.id == session_id)
-        )
-        if (request or {}).get(THAW_KEY):
+        if home.thaw_wanted_at is not None:
             # The row says it is awake but its processes are still stopped:
             # sending a call to it now would wait on the freezer.
             return False
@@ -817,7 +812,7 @@ class HostPool(PoolSweep):
         return host is not None and host.device_id == device_id and _keeps(host)
 
     async def _unpark(
-        self, home: SandboxHome, host: CloudHost, session_id: uuid.UUID
+        self, home: SandboxHome, host: CloudHost, environment_id: uuid.UUID
     ) -> bool:
         """Start a parked sandbox again on its host, under the pool's lock:
         when the host takes sandboxes, answers, and has a slot for it — a
@@ -841,49 +836,31 @@ class HostPool(PoolSweep):
                 return False
         home.parked_at = None
         home.frozen_at = None
+        home.thaw_wanted_at = None
         home.active_at = datetime.now(UTC)
-        row = await self._session.scalar(
-            select(AgentSession).where(AgentSession.id == session_id)
-        )
-        if row is not None:
-            row.execution_request = {
-                key: value
-                for key, value in (row.execution_request or {}).items()
-                if key != THAW_KEY
-            }
-            if row.work_lease and "verified_at" in row.work_lease:
-                row.work_lease = {
-                    key: value
-                    for key, value in row.work_lease.items()
-                    if key != "verified_at"
-                }
+        await environment_rows.unchecked(self._session, environment_id)
         return True
 
-    async def _wake_frozen(self, home: SandboxHome, session_id: uuid.UUID) -> None:
+    async def _wake_frozen(self, home: SandboxHome) -> None:
         """Ask for a frozen sandbox to be woken, under the pool's lock.
 
         The mark goes at once so a concurrent freeze sees that somebody wants
         it back (``lifecycle._freeze`` re-checks after stopping the processes
-        and thaws it itself); ``THAW_KEY`` is left for the install, which does
+        and thaws it itself); the thaw is left for the install, which does
         the host call with no database lock held (`session_work._install`).
         The idle clock moves to now: the first real tool call lands here."""
         home.frozen_at = None
         home.active_at = datetime.now(UTC)
-        row = await self._session.scalar(
-            select(AgentSession).where(AgentSession.id == session_id)
-        )
-        if row is not None:
-            row.execution_request = {
-                **(row.execution_request or {}),
-                THAW_KEY: home.resource_id,
-            }
+        home.thaw_wanted_at = datetime.now(UTC)
 
-    async def mark_awake(self, session_id: uuid.UUID) -> tuple[str | None, str] | None:
-        """Ask for the session's frozen sandbox to be woken, under the pool's
+    async def mark_awake(
+        self, environment_id: uuid.UUID
+    ) -> tuple[str | None, str] | None:
+        """Ask for the environment's frozen sandbox to be woken, under the pool's
         lock, without a tool call behind it (a reader opening its preview).
 
         Marked exactly as ``place`` marks one a tool call is waiting on: the
-        home is kept frozen in its row and ``THAW_KEY`` says it is wanted, so a
+        home is kept frozen in its row and a thaw is asked for it, so a
         freeze on its way to the host sees the mark and thaws it itself
         (``lifecycle._freeze``), and the host call is left to the caller with
         no lock held. Returns the host's device and the resource to wake, or
@@ -891,7 +868,7 @@ class HostPool(PoolSweep):
         already being removed. A home that is not frozen is returned with a
         None device, which is a sandbox that can be used as it is."""
         await self._repo.lock_pool()
-        home = await self._repo.current_home(session_id)
+        home = await self._repo.current_home(environment_id)
         if home is not None:
             home = await self._repo.lock_home(home.id)
         if home is None or home.stopped_at is not None:
@@ -913,15 +890,15 @@ class HostPool(PoolSweep):
                 # caller wake the agent, rather than telling it it is awake.
                 await self._session.commit()
                 return None
-            await self._wake_frozen(home, session_id)
+            await self._wake_frozen(home)
         await self._session.commit()
         return device_id, str(home.resource_id)
 
-    async def tell_waiting(self, session_id: uuid.UUID) -> dict | None:
-        """Tell the session's room, once, that its sandbox is being prepared.
-        Returns what to publish once committed."""
+    async def tell_waiting(self, environment_id: uuid.UUID) -> dict | None:
+        """Tell the environment's room, once, that its sandbox is being
+        prepared. Returns what to publish once committed."""
 
-        home = await self._locked_home(session_id)
+        home = await self._locked_home(environment_id)
         if home is None or home.waiting_since is not None:
             return None
         home.waiting_since = datetime.now(UTC)
@@ -929,20 +906,20 @@ class HostPool(PoolSweep):
             self._session, home, whole_machine=await self._vm(home)
         )
 
-    async def tell_ready(self, session_id: uuid.UUID) -> dict | None:
+    async def tell_ready(self, environment_id: uuid.UUID) -> dict | None:
         """Close the room's preparing line, if it was told one."""
 
-        home = await self._locked_home(session_id)
+        home = await self._locked_home(environment_id)
         if home is None or home.waiting_since is None:
             return None
         home.waiting_since = None
         return await tell_ready(self._session, home, await self._vm(home))
 
-    async def waited_s(self, session_id: uuid.UUID) -> float | None:
-        """How long the session has waited for a host still coming up, if it
-        was told to wait (``tell_waiting``); read before ``tell_ready`` ends
-        the wait."""
-        home = await self._locked_home(session_id)
+    async def waited_s(self, environment_id: uuid.UUID) -> float | None:
+        """How long the environment has waited for a host still coming up, if
+        it was told to wait (``tell_waiting``); read before ``tell_ready``
+        ends the wait."""
+        home = await self._locked_home(environment_id)
         if home is None or home.waiting_since is None:
             return None
         return (datetime.now(UTC) - home.waiting_since).total_seconds()
@@ -951,12 +928,9 @@ class HostPool(PoolSweep):
         host = None if home.host_id is None else await self._repo.get(home.host_id)
         return host is not None and host.whole_machine
 
-    async def _locked_home(self, session_id: uuid.UUID) -> SandboxHome | None:
-        return await self._session.scalar(
-            select(SandboxHome)
-            .where(SandboxHome.session_id == session_id)
-            .with_for_update()
-            .execution_options(populate_existing=True)
+    async def _locked_home(self, environment_id: uuid.UUID) -> SandboxHome | None:
+        return await occupants.home_of_environment(
+            self._session, environment_id, lock=True
         )
 
     # --- what rooms read -------------------------------------------------------

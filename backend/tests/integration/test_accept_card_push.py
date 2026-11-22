@@ -89,4 +89,31 @@ def test_a_check_that_finds_a_new_state_tells_the_card_s_pages(client, told):
 
     _rewrite(card, lambda s: _checked_now({**s, "state": "blocked"}))
 
-    assert {frame["resource"] for _, frame in told.frames} == {"accept", "tasks"}
+    assert {frame["resource"] for _, frame in told.frames} == {
+        "accept",
+        "tasks",
+        "topics",
+    }
+
+
+def test_a_cards_new_check_state_reaches_the_project_sidebar(client, told, monkeypatch):
+    from app.domain.agent import project_feed
+
+    # A project page is actually listening; tell_project deliberately avoids
+    # any database reads when there are no subscribers.
+    told.any_subscribed = lambda _prefix: True
+    told.has_subscribers = lambda _channel: True
+    monkeypatch.setattr(project_feed, "get_broker", lambda: told)
+    monkeypatch.setattr(project_feed, "_sessions", client.test_factory)
+    project = _make_project(client)
+    room = _make_topic(client, project)
+    card = _make_card(client, room)
+    told.frames.clear()
+
+    _rewrite(card, lambda s: _checked_now({**s, "state": "clean", "who": "human"}))
+
+    # A reader in a different channel only subscribes to the project feed.
+    assert (
+        f"project:{project}",
+        {"type": "state", "resource": "topics", "id": room},
+    ) in told.frames

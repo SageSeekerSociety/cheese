@@ -177,6 +177,7 @@ const room = useRoomLayout(usePagePanels, {
   onActivated: () => {},
   onClose: () => {},
   onKeep: () => {},
+  onSpawn: () => {},
 })
 
 // 这段私聊里的文件：清单、正在看的那一份、保存到资料库（私聊里的东西只有这里的人看得到，

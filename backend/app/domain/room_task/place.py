@@ -524,5 +524,14 @@ async def session_keeps_work(
         return True
     if row is None:
         return True
-    place = await PlaceResolver(session).conversation(row.conversation_id)
+    return await conversation_keeps_work(session, row.conversation_id)
+
+
+async def conversation_keeps_work(
+    session: AsyncSession, conversation_id: uuid.UUID
+) -> bool:
+    """Whether what is done in the conversation may be carried into the
+    project (`Place.keeps_work`): a 支线's may not. One that is gone has no
+    支线 to answer for, and keeps its work."""
+    place = await PlaceResolver(session).conversation(conversation_id)
     return place is None or place.keeps_work

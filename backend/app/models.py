@@ -26,6 +26,7 @@ from app.domain.delivery import models as delivery  # noqa: F401
 from app.domain.device import models as device  # noqa: F401
 from app.domain.discussion import models as discussion  # noqa: F401
 from app.domain.docs_site import models as docs_site  # noqa: F401
+from app.domain.environment import models as environment  # noqa: F401
 from app.domain.feedback import models as feedback  # noqa: F401
 from app.domain.groups import models as groups  # noqa: F401
 from app.domain.happenings import models as happenings  # noqa: F401
@@ -55,6 +56,7 @@ from app.domain.project_situation import models as project_situation  # noqa: F4
 from app.domain.project_skill import models as project_skill  # noqa: F401
 from app.domain.questions import models as questions  # noqa: F401
 from app.domain.remote_mcp import models as remote_mcp  # noqa: F401
+from app.domain.repository import models as repository  # noqa: F401
 from app.domain.review import comment_models as review_comments  # noqa: F401
 from app.domain.review import models as review  # noqa: F401
 from app.domain.room_task import models as room_task  # noqa: F401

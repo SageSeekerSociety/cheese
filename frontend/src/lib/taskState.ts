@@ -64,7 +64,7 @@ export interface TaskState {
   tone: TaskStateTone
   /** 状态词（`work.taskState.label.<status>`）。 */
   label: string
-  /** 记号在转：只给「在做」且会话真的在跑的那一刻。 */
+  /** 记号在转：「在做」或修复交付，且会话真的在跑。交付链路本身不算运行。 */
   live: boolean
   /** 第一次看到时要闪一下的那件事的钥匙；不闪是 null。见 `firstSight`。 */
   attention: string | null
@@ -209,9 +209,9 @@ type StateRow = Pick<RoomTask, 'id' | 'presentation'> &
     >
   >
 
-/** 做它的 AI 队友此刻是不是真的在跑。频道的任务列表和单个任务带 `session_running`；
- *  项目级列表和侧栏行只带 `moving`（会话在跑，或卡走在交付链路上）—— 「在做」的时候
- *  没有卡在链路上，所以那边 `moving` 就是会话在跑。 */
+/** 任务会话是不是真的在跑，各处列表与任务页都带 `session_running`。
+ *  没有这个字段时，`moving` 只在「在做」格等价于运行；修复交付不能用它推断，
+ *  因为卡走在交付链路上也会让 `moving` 为真。 */
 export function sessionRunning(row: Pick<StateRow, 'session_running' | 'moving'>): boolean {
   return row.session_running ?? row.moving === true
 }
@@ -262,7 +262,8 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
   const now = ctx.now ?? Date.now()
   const nameOf = ctx.nameOf ?? ((handle: string) => handle)
   const note = (row.progress_note ?? '').trim()
-  const live = kind === 'running' && sessionRunning(row)
+  const repairing = phrase === 'fixing_checks' || phrase === 'resolving_conflict' || phrase === 'updating_branch'
+  const live = kind === 'running' ? sessionRunning(row) : repairing && row.session_running === true
   const waitsOn = (handle: string | null | undefined, mine: boolean): string | null =>
     mine ? t('work.taskState.waitsOnYou') : handle ? t('work.taskState.waitsOn', { name: nameOf(handle) }) : null
   let icon = look.icon
@@ -311,11 +312,25 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
       break
     case 'asking': {
       const mine = row.needs_my_action === true
+      if (!mine) tone = 'neutral'
       line = waitsOn(row.waiting_on, mine) ?? ''
       waits = line
       break
     }
     case 'review': {
+      if (phrase === 'gate_running' || phrase === 'awaiting_checks') {
+        icon = LOOK.waiting.icon
+        tone = LOOK.waiting.tone
+      } else if (repairing) {
+        icon = live ? LOOK.running.icon : RUNNING_IDLE_ICON
+        tone = LOOK.running.tone
+      } else if (phrase === 'checks_failed') {
+        icon = LOOK.blocked.icon
+        tone = 'danger'
+      } else if (phrase === 'awaiting_review' && row.needs_my_action === true) {
+        icon = LOOK.asking.icon
+        tone = LOOK.asking.tone
+      }
       // 只有卡真在等人审阅（`awaiting_review`）时才写在等谁，名字取卡上的审阅人：任务
       // 建时定的那位可能已经改由别人审阅。跑检查、修检查、解冲突时写的是那一步，下一步
       // 在平台和队友手上，检查没过时在负责人手上，都不是在等谁审阅。

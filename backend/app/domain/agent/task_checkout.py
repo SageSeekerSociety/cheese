@@ -113,19 +113,10 @@ def task_checkout(client, topic, *, notice=True):
     a lease still preparing, a command that ended without saying where the
     checkout is. ``notice``: say that on stderr. A launch says it; a command
     being handed to the machine does not, since its stderr is the agent's."""
-    request = {
-        "tool": "Bash",
-        "args": {
-            "command": _CHECKOUT.format(topic=shlex.quote(str(topic))),
-            "timeout": CHECKOUT_TIMEOUT_MS,
-        },
-        "platform": True,
-    }
     answer = {}
     for attempt in range(2):
         try:
-            request["id"] = "task-checkout-" + uuid.uuid4().hex
-            answer = client.call("invoke", request)
+            answer = client.call("invoke", checkout_request(topic))
             break
         except (RuntimeError, OSError, TimeoutError):
             # The first call that takes the machine's hands may be answered
@@ -134,6 +125,28 @@ def task_checkout(client, topic, *, notice=True):
             if attempt:
                 # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
                 raise TaskCheckoutFailed("the machine did not answer") from None
+    return checkout_answered(answer, notice=notice)
+
+
+def checkout_request(topic, prefix="task-checkout-"):
+    """The executor call that opens ``topic``'s checkout: the machine's own
+    Bash, as the platform's call (no project hooks). ``prefix`` names whose
+    call it is in the executor's log."""
+    return {
+        "id": prefix + uuid.uuid4().hex,
+        "tool": "Bash",
+        "args": {
+            "command": _CHECKOUT.format(topic=shlex.quote(str(topic))),
+            "timeout": CHECKOUT_TIMEOUT_MS,
+        },
+        "platform": True,
+    }
+
+
+def checkout_answered(answer, *, notice=False):
+    """Where the checkout is, read off the machine's answer to
+    `checkout_request`: its path, or None when there is no checkout to open
+    (`NO_CHECKOUT`). Raises ``TaskCheckoutFailed`` for anything else."""
     value = answer.get("value") or {}
     said = value.get("stdout") or answer.get("error") or ""
     lines = said.strip().splitlines()

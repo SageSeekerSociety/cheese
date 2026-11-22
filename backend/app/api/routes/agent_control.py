@@ -27,6 +27,7 @@ from app.core.errors import (
 )
 from app.domain.agent import private_chat
 from app.domain.agent.chat import ChatService
+from app.domain.agent_session.attachment import place_of
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.actor import Actor
 from app.domain.room_task.place import place_or_404
@@ -93,18 +94,23 @@ class ControlIn(BaseModel):
     request: dict[str, Any]
 
 
-async def executor_target(db: AsyncSession, topic_id: uuid.UUID) -> dict | None:
-    """The executor the room's session works on, for this generation of the room.
-
-    Asked of the room's sessions and not of one: they lease the same executor
-    today (see `api/routes/execution.py`).
-    """
+async def executor_target(
+    db: AsyncSession, topic_id: uuid.UUID, agent: str | None
+) -> dict | None:
+    """The machine the session of the seat ``agent`` works on, for this
+    generation of the room: what its file and workspace controls read is
+    that agent's own working copy, so it is the environment that session is
+    attached to (or the scratch area of a session with none), never another
+    session's."""
+    if agent is None:
+        return None
     place = await place_or_404(db, topic_id)
     resource = str(place.room.resource_id or place.room.id)
-    for held in await AgentSessionService(db).places_in_room(place.room_id):
-        if held.lease and held.resource_id == resource:
-            return held.lease
-    return None
+    row = await AgentSessionService(db).latest(place.conversation_id, agent)
+    held = await place_of(db, row) if row is not None else None
+    if held is None or not held.lease or held.resource_id != resource:
+        return None
+    return held.lease
 
 
 @router.post(
@@ -129,7 +135,7 @@ async def control(
     request = data.request
     if request.get("subtype") not in runtime.controls:
         raise ValidationError("Unsupported control; see the session's controls list")
-    target = await executor_target(db, topic_id)
+    target = await executor_target(db, topic_id, state.get("agent"))
     # A control waits for a remote process; do not hold an idle transaction.
     await db.commit()
     try:

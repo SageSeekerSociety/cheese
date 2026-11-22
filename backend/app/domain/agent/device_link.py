@@ -49,6 +49,9 @@ class LinkMsg:
     executor: bool = False
     # `hello` only: the connector expands `place.ROOT_PLACEHOLDER` itself.
     profiles: bool = False
+    # `hello` only: the connector opens the byte streams `stream_open` asks
+    # for and relays them on credit (`cli/internal/host/stream.go`).
+    streams: bool = False
     name: str = ""
     value: Any = None
     id: str = ""
@@ -71,6 +74,7 @@ class LinkMsg:
             target=str(m.get("target", "")),
             executor=m.get("executor") is True,
             profiles=m.get("profiles") is True,
+            streams=m.get("streams") is True,
             name=str(m.get("name", "")),
             value=m.get("value"),
             id=str(m.get("id", "")),
@@ -111,6 +115,33 @@ def machine_data(stream_id: str, payload: bytes) -> dict[str, Any]:
 def machine_close(stream_id: str) -> dict[str, Any]:
     """The platform answered a machine stream in full."""
     return {"t": "machine.close", "id": stream_id}
+
+
+def stream_open(stream_id: str, state: str, header: str) -> dict[str, Any]:
+    """Open a stream to the executor under ``state`` and keep it open:
+    ``header`` is the first line the connector writes to its socket, which
+    says what the stream is for; from there bytes go both ways."""
+    return {"t": "stream.open", "id": stream_id, "path": state, "header": header}
+
+
+def stream_data(stream_id: str, payload: bytes) -> dict[str, Any]:
+    """Bytes for the executor on an open stream."""
+    return {
+        "t": "stream.data",
+        "id": stream_id,
+        "data": base64.b64encode(payload).decode(),
+    }
+
+
+def stream_ack(stream_id: str, taken: int) -> dict[str, Any]:
+    """``taken`` more bytes of the stream's output were passed on: the
+    connector may read that much more from the executor."""
+    return {"t": "stream.ack", "id": stream_id, "bytes": int(taken)}
+
+
+def stream_close(stream_id: str) -> dict[str, Any]:
+    """The server is done with a stream."""
+    return {"t": "stream.close", "id": stream_id}
 
 
 def welcome() -> dict[str, Any]:

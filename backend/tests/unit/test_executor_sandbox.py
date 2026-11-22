@@ -28,7 +28,14 @@ RUNTIME = Path(runtime.__file__)
 BACKEND = Path(__file__).resolve().parents[2]
 
 # The modules `runtime.py` imports from beside itself, by their bare names.
-PARTS = ("runtime_core", "runtime_commands", "runtime_context", "runtime_calls")
+PARTS = (
+    "runtime_core",
+    "runtime_commands",
+    "runtime_context",
+    "runtime_calls",
+    "runtime_terminal",
+    "runtime_language",
+)
 
 
 @pytest.fixture(autouse=True)

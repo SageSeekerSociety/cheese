@@ -1,0 +1,14 @@
+{
+  "type": "stream.data",
+  "origin": "server",
+  "why": "Bytes for the executor on an open stream, written to its socket verbatim.",
+  "frame": {
+    "t": "stream.data",
+    "id": "stream-3f9a1c7e5b2d4086a1e9c7b5d3f1a2b4",
+    "data": "bWFrZSB0ZXN0DQ=="
+  },
+  "meaning": {
+    "stream_id": "stream-3f9a1c7e5b2d4086a1e9c7b5d3f1a2b4",
+    "payload": "make test\r"
+  }
+}

@@ -89,6 +89,7 @@ def test_only_a_running_command_holds_an_idle_upgrade(tmp_path, running):
     executor.active_calls = 0
     executor.upgrading = False
     executor.running = {"shell-1": {}} if running else {}
+    executor.terminals = runtime.terminal.Terminals(executor)
 
     result = executor.dispatch("begin_upgrade", {"release": "next"})
 

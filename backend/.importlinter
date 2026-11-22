@@ -613,6 +613,12 @@ unmatched_ignore_imports_alerting = warn
 # of a student's code to a judge host over the device link (`agent.device_hub`)
 # and reads the task's suites and queue rows from `task` at layer 4, which may
 # not reach a device itself. The task side queues a run; this side takes it.
+#
+# `environment` joined at layer 1 (2026-11-21): an execution environment, the
+# conversation's pointer to it and who is attached to it are asked about by
+# `agent_session` and `repository` at layer 3, `room_task` and `memory` at 4
+# and `machine` at 5, and it reads nothing of the domain but `common`. It names
+# a session or a sandbox by id, so none of those packages has to sit below it.
 name = C5 domain packages form seven layers, dependencies point down
 type = layers
 layers =
@@ -622,7 +628,7 @@ layers =
     block : thread : pin : chapter : mentions : room_task : task : review : living_doc : documents : library : deliverables : memory : feedback : space : groups : questions : answers : comments : discussion : materials : project_skill : search : docs_site : canvas : web_snippet : project_material : voice : machine_skill : skill_market
     repository : integration : webhook : fetch : remote_mcp : gateway_chat : usage : notification : agent_session : environment_diagnosis
     identity : user : team : project : topic : membership : topic_membership : authz : policy : invite : passkey : oauth : agent_type : agent_credential : ci_activity
-    common : prompts : day_windows : conversation : idempotency : addressing : delivery_events : happenings : run_record : session_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta : shell_catalog : presentation_meta : review_note_codes : project_material_rows : event_about : event_author : project_permissions : reads : repositories
+    common : prompts : day_windows : conversation : environment : idempotency : addressing : delivery_events : happenings : run_record : session_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta : shell_catalog : presentation_meta : review_note_codes : project_material_rows : event_about : event_author : project_permissions : reads : repositories
 containers =
     app.domain
 exhaustive = true
