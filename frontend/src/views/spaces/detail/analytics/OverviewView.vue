@@ -25,6 +25,67 @@
     />
 
     <template v-else-if="overview">
+      <!-- 学生学得怎么样：最靠前的一句。老师进数据页先看到它，不必切到「学情分析」页签。 -->
+      <section class="an-card learning-now" data-testid="overview-learning">
+        <div class="learning-now__head">
+          <h3 class="an-card__title">{{ t('spaces.analytics.overview.learning.title') }}</h3>
+          <BaseButton
+            v-if="learning?.enabled && learning.reported > 0"
+            kind="ghost"
+            size="sm"
+            @click="emit('openLearning')"
+          >
+            {{ t('spaces.analytics.overview.learning.open') }}
+          </BaseButton>
+        </div>
+        <v-progress-linear v-if="learningLoading" indeterminate color="primary" />
+        <template v-else-if="learning && mastery">
+          <AnalyticsStatStrip>
+            <AnalyticsMetricCard
+              v-for="item in masteryCards"
+              :key="item.key"
+              :label="item.label"
+              :value="item.value"
+              :description="item.description"
+            />
+          </AnalyticsStatStrip>
+          <p class="an-note">{{ masteryLede }}</p>
+          <h4 class="an-card__title learning-now__sub">{{ t('spaces.analytics.overview.learning.weakTitle') }}</h4>
+          <p v-if="!learning.focus.length" class="an-note">
+            {{
+              mastery.reported === 0
+                ? t('spaces.analytics.overview.learning.tooFew', { n: learning.minPeople })
+                : t('spaces.analytics.overview.learning.weakEmpty')
+            }}
+          </p>
+          <div v-else class="learning-now__points">
+            <button
+              v-for="point in learning.focus"
+              :key="point.knowledgePointId"
+              type="button"
+              class="learning-now__point"
+              @click="emit('openLearningPoint', point.knowledgePointId)"
+            >
+              <span class="learning-now__name">{{ point.name }}</span>
+              <span class="learning-now__stuck">
+                {{
+                  t('spaces.analytics.overview.learning.weakStuck', {
+                    stuck: point.stuck,
+                    involved: point.involved,
+                  })
+                }}
+              </span>
+            </button>
+          </div>
+        </template>
+        <BaseEmptyState
+          v-else
+          size="inline"
+          :title="t('spaces.analytics.overview.learning.offTitle')"
+          :desc="t('spaces.analytics.overview.learning.offDesc')"
+        />
+      </section>
+
       <AnalyticsStatStrip>
         <AnalyticsMetricCard
           v-for="item in metricCards"
@@ -72,7 +133,7 @@
 </template>
 
 <script setup lang="ts">
-import type { SpaceAnalyticsAlerts, SpaceAnalyticsOverview } from '@/types/apiSpaces'
+import type { LearningClassOverview, SpaceAnalyticsAlerts, SpaceAnalyticsOverview } from '@/types/apiSpaces'
 import type { AnalyticsGroupBy, SpaceAnalyticsQueryState } from './utils'
 
 import { computed } from 'vue'
@@ -87,6 +148,7 @@ import AnalyticsTrendCard from './components/AnalyticsTrendCard.vue'
 import { useAnalyticsOptions } from './composables/useAnalyticsOptions'
 import { formatCount, formatPercent, labelDistributionCodes, withDistributionPercent } from './helpers'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
 
@@ -105,6 +167,9 @@ const props = defineProps<{
   /** 出题人下拉的选项：页面取回来，这里只画。 */
   publishers: Array<{ title: string; value: number | null }>
   publishersLoading: boolean
+  /** 学情分析的整体那一眼：学生学得怎么样。读不到是 null（这一块整块不画）。 */
+  learning?: LearningClassOverview | null
+  learningLoading?: boolean
 }>()
 
 const publisherId = defineModel<number | null>('publisherId', { required: true })
@@ -114,10 +179,40 @@ const emit = defineEmits<{
   load: []
   /** 点一个能处理的数：报上去「要跳到哪一格、带哪几个筛选」。 */
   openTasks: [patch: Partial<SpaceAnalyticsQueryState>]
+  /** 「看完整的学情分析」：切到那一个页签。 */
+  openLearning: []
+  /** 点一个薄弱的知识点：切过去并打开它。 */
+  openLearningPoint: [pointId: number]
 }>()
 
 const { t, te } = useI18n()
 const options = useAnalyticsOptions()
+
+/** 这块板够人数才报数的那一半：没有（没开学情分析 / 还没够人）时是 null。 */
+const mastery = computed(() => props.learning?.mastery ?? null)
+
+/** 三档各多少人：掌握 / 不稳 / 薄弱，按人算（一个人一个知识点算一次）。 */
+const masteryCards = computed(() => {
+  const m = mastery.value
+  if (!m) return []
+  const total = m.judged || 1
+  return (['mastered', 'shaky', 'weak'] as const).map((level) => ({
+    key: level,
+    label: t(`spaces.analytics.overview.learning.levels.${level}`),
+    value: m.levels[level],
+    description: formatPercent(m.levels[level] / total),
+  }))
+})
+
+/** 这一条按谁画的：几个成员、几个知识点，以及一共多少条判断。 */
+const masteryLede = computed(() => {
+  const m = mastery.value
+  if (!m) return ''
+  return [
+    t('spaces.analytics.overview.learning.lede', { people: m.peopleJudged, points: m.reported }),
+    t('spaces.analytics.overview.learning.judged', { n: m.judged }),
+  ].join(' ')
+})
 
 const metricCards = computed(() => {
   const o = props.overview

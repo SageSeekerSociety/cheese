@@ -7,15 +7,19 @@
     :error-detail="errorDetail"
     :overview="overview"
     :alerts="alerts"
+    :learning="learning"
+    :learning-loading="learningLoading"
     :publishers="publisherOptions"
     :publishers-loading="publishersLoading"
     @load="load"
     @open-tasks="openTasks"
+    @open-learning="openLearning"
+    @open-learning-point="openLearningPoint"
   />
 </template>
 
 <script setup lang="ts">
-import type { SpaceAnalyticsAlerts, SpaceAnalyticsOverview } from '@/types/apiSpaces'
+import type { LearningClassOverview, SpaceAnalyticsAlerts, SpaceAnalyticsOverview } from '@/types/apiSpaces'
 import type { AnalyticsGroupBy, SpaceAnalyticsQueryState } from './utils'
 
 import { ref, watch } from 'vue'
@@ -41,6 +45,10 @@ const failed = ref(false)
 const errorDetail = ref<string | null>(null)
 const overview = ref<SpaceAnalyticsOverview | null>(null)
 const alerts = ref<SpaceAnalyticsAlerts | null>(null)
+// 学生的作答情况（学情分析）那一块：这一页最靠前的一句「学生学得怎么样」，不必切到
+// 后面的「学情分析」页签才看得到。读不到就整块不画（不是把「读不出来」画成「没有」）。
+const learning = ref<LearningClassOverview | null>(null)
+const learningLoading = ref(false)
 const { publishers: publisherOptions, loading: publishersLoading } = useAnalyticsPublishers(spaceId, filters)
 
 const publisherIdModel = ref<number | null>(filters.value.publisherId ?? null)
@@ -74,6 +82,18 @@ const load = async () => {
 
     overview.value = overviewResponse
     alerts.value = alertsResponse
+    // 学情那一块单独读：它读不到不该把整页画成失败（这一页还有别的数在）。
+    learningLoading.value = true
+    SpacesApi.getLearningClassOverview(spaceId.value)
+      .then((data) => {
+        learning.value = data
+      })
+      .catch(() => {
+        learning.value = null
+      })
+      .finally(() => {
+        learningLoading.value = false
+      })
   } catch (error) {
     console.error('load overview analytics failed', error)
     failed.value = true
@@ -93,4 +113,8 @@ watch(
 
 /** 点一个能处理的数：去「题目」那一格，带上对应的筛选。 */
 const openTasks = (patch: Partial<SpaceAnalyticsQueryState>) => pushToSection(analyticsNames.tasks, patch)
+
+// 「看完整的学情分析」：切到那一个页签（带不带知识点由点的地方决定）。
+const openLearning = () => pushToSection(analyticsNames.learning)
+const openLearningPoint = (pointId: number) => pushToSection(analyticsNames.learning, { knowledgePoint: pointId })
 </script>

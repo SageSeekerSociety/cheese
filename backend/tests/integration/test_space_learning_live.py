@@ -72,9 +72,7 @@ def test_the_frame_carries_no_analysis(api_client, user_client, db_session):
 def test_someone_outside_the_board_is_refused(api_client, user_client, db_session):
     board = _board(user_client, api_client, db_session)
     outsider = user_client.create_user()
-    outsider_token = user_client.login(
-        api_client, outsider.username, outsider.password
-    )
+    outsider_token = user_client.login(api_client, outsider.username, outsider.password)
     with pytest.raises(WebSocketDisconnect):
         with api_client.websocket_connect(
             f"/spaces/{board['space_id']}/learning-analysis/live?token={outsider_token}"

@@ -77,6 +77,27 @@ class FocusPointOut(BaseModel):
     involved: int
 
 
+class ClassMasteryLevelsOut(BaseModel):
+    model_config = _C
+
+    mastered: int
+    shaky: int
+    weak: int
+
+
+class ClassMasteryOut(BaseModel):
+    """整体学情：够人数才报的每个知识点，按当前判断数人（一个人一个点算一次）。"""
+
+    model_config = _C
+
+    members: int
+    reported: int
+    points: int
+    levels: ClassMasteryLevelsOut
+    judged: int
+    people_judged: int = Field(alias="peopleJudged")
+
+
 class RealtimeStateOut(BaseModel):
     """今天学情分析的实时读取到哪了（与「我的学习洞察」同一份）。"""
 
@@ -100,6 +121,7 @@ class LearningClassOverviewOut(BaseModel):
     weak_points: int = Field(alias="weakPoints")
     tasks: list[TaskCompletionOut]
     focus: list[FocusPointOut]
+    mastery: ClassMasteryOut | None = None
     realtime: RealtimeStateOut | None = None
 
 

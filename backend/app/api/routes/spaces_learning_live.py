@@ -66,9 +66,7 @@ async def learning_live_feed(
         actor.authenticated
         and space is not None
         and user_id is not None
-        and await space_seats.SPACE.allows(
-            db, space_id, user_id, SpacePermission.view
-        )
+        and await space_seats.SPACE.allows(db, space_id, user_id, SpacePermission.view)
     )
     if not allowed:
         await websocket.accept()

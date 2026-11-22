@@ -39,6 +39,8 @@ const route: { query: Record<string, string>; params: { spaceId: string } } = {
   params: { spaceId: '42' },
 }
 
+// 学情分析的推送在用例里不开真连接（这一条用例不测它）。
+vi.mock('@/lib/learningLive', () => import('@/test/fakeLearningLive'))
 vi.mock('vue-router', () => ({
   useRoute: () => route,
   useRouter: () => ({ push, replace }),
