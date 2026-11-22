@@ -294,11 +294,13 @@ async def write_file(
             path=path,
             previous=saved["previous"],
             content=saved.get("content", content),
+            working=chat.work_in_flight(row.id),
         )
         await db.commit()
         if said is not None:
-            line, told = said
-            await chat.notify_running_session(row.id, told, blocks=[line.id])
+            line, told, unheard = said
+            if unheard:
+                await chat.notify_running_session(row.id, told, blocks=[line.id])
     return ok(
         {
             "path": path,

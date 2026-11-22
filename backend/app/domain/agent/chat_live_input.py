@@ -199,6 +199,10 @@ class LiveInput:
         await record_read(self._sessions, reader=acting, block_ids=user_block_ids)
         return True
 
+    def work_in_flight(self, topic_id: uuid.UUID) -> uuid.UUID | None:
+        """The work the session in this topic is doing right now, if one is."""
+        return self._compute.work_in_flight(topic_id)
+
     async def notify_running_session(
         self,
         topic_id: uuid.UUID,
