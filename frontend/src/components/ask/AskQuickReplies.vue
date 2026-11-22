@@ -65,7 +65,7 @@ import type { Block } from '../../cx_types'
 import { computed, ref, watch } from 'vue'
 
 import { t } from '../../i18n'
-import { askAnswers, askClosedByAsker, askOptions } from '../../lib/blockDisplay'
+import { askAnswers, askClosedByAsker, askEarlierAnswers, askFinalAnswer, askOptions } from '../../lib/blockDisplay'
 import BaseButton from '../base/BaseButton.vue'
 import ConfirmDialog from '../base/ConfirmDialog.vue'
 
@@ -103,10 +103,11 @@ const responses = computed(() => askAnswers(props.block))
 /** 提问方把题收起来了：撤回（不再等人答）或过期（还能答）。 */
 const closedByAsker = computed(() => askClosedByAsker(props.block))
 const withdrawn = computed(() => closedByAsker.value === 'withdrawn')
-/** 真正的回答（不是跳过）。最后一条算数；前面那几条是同一个人先说过的。 */
+/** 真正的回答（不是跳过）。最后一条算数；前面那几条是同一个人先说过的。判据在
+ *  `lib/blockDisplay` 里，和整组卡读同一份。 */
 const answers = computed(() => responses.value.filter((a) => !a.skipped))
-const finalAnswer = computed(() => answers.value.at(-1) ?? null)
-const earlierAnswers = computed(() => answers.value.slice(0, -1))
+const finalAnswer = computed(() => askFinalAnswer(props.block))
+const earlierAnswers = computed(() => askEarlierAnswers(props.block))
 const skips = computed(() => responses.value.filter((a) => a.skipped))
 // 点名的人都跳过了：题对谁都了结了。问所有人的题不会这样了结。
 const skippedByAll = computed(
