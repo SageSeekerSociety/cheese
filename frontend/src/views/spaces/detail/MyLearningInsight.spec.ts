@@ -41,7 +41,21 @@ vi.mock('vuetify-sonner', () => ({
   toast: { success: vi.fn(), error: (...a: unknown[]) => toastError(...a), warning: vi.fn() },
 }))
 
-vi.mock('vue-router', () => ({ useRoute: () => ({ params: { spaceId: '11' } }) }))
+const joinedTasks = vi.fn()
+const taskDetail = vi.fn()
+const push = vi.fn()
+
+vi.mock('vue-router', () => ({
+  useRoute: () => ({ params: { spaceId: '11' } }),
+  useRouter: () => ({ push }),
+}))
+
+vi.mock('@/api/taskBoard', () => ({
+  TaskBoardApi: {
+    joined: (...a: unknown[]) => joinedTasks(...a),
+    detail: (...a: unknown[]) => taskDetail(...a),
+  },
+}))
 
 import MyLearningInsightPage from './MyLearningInsight.vue'
 
@@ -121,6 +135,8 @@ describe('我的学习洞察', () => {
     setLocale('zh-CN')
     vi.stubGlobal('visualViewport', new EventTarget())
     readMyLearningPractice.mockResolvedValue(overview())
+    joinedTasks.mockResolvedValue([])
+    taskDetail.mockResolvedValue({ task: { space: { id: 11 } } })
   })
 
   afterEach(() => {
@@ -285,5 +301,26 @@ describe('我的学习洞察', () => {
     await fireEvent.click(await screen.findByTestId('insight-practice'))
     await waitFor(() => expect(toastError).toHaveBeenCalled())
     expect(screen.queryByTestId('learning-practice')).toBeNull()
+  })
+
+  it('领了这块板上的题时，顶上给一条回作业的路，点了去那道题', async () => {
+    readMyLearningInsight.mockResolvedValue(insight())
+    joinedTasks.mockResolvedValue([
+      { id: 2465, title: 'SQL 聚合函数与分组', intro: null, deadline: null, myDeadline: null, approved: true, ended: false },
+      { id: 9, title: '别的板的题', intro: null, deadline: null, myDeadline: null, approved: true, ended: false },
+    ])
+    taskDetail.mockImplementation((id: number) =>
+      Promise.resolve({ task: { space: id === 2465 ? { id: 11 } : { id: 12 } } })
+    )
+    mount()
+
+    const back = await screen.findByTestId('insight-back-to-work')
+    expect(back.textContent).toContain('SQL 聚合函数与分组')
+    expect(back.textContent).not.toContain('别的板的题')
+    await fireEvent.click(screen.getByTestId('insight-back-task'))
+    expect(push).toHaveBeenCalledWith({
+      name: 'TasksDetail',
+      params: { spaceId: '11', taskId: '2465' },
+    })
   })
 })

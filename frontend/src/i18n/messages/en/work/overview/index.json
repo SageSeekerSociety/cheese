@@ -65,5 +65,12 @@
     "text": "Text, graded by hand",
     "file": "File",
     "code": "Code, run against test cases"
-  }
+  },
+  "learningTitle": "Learning insight and practice",
+  "learningFocus": "Work on next: {name} ({level})",
+  "learningDue": "{n} review set(s) due",
+  "learningOpen": "{n} practice set(s) unfinished",
+  "learningEmpty": "No analysis yet. Discuss the task with the AI and from tomorrow this page sorts out what to work on, by knowledge point.",
+  "learningGo": "Go to practice",
+  "learningOpenInsight": "My learning insight"
 }

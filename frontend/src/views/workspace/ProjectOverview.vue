@@ -2,6 +2,7 @@
 // 项目总览（容器）：读项目目标、最近进展、项目的任务和名册，去任务页、文档
 // 页、全部任务都在这里；画面在同目录的 ProjectOverviewView。
 import type { ArtifactApi } from '@/components/ArtifactManifest.vue'
+import type { ProjectLearning } from '@/components/overview/LearningPracticeCard.vue'
 import type { ProjectMemberRow, RoomTask, Topic } from '@/cx_types'
 import type { TaskStageStatus } from '@/types'
 import type { ProgressItem } from '@/types/projectProgress'
@@ -28,6 +29,7 @@ import {
   publishProjectSite,
   renameProjectArtifact,
 } from '@/api'
+import { SpacesApi } from '@/api/spaces'
 import { TaskBoardApi } from '@/api/taskBoard'
 import { newTask } from '@/commands/topicActions'
 import { agentNames, memberName } from '@/lib/agentNames'
@@ -227,6 +229,42 @@ function goSubmit() {
     params: { spaceId: String(task.space_id), taskId: String(task.id) },
   })
 }
+// 学情分析与巩固练习：只在领题来的项目、且这道题所在的板开着学情分析时摆。最该补的
+// 知识点和到期/待做的巩固题从「我的学习洞察」的两条接口读；读不到就不摆这张卡（不挡
+// 总览，也不替一块不认识的板下结论）。
+const learning = ref<ProjectLearning | null>(null)
+watch(
+  () => fromTask.value?.space_id,
+  async (spaceId) => {
+    learning.value = null
+    if (!spaceId) return
+    try {
+      const [insight, practice] = await Promise.all([
+        SpacesApi.readMyLearningInsight(spaceId),
+        SpacesApi.readMyLearningPractice(spaceId),
+      ])
+      if (fromTask.value?.space_id !== spaceId) return
+      if (!insight.enabled) return
+      const focusPoint = insight.knowledgePoints.find(
+        (point) => point.id === insight.focusKnowledgePointId && point.judgment
+      )
+      learning.value = {
+        focus: focusPoint?.judgment ? { name: focusPoint.name, level: focusPoint.judgment.level } : null,
+        due: practice.due.length,
+        open: practice.open.length,
+        left: practice.enabled ? Math.max(practice.dailyLimit - practice.usedToday, 0) : null,
+      }
+    } catch {
+      learning.value = null
+    }
+  },
+  { immediate: true }
+)
+function openLearningInsight() {
+  const task = fromTask.value
+  if (!task) return
+  void router.push({ name: 'SpacesMyLearningInsight', params: { spaceId: String(task.space_id) } })
+}
 function newCodeTask() {
   const root = store.rootTopic
   if (root) void newTask(root, router)
@@ -285,8 +323,7 @@ function allTasks() {
     :starter="starter"
     :task-linked="fromTask !== null"
     :submission="submission"
-    @go-submit="goSubmit"
-    @new-task="newCodeTask"
+    :learning="learning"
     :progress="progress"
     :progress-failed="progressFailed"
     :tasks="tasks"
@@ -301,6 +338,9 @@ function allTasks() {
     :agent-handle="store.agentHandle"
     :drafting="drafting"
     :draft-error="draftError"
+    @go-submit="goSubmit"
+    @new-task="newCodeTask"
+    @open-learning="openLearningInsight"
     @draft-overview="draftOverview"
     @edit-overview="editOverview"
     @open-task="openTask"

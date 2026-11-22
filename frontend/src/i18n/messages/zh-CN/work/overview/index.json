@@ -65,5 +65,12 @@
     "text": "文本，老师手动判",
     "file": "文件",
     "code": "代码，跑测试点"
-  }
+  },
+  "learningTitle": "学情分析与巩固练习",
+  "learningFocus": "最该补的：{name}（{level}）",
+  "learningDue": "{n} 组复习到期",
+  "learningOpen": "{n} 组巩固题没做完",
+  "learningEmpty": "还没有分析结果。在题目里和 AI 讨论，明晚之后这里会按知识点整理出你最该补的地方。",
+  "learningGo": "去巩固练习",
+  "learningOpenInsight": "看我的学习洞察"
 }
