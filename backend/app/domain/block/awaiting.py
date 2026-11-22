@@ -42,9 +42,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.request_facts import recall, remember
 from app.domain.block.asked import (
     Awaited,
-    answerable,
+    answerable_by,
     may_answer,
-    pending_replies,
     settled,
     skipped_by,
 )
@@ -199,22 +198,24 @@ class AwaitingQueries:
         record the answer on.
 
         A reply to a question (`reply_to` — what clicking one of its options
-        sends) answers that question, but only while it is unanswered: a
-        question takes one answer, so a reply to one already answered records
-        nothing. Nor does a reply from someone who may not answer it
-        (`block.asked.may_answer`): it is talk about the question — a teammate
-        quoting it to say which option he would pick — posted like any other
-        message, not its answer. A reply to any other message answers nothing.
+        sends) answers that question. A question takes one person's answer, so a
+        reply from a second person records nothing — but the person whose answer
+        is on it may say it again, and his later line replaces the earlier one
+        (`block.asked.final_answer`). Nor does a reply from someone who may not
+        answer it (`block.asked.may_answer`): it is talk about the question — a
+        teammate quoting it to say which option he would pick — posted like any
+        other message, not its answer. A reply to any other message answers
+        nothing.
 
         A message that replies to nothing answers the open questions in its
         conversation its author may answer (`block.asked.may_answer`: asked of
         him, among others, of everyone in the channel, or of nobody in
-        particular), that he has not skipped and that nobody has answered yet,
-        but only when it is his first word since they were asked: what he says
-        after that is talk, not his answer. Only an answer recorded on the
-        question changes the waiting state; talk on its own does not.
-        ``first_word_only=False`` drops that last condition, for a message the
-        caller knows is addressed to an asker.
+        particular), that he has not skipped — and either nobody has answered
+        yet or the answer on it is his own. Only his first word since they were
+        asked counts, unless he is replacing his own answer. Only an answer
+        recorded on the question changes the waiting state; talk on its own does
+        not. ``first_word_only=False`` drops the first-word condition, for a
+        message the caller knows is addressed to an asker.
         Whom it names is the caller's to weigh.
         """
         place = (Block.conversation_id == reply.conversation_id,)
@@ -227,11 +228,13 @@ class AwaitingQueries:
             )
             if parent is None:
                 return []
-            # 一道题只收一个回答：点选项那条路（`reply_to` 指过来的就是它）也拦下已
-            # 经了结的题，否则第二个人再点一下就又记一条。判据是 `answerable`，不是
-            # `settled`：过期收起来的那道题仍答得上（题卡留着输入框），而撤回过、
-            # 有人答过、被所有人跳过的都答不上。
-            if not answerable(parent.meta) or not may_answer(parent.meta, reply.author):
+            # 一道题只收一个人的回答：点选项那条路（`reply_to` 指过来的就是它）也拦下
+            # 别人已经答过的题，否则第二个人再点一下就又记一条。判据是
+            # `answerable_by`：过期收起来的那道题仍答得上（题卡留着输入框），撤回过、
+            # 被所有人跳过的都答不上，自己答过的可以说第二遍（以最后一句为准）。
+            if not answerable_by(parent.meta, reply.author) or not may_answer(
+                parent.meta, reply.author
+            ):
                 return []
             return [parent]
         asked_filter = (
@@ -262,7 +265,7 @@ class AwaitingQueries:
                 )
             ).all()
             if may_answer(block.meta, reply.author)
-            and answerable(block.meta)
+            and answerable_by(block.meta, reply.author)
             and reply.author not in skipped_by(block.meta)
         ]
         if not candidates:
@@ -291,37 +294,14 @@ class AwaitingQueries:
             .with_for_update()
             .execution_options(populate_existing=True)
         )
-        # 答不上的不收（`answerable`，和点选项、跳过同一条）：已经有人答过、被所有人
-        # 跳过、或者被提问的那位撤回的；过期的除外，那道题还收回答。他自己跳过的也
+        # 答不上的不收（`answerable_by`，和点选项、跳过同一条）：别人已经答过、被所有
+        # 人跳过、或者被提问的那位撤回的；过期的除外，那道题还收回答。他自己跳过的也
         # 不收：跳过之后他说的话是说话，不是回答。上面的 SQL 只是先筛一遍，谁能答由
         # `may_answer` 定。
-        first = (await self._session.scalars(stmt)).all()
-        # A question he has already replied to in his own words (still pending,
-        # `block.asked.PENDING`) keeps taking his words: the first one may have
-        # been a question about it, and what he says next is no longer his
-        # "first word" since it was asked.
-        again = (
-            []
-            if not first_word_only
-            else [
-                block
-                for block in (
-                    await self._session.scalars(
-                        select(Block)
-                        .where(Block.id.in_(candidates), *asked_filter)
-                        .order_by(Block.created_at, Block.id)
-                        .with_for_update()
-                        .execution_options(populate_existing=True)
-                    )
-                ).all()
-                if any(e.get("by") == reply.author for e in pending_replies(block.meta))
-            ]
-        )
-        seen = {block.id for block in first}
         return [
             block
-            for block in (*first, *(b for b in again if b.id not in seen))
+            for block in (await self._session.scalars(stmt)).all()
             if may_answer(block.meta, reply.author)
-            and answerable(block.meta)
+            and answerable_by(block.meta, reply.author)
             and reply.author not in skipped_by(block.meta)
         ]

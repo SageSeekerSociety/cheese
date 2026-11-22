@@ -128,9 +128,10 @@ def record_answers(
     题（``Answer.empty``）一个字不改，它照旧等回答。
 
     谁答得了由 `block.asked.may_answer` 定，和点选项、跳过同一条；别人已经答过的题
-    不再收（`block.asked.settled`），他跳过的那题也不收。**但答过的人可以改自己的
-    答案**：「改答案」就是把这份草稿再交一次，所以 ``by`` 自己留下的那些条目先撤掉
-    再写新的——一道题仍然只有一个人的回答，别人抢不走，答的人改得动。
+    不再收，他跳过的那题也不收。**但答过的人可以改自己的答案**：「改答案」就是把
+    这份草稿再交一次——一道题仍然只有一个人的回答，别人抢不走，答的人改得动。他先前
+    那几条不去掉：`block.asked.final_answer` 取最后一条，卡上把先前的降一档列出来
+    （`earlier_answers`），和单答那条路一样，说过的话不在卡上消失。
     任何一条不合规都当场拒绝，整组一条不落——半组答案比没有答案更难收拾。
     """
     touched: list[Block] = []
@@ -159,8 +160,9 @@ def record_answers(
             "at": at.isoformat(),
             "reply_id": None,
         }
-        # 自己那条不算：先拿掉，再按这次的答案写一条。别人的一条都不动。
-        question.meta = {**meta, "answer_log": [*others, entry]}
+        # 自己先前那几条留着：最后一条为准（`block.asked.final_answer`），先前说过
+        # 的降一档留在卡上（`earlier_answers`），不静默丢掉。别人的一条都不动。
+        question.meta = {**meta, "answer_log": [*log, entry]}
         touched.append(question)
     if not touched:
         raise ValidationError(say("askAnswersEmpty"))

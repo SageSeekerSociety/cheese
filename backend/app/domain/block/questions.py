@@ -344,10 +344,10 @@ async def withdraw_question(session, *, question: Block, by: str) -> Block:
 async def confirm_pending(session, *, question: Block, by: str) -> Block:
     """提问的那位确认：人打字回的那几句就是答案，题就此结掉。
 
-    打字回复先以 ``kind=pending`` 记在题上（`announce.answer_questions`），题仍在
-    等回答、黄灯不灭；那句话是答案还是追问、岔话，只有提问的那位读得懂。它判定是
-    答案，就走这一步，把待确认的条目改成 ``kind=note``，题因此 `answered`。判定不是
-    答案时什么都不用做，题保持打开。
+    **2026-11-22 起打字回复当场就算作答**（`agent.announce.answer_questions` 记成
+    ``kind=note``），所以这条路不再有新的输入。留着它，是因为它有两条责任还没别的
+    地方接：一是把旧版本写下的 ``pending`` 条目归成 ``note``，二是在老数据把题卡在
+    「待确认」时还能结掉。
 
     只有题块作者可以确认，没有待确认的回复就拒掉，已经了结的题也不再收。flush，不
     commit；通知由调用方结。

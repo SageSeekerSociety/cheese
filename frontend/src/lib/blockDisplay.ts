@@ -155,9 +155,9 @@ export function artifactKind(block: Block): string {
 /** 一个选项。`text` 是提问方给的那几个字，`explain` 是他补的解释，没补就没有。 */
 export type AskOption = { text: string; explain?: string }
 
-/** 答过这道题的一句话：谁说的、说的是什么。 */
+/** 答过这道题的一句话：谁说的、说的什么、什么时候说的。 */
 /** `skipped`：被问的人跳过了这道题、没有回答（`answer_log` 里 `kind: 'skipped'` 那一条）。 */
-export type AskAnswer = { by: string; text: string; skipped: boolean }
+export type AskAnswer = { by: string; text: string; skipped: boolean; at?: string | null }
 
 /** 这一条是不是带选项的提问（`cheese_ask`）。不是就返回 null。 */
 export function askOptions(block: Block): AskOption[] | null {
@@ -190,22 +190,45 @@ export function askClosedByAsker(block: Block): AskClosed | null {
  * 答过这道题的每一句，按先后：点了选项的是那个选项，打字回的是他那句话；跳过的那一条
  * 没有话，`skipped` 为真。提问方收起题的那一条不算回答，这里就没有它。
  * 房间里所有人看到的是同一份。
+ *
+ * `pending` 算回答：2026-11-22 起打字不再写这一种，但之前写下的那些就是那个人说的话，
+ * 后端也按回答读（`block.asked._said`）。这里跟着后端，不把已经答过的题看成没答。
  */
 export function askAnswers(block: Block): AskAnswer[] {
   const log = (block.meta as Record<string, unknown> | null)?.answer_log
   if (!Array.isArray(log)) return []
+  return (log as Record<string, unknown>[])
+    .filter((entry) => !['withdrawn', 'expired'].includes(String(entry.kind)))
+    .map((entry: Record<string, unknown>) => ({
+      by: String(entry.by ?? ''),
+      // `reject` 只在早先作答的题上留着；它说的就是「以上都不是」。`pending` 是他
+      // 自己打的那句话，和 `note` 一样读。
+      text:
+        entry.kind === 'reject'
+          ? t('ask.replies.noneOfThese')
+          : String((entry.kind === 'note' || entry.kind === 'pending' ? entry.note : entry.option) ?? ''),
+      skipped: entry.kind === 'skipped',
+      at: typeof entry.at === 'string' ? entry.at : null,
+    }))
+}
+
+/**
+ * 这道题上算数的那个回答：最后一条（跳过不算，别人抢不走——后端只收一个人的回答）。
+ * 同一个人再答一次时，先前那几条由 `askEarlierAnswers` 给出。
+ */
+export function askFinalAnswer(block: Block): AskAnswer | null {
   return (
-    (log as Record<string, unknown>[])
-      // `pending`：打字回复还没被提问方确认成答案，题照旧开着，不算回答。
-      .filter((entry) => !['withdrawn', 'expired', 'pending'].includes(String(entry.kind)))
-      .map((entry: Record<string, unknown>) => ({
-        by: String(entry.by ?? ''),
-        // `reject` 只在早先作答的题上留着；它说的就是「以上都不是」。
-        text:
-          entry.kind === 'reject'
-            ? t('ask.replies.noneOfThese')
-            : String((entry.kind === 'note' ? entry.note : entry.option) ?? ''),
-        skipped: entry.kind === 'skipped',
-      }))
+    askAnswers(block)
+      .filter((a) => !a.skipped)
+      .at(-1) ?? null
   )
+}
+
+/**
+ * 被 `askFinalAnswer` 盖过的那几条，按先后。卡上把它们降一档列出来：他说过的话不在
+ * 卡上消失，只是不再算数（2026-11-22 定的）。
+ */
+export function askEarlierAnswers(block: Block): AskAnswer[] {
+  const answers = askAnswers(block).filter((a) => !a.skipped)
+  return answers.slice(0, -1)
 }

@@ -14,6 +14,18 @@ person a question names has skipped it is it settled by the skips, and a
 question asked of everyone never is: the channel is not a fixed list of people
 who could all decline.
 
+A person's own words are an answer, on the same footing as an option: whoever
+answers a question settles it for everyone, and the card shows what he said
+(2026-11-22, caisongyang's call — before this, typed words were held as
+``pending`` awaiting the asking agent's confirmation, and a card that never
+showed them read as "no reaction"). The ``pending`` kind is still read as an
+answer: rows written before that date keep working without a migration.
+
+Someone who has already answered may say it again — the later words replace his
+earlier ones, and the card keeps the earlier line as what he said before
+(``final_answer`` is his latest; ``earlier_answers`` the ones it replaced). Only
+an answer from a second person is refused: a question takes one person's answer.
+
 Two entries are neither: the asking agent taking its own question back
 (``withdrawn``, `block.questions.withdraw_question`) and the clock running out
 on one nobody answered (``expired``, `block.questions.expire_question`). Both
@@ -46,10 +58,10 @@ EXPIRED = "expired"
 #: not answers: ``answered`` stays false, and the card is free to take one.
 CLOSED_BY_THE_ASKER = (WITHDRAWN, EXPIRED)
 #: A person typed something in reply to the question that is not one of its
-#: options. Whether it is the answer or only talk about the question (asking
-#: what it means, changing the subject) is for the asking agent to say
-#: (`block.questions.confirm_pending`): until it does, the question stays open
-#: and the yellow light stays on. Not an answer: ``answered`` ignores it.
+#: options. Since 2026-11-22 this is an answer like any other — nobody writes it
+#: any more, but rows from before that date still carry it, so it is read as
+#: one (`_said`): dropping it here would silently unfinish questions people
+#: already answered.
 PENDING = "pending"
 
 
@@ -92,21 +104,42 @@ def skipped_by(meta: dict | None) -> frozenset[str]:
 
 
 def _said(meta: dict | None) -> list[dict]:
-    """The `answer_log` entries that are somebody's response to the question."""
+    """The `answer_log` entries that are somebody's response to the question.
+
+    ``pending`` sits on the answering side: after 2026-11-22 nothing writes it,
+    but a row from before still holds a person's words — and those words are his
+    answer, not a draft of one."""
     return [
         entry
         for entry in ((meta or {}).get("answer_log") or [])
-        if (entry or {}).get("kind") not in (*CLOSED_BY_THE_ASKER, PENDING)
+        if (entry or {}).get("kind") not in CLOSED_BY_THE_ASKER
     ]
 
 
 def pending_replies(meta: dict | None) -> list[dict]:
-    """Typed replies the asking agent has not yet confirmed as answers."""
+    """Legacy: typed replies written before typed words became answers
+    (`block.questions.confirm_pending` normalizes them)."""
     return [
         entry
         for entry in ((meta or {}).get("answer_log") or [])
         if (entry or {}).get("kind") == PENDING
     ]
+
+
+def final_answer(meta: dict | None) -> dict | None:
+    """The answer that counts: the last thing anybody said that was not a skip.
+
+    Someone who answers again replaces his own earlier answer; his earlier lines
+    stay in the log, and the card draws them as what he said before
+    (`earlier_answers`)."""
+    answers = [e for e in _said(meta) if (e or {}).get("kind") != SKIPPED]
+    return answers[-1] if answers else None
+
+
+def earlier_answers(meta: dict | None) -> list[dict]:
+    """The answers ``final_answer`` replaced, oldest first."""
+    answers = [e for e in _said(meta) if (e or {}).get("kind") != SKIPPED]
+    return answers[:-1]
 
 
 def answered(meta: dict | None) -> bool:
@@ -155,15 +188,30 @@ def settled(meta: dict | None) -> bool:
 
 
 def answerable(meta: dict | None) -> bool:
-    """Whether a person may still answer it.
+    """Whether the question still takes an answer from somebody.
 
     The same as ``settled`` except for one case: a question whose deadline
     passed may still be answered (the card keeps its field), so an expired one
     is settled without being closed to answers. A question the asker took back
-    is closed, and one that has been answered takes no second answer."""
-    if answered(meta) or skipped_by_all(meta) or withdrawn_by_the_asker(meta):
+    is closed, one everybody skipped is closed, and one that has been answered
+    takes no second answer — though the person who gave that answer may give
+    another (`answerable_by`)."""
+    if skipped_by_all(meta) or withdrawn_by_the_asker(meta):
         return False
-    return True
+    return final_answer(meta) is None
+
+
+def answerable_by(meta: dict | None, handle: str | None) -> bool:
+    """Whether ``handle`` may answer it now: nobody has, or the answer on it is
+    his own and he is saying it again — the last action wins, and his earlier
+    line stays on the card (`earlier_answers`). Someone who skipped it is out
+    until he takes the skip back (`block.questions.withdraw_answer`)."""
+    if skipped_by_all(meta) or withdrawn_by_the_asker(meta):
+        return False
+    if handle and handle in skipped_by(meta):
+        return False
+    answer = final_answer(meta)
+    return answer is None or (answer or {}).get("by") == handle
 
 
 @dataclass(frozen=True)

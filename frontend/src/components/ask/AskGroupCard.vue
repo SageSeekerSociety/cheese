@@ -19,7 +19,7 @@ import type { GroupAnswer } from '../../lib/askGroups'
 import { computed, ref, watch } from 'vue'
 
 import { askHeader, askMultiSelect } from '../../lib/askGroups'
-import { askAnswers, askClosedByAsker, askOptions } from '../../lib/blockDisplay'
+import { askAnswers, askClosedByAsker, askFinalAnswer, askOptions } from '../../lib/blockDisplay'
 import BaseButton from '../base/BaseButton.vue'
 
 import { t } from '@/i18n'
@@ -49,31 +49,31 @@ type Draft = { options: string[]; note: string }
 
 const questions = computed(() => props.blocks)
 const total = computed(() => questions.value.length)
-/** 别人答过的题（一道题只收一个人的回答；自己答过的那几条不算，改得动）。 */
-const answeredByOthers = computed(() =>
-  questions.value.some((q) => askAnswers(q).some((a) => !a.skipped && a.by !== props.viewer))
-)
 /** 我自己答过了没有——「已提交」看的是这个，不是本地的一个标记。 */
 const submitted = computed(() =>
   questions.value.some((q) => askAnswers(q).some((a) => !a.skipped && a.by === props.viewer))
 )
-const canAnswer = computed(() => {
-  if (props.closed || answeredByOthers.value) return false
-  return questions.value.some((q) => mayAnswer(q))
-})
-
+/**
+ * 这一组里还有题等着看的人答：他自己还没答、别人也还没答、提问方也没收回。
+ * 以前只要组里任意一道被别人答了，整张卡就锁死，剩下几道他明明答得了也答不了
+ * （2026-11-22 一并修的）。
+ */
+const canAnswer = computed(() => !props.closed && questions.value.some((q) => mayAnswer(q)))
+/** 这道题现在收不收看的人的答案：题自己答过了还能改，别人答过就不收了。 */
 function mayAnswer(block: Block): boolean {
   // 提问方把这道题收回去了：这一组里它不再等人答（过期的那条还能答）。
   if (askClosedByAsker(block) === 'withdrawn') return false
   const meta = (block.meta ?? {}) as { asked?: string[]; asked_all?: boolean }
   const asked = meta.asked ?? []
-  return !!props.viewer && (asked.length === 0 || !!meta.asked_all || asked.includes(props.viewer))
+  if (!props.viewer || !(asked.length === 0 || !!meta.asked_all || asked.includes(props.viewer))) return false
+  // 一道题只收一个人的回答：别人答过的题，他答不了了（自己答过的改得动）。
+  return !askAnswers(block).some((a) => !a.skipped && a.by !== props.viewer)
 }
 
 /** 服务端已经记下的答案：题上的 `answer_log`。提交成没成看它，不看本地标记。 */
 function recordedAnswers(): Draft[] {
   return questions.value.map((q) => {
-    const entry = askAnswers(q).find((a) => !a.skipped)
+    const entry = askFinalAnswer(q)
     if (!entry) return { options: [], note: '' }
     // 多选题记的是一串，拆回每一项；单选记的就是那一个选项。都对不上就是他自己写的话。
     const offered = askOptions(q) ?? []
@@ -140,7 +140,7 @@ function chosen(index: number, text: string): boolean {
 }
 
 function pick(index: number, text: string, multi: boolean) {
-  if (!canAnswer.value || !answering.value) return
+  if (!answering.value || !mayAnswer(questions.value[index]!)) return
   touched.value = true
   const draft = draftFor(index)
   if (multi) {
@@ -155,6 +155,7 @@ function pick(index: number, text: string, multi: boolean) {
 }
 
 function typeNote(index: number, value: string) {
+  if (!mayAnswer(questions.value[index]!)) return
   touched.value = true
   const draft = draftFor(index)
   draft.note = value
@@ -235,6 +236,8 @@ function reopen() {
         <p class="ask-group__step">{{ label(questions[at]!, at) }}</p>
         <p class="ask-group__question">{{ questions[at]!.content }}</p>
         <p v-if="askMultiSelect(questions[at]!)" class="ask-group__hint">{{ t('ask.group.multiHint') }}</p>
+        <!-- 这一道题别人答过了：只有它在卡上锁住，别的题照答（以前整张卡一起锁）。 -->
+        <p v-if="!mayAnswer(questions[at]!)" class="ask-group__hint">{{ t('ask.group.takenByOther') }}</p>
 
         <ul class="ask-group__opts">
           <li v-for="option in askOptions(questions[at]!) ?? []" :key="option.text" class="ask-group__opt">
@@ -244,7 +247,7 @@ function reopen() {
                 :name="`ask-group-${questions[at]!.id}`"
                 autocomplete="off"
                 :checked="chosen(at, option.text)"
-                :disabled="!canAnswer"
+                :disabled="!mayAnswer(questions[at]!)"
                 @change="pick(at, option.text, askMultiSelect(questions[at]!))"
               />
               <span>
@@ -260,7 +263,7 @@ function reopen() {
               autocomplete="off"
               :placeholder="t('ask.group.otherLabel')"
               :aria-label="t('ask.group.otherLabel')"
-              :disabled="!canAnswer"
+              :disabled="!mayAnswer(questions[at]!)"
               @input="typeNote(at, ($event.target as HTMLInputElement).value)"
             />
           </li>
