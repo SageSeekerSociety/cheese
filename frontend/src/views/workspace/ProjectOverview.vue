@@ -37,12 +37,12 @@ import { requestDraft } from '@/lib/overviewDraft'
 import { prefetchNow } from '@/lib/routePrefetch'
 import { TASK_ROUTE_NAMES } from '@/lib/spaceRouteNames'
 import { TASK_FOLDER } from '@/lib/taskRevision'
-import { readJudgeSummaries } from '@/views/tasks/composables/useTaskJudge'
 import { myHandle } from '@/me'
 import { queryClient } from '@/query/client'
 import { overviewQuery, progressQuery, projectQuery, situationQuery } from '@/query/project'
 import { openProjectTasksQuery } from '@/query/tasks'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { readJudgeSummaries } from '@/views/tasks/composables/useTaskJudge'
 import ProjectOverviewView from '@/views/workspace/ProjectOverviewView.vue'
 
 const props = defineProps<{ projectId: string }>()
