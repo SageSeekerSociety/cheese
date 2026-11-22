@@ -11,7 +11,7 @@ import asyncio
 
 from sqlalchemy import select
 
-from app.domain.block.models import AGENT_NOTICE_META_KEY, Block
+from app.domain.block.models import AGENT_NOTICE_META_KEY, CONSUMED_TURN_META_KEY, Block
 from app.domain.room_task.models import Task
 from tests.delivery import delivery_task_id
 from tests.integration.test_file_panel_safety import (  # noqa: F401 — fixture
@@ -134,3 +134,86 @@ def test_someone_other_than_the_owner_who_edits_is_credited(client):
             return (await session.get(Task, task_id)).contributor_handles
 
     assert "alice" in asyncio.run(credited())
+
+
+def _edit_lines(client, tid):
+    task_id = delivery_task_id(client, tid)
+
+    async def lines():
+        async with client.test_factory() as session:
+            rows = await session.scalars(
+                select(Block)
+                .where(Block.conversation_id == task_id)
+                .order_by(Block.created_at, Block.id)
+            )
+            return [
+                b for b in rows if (b.meta or {}).get("event_type") == "file_edited"
+            ]
+
+    return asyncio.run(lines())
+
+
+def test_a_run_of_saves_on_one_file_is_one_line_with_all_it_changed(client):
+    """A person types and the page saves as they go: the task shows one line
+    for the file, and it says everything changed since they began."""
+    pid = _mkproject(client)
+    tid = _mktopic(client, pid)
+    _put(client, pid, tid, "note.txt", "一\n二\n三\n四\n五\n六\n七\n八\n九\n".encode())
+    headers = _owner(client)
+
+    read = _read(client, pid, tid, headers)
+    assert (
+        _save(
+            client, pid, tid, headers, "一\n二\n三\n四\n五\n六\n七\n八\n九改了\n", read
+        ).status_code
+        == 200
+    )
+    read = _read(client, pid, tid, headers)
+    assert (
+        _save(
+            client,
+            pid,
+            tid,
+            headers,
+            "一改了\n二\n三\n四\n五\n六\n七\n八\n九改了\n",
+            read,
+        ).status_code
+        == 200
+    )
+
+    (line,) = _edit_lines(client, tid)
+    diff = line.meta["detail"]
+    assert "-一" in diff and "+一改了" in diff
+    assert "-九" in diff and "+九改了" in diff
+    assert "-九改了" not in diff
+    assert "1–9" in line.content
+
+
+def test_a_save_after_the_teammate_read_the_line_starts_a_new_one(client):
+    """What the teammate already read stays as it was read; a later edit is a
+    later line."""
+    pid = _mkproject(client)
+    tid = _mktopic(client, pid)
+    _put(client, pid, tid, "note.txt", "一\n二\n".encode())
+    headers = _owner(client)
+
+    read = _read(client, pid, tid, headers)
+    assert _save(client, pid, tid, headers, "一\n二改了\n", read).status_code == 200
+    (first,) = _edit_lines(client, tid)
+
+    async def read_by_a_finished_turn():
+        async with client.test_factory() as session:
+            row = await session.get(Block, first.id)
+            row.meta = {
+                **row.meta,
+                CONSUMED_TURN_META_KEY: "11111111-1111-1111-1111-111111111111",
+            }
+            await session.commit()
+
+    asyncio.run(read_by_a_finished_turn())
+    read = _read(client, pid, tid, headers)
+    assert _save(client, pid, tid, headers, "一改了\n二改了\n", read).status_code == 200
+
+    earlier, later = _edit_lines(client, tid)
+    assert "+二改了" in earlier.meta["detail"]
+    assert "+一改了" in later.meta["detail"] and "+二改了" not in later.meta["detail"]

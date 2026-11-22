@@ -183,7 +183,7 @@
   "workspaceVcsPermsDetail": "版本库目录属于另一个系统用户，平台无法访问。项目文件、已提交的改动和版本历史都没有受到影响。需要管理员在机器上修改一次属主（deploy/fix-workspace-ownership.sh），平台无法自行处理。把这条提示转给管理员，修复后可以重试。",
   "workspaceVcsPermsTitle": "工作区版本库权限异常",
   "roomFilesKept": "这里以前工作目录里的文件已另存一份，会保留到 {date}，之后删除。需要取回其中的文件，联系平台管理员。",
-  "taskFileEdited": "{who} 修改了 {path} {lines}，已告诉 {agent}",
+  "taskFileEdited": "{who} 修改了 {path} {lines}",
   "taskFileEditedLines": "第 {lines} 行",
   "roomFileEditorSaved": "{who} 在编辑器里保存了 {path}，已告诉 {agent}",
   "roomFileEditorSavedAside": "{who} 保存时 {path} 已被改过，这一份另存为 {aside}，已告诉 {agent}",

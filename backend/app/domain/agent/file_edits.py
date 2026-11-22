@@ -7,19 +7,33 @@ the task (who changed which lines, with the diff), and that line carries what
 the teammate is told before its next tool call: re-read the file before
 touching it.
 
+Saves come in a run while a person types. A run on one file is one line: until
+the teammate has read it, and for as long as the work that read it is still
+going, the next save rewrites that line with everything changed since the run
+began, and a new line starts only after that.
+
 The person who edited is also credited on the task: their part goes into the
 teammate's next commit, which names them as a co-author, unless they hand it
 in themselves first (`machine.hand_in`), as a commit of their own.
 """
 
 import difflib
+import re
 import uuid
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.sentences import say
+from app.core.live_frames import show_once_committed
+from app.core.sentences import say, with_keys
 from app.domain.agent.announce import announce
-from app.domain.block.models import AGENT_NOTICE_META_KEY, Block
+from app.domain.block.models import (
+    AGENT_NOTICE_META_KEY,
+    Block,
+    BlockKind,
+    consumed_turn,
+)
+from app.domain.block.schemas import BlockOut
 from app.domain.identity.handles import CHEESE_HANDLE
 from app.domain.notice_meta import (
     EVENT_FILE_EDITED,
@@ -45,6 +59,65 @@ def changed_lines(previous: str, content: str) -> tuple[int, int] | None:
     return spans[0][0], spans[-1][1]
 
 
+#: On a line's meta: whose run of saves on which file the line stands for.
+FILE_EDIT_META_KEY = "file_edit"
+
+_HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+
+
+def _before(after: str, diff: str) -> str:
+    """The text `diff` was taken from, given the text it led to. `diff` is a
+    unified diff this module wrote, so it applies to `after` exactly."""
+    lines = after.splitlines()
+    out: list[str] = []
+    at = 0
+    old: list[str] | None = None
+    for row in diff.splitlines():
+        hunk = _HUNK.match(row)
+        if hunk:
+            if old is not None:
+                out.extend(old)
+            start = int(hunk.group(3))
+            count = int(hunk.group(4) if hunk.group(4) is not None else 1)
+            # A hunk that adds nothing names the line before it.
+            first = start - 1 if count else start
+            out.extend(lines[at:first])
+            at = first + count
+            old = []
+        elif old is not None and row[:1] in (" ", "-"):
+            old.append(row[1:])
+    if old is not None:
+        out.extend(old)
+    out.extend(lines[at:])
+    return "\n".join(out)
+
+
+async def _open_line(
+    session: AsyncSession, task: Task, who: str, path: str, working: uuid.UUID | None
+) -> Block | None:
+    """The line this person's run of saves on this file is still written on:
+    their latest one, while the teammate has not read it or the work that read
+    it is still going."""
+    line = await session.scalar(
+        select(Block)
+        .where(
+            Block.conversation_id == task.id,
+            Block.kind == BlockKind.event,
+            Block.meta["event_type"].as_string() == EVENT_FILE_EDITED,
+            Block.meta[FILE_EDIT_META_KEY]["path"].as_string() == path,
+            Block.meta[FILE_EDIT_META_KEY]["by"].as_string() == who,
+        )
+        .order_by(Block.created_at.desc(), Block.id.desc())
+        .limit(1)
+    )
+    if line is None:
+        return None
+    read_in = consumed_turn(line)
+    if read_in is None or (working is not None and read_in == str(working)):
+        return line
+    return None
+
+
 async def announce_edit(
     session: AsyncSession,
     *,
@@ -53,12 +126,22 @@ async def announce_edit(
     path: str,
     previous: str | None,
     content: str,
-) -> tuple[Block, str] | None:
-    """Say the edit in the task and credit its author: the line, and what the AI
-    teammate is told about it. None when nothing changed."""
-    span = changed_lines(previous, content) if previous is not None else None
-    if previous is not None and span is None:
+    working: uuid.UUID | None = None,
+) -> tuple[Block, str, bool] | None:
+    """Say the edit in the task and credit its author: the line, what the AI
+    teammate is told about it, and whether the teammate has yet to hear of this
+    run of saves. None when nothing changed.
+
+    `working` is the work the teammate is doing in the task right now, if any.
+    """
+    if previous is not None and changed_lines(previous, content) is None:
         return None
+    line = await _open_line(session, task, who, path, working)
+    detail = (line.meta or {}).get("detail") if line is not None else None
+    if line is not None and previous is not None and detail:
+        # The run's first text, so the line says everything changed since then.
+        previous = _before(previous, detail)
+    span = changed_lines(previous, content) if previous is not None else None
     lines = (
         ""
         if span is None
@@ -67,7 +150,6 @@ async def announce_edit(
             lines=str(span[0]) if span[0] == span[1] else f"{span[0]}–{span[1]}",
         )
     )
-    agent = task.agent_handle or CHEESE_HANDLE
     diff = (
         "\n".join(
             difflib.unified_diff(
@@ -98,20 +180,30 @@ async def announce_edit(
         detail_label=say("labelDocEditDiff"),
     )
     meta[AGENT_NOTICE_META_KEY] = for_agent
+    meta[FILE_EDIT_META_KEY] = {"path": path, "by": who}
+    said = say("taskFileEdited", who=f"<@{who}>", path=path, lines=lines)
+    if line is not None:
+        unheard = consumed_turn(line) is None
+        line.content = said
+        line.meta = with_keys({**(line.meta or {}), **meta}, content=said)
+        await session.flush()
+        show_once_committed(
+            session,
+            line.conversation_id,
+            {
+                "type": "block_updated",
+                "block": BlockOut.model_validate(line).model_dump(mode="json"),
+            },
+        )
+        return line, for_agent, unheard
     block = await announce(
         session,
         place_id=task.room_id,
         task_id=task.id,
-        content=say(
-            "taskFileEdited",
-            who=f"<@{who}>",
-            path=path,
-            lines=lines,
-            agent=f"<@{agent}>",
-        ),
+        content=said,
         meta=meta,
     )
-    return (block, for_agent) if block is not None else None
+    return (block, for_agent, True) if block is not None else None
 
 
 async def announce_editor_save(
