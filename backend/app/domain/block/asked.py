@@ -187,31 +187,33 @@ def settled(meta: dict | None) -> bool:
     return answered(meta) or skipped_by_all(meta) or closed_by_the_asker(meta)
 
 
-def answerable(meta: dict | None) -> bool:
-    """Whether the question still takes an answer from somebody.
+def answerable(meta: dict | None, handle: str | None = None) -> bool:
+    """Whether the question still takes an answer — from ``handle`` when one is
+    given, from anybody otherwise.
 
     The same as ``settled`` except for one case: a question whose deadline
     passed may still be answered (the card keeps its field), so an expired one
     is settled without being closed to answers. A question the asker took back
-    is closed, one everybody skipped is closed, and one that has been answered
-    takes no second answer — though the person who gave that answer may give
-    another (`answerable_by`)."""
-    if skipped_by_all(meta) or withdrawn_by_the_asker(meta):
-        return False
-    return final_answer(meta) is None
+    is closed, and so is one everybody skipped.
 
-
-def answerable_by(meta: dict | None, handle: str | None) -> bool:
-    """Whether ``handle`` may answer it now: nobody has, or the answer on it is
-    his own and he is saying it again — the last action wins, and his earlier
-    line stays on the card (`earlier_answers`). Someone who skipped it is out
-    until he takes the skip back (`block.questions.withdraw_answer`)."""
+    One that has been answered takes no second answer — from a second person.
+    The person whose answer is on it may give another: the last action wins and
+    his earlier line stays on the card (`earlier_answers`). Someone who skipped
+    it is out until he takes the skip back (`block.questions.withdraw_answer`).
+    """
     if skipped_by_all(meta) or withdrawn_by_the_asker(meta):
         return False
     if handle and handle in skipped_by(meta):
         return False
     answer = final_answer(meta)
-    return answer is None or (answer or {}).get("by") == handle
+    return answer is None or (
+        handle is not None and (answer or {}).get("by") == handle
+    )
+
+
+def answerable_by(meta: dict | None, handle: str | None) -> bool:
+    """``answerable`` for one person; named for the call sites that read as「他能答吗」."""
+    return answerable(meta, handle)
 
 
 @dataclass(frozen=True)
