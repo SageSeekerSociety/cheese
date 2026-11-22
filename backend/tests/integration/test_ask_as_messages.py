@@ -316,13 +316,13 @@ def test_a_question_somebody_answered_is_not_withdrawn_by_the_next_ask(
 ):
     """Asking again replaces a card nobody answered. One that has an answer on it
     stays: withdrawing it would take his words out of the channel."""
-    # Asked of bob, so that the second ask (not alice's message) is what settles
-    # anything here; alice's words are the answer already on the first card.
+    # Asked of bob, and bob is the one who answers: only someone it asks can
+    # answer it, and it is his words that have to survive the second ask.
     pid, room = _room(client)
     seed_user(client, "bob")
     join_project_team(client, pid, "bob")
     first = _ask_in_a_turn(client, stub_hooks, monkeypatch, room, to=["bob"])
-    _say(client, room, "alice", {"content": "你先帮老师发个十几题"})
+    _say(client, room, "bob", {"content": "你先帮老师发个十几题"})
 
     with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
         response = client.post(
