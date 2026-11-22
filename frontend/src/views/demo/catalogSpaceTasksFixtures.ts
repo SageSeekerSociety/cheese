@@ -563,6 +563,7 @@ export const PANEL_SPLIT = {
 /** 「我的学习洞察」：一个成员在这块板上的结果 —— 一条薄弱（最该补的）、一条掌握、一条未涉及。 */
 export const MY_LEARNING_INSIGHT: MyLearningInsight = {
   enabled: true,
+  realtime: { state: 'live', callsToday: 6, dailyCalls: 2000 },
   updatedAt: Date.UTC(2026, 10, 16, 6, 20),
   focusKnowledgePointId: 91,
   knowledgePoints: [

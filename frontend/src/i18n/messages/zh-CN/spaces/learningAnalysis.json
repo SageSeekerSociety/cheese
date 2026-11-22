@@ -112,7 +112,11 @@
     "taskQuote": "「{name}」",
     "backToWorkTitle": "做完回到题目",
     "backToWorkDesc": "巩固题做完，接着做这道题的作业并提交答案。",
-    "backToWorkGo": "回到「{name}」"
+    "backToWorkGo": "回到「{name}」",
+    "realtime": {
+      "live": "实时更新中：你在题目里说完话，一两分钟后这一页会自己刷新。",
+      "capped": "今天实时分析到上限，明早统一更新。今天剩下的话明早统一读。"
+    }
   },
   "practice": {
     "title": "巩固练习",

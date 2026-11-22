@@ -1,5 +1,8 @@
 import type { AnalyticsApproveType, Page, Space, SpaceAnnouncement, SpaceTeaching, TaskSubmission } from '@/types'
 
+/** 今天学情分析的实时状态（与「我的学习洞察」同一份，见 `./spaces`）。 */
+export type LearningRealtime = import('./spaces').LearningRealtime
+
 export type SpaceApplication = {
   /** `create`：新建空间待审；`open`：已有空间申请设为开放空间。 */
   kind: 'create' | 'open'
@@ -411,6 +414,22 @@ export type LearningClassOverview = {
   weakPoints: number
   tasks: LearningClassTaskCompletion[]
   focus: LearningClassFocusPoint[]
+  /** 整体学情：够人数才报的每个知识点，按当前判断数人。 */
+  mastery?: LearningClassMastery | null
+  /** 今天实时读取到哪了；板没开时是 null。 */
+  realtime?: LearningRealtime | null
+}
+
+/** 整体掌握程度：一个人一个知识点算一次（标了「不准」的不算）。 */
+export type LearningClassMastery = {
+  members: number
+  /** 够 {minPeople} 人、能报数的知识点个数；`points` 是清单总数。 */
+  reported: number
+  points: number
+  levels: { mastered: number; shaky: number; weak: number }
+  /** 全部判断的条数；`peopleJudged` 是被判过的不同人数。 */
+  judged: number
+  peopleJudged: number
 }
 
 export type LearningClassQuadrant = 'both' | 'hard' | 'focus' | 'normal'

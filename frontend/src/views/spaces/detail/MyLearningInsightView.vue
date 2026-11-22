@@ -18,6 +18,7 @@ import type {
   LearningLevel,
   LearningPracticeSource,
   LearningQuestionKind,
+  LearningRealtime,
   MyLearningInsight,
   MyLearningPractice,
 } from '@/types'
@@ -39,6 +40,8 @@ const props = defineProps<{
   failed: boolean
   /** 正在标「不准」的那条判断。 */
   disputing?: number | null
+  /** 今天实时读取到哪了（`live` / `capped`）；还没读到是 null。 */
+  realtime?: LearningRealtime | null
   /** 巩固练习一览（第 4 步）：没做完的几组、复习提醒、今天还能要几次。没读到是 null。 */
   practice?: MyLearningPractice | null
   /** 正在出题的知识点。 */
@@ -178,6 +181,18 @@ const whoRows = computed(() => [
       </section>
 
       <p class="mli__lede">{{ lede }}</p>
+
+      <!-- 今天实时读取到哪了：还在实时更新，还是到上限了、等明早。 -->
+      <v-alert
+        v-if="realtime"
+        :type="realtime.state === 'capped' ? 'info' : 'success'"
+        variant="tonal"
+        density="compact"
+        class="mli__realtime"
+        data-testid="insight-realtime"
+      >
+        {{ t(`spaces.learningAnalysis.insight.realtime.${realtime.state}`) }}
+      </v-alert>
 
       <div class="mli__cols">
         <div class="mli__main">

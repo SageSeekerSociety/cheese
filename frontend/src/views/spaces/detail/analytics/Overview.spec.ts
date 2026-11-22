@@ -15,6 +15,8 @@ const api = vi.hoisted(() => ({
   getAnalyticsOverview: vi.fn(),
   getAnalyticsAlerts: vi.fn(),
   getAnalyticsPublishers: vi.fn(),
+  // 学情那一块（学生学得怎么样）也在这里读；缺了它整页会报错。
+  getLearningClassOverview: vi.fn(),
 }))
 vi.mock('@/api/spaces', () => ({ SpacesApi: api }))
 vi.mock('vuetify-sonner', () => ({ toast: { error: vi.fn() } }))
@@ -53,6 +55,8 @@ const Probe = defineComponent({
     'alerts',
     'publishers',
     'publishersLoading',
+    'learning',
+    'learningLoading',
   ],
   setup(props, { emit }) {
     state = props
@@ -84,6 +88,7 @@ beforeEach(() => {
   vi.resetAllMocks()
   api.getAnalyticsOverview.mockResolvedValue(OVERVIEW)
   api.getAnalyticsAlerts.mockResolvedValue(ANALYTICS_ALERTS)
+  api.getLearningClassOverview.mockResolvedValue(null)
   api.getAnalyticsPublishers.mockResolvedValue({ publishers: analyticsPublishers() })
 })
 afterEach(() => {
@@ -93,6 +98,19 @@ afterEach(() => {
 })
 
 describe('总览看板容器', () => {
+  it('学情那一眼单独读：读到了交给画面，读不到整页照旧（不画成失败）', async () => {
+    const { LEARNING_CLASS_OVERVIEW } = await import('@/views/demo/catalogLearningClassFixtures')
+    // 一遍各读一次：第一次失败、第二次读到。
+    api.getLearningClassOverview.mockRejectedValueOnce(new Error('down')).mockResolvedValueOnce(LEARNING_CLASS_OVERVIEW)
+    await renderPage()
+    expect(state['failed']).toBe(false)
+    expect(state['learning']).toBeNull()
+    expect(state['learningLoading']).toBe(false)
+
+    await renderPage()
+    expect((state['learning'] as { mastery?: { reported: number } }).mastery?.reported).toBe(6)
+  })
+
   it('两块数据并发取，任一还没回来就保持 loading，两块都到了才交给画面', async () => {
     const overview = deferred<SpaceAnalyticsOverview>()
     const alerts = deferred<SpaceAnalyticsAlerts>()

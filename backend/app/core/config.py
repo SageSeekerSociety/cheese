@@ -440,15 +440,15 @@ class Settings(BaseSettings, SandboxSettings, MachineSettings, DatabaseSettings)
     environment_diagnosis_budget_usd: float = 10.0
     environment_diagnosis_timeout_seconds: float = 60.0
     # 出题页「涉及的知识点」那一块的 AI 建议：读一道题的题面，给出一组知识点
-    # （app/domain/space/knowledge_suggestions.py）。它的虚拟 key 不带预算：问一次
-    # 由发问的那个人付钱（与问芝士同一口径），所以模型必须在网关上计价。
-    # Fallback of the platform model role of the same name: read only while
-    # no administrator has pointed the role (app.core.model_roles).
+    # （knowledge_suggestions.py）。它的虚拟 key 不带预算：问一次由发问的人付钱。
+    # 学情分析（中文说明在上面那一段）：上限、汇总预留、冷却、停顿与批大小。
+    # Fallback of the platform model role: read only while no administrator has
+    # pointed the role (app.core.model_roles).
     learning_analysis_model: str = "deepseek-flash"
     learning_analysis_timeout_seconds: float = 60.0
-    # 学情分析（space/learning_insight_analysis.py）：每块板每天的调用上限（费用记在开启者
-    # 名下，这是刹车）；一个人说完等多久才读他（他一连问几句、AI 回完，一起进去）。
-    learning_analysis_daily_calls_per_space: int = 200
+    learning_analysis_daily_calls_per_space: int = 2000
+    learning_analysis_aggregate_reserve_calls: int = 200
+    learning_analysis_member_cooldown_seconds: int = 240
     learning_analysis_settle_seconds: int = 120
     learning_analysis_batch_messages: int = 40
     # What a conversation's sandboxes may spend a day on models, per budget

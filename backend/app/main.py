@@ -96,6 +96,7 @@ from app.domain.review.periodic import sweep_abandoned_gates
 from app.domain.room_cleanup.retire import sweep_retired_storage
 from app.domain.routine import builtin_triage
 from app.domain.skill_market import close_market_connections
+from app.domain.space import learning_live
 from app.periodic_jobs import gate_nudge_factory, periodic_jobs
 
 # Observable (可观测性军规): structlog + contextvars — every line timestamped,
@@ -482,6 +483,10 @@ async def lifespan(application: FastAPI):
         get_consumptions().run() if not pool else asyncio.sleep(0),
         name="questions nobody reads",
     )
+    # 学情分析那两页的推送口（`space/learning_live.py`）：domain 不认识 broker，
+    # 这里把本进程的 `publish` 装给它。pool 进程装的是转发版（RelayBroker），帧经
+    # Valkey 到实时进程的 broker，再发给页面。
+    learning_live.install(get_broker().publish)
     # What pool processes publish reaches the room sockets through this
     # process's broker (`realtime/relay.py`).
     relaying = asyncio.create_task(

@@ -406,6 +406,21 @@ class LearningSourcesOut(BaseModel):
     tasks: list[LearningSourceTaskOut]
 
 
+class RealtimeStateOut(BaseModel):
+    """今天学情分析的实时读取到哪了（与老师端总览同一份）。
+
+    ``state`` 是 ``live``（还能读今天的新发言）或 ``capped``（今天读取这一路的次数
+    用完了，页面写明「今天实时分析到上限，明早统一更新」）。``callsToday`` 与
+    ``dailyCalls`` 是这块板今天用掉的次数和一天的上限，只用于给人看。
+    """
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    state: Literal["live", "capped"]
+    calls_today: int = Field(alias="callsToday")
+    daily_calls: int = Field(alias="dailyCalls")
+
+
 class MyLearningInsightOut(BaseModel):
     """「我的学习洞察」。``enabled`` 为假时这块板没开学情分析，其余都是空的。"""
 
@@ -416,6 +431,7 @@ class MyLearningInsightOut(BaseModel):
     knowledge_points: list[LearningInsightPointOut] = Field(alias="knowledgePoints")
     focus_knowledge_point_id: int | None = Field(alias="focusKnowledgePointId")
     frequent_questions: list[FrequentQuestionOut] = Field(alias="frequentQuestions")
+    realtime: RealtimeStateOut | None = None
     sources: LearningSourcesOut
 
 

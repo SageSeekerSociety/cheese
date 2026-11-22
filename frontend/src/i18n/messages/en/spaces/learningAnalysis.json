@@ -112,7 +112,11 @@
     "taskQuote": "“{name}”",
     "backToWorkTitle": "Back to the task",
     "backToWorkDesc": "After the practice set, get back to the task and hand your answer in.",
-    "backToWorkGo": "Back to “{name}”"
+    "backToWorkGo": "Back to “{name}”",
+    "realtime": {
+      "live": "Updating live: a minute or two after you speak in a task, this page refreshes itself.",
+      "capped": "Today's realtime analysis has reached its limit; it updates again tomorrow morning. What you say today is read in that pass."
+    }
   },
   "practice": {
     "title": "Practice",

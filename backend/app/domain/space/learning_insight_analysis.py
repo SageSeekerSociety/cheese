@@ -38,7 +38,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -51,7 +51,11 @@ from app.core.config import settings
 from app.core.db import SessionFactory
 from app.domain.gateway_chat import Completion, GatewayCallError, GatewayChat
 from app.domain.service_keys import service_key
-from app.domain.space import knowledge_suggestions, learning_class_analysis
+from app.domain.space import (
+    knowledge_suggestions,
+    learning_class_analysis,
+    learning_live,
+)
 from app.domain.space import permissions as space_seats
 from app.domain.space.learning_class_repositories import LearningClassWrites
 from app.domain.space.learning_insight_repositories import (
@@ -323,6 +327,40 @@ def local_day(now: datetime) -> tuple[date, int]:
     return local.date(), local.hour
 
 
+def daily_ceiling(space: Space | None = None) -> int:
+    """A board's whole day of analysis calls, both passes together.
+
+    One number for the row ``SpaceLearningRun.calls`` is held against. The
+    board may carry its own (``Space.learning_analysis_daily_calls``); without
+    one it follows the platform default.
+    """
+    own = (
+        getattr(space, "learning_analysis_daily_calls", None)
+        if space is not None
+        else None
+    )
+    if own is not None:
+        return max(0, int(own))
+    return max(0, settings.learning_analysis_daily_calls_per_space)
+
+
+def read_ceiling(space: Space | None = None) -> int:
+    """Where the minute's reads stop: the day's ceiling less the reserve kept
+    for the hourly aggregates.
+
+    Without the reserve the reads could spend the board's whole day on member
+    words, and the teacher's side — the clusters and the teaching advice —
+    would never run.
+    """
+    ceiling = daily_ceiling(space)
+    # 预留再多也只在少数：读取这一路永远拿到一半以上，一块小上限的板不会因为这份
+    # 预留一次都读不了。
+    reserve = min(
+        max(0, settings.learning_analysis_aggregate_reserve_calls), ceiling // 2
+    )
+    return max(0, ceiling - reserve)
+
+
 @dataclass
 class _Pass:
     """What one pass needs, settled once before any board is read."""
@@ -333,6 +371,10 @@ class _Pass:
     rates: Rates
     transport: httpx.AsyncBaseTransport | None
     counts: dict[str, int]
+    #: Where this pass's calls stop: ``read_ceiling`` for the minute's reads,
+    #: ``daily_ceiling`` for the hourly aggregates (which may spend the reserve
+    #: the reads leave them).
+    ceiling: Callable[[Space | None], int] = daily_ceiling
 
 
 async def _settle(
@@ -340,6 +382,8 @@ async def _settle(
     now: datetime | None,
     transport: httpx.AsyncBaseTransport | None,
     counts: dict[str, int],
+    *,
+    ceiling: Callable[[Space | None], int] = daily_ceiling,
 ) -> _Pass | None:
     """A pass with its model and rates, or nothing when the gateway has no
     price for the model — an unpriced model cannot be charged for, so it is
@@ -358,6 +402,7 @@ async def _settle(
         rates=rates,
         transport=transport,
         counts=counts,
+        ceiling=ceiling,
     )
 
 
@@ -383,7 +428,7 @@ async def run_recent(
     that has spent its day's calls is skipped until tomorrow.
     """
     counts = {"spaces": 0, "calls": 0, "failed": 0, "capped": 0}
-    pass_ = await _settle(sessions, now, transport, counts)
+    pass_ = await _settle(sessions, now, transport, counts, ceiling=read_ceiling)
     if pass_ is None:
         return counts
     for space_id in await _board_ids(sessions):
@@ -430,7 +475,7 @@ async def _open_board(
 ) -> tuple[Space, SpaceLearningRun, list[SpaceKnowledgePoint], GatewayChat] | None:
     """The board, today's run row, its points and the gateway, or nothing when
     this board must not be read now (off, no points, no payer, out of credit,
-    no key, or today's calls spent)."""
+    no key, or this pass's calls spent)."""
     space = await session.get(Space, space_id)
     if space is None or not space.learning_analysis_enabled:
         return None
@@ -438,8 +483,8 @@ async def _open_board(
         space_id=space_id, day=pass_.day
     )
     await session.commit()
-    if run.capped:
-        # 今天的调用次数用完了：明天的那一行是新的。
+    if run.calls >= pass_.ceiling(space):
+        # 这道门用完了今天的次数：读取用完了明天再读，汇总还能用它自己那份预留。
         return None
     points = list(await SpaceKnowledgePointRepository(session).list_for_space(space_id))
     if not points:
@@ -475,6 +520,10 @@ async def _read_board(session: AsyncSession, space_id: int, pass_: _Pass) -> Non
         settled=settled,
     )
     seats: dict[int, bool] = {}
+    cooldown = timedelta(
+        seconds=max(0, settings.learning_analysis_member_cooldown_seconds)
+    )
+    cursors = SpaceLearningCursorRepository(session)
     for pair in pairs:
         if pair.user_id not in seats:
             seat = await space_seats.seat_of(session, space_id, pair.user_id)
@@ -482,10 +531,19 @@ async def _read_board(session: AsyncSession, space_id: int, pass_: _Pass) -> Non
         if not seats[pair.user_id]:
             # 不在这块板里了（或者是这门课的老师）：不读他的新发言。
             continue
+        # 一个人刚被判过就再判一次，同一条对话会把一块板的上限烧在一个人身上：
+        # 他后说的几句留到冷却之后，一次一起读（一句话的停顿窗口管的是「几秒内
+        # 的连发」，这里管的是「一个话多的成员」）。
+        if cooldown:
+            last = await cursors.last_read_at(space_id=space_id, user_id=pair.user_id)
+            if last is not None and pass_.now - last < cooldown:
+                continue
         outcome = await _analyse_pair(
             session, space, pair, run, chat, points=points, pass_=pass_, until=settled
         )
         if outcome == "capped":
+            # 读取这一路用完了今天的次数（汇总那份预留不算在内）：记下来，页面据此
+            # 说「今天实时分析到上限，明早统一更新」；汇总那一条也还跑得动。
             pass_.counts["capped"] += 1
             await SpaceLearningRunRepository(session).finish(run, capped=True)
             await session.commit()
@@ -535,7 +593,7 @@ class _Asker:
     pass_: _Pass
 
     def capped(self) -> bool:
-        return self.run.calls >= settings.learning_analysis_daily_calls_per_space
+        return self.run.calls >= self.pass_.ceiling(self.space)
 
     async def __call__(self, *, system: str, prompt: str) -> str | None:
         await SpaceLearningRunRepository(self.session).count_call(self.run)
@@ -735,3 +793,6 @@ async def _write(
         read=len(messages),
         now=now,
     )
+    # 这块板变了：两端开着的页面看到这一帧就重读自己那一份（帧里不带结果，谁能看
+    # 哪条仍由那两条 GET 判）。
+    await learning_live.publish(space_id)

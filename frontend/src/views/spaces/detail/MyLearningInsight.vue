@@ -4,6 +4,7 @@
     :loading="state === 'loading'"
     :failed="state === 'error'"
     :disputing="disputing"
+    :realtime="realtime"
     :practice="practice.overview.value"
     :starting="practice.starting.value"
     :explanation="practice.explanation.value"
@@ -57,7 +58,7 @@ const route = useRoute()
 const router = useRouter()
 
 const spaceId = () => Number(route.params.spaceId)
-const { insight, state, disputing, load, dispute } = useMyLearningInsight(spaceId)
+const { insight, state, realtime, disputing, load, dispute } = useMyLearningInsight(spaceId)
 const practice = useMyLearningPractice(spaceId, load)
 
 // 我在这块板领了、还没结束的题：做完巩固题要从这里回到那道题接着做。读不到就不画

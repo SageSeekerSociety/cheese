@@ -121,6 +121,12 @@ class Space(Base):
     learning_analysis_enabled_at: Mapped[datetime | None] = mapped_column(
         "learning_analysis_enabled_at", DateTime(timezone=True), nullable=True
     )
+    # 这块板一天能用多少次模型调用（每分钟的读取与每小时的汇总合起来）。NULL 就跟着
+    # 平台的默认值走（``settings.learning_analysis_daily_calls_per_space``）：管理员以后
+    # 按板调的时候，空着的那些板仍然跟着默认值变。
+    learning_analysis_daily_calls: Mapped[int | None] = mapped_column(
+        "learning_analysis_daily_calls", Integer, nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
     )

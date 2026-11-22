@@ -50,6 +50,7 @@ from app.domain.space.learning_insight_analysis import LOCAL_ZONE
 from app.domain.space.learning_insight_repositories import LearningConversationReads
 from app.domain.space.learning_practice_service import SpaceLearningPracticeService
 from app.domain.space.learning_privacy import Masker, masker_for, member_code
+from app.domain.space.learning_realtime_state import state as realtime_state
 from app.domain.space.learning_service import _excerpt
 from app.domain.space.models import SpaceKnowledgePoint
 from app.domain.space.repositories import SpaceKnowledgePointRepository
@@ -83,6 +84,40 @@ TREND_WEEKS = 8
 
 def _ms(moment: datetime | None) -> int | None:
     return int(moment.timestamp() * 1000) if moment is not None else None
+
+
+def _mastery(board: _Board) -> dict:
+    """Whole-class mastery over the points the class is big enough to report.
+
+    Counts people once per point at their current level (a disputed judgment is
+    not a count: it is what the model said and the member said is wrong). A
+    person with no judgment on a point is 「未涉及」 there.
+    """
+    levels = {"mastered": 0, "shaky": 0, "weak": 0}
+    points_reported = 0
+    people: set[int] = set()
+    by_point: dict[int, list[JudgmentRow]] = {}
+    for row in board.judgments:
+        by_point.setdefault(row.point_id, []).append(row)
+    for point in board.points:
+        counts = board.counts.get(point.id)
+        if counts is None or len(counts.involved) < MIN_PEOPLE:
+            continue
+        points_reported += 1
+        for row in by_point.get(point.id, ()):
+            if row.disputed or row.level not in levels:
+                continue
+            levels[row.level] += 1
+            people.add(row.user_id)
+    total = sum(levels.values())
+    return {
+        "members": len(board.members),
+        "reported": points_reported,
+        "points": len(board.points),
+        "levels": levels,
+        "judged": total,
+        "peopleJudged": len(people),
+    }
 
 
 def _enabled(space) -> bool:
@@ -223,6 +258,8 @@ class SpaceLearningClassService:
                 "weakPoints": 0,
                 "tasks": [],
                 "focus": [],
+                "mastery": None,
+                "realtime": None,
             }
         board = await self._board(space.id)
         members = len(board.members)
@@ -271,6 +308,10 @@ class SpaceLearningClassService:
         return {
             "enabled": True,
             "minPeople": MIN_PEOPLE,
+            # 整体学情（这一页最上面那一句「学生学得怎么样」）：每个知识点按当前判断
+            # 数人，只在够 MIN_PEOPLE 人的点上算 —— 与下面每个知识点、每一组同一条界。
+            # 不够人的点不进分母：说「看过几个点」时说的是能报数的那些点。
+            "mastery": _mastery(board),
             "updatedAt": _ms(max(updated)) if updated else None,
             "members": members,
             "completion": {
@@ -282,6 +323,10 @@ class SpaceLearningClassService:
                 space.id, since=_since_enabled(space, now - timedelta(days=7))
             ),
             "weakPoints": sum(1 for r in rows if r["quadrant"] == "both"),
+            # 今天实时读取到哪了：还在读，还是到上限了、等明早。
+            "realtime": await realtime_state(
+                self._session, space_id=space.id, space=space
+            ),
             "tasks": task_rows,
             "focus": [
                 {

@@ -62,4 +62,8 @@ afterEach(() => {
 afterEach(async () => {
   const { resetRoomLink } = await import('@/lib/roomLink')
   resetRoomLink()
+  // 学情分析那两页的推送（lib/learningLive.ts）也是模块级的：一条一条关掉，
+  // 不然下一个用例会被上一个用例留着的连接连出去。
+  const { resetLearningLive } = await import('@/lib/learningLive')
+  resetLearningLive()
 })

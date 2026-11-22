@@ -380,6 +380,20 @@ class SpaceLearningCursorRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
+    async def last_read_at(self, *, space_id: int, user_id: int) -> datetime | None:
+        """When this member's words were last read on this board (any 题目).
+
+        The cursor moves exactly when the analysis has read them, so the newest
+        of the member's cursors is how long ago that was — what the minute's
+        reads use to leave a person alone for a while after reading them.
+        """
+        return await self._session.scalar(
+            select(func.max(SpaceLearningCursor.updated_at)).where(
+                SpaceLearningCursor.space_id == space_id,
+                SpaceLearningCursor.user_id == user_id,
+            )
+        )
+
     async def get(
         self, *, space_id: int, user_id: int, task_id: int
     ) -> SpaceLearningCursor | None:

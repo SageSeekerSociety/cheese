@@ -14,6 +14,14 @@ import type {
 const at = Date.parse('2026-11-16T06:00:00Z')
 
 export const LEARNING_CLASS_OVERVIEW: LearningClassOverview = {
+  mastery: {
+    members: 23,
+    reported: 6,
+    points: 38,
+    levels: { mastered: 41, shaky: 22, weak: 13 },
+    judged: 76,
+    peopleJudged: 18,
+  },
   enabled: true,
   minPeople: 3,
   updatedAt: at,

@@ -745,3 +745,135 @@ async def test_the_queue_writes_the_sets_teachers_pushed_on_boards_still_open(
     assert waiting.generated_at is None
     # 模型读到的是这个人卡住的地方和他自己的话。
     assert "子查询里怎么引用外层那一行？" in gateway.asked[0]
+
+
+# --- 实时之后补的几处（上限 2000、汇总预留、成员冷却、板级上限、状态） -----------------
+
+
+@pytest.mark.anyio
+async def test_reads_stop_before_the_aggregates_reserve(
+    business_db_factory, gateway, monkeypatch
+):
+    """读取这一路给每小时的汇总留一份：到了「上限 − 预留」就不再读人，
+    汇总那一条还跑得动（否则老师的聚类与讲课建议永远没机会跑）。"""
+    monkeypatch.setattr(settings, "learning_analysis_daily_calls_per_space", 4)
+    monkeypatch.setattr(settings, "learning_analysis_aggregate_reserve_calls", 2)
+    factory = business_db_factory
+    async with factory() as session:
+        world = await _board(session, ["ann", "bob", "cat"])
+        for name in ("ann", "bob", "cat"):
+            _say(session, world["people"][name], f"{name} 的问题", SAID_AT)
+        await session.commit()
+    # 今天已经读掉两次 —— 读取那一路到点（4 − 2），汇总还能再花两次。
+    assert learning_insight_analysis.read_ceiling() == 2
+    assert learning_insight_analysis.daily_ceiling() == 4
+    async with factory() as session:
+        day, _ = learning_insight_analysis.local_day(PASS_AT)
+        session.add(
+            SpaceLearningRun(
+                space_id=world["space_id"],
+                run_date=day,
+                calls=2,
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+
+    gateway.answers.append(_answer([]))
+    counts = await _pass(factory, gateway)
+    assert counts["calls"] == 0
+    assert await _rows(factory, SpaceLearningCursor, space_id=world["space_id"]) == []
+    # 汇总那一侧还能用自己的预留（这里的板没有要归类的提问，所以调用为 0 ——
+    # 关键是它没有被读取那一路的 2 挡住）。
+    assert learning_insight_analysis.daily_ceiling() > 2
+
+
+@pytest.mark.anyio
+async def test_a_member_just_read_is_left_alone_until_the_cooldown(
+    business_db_factory, gateway, monkeypatch
+):
+    monkeypatch.setattr(settings, "learning_analysis_member_cooldown_seconds", 600)
+    factory = business_db_factory
+    # 冷却按游标的写入时刻算（墙钟），所以这一条用例用现在起的真实时刻，不用
+    # 固定的 PASS_AT。
+    now = datetime.now(UTC)
+    async with factory() as session:
+        world = await _board(session, ["ann"])
+        _say(session, world["people"]["ann"], "第一句", now - timedelta(minutes=5))
+        await session.commit()
+    gateway.answers.append(_answer([]))
+    await _pass(factory, gateway, now)
+    assert len(gateway.asked) == 1
+
+    # 两分钟后又说了几句：还在冷却里，这一轮不读他。
+    async with factory() as session:
+        _say(
+            session,
+            world["people"]["ann"],
+            "紧接着又说了一句",
+            now - timedelta(minutes=2),
+        )
+        await session.commit()
+    counts = await _pass(factory, gateway, now + timedelta(minutes=2))
+    assert counts["calls"] == 0
+    assert len(gateway.asked) == 1
+
+    # 冷却过了，才读进来。
+    gateway.answers.append(_answer([]))
+    counts = await _pass(factory, gateway, now + timedelta(minutes=11))
+    assert counts["calls"] == 1
+    assert len(gateway.asked) == 2
+
+
+@pytest.mark.anyio
+async def test_a_board_may_carry_its_own_daily_cap(
+    business_db_factory, gateway, monkeypatch
+):
+    monkeypatch.setattr(settings, "learning_analysis_daily_calls_per_space", 2000)
+    monkeypatch.setattr(settings, "learning_analysis_aggregate_reserve_calls", 200)
+    factory = business_db_factory
+    async with factory() as session:
+        world = await _board(session, ["ann"])
+        space = await session.get(Space, world["space_id"])
+        space.learning_analysis_daily_calls = 30
+        _say(session, world["people"]["ann"], "问一句", SAID_AT)
+        await session.commit()
+    assert learning_insight_analysis.daily_ceiling() == 2000
+    async with factory() as session:
+        space = await session.get(Space, world["space_id"])
+        assert learning_insight_analysis.daily_ceiling(space) == 30
+        # 预留再多也只占一半：30 − min(200, 15) = 15。
+        assert learning_insight_analysis.read_ceiling(space) == 15
+
+
+@pytest.mark.anyio
+async def test_the_pages_state_says_live_or_capped(
+    business_db_factory, gateway, monkeypatch
+):
+    monkeypatch.setattr(settings, "learning_analysis_daily_calls_per_space", 10)
+    monkeypatch.setattr(settings, "learning_analysis_aggregate_reserve_calls", 2)
+    factory = business_db_factory
+    async with factory() as session:
+        world = await _board(session, ["ann"])
+        await session.commit()
+    from app.domain.space.learning_realtime_state import state
+
+    async with factory() as session:
+        live = await state(session, space_id=world["space_id"], now=PASS_AT)
+    assert live == {"state": "live", "callsToday": 0, "dailyCalls": 10}
+    async with factory() as session:
+        day, _ = learning_insight_analysis.local_day(PASS_AT)
+        session.add(
+            SpaceLearningRun(
+                space_id=world["space_id"],
+                run_date=day,
+                calls=8,
+                created_at=datetime.now(UTC),
+                updated_at=datetime.now(UTC),
+            )
+        )
+        await session.commit()
+    async with factory() as session:
+        capped = await state(session, space_id=world["space_id"], now=PASS_AT)
+    assert capped["state"] == "capped"
