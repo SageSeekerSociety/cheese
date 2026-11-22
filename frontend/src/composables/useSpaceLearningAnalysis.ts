@@ -14,6 +14,7 @@
 // 读到 `enabled` 的板，不能当成「没开学情分析」——那会把那一块整个藏掉，而它可能正开
 // 着。所以 `state` 分 `loading` / `ready` / `error`，用的人据此决定摆什么。
 import type {
+  LearningRealtime,
   MyLearningInsight,
   SpaceKnowledgePoint,
   SpaceKnowledgeSuggestion,
@@ -23,6 +24,7 @@ import type {
 import { type MaybeRefOrGetter, ref, toValue, watch } from 'vue'
 
 import { SpacesApi } from '@/api/spaces'
+import { onLearningLive } from '@/lib/learningLive'
 
 /** 这一份读到哪一步了。`error` 不能当成「没有」——见上。 */
 export type LearningAnalysisState = 'loading' | 'ready' | 'error'
@@ -202,6 +204,8 @@ export function useSpaceLearningNotice(spaceId: MaybeRefOrGetter<number | undefi
 export function useMyLearningInsight(spaceId: MaybeRefOrGetter<number | undefined>) {
   const insight = ref<MyLearningInsight | null>(null)
   const state = ref<LearningAnalysisState>('loading')
+  /** 今天实时读取到哪了（`live` / `capped`）；还没读到是 null。 */
+  const realtime = ref<LearningRealtime | null>(null)
   /** 正在标「不准」的那条判断。 */
   const disputing = ref<number | null>(null)
 
@@ -215,7 +219,7 @@ export function useMyLearningInsight(spaceId: MaybeRefOrGetter<number | undefine
     try {
       const res = await SpacesApi.readMyLearningInsight(id)
       if (toValue(spaceId) !== id) return
-      insight.value = res
+      apply(res)
       state.value = 'ready'
     } catch {
       if (toValue(spaceId) !== id) return
@@ -233,9 +237,27 @@ export function useMyLearningInsight(spaceId: MaybeRefOrGetter<number | undefine
       if (toValue(spaceId) !== id) return
       const res = await SpacesApi.readMyLearningInsight(id)
       if (toValue(spaceId) !== id) return
-      insight.value = res
+      apply(res)
     } finally {
       disputing.value = null
+    }
+  }
+
+  /** 照服务端回来的那一份更新本地：结果和今天实时读取的状态一起。 */
+  function apply(res: MyLearningInsight) {
+    insight.value = res
+    realtime.value = res.realtime ?? realtime.value
+  }
+
+  /** 服务端说变了：重读一次；读失败就留着上一份（不把一页好数据画成错误）。 */
+  async function quietReload(id: number) {
+    try {
+      const res = await SpacesApi.readMyLearningInsight(id)
+      if (toValue(spaceId) !== id) return
+      apply(res)
+      state.value = 'ready'
+    } catch {
+      /* 下一帧或下一次打开再试 */
     }
   }
 
@@ -243,10 +265,26 @@ export function useMyLearningInsight(spaceId: MaybeRefOrGetter<number | undefine
     () => toValue(spaceId),
     () => {
       insight.value = null
+      realtime.value = null
       void load()
     },
     { immediate: true }
   )
 
-  return { insight, state, disputing, load, dispute }
+  // 一两分钟前写下的判断不必等人手动刷新：连接建立 / 重连上、这块板变了，重读一次。
+  watch(
+    () => toValue(spaceId),
+    (id, _previous, onCleanup) => {
+      if (!id || !Number.isFinite(id) || id <= 0) return
+      onCleanup(
+        onLearningLive(id, () => {
+          if (toValue(spaceId) !== id) return
+          void quietReload(id)
+        })
+      )
+    },
+    { immediate: true }
+  )
+
+  return { insight, state, realtime, disputing, load, dispute }
 }

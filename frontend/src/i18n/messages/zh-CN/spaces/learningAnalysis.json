@@ -109,7 +109,11 @@
       "verify": "验证思路",
       "other": "其他"
     },
-    "taskQuote": "「{name}」"
+    "taskQuote": "「{name}」",
+    "realtime": {
+      "live": "实时更新中：你在题目里说完话，一两分钟后这一页会自己刷新。",
+      "capped": "今天实时分析到上限，明早统一更新。今天剩下的话明早统一读。"
+    }
   },
   "practice": {
     "title": "巩固练习",

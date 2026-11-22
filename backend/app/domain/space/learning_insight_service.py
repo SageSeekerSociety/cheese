@@ -22,12 +22,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ConflictError, NotFoundError
 from app.core.sentences import say
+from app.domain.space import learning_live
 from app.domain.space.learning_insight_repositories import (
     LearningConversationReads,
     SpaceLearningCursorRepository,
     SpaceLearningJudgmentRepository,
     SpaceLearningQuestionRepository,
 )
+from app.domain.space.learning_realtime_state import state as realtime_state
 from app.domain.space.learning_service import _excerpt
 from app.domain.space.models import SpaceLearningJudgment
 from app.domain.space.repositories import SpaceKnowledgePointRepository
@@ -101,6 +103,10 @@ class SpaceLearningInsightService:
             "knowledgePoints": items,
             "focusKnowledgePointId": _focus(judgments, point_names),
             "frequentQuestions": _frequent(questions, point_names),
+            # 今天实时读取到哪了：还在读，还是到上限了、等明早（§ step 2 实时）。
+            "realtime": await realtime_state(
+                self._session, space_id=space.id, space=space
+            ),
             "sources": {
                 "messagesRead": sum(c.messages_read for c in cursors),
                 "tasks": [
@@ -129,6 +135,8 @@ class SpaceLearningInsightService:
                 data={"spaceId": space.id, "judgmentId": judgment_id},
             )
         await self._judgments.dispute(row, now=datetime.now(UTC))
+        # 这一条不参选「最该补的」了：这一页（和可能看着的同一个人）重读一次。
+        await learning_live.publish(space.id)
         return {"judgmentId": row.id, "disputed": True}
 
 
@@ -139,6 +147,7 @@ def _empty(*, enabled: bool) -> dict:
         "knowledgePoints": [],
         "focusKnowledgePointId": None,
         "frequentQuestions": [],
+        "realtime": None,
         "sources": {"messagesRead": 0, "tasks": []},
     }
 

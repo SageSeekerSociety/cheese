@@ -42,10 +42,12 @@ vi.mock('vuetify-sonner', () => ({
 }))
 
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { spaceId: '11' } }) }))
+// 这一页的推送（实时分析）在用例里由 `pushLearningLive` 手动叫：不开真连接。
+vi.mock('@/lib/learningLive', () => import('@/test/fakeLearningLive'))
 
 import MyLearningInsightPage from './MyLearningInsight.vue'
 
-import i18n, { setLocale } from '@/i18n'
+import i18n, { setLocale, t } from '@/i18n'
 
 function insight(overrides: Partial<MyLearningInsight> = {}): MyLearningInsight {
   return {
@@ -78,6 +80,7 @@ function insight(overrides: Partial<MyLearningInsight> = {}): MyLearningInsight 
     frequentQuestions: [
       { knowledgePointId: 1, knowledgePointName: '相关子查询', kind: 'concept', count: 4, example: '怎么引用外层的列' },
     ],
+    realtime: { state: 'live', callsToday: 5, dailyCalls: 2000 },
     sources: { messagesRead: 12, tasks: [{ taskId: 3, name: '第 3 题', messagesRead: 12 }] },
     ...overrides,
   }
@@ -239,6 +242,14 @@ describe('我的学习洞察', () => {
     await waitFor(() => expect(completeLearningPractice).toHaveBeenCalledWith(11, 70))
     expect((await within(dialog).findByTestId('practice-result')).textContent).toContain('「薄弱」变成了「不稳」')
     await waitFor(() => expect(readMyLearningInsight).toHaveBeenCalledTimes(2))
+  })
+
+  it('今天实时分析到上限：这一页写明「今天实时分析到上限，明早统一更新」', async () => {
+    readMyLearningInsight.mockResolvedValue(
+      insight({ realtime: { state: 'capped', callsToday: 1800, dailyCalls: 2000 } })
+    )
+    mount()
+    await screen.findByText(t('spaces.learningAnalysis.insight.realtime.capped'))
   })
 
   it('复习提醒：到期的再做一组出的是复习那一组；没到期时说下一次是哪天', async () => {

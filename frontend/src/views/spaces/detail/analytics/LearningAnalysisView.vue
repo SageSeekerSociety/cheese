@@ -30,6 +30,18 @@
       </div>
       <p v-if="pointId == null" class="an-note">{{ t(`spaces.analytics.learning.class.lede.${sub}`) }}</p>
 
+      <!-- 今天实时读取到哪了：还在实时更新，还是到上限了、等明早。 -->
+      <v-alert
+        v-if="realtime"
+        :type="realtime.state === 'capped' ? 'info' : 'success'"
+        variant="tonal"
+        density="compact"
+        class="la-realtime"
+        data-testid="class-realtime"
+      >
+        {{ t(`spaces.analytics.learning.class.realtime.${realtime.state}`) }}
+      </v-alert>
+
       <BaseLoadError
         v-if="failed"
         :title="t('spaces.analytics.learning.class.loadFailed')"
@@ -96,6 +108,7 @@ import type {
   LearningClassTrend as Trend,
   LearningClassWords as Words,
   LearningPushResult,
+  LearningRealtime,
 } from '@/types/apiSpaces'
 import type { LearningSub } from './learningSubs'
 
@@ -136,6 +149,8 @@ const props = withDefaults(
     tasks?: Tasks | null
     behavior?: Behavior | null
     trend?: Trend | null
+    /** 今天实时读取到哪了；还没读到是 null。 */
+    realtime?: LearningRealtime | null
   }>(),
   {
     pointId: null,
@@ -152,6 +167,7 @@ const props = withDefaults(
     tasks: null,
     behavior: null,
     trend: null,
+    realtime: null,
   }
 )
 

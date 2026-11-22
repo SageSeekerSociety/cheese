@@ -16,6 +16,7 @@ import type {
   LearningExcerpt,
   LearningExportRequest,
   LearningPushResult,
+  LearningRealtime,
 } from '@/types/apiSpaces'
 import type { LearningSub } from '../learningSubs'
 
@@ -29,6 +30,7 @@ import { buildSourceLink } from '../helpers'
 import { axiosErrorMessage } from '@/api/axiosHttp'
 import { SpacesApi } from '@/api/spaces'
 import { announceDownload, announceDownloadFailure, saveBlob } from '@/lib/download'
+import { onLearningLive } from '@/lib/learningLive'
 import { toast } from '@/lib/toast'
 
 type Pages = {
@@ -65,6 +67,9 @@ export function useLearningClass(spaceId: Readonly<Ref<number>>) {
   const ratios = ref<{ askedRatio?: number; stuckRatio?: number }>({})
 
   const enabled = computed(() => pages.value.overview?.enabled ?? null)
+
+  /** 今天实时读取到哪了：总览读到的那一份，或后来重读时读到的那一份。 */
+  const realtime = ref<LearningRealtime | null>(null)
 
   const fetchPage = (which: LearningSub): Promise<Pages[LearningSub]> => {
     const id = spaceId.value
@@ -105,6 +110,7 @@ export function useLearningClass(spaceId: Readonly<Ref<number>>) {
       if (!spaceId.value || (!force && pages.value[which])) return
       const data = await fetchPage(which)
       pages.value = { ...pages.value, [which]: data }
+      rememberRealtime(data)
     })
 
   const loadPoint = () =>
@@ -119,6 +125,7 @@ export function useLearningClass(spaceId: Readonly<Ref<number>>) {
     spaceId,
     (value) => {
       pages.value = { ...EMPTY }
+      realtime.value = null
       pointId.value = null
       pointDetail.value = null
       sub.value = 'overview'
@@ -130,6 +137,43 @@ export function useLearningClass(spaceId: Readonly<Ref<number>>) {
   watch(sub, (value) => {
     load(value).catch(() => undefined)
   })
+
+  /** 这次读回来的页里若有实时那一格，就换成它。 */
+  function rememberRealtime(page: Pages[LearningSub] | null | undefined) {
+    const found = (page as { realtime?: LearningRealtime | null } | null | undefined)?.realtime
+    if (found) realtime.value = found
+  }
+
+  // 正开着的那一页变了就重读一次：总览要总览，知识点详情要那个知识点。别的一格格
+  // 留着，切过去时本来就会取。读失败留着上一份。
+  async function quietReload() {
+    const id = spaceId.value
+    if (!id) return
+    try {
+      if (pointId.value != null) {
+        const detail = await SpacesApi.getLearningClassPoint(id, pointId.value)
+        if (spaceId.value !== id || pointId.value == null) return
+        pointDetail.value = detail
+        return
+      }
+      const which = sub.value
+      const data = await fetchPage(which)
+      if (spaceId.value !== id || sub.value !== which) return
+      pages.value = { ...pages.value, [which]: data }
+      rememberRealtime(data)
+    } catch {
+      /* 下一帧再试 */
+    }
+  }
+
+  watch(
+    spaceId,
+    (id, _previous, onCleanup) => {
+      if (!id) return
+      onCleanup(onLearningLive(id, () => void quietReload()))
+    },
+    { immediate: true }
+  )
 
   const openPoint = (id: number) => {
     pointId.value = id
@@ -228,6 +272,7 @@ export function useLearningClass(spaceId: Readonly<Ref<number>>) {
     retry,
     openPoint,
     closePoint,
+    realtime,
     pushing,
     pushResult,
     push,

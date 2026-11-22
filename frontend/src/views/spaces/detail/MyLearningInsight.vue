@@ -4,6 +4,7 @@
     :loading="state === 'loading'"
     :failed="state === 'error'"
     :disputing="disputing"
+    :realtime="realtime"
     :practice="practice.overview.value"
     :starting="practice.starting.value"
     :explanation="practice.explanation.value"
@@ -52,7 +53,7 @@ const { t } = useI18n()
 const route = useRoute()
 
 const spaceId = () => Number(route.params.spaceId)
-const { insight, state, disputing, load, dispute } = useMyLearningInsight(spaceId)
+const { insight, state, realtime, disputing, load, dispute } = useMyLearningInsight(spaceId)
 const practice = useMyLearningPractice(spaceId, load)
 
 async function attempt(work: () => Promise<unknown>, fallback: string) {

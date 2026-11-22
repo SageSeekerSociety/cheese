@@ -356,6 +356,10 @@
         "submit": "Export",
         "failed": "Export failed; try again later",
         "fileName": "learning-report"
+      },
+      "realtime": {
+        "live": "Updating live: a minute or two after a member speaks in a task, this page refreshes itself.",
+        "capped": "Today's realtime analysis has reached its limit; it updates again tomorrow morning."
       }
     }
   },

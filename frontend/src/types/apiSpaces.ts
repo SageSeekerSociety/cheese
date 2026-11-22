@@ -1,5 +1,8 @@
 import type { AnalyticsApproveType, Page, Space, SpaceAnnouncement, SpaceTeaching, TaskSubmission } from '@/types'
 
+/** 今天学情分析的实时状态（与「我的学习洞察」同一份，见 `./spaces`）。 */
+export type LearningRealtime = import('./spaces').LearningRealtime
+
 export type SpaceApplication = {
   /** `create`：新建空间待审；`open`：已有空间申请设为开放空间。 */
   kind: 'create' | 'open'
@@ -411,6 +414,8 @@ export type LearningClassOverview = {
   weakPoints: number
   tasks: LearningClassTaskCompletion[]
   focus: LearningClassFocusPoint[]
+  /** 今天实时读取到哪了；板没开时是 null。 */
+  realtime?: LearningRealtime | null
 }
 
 export type LearningClassQuadrant = 'both' | 'hard' | 'focus' | 'normal'

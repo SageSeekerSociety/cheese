@@ -77,6 +77,16 @@ class FocusPointOut(BaseModel):
     involved: int
 
 
+class RealtimeStateOut(BaseModel):
+    """今天学情分析的实时读取到哪了（与「我的学习洞察」同一份）。"""
+
+    model_config = _C
+
+    state: Literal["live", "capped"]
+    calls_today: int = Field(alias="callsToday")
+    daily_calls: int = Field(alias="dailyCalls")
+
+
 class LearningClassOverviewOut(BaseModel):
     """总览。``enabled`` 为假时这块板没开学情分析，其余为空。"""
 
@@ -90,6 +100,7 @@ class LearningClassOverviewOut(BaseModel):
     weak_points: int = Field(alias="weakPoints")
     tasks: list[TaskCompletionOut]
     focus: list[FocusPointOut]
+    realtime: RealtimeStateOut | None = None
 
 
 class ClassPointOut(BaseModel):

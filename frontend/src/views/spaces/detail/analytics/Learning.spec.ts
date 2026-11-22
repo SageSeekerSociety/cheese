@@ -23,6 +23,8 @@ const download = vi.hoisted(() => ({ saveBlob: vi.fn(), announceDownload: vi.fn(
 vi.mock('@/lib/download', () => download)
 vi.mock('@/api/spaces', () => ({ SpacesApi: api }))
 vi.mock('vuetify-sonner', () => ({ toast: { error: vi.fn() } }))
+// 学情分析的推送在用例里由 `pushLearningLive` 手动叫：不开真连接。
+vi.mock('@/lib/learningLive', () => import('@/test/fakeLearningLive'))
 
 import Learning from './Learning.vue'
 
@@ -88,6 +90,7 @@ const AnalysisProbe = defineComponent({
     'tasks',
     'behavior',
     'trend',
+    'realtime',
   ],
   setup(props, { emit, slots }) {
     view = props
@@ -232,6 +235,31 @@ describe('学习看板容器', () => {
     await flushPromises()
     expect(api.getLearningClassQuestions).toHaveBeenCalledOnce()
     expect(api.getLearningClassOverview).toHaveBeenCalledOnce()
+  })
+
+  it('学情分析：服务端说这块板变了，正开着的那一页重读一次；实时那一格跟着换', async () => {
+    const { pushLearningLive } = await import('@/test/fakeLearningLive')
+    await render()
+    expect(api.getLearningClassOverview).toHaveBeenCalledOnce()
+    expect(view['realtime']).toBeNull()
+    api.getLearningClassOverview.mockResolvedValue({
+      ...LEARNING_CLASS_OVERVIEW,
+      realtime: { state: 'live', callsToday: 3, dailyCalls: 2000 },
+    })
+    pushLearningLive(7)
+    await flushPromises()
+    // 重读一次：不必等人刷新。
+    expect(api.getLearningClassOverview).toHaveBeenCalledTimes(2)
+    expect((view['realtime'] as { state: string }).state).toBe('live')
+    // 到上限时同一页上换成「明早统一更新」那一句。
+    api.getLearningClassOverview.mockResolvedValue({
+      ...LEARNING_CLASS_OVERVIEW,
+      realtime: { state: 'capped', callsToday: 1800, dailyCalls: 2000 },
+    })
+    pushLearningLive(7)
+    await flushPromises()
+    expect((view['realtime'] as { state: string }).state).toBe('capped')
+    expect(api.getLearningClassOverview).toHaveBeenCalledTimes(3)
   })
 
   it('学情分析没读到时，原有的发言与队列照样读、照样画', async () => {

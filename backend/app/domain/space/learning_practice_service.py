@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db import SessionFactory
 from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.core.sentences import say
+from app.domain.space import learning_live
 from app.domain.space import learning_practice_analysis as ai
 from app.domain.space.knowledge_suggestions import Refused
 from app.domain.space.learning_class_analysis import MIN_PEOPLE
@@ -431,6 +432,8 @@ class SpaceLearningPracticeService:
         row.correct = correct
         row.completed_at = now
         self._session.add(row)
+        # 档位可能刚被这一组题改过：两端开着的页面重读一次。
+        await learning_live.publish(space.id)
         today, _ = local_day(now)
         review = await self._repo.review(
             space_id=space.id, user_id=row.user_id, point_id=row.knowledge_point_id

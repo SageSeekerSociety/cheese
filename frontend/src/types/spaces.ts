@@ -199,6 +199,17 @@ export type LearningFrequentQuestion = {
 }
 
 /** 「我的学习洞察」（`GET /spaces/{spaceId}/learning-analysis/me`）。 */
+/** 今天学情分析实时读取到哪了（与老师端总览同一份）。
+ *
+ *  `state` 是 `live`（还能读今天的新发言）或 `capped`（今天读取这一路的次数用完了，
+ *  页面写明「今天实时分析到上限，明早统一更新」）。`callsToday` / `dailyCalls` 是这块板
+ *  今天用掉的次数和一天的上限，只用于展示。 */
+export type LearningRealtime = {
+  state: 'live' | 'capped'
+  callsToday: number
+  dailyCalls: number
+}
+
 export type MyLearningInsight = {
   /** 这块板开没开学情分析；没开时其余都是空的。 */
   enabled: boolean
@@ -209,6 +220,8 @@ export type MyLearningInsight = {
   /** 最该补的那个知识点；没有要补的是 null。 */
   focusKnowledgePointId: number | null
   frequentQuestions: LearningFrequentQuestion[]
+  /** 今天实时读取到哪了；板没开时是 null。 */
+  realtime: LearningRealtime | null
   /** 读了什么：一共几条发言、哪几道题各几条。 */
   sources: {
     messagesRead: number

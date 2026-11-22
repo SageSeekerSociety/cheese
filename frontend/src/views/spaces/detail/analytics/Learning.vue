@@ -16,6 +16,7 @@
     :tasks="learning.pages.value.tasks"
     :behavior="learning.pages.value.behavior"
     :trend="learning.pages.value.trend"
+    :realtime="learning.realtime.value"
     @open-point="learning.openPoint"
     @close-point="learning.closePoint"
     @push="learning.push"
