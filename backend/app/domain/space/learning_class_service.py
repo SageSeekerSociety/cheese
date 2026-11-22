@@ -258,6 +258,7 @@ class SpaceLearningClassService:
                 "weakPoints": 0,
                 "tasks": [],
                 "focus": [],
+                "mastery": None,
                 "realtime": None,
             }
         board = await self._board(space.id)
