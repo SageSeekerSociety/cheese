@@ -325,7 +325,11 @@ describe('工作面板 · Tab 容器', () => {
     // 落在「文件」那一格上，开着的正是被点的那个文件：这件任务工作树上的那一份。
     expect(visible(container, '.task-files')).toBe(true)
     expect(visible(container, '.test-overview')).toBe(false)
-    await vi.waitFor(() => expect(container.querySelector('.task-files__path')?.textContent?.trim()).toBe('src/b.ts'))
+    await vi.waitFor(() =>
+      expect(container.querySelector<HTMLTextAreaElement>('.task-files .stub-editor')?.value).toBe(
+        'export const b = 1\n'
+      )
+    )
   })
 
   // 规则 1: 几格永远都在、位置不变，这一格此刻有没有东西只决定它的字深浅。判定

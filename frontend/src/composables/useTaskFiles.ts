@@ -10,9 +10,14 @@
 // the file changed underneath is merged by the backend against that version;
 // when it cannot be, the person's text stays and they choose.
 //
-// A file can be open in several cells at once (one file per cell). What is
-// known about one file of a task — its text, whether it is held, saving or in
-// conflict — and about the task's machine is kept once, here at module level,
+// A cell of the 文件 panel keeps a tab for each file opened in it, remembered
+// per task in this browser; closing a tab only stops showing the file — text
+// held for it is saved as if the person had switched to another file. A cell
+// holding one file (opened beside) keeps no tabs.
+//
+// A file can be open in several cells at once. What is known about one file
+// of a task — its text, whether it is held, saving or in conflict — and about
+// the task's machine is kept once, here at module level,
 // and every cell showing it reads that one copy: two cells on the same file
 // show the same text, and it is saved once.
 import type { WorkspaceFile } from '../cx_types'
@@ -29,6 +34,7 @@ import {
   readFile,
   writeFile,
 } from '../api'
+import { storageGetJson, storageRemove, storageSetJson } from '../lib/browserStorage'
 import { noteSaved } from '../lib/handIn'
 import { heldEdit, heldOnlyInMemory, heldPaths, holdEdit, releaseEdit } from '../lib/heldEdits'
 
@@ -63,6 +69,8 @@ export interface TaskFilesOptions {
   active: () => boolean
   /** A turn ended: what the teammate changed is read again. */
   refreshTick: () => number
+  /** This cell keeps a tab per file opened in it (the 文件 panel, not a cell holding one file). */
+  tabs?: () => boolean
 }
 
 /** How long typing settles before a save goes out (ms). */
@@ -72,8 +80,24 @@ const POLL_MS = 2000
 /** How many answers of "nothing is being brought back" are waited out before it counts as failed. */
 const IDLE_POLLS = 10
 
-/** The file each task's panel had open: it opens on it again. */
-const lastOpen = new Map<string, string>()
+/** The tabs each task's panel had open, and the one shown: it opens on them again. */
+interface SavedTabs {
+  open: string[]
+  active: string | null
+}
+const TABS_PREFIX = 'cheesex.taskFileTabs.'
+
+function readTabs(tid: string): SavedTabs {
+  const saved = storageGetJson<Partial<SavedTabs>>(TABS_PREFIX + tid)
+  const open = Array.isArray(saved?.open) ? saved.open.filter((p): p is string => typeof p === 'string') : []
+  const active = typeof saved?.active === 'string' && open.includes(saved.active) ? saved.active : null
+  return { open, active }
+}
+
+function writeTabs(tid: string, tabs: SavedTabs) {
+  if (tabs.open.length) storageSetJson(TABS_PREFIX + tid, tabs)
+  else storageRemove(TABS_PREFIX + tid)
+}
 
 const isRefusal = (e: unknown, name: string) => e instanceof ApiError && e.code === name
 
@@ -134,7 +158,14 @@ function fileState(tid: string, path: string): FileState {
   const key = keyOf(tid, path)
   let state = fileStates.get(key)
   if (!state) {
-    state = reactive({ file: null, held: false, saving: false, conflict: false, merge: null, error: '' }) as FileState
+    state = reactive({
+      file: null,
+      held: heldEdit(tid, path) !== null,
+      saving: false,
+      conflict: false,
+      merge: null,
+      error: '',
+    }) as FileState
     fileStates.set(key, state)
   }
   return state
@@ -183,6 +214,9 @@ async function saveHeld(tid: string, path: string): Promise<void> {
       const mine = state.file.content === kept.content
       state.file = { ...state.file, version: res.version, base: saved, content: mine ? saved : state.file.content }
       state.held = !mine
+    } else {
+      // Saved while no cell showed it (a closed tab, an earlier visit).
+      state.held = heldEdit(tid, path) !== null
     }
     state.conflict = false
     state.merge = null
@@ -204,6 +238,16 @@ async function saveHeld(tid: string, path: string): Promise<void> {
     state.saving = false
     if (again.delete(key) && task.machine === 'ready') void saveHeld(tid, path)
   }
+}
+
+/** A save waiting for typing to settle goes out now (the person moved away from the file). */
+function saveSoon(tid: string, path: string) {
+  const key = keyOf(tid, path)
+  const pending = saveTimers.get(key)
+  if (!pending) return
+  clearTimeout(pending)
+  saveTimers.delete(key)
+  if (taskState(tid).machine === 'ready') void saveHeld(tid, path)
 }
 
 /** Save every file of this task with text held, then the tree changes waiting (the machine is ready). */
@@ -309,6 +353,11 @@ export function useTaskFiles(opts: TaskFilesOptions) {
   const lines = ref<{ start: number; end: number } | null>(null)
   /** A tree change refused or failed. */
   const arrangeError = ref('')
+  /** The files open as tabs in this cell, in the order they sit. */
+  const tabs = ref<string[]>([])
+  /** The tab that was shown when the task was last left, opened once the listing says it still exists. */
+  let savedActive: string | null = null
+  const keepsTabs = () => opts.tabs?.() ?? true
 
   const task = () => opts.taskId()
   // This cell counts as one of its task's cells while it is mounted.
@@ -322,6 +371,9 @@ export function useTaskFiles(opts: TaskFilesOptions) {
       const state = taskState(tid)
       state.users += 1
       state.projectId = opts.projectId() ?? state.projectId
+      const saved = keepsTabs() ? readTabs(tid) : { open: [], active: null }
+      tabs.value = saved.open
+      savedActive = saved.active
     },
     { immediate: true }
   )
@@ -342,6 +394,12 @@ export function useTaskFiles(opts: TaskFilesOptions) {
   const machine = computed<TaskMachineState>(() => shared.value?.machine ?? 'unknown')
   const saveError = computed(() => current.value?.error || shared.value?.error || '')
   const touched = computed(() => shared.value?.touched ?? new Set<string>())
+
+  /** Tabs whose file has text not saved yet. */
+  const heldTabs = computed<ReadonlySet<string>>(() => {
+    const tid = task()
+    return new Set(tid ? tabs.value.filter((p) => fileState(tid, p).held) : [])
+  })
 
   const canEdit = computed(() => !opts.readOnly() && !!file.value && !file.value.binary && !file.value.tooLarge)
 
@@ -377,9 +435,15 @@ export function useTaskFiles(opts: TaskFilesOptions) {
     const tid = task()
     if (!pid || !tid) return
     const request = ++fileRequest
+    if (keepsTabs() && !tabs.value.includes(path)) {
+      // A new tab sits right after the one shown, or last when none is.
+      const shown = openPath.value ? tabs.value.indexOf(openPath.value) : -1
+      const slot = shown < 0 ? tabs.value.length : shown + 1
+      tabs.value = [...tabs.value.slice(0, slot), path, ...tabs.value.slice(slot)]
+    }
     openPath.value = path
     lines.value = at
-    lastOpen.set(tid, path)
+    rememberTabs()
     opening.value = true
     fileError.value = ''
     const state = fileState(tid, path)
@@ -413,6 +477,41 @@ export function useTaskFiles(opts: TaskFilesOptions) {
     } finally {
       if (request === fileRequest) opening.value = false
     }
+  }
+
+  /** Shows no file: the last tab was closed, or the file shown was deleted. */
+  function showNothing() {
+    fileRequest += 1
+    openPath.value = null
+    lines.value = null
+    opening.value = false
+    fileError.value = ''
+  }
+
+  function rememberTabs() {
+    const tid = task()
+    if (tid && keepsTabs()) writeTabs(tid, { open: tabs.value, active: openPath.value })
+  }
+
+  /**
+   * Close a file's tab. Text held for it is not dropped: a save waiting for the
+   * typing to settle goes out now, and one waiting for the machine goes out with
+   * the others once it is ready — as when the person switches to another file.
+   */
+  function closeTab(path: string) {
+    const tid = task()
+    const at = tabs.value.indexOf(path)
+    if (!tid || at < 0) return
+    saveSoon(tid, path)
+    const rest = tabs.value.filter((p) => p !== path)
+    tabs.value = rest
+    if (openPath.value === path) {
+      // The neighbour on the right takes its place, or on the left at the end of the row.
+      const next = rest[Math.min(at, rest.length - 1)]
+      if (next) void open(next)
+      else showNothing()
+    }
+    rememberTabs()
   }
 
   /** Opens a file by path when the task's copy has it; answers whether it does. */
@@ -539,33 +638,55 @@ export function useTaskFiles(opts: TaskFilesOptions) {
     }
   }
 
-  /** Text held for a renamed or deleted file goes with it. */
+  /** Text held for a renamed or deleted file, and its tab, go with it. */
   function afterArrange(tid: string, change: TaskFileArrangement, path: string) {
     if (change.operation !== 'move' && change.operation !== 'delete') return
     const under = (p: string) => p === change.path || p.startsWith(`${change.path}/`)
+    const moved = (p: string) => path + p.slice(change.path.length)
     for (const p of heldPaths(tid).filter(under)) {
       const kept = heldEdit(tid, p)
       releaseEdit(tid, p)
       fileStates.delete(keyOf(tid, p))
-      if (kept && change.operation === 'move') holdEdit(tid, path + p.slice(change.path.length), kept)
+      if (kept && change.operation === 'move') holdEdit(tid, moved(p), kept)
     }
+    const before = tabs.value
     const now = openPath.value
-    if (now && under(now)) {
-      if (change.operation === 'move') void open(path + now.slice(change.path.length))
-      else openPath.value = null
+    if (change.operation === 'move') {
+      tabs.value = before.map((p) => (under(p) ? moved(p) : p))
+      if (now && under(now)) void open(moved(now))
+    } else {
+      tabs.value = before.filter((p) => !under(p))
+      if (now && under(now)) {
+        const at = before.indexOf(now)
+        const next =
+          before.slice(at + 1).find((p) => !under(p)) ??
+          before
+            .slice(0, Math.max(at, 0))
+            .reverse()
+            .find((p) => !under(p))
+        if (next) void open(next)
+        else showNothing()
+      }
     }
+    rememberTabs()
   }
 
   // ---------------------------------------------------------------- lifetime
 
-  // The panel loads the first time it is on screen, and opens the file it had.
+  // The panel loads the first time it is on screen, and opens the tabs it had;
+  // a file that is gone since is dropped without a word.
   watch(
     () => [opts.active(), task()] as const,
     ([active, tid]) => {
       if (!active || !tid || listed.value || listing.value) return
       void loadListing().then(() => {
-        const last = lastOpen.get(tid)
-        if (!openPath.value && last && files.value.some((f) => f.path === last)) void open(last)
+        if (!listed.value || task() !== tid || !keepsTabs()) return
+        const known = new Set(files.value.map((f) => f.path))
+        tabs.value = tabs.value.filter((p) => known.has(p) || p === openPath.value)
+        const last = savedActive && tabs.value.includes(savedActive) ? savedActive : tabs.value.at(-1)
+        savedActive = null
+        if (!openPath.value && last) void open(last)
+        else rememberTabs()
       })
       // Text held from an earlier visit is saved even if its file is not opened.
       if (heldPaths(tid).length && !opts.readOnly()) void resume(tid)
@@ -600,9 +721,12 @@ export function useTaskFiles(opts: TaskFilesOptions) {
   return {
     files,
     dirs,
+    listed,
     listing,
     listError,
     openPath,
+    tabs,
+    heldTabs,
     file,
     opening,
     fileError,
@@ -619,6 +743,7 @@ export function useTaskFiles(opts: TaskFilesOptions) {
     loadListing,
     open,
     openFile,
+    closeTab,
     edit,
     saveNow,
     retry,

@@ -317,3 +317,83 @@ export function readerText(file: { head?: string | null; content: string | null 
   if (!file) return null
   return file.head ?? file.content
 }
+
+/** The mark beside a file in a task's 文件 panel, its tree and its tabs (`FileKindMark`):
+ *  a small, general set — the languages a course is taught in and the files that build
+ *  and describe them — read off the table above, plus the few files known by their whole
+ *  name. Anything else is a plain file. */
+export type FileMark =
+  | 'c'
+  | 'cpp'
+  | 'header'
+  | 'python'
+  | 'javascript'
+  | 'typescript'
+  | 'java'
+  | 'go'
+  | 'rust'
+  | 'markdown'
+  | 'config'
+  | 'makefile'
+  | 'shell'
+  | 'git'
+  | 'text'
+  | 'file'
+
+const MARK_BY_LANGUAGE: Record<string, FileMark> = {
+  c: 'c',
+  cpp: 'cpp',
+  python: 'python',
+  javascript: 'javascript',
+  typescript: 'typescript',
+  java: 'java',
+  go: 'go',
+  rust: 'rust',
+  bash: 'shell',
+  json: 'config',
+  yaml: 'config',
+  ini: 'config',
+  plaintext: 'text',
+}
+const HEADER_SUFFIXES = new Set(['h', 'hpp', 'hh', 'hxx'])
+const BUILD_SUFFIXES = new Set(['mk', 'cmake'])
+const MARK_BY_NAME: Record<string, FileMark> = {
+  makefile: 'makefile',
+  gnumakefile: 'makefile',
+  'cmakelists.txt': 'makefile',
+  '.gitignore': 'git',
+  '.gitattributes': 'git',
+  '.gitmodules': 'git',
+  '.gitkeep': 'git',
+}
+
+export function fileMark(path: string): FileMark {
+  const name = (path.split('/').pop() ?? '').toLowerCase()
+  const named = MARK_BY_NAME[name]
+  if (named) return named
+  const suffix = suffixOf(path)
+  if (HEADER_SUFFIXES.has(suffix)) return 'header'
+  if (BUILD_SUFFIXES.has(suffix)) return 'makefile'
+  if (DOCUMENT_TYPES[suffix]?.view === 'markdown') return 'markdown'
+  return MARK_BY_LANGUAGE[codeLanguageOf(suffix) ?? ''] ?? 'file'
+}
+
+/** The letters drawn for a mark; a mark without letters is drawn as a file icon. */
+export const FILE_MARK_LETTERS: Record<FileMark, string | null> = {
+  c: 'C',
+  cpp: 'C+',
+  header: 'H',
+  python: 'Py',
+  javascript: 'JS',
+  typescript: 'TS',
+  java: 'J',
+  go: 'Go',
+  rust: 'Rs',
+  markdown: 'MD',
+  config: '{}',
+  makefile: 'M',
+  shell: '$',
+  git: 'git',
+  text: null,
+  file: null,
+}

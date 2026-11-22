@@ -97,4 +97,26 @@ describe('the file editor', () => {
     view.unmount()
     await server.next('textDocument/didClose')
   }, 30_000)
+
+  it('a file kept as a tab comes back as it was left, and what was typed there can be undone', async () => {
+    const link: LanguageLink = { scope: 'task-2', serverFor: () => null, open: () => {} }
+    const keep = ['a.c', 'b.c']
+    const view = render(CodeEditor, {
+      props: { modelValue: 'one\n', filename: 'a.c', language: link, keep },
+      global: { plugins: [vuetify] },
+    })
+    const editor = await shown()
+    editor.pushUndoStop()
+    type(editor, 'typed\n')
+
+    await view.rerender({ modelValue: 'two\n', filename: 'b.c', language: link, keep })
+    await vi.waitFor(() => expect(editor.getValue()).toBe('two\n'))
+    // Its text as last read: what was typed there is not saved yet.
+    await view.rerender({ modelValue: 'one\n', filename: 'a.c', language: link, keep })
+    await vi.waitFor(() => expect(editor.getValue()).toBe('one\ntyped\n'))
+
+    editor.trigger('test', 'undo', null)
+    expect(editor.getValue()).toBe('one\n')
+    view.unmount()
+  }, 30_000)
 })
