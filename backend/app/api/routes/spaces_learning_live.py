@@ -52,10 +52,10 @@ async def learning_live_feed(
     actor = await ActorResolver(
         session=db, bearer=token or None, cheese_token=""
     ).resolve(read_only=True)
-    from app.domain.user.repositories import UserRepository
+    from app.domain.user.services import user_by_handle
 
     owner = (
-        await UserRepository(db).get_by_username(actor.handle)
+        await user_by_handle(db, actor.handle)
         if actor.authenticated and actor.user_id is None
         else None
     )
