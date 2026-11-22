@@ -12,6 +12,7 @@
 // 数据和去处都由容器 ProjectOverview 给。
 import type { ProjectSituation } from '@/api/projectProgress'
 import type { ArtifactApi } from '@/components/ArtifactManifest.vue'
+import type { ProjectLearning } from '@/components/overview/LearningPracticeCard.vue'
 import type { LatestHandIn, SubmissionRequirement } from '@/components/overview/SubmissionRequirementsCard.vue'
 import type { RoomTask } from '@/cx_types'
 import type { TaskState } from '@/lib/taskState'
@@ -26,6 +27,7 @@ import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import AppPage from '@/components/common/AppPage.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import LearningPracticeCard from '@/components/overview/LearningPracticeCard.vue'
 import OverviewDraftForm from '@/components/overview/OverviewDraftForm.vue'
 import SituationCard from '@/components/overview/SituationCard.vue'
 import SubmissionRequirementsCard from '@/components/overview/SubmissionRequirementsCard.vue'
@@ -81,6 +83,8 @@ const props = defineProps<{
   starter?: ProjectStarter | null
   /** 提交要求卡；见 ProjectSubmission。 */
   submission?: ProjectSubmission | null
+  /** 学情分析与巩固练习卡；见 ProjectLearning。 */
+  learning?: ProjectLearning | null
   /** 「题目更新」那几行能不能点到题目的历史版本页：看的人看得到这道题的 `题目/` 才能。 */
   taskLinked?: boolean
   /** 最近进展；还没读到是 null。 */
@@ -124,6 +128,8 @@ const emit = defineEmits<{
   'open-task-folder': []
   /** 去题目页的提交表单。 */
   'go-submit': []
+  /** 去这道题所在板的「我的学习洞察」。 */
+  'open-learning': []
   /** 在这个项目里新建任务写代码。 */
   'new-task': []
 }>()
@@ -257,6 +263,7 @@ function stateOf(task: RoomTask): TaskState {
       @go-submit="emit('go-submit')"
       @new-task="emit('new-task')"
     />
+    <LearningPracticeCard v-if="learning" :learning="learning" @open-learning="emit('open-learning')" />
     <div class="overview">
       <div class="overview__main">
         <!-- 项目目标：人写的那一份。显示文档本身，不替它排成字段。 -->

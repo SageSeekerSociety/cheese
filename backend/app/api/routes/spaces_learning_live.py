@@ -52,10 +52,8 @@ async def learning_live_feed(
     actor = await ActorResolver(
         session=db, bearer=token or None, cheese_token=""
     ).resolve(read_only=True)
-    from app.domain.space.models import Space
     from app.domain.user.repositories import UserRepository
 
-    space = await db.get(Space, space_id)
     owner = (
         await UserRepository(db).get_by_username(actor.handle)
         if actor.authenticated and actor.user_id is None
@@ -64,7 +62,6 @@ async def learning_live_feed(
     user_id = actor.user_id or (owner.id if owner is not None else None)
     allowed = (
         actor.authenticated
-        and space is not None
         and user_id is not None
         and await space_seats.SPACE.allows(db, space_id, user_id, SpacePermission.view)
     )

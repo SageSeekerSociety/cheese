@@ -354,3 +354,23 @@ it('draws the submission card only for a project that came from a task', () => {
   })
   expect(claimed.queryByTestId('overview-submission')).not.toBeNull()
 })
+
+it('draws the learning card only when the board has the analysis on', async () => {
+  const plain = mount({ learning: null })
+  expect(plain.queryByTestId('overview-learning')).toBeNull()
+  plain.unmount()
+  const claimed = mount({
+    learning: {
+      focus: { name: 'SQL 聚合函数与分组', level: 'weak' },
+      due: 0,
+      open: 1,
+      left: 6,
+    },
+  })
+  const card = claimed.getByTestId('overview-learning')
+  expect(card.textContent).toContain('SQL 聚合函数与分组')
+  expect(card.textContent).toContain('薄弱')
+  expect(card.textContent).toContain('1 组巩固题没做完')
+  await fireEvent.click(claimed.getByTestId('overview-learning-go'))
+  expect(claimed.emitted('open-learning')).toHaveLength(1)
+})

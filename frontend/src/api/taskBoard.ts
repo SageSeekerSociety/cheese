@@ -37,7 +37,21 @@ export interface FoundTask {
   deadline: number | null
 }
 
+/** 我领了的一道题（`GET /tasks/joined`）：跨空间，最近动过的在前。 */
+export interface JoinedTask {
+  id: number
+  title: string
+  intro: string | null
+  deadline: number | null
+  myDeadline: number | null
+  approved: boolean
+  ended: boolean
+}
+
 export namespace TaskBoardApi {
+  /** 我在各处领了、还在做的题。做巩固题的那一页用它找回这块板上我的作业。 */
+  export const joined = () => axiosRequest<JoinedTask[]>({ url: '/tasks/joined', method: 'GET' }, true)
+
   /** Ctrl+K：我加入的空间里名字或简介含这些词的题目，照各空间列表给我看的那样。 */
   export const search = (q: string) =>
     axiosRequest<{ tasks: FoundTask[] }>({ url: '/tasks/search', method: 'GET', params: { q } }, true)

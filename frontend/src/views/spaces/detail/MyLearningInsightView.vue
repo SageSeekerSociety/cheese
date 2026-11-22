@@ -49,7 +49,11 @@ const props = defineProps<{
   /** 「先看一段讲解」读回来的那一段，和正在读讲解的知识点。 */
   explanation?: LearningExplanation | null
   explaining?: number | null
+  /** 我在这一页读到的、还开着的领题（每题一行）；没有就画不出回作业那条路。 */
+  myTasks?: Array<{ id: number; name: string }>
 }>()
+// 预览站和别处只摆画面、不给这一项：没有它就是不画那条回去的路，不是崩。
+const myTasks = computed(() => props.myTasks ?? [])
 
 const emit = defineEmits<{
   dispute: [judgmentId: number]
@@ -59,6 +63,8 @@ const emit = defineEmits<{
   /** 打开没做完的一组。 */
   openPractice: [practiceId: number, pointId: number]
   explain: [pointId: number]
+  /** 回到我在这块板领的那道题（做完巩固题接着做作业）。 */
+  openTask: [taskId: number]
 }>()
 
 const { t, locale } = useI18n()
@@ -155,6 +161,25 @@ const whoRows = computed(() => [
     />
 
     <template v-else>
+      <!-- 从领了题的项目进来时，这一页顶上给一条回去的路：做完巩固题接着做那道题、交答案。
+         没有领题（或者只领了一道）的人不画这一条。 -->
+      <section v-if="myTasks.length" class="mli__card mli__back" data-testid="insight-back-to-work">
+        <h2 class="mli__card-title">{{ t('spaces.learningAnalysis.insight.backToWorkTitle') }}</h2>
+        <p class="mli__muted">{{ t('spaces.learningAnalysis.insight.backToWorkDesc') }}</p>
+        <div class="mli__actions">
+          <BaseButton
+            v-for="task in myTasks"
+            :key="task.id"
+            kind="secondary"
+            size="sm"
+            data-testid="insight-back-task"
+            @click="emit('openTask', task.id)"
+          >
+            {{ t('spaces.learningAnalysis.insight.backToWorkGo', { name: task.name }) }}
+          </BaseButton>
+        </div>
+      </section>
+
       <p class="mli__lede">{{ lede }}</p>
 
       <!-- 今天实时读取到哪了：还在实时更新，还是到上限了、等明早。 -->
@@ -420,6 +445,10 @@ const whoRows = computed(() => [
 <style scoped>
 .mli {
   padding: 4px 24px 32px;
+}
+
+.mli__back {
+  margin-bottom: 16px;
 }
 
 .mli__loading {
