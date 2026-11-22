@@ -396,20 +396,20 @@ def _ask_an_old_question(
     return block
 
 
-def test_typing_a_reply_does_not_settle_a_question_row(client):
-    """没点选项、自己打字回了一句：那句话可能只是追问，题仍在等回答，通知保持未读，
-    由提问的那位读完确认（`block.questions.confirm_pending`）才结。
-    """
+def test_typing_a_reply_settles_the_question_row(client):
+    """没点选项、自己打字回了一句：从 2026-11-22 起这就是作答（蔡松洋定的）。题结掉、
+    通知读到，卡上写着他说的那句话。追问一句「这是什么意思」也算，卡上能撤回。"""
     alice = seed_user(client, "alice")
     pid, room = _room(client)
     _ask_an_old_question(client, room, asked=["alice"])
     assert _shown(client, pid, room)["phrase"] == NeedsYou.awaiting_answer
 
-    _say(client, room, "解释一下这个问题是什么意思？")
+    _say(client, room, "按季度统计")
 
-    assert _shown(client, pid, room)["phrase"] == NeedsYou.awaiting_answer
+    assert _shown(client, pid, room)["phrase"] != NeedsYou.awaiting_answer
     (row,) = _questions(client, alice)
-    assert row["read"] is False
+    assert row["read"] is True
+    assert row["contextMetadata"]["answered"] == "按季度统计"
 
 
 def test_someone_else_typing_does_not_answer_for_the_person_asked(client):

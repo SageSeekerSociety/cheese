@@ -364,8 +364,9 @@ def test_a_question_waits_on_whoever_summoned_the_agent(
     assert _seen_by(client, pid, "carol")["问答"]["awaits_me"] is False
 
 
-def test_replying_in_words_instead_of_a_button_keeps_the_wait(client):
-    """没点选项、直接回了一句话，题仍等着，由提问的那位确认才结；别人说话更不算。"""
+def test_replying_in_words_settles_it_but_someone_else_speaking_does_not(client):
+    """没点选项、直接回了一句话：2026-11-22 起这就是作答，题不再等他（蔡松洋定的）。
+    别人说话不算 —— 能被问的只有名单上的人。"""
     pid = _project(client)
     tid = _topic(client, pid, "问答", created_by="alice")
     # A person asks it, in the channel's main line: an answer wakes no agent.
@@ -377,9 +378,8 @@ def test_replying_in_words_instead_of_a_button_keeps_the_wait(client):
     _say(client, tid, "carol", "我路过")
     assert _seen_by(client, pid, "bob")["问答"]["awaits_me"] is True
 
-    # Words alone do not settle it: they may be a question about it.
     _say(client, tid, "bob", "都行，你先按部门")
-    assert _seen_by(client, pid, "bob")["问答"]["awaits_me"] is True
+    assert _seen_by(client, pid, "bob")["问答"]["awaits_me"] is False
 
 
 def test_a_question_awaits_only_whoever_started_the_turn(
