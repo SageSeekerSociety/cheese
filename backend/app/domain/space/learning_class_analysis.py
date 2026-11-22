@@ -1,4 +1,4 @@
-"""每晚分析里给老师那一侧备的三件事（§ learning analysis, step 3）。
+"""学情分析里给老师那一侧备的三件事（§ learning analysis, step 3）。
 
 第 2 步读完每个成员的新发言之后，同一晚、同一块板接着做：
 
@@ -47,7 +47,7 @@ MIN_PEOPLE = 3
 CLUSTER_BATCH = 50
 CLUSTER_CONTEXT = 80
 MAX_CLUSTER_LABEL_CHARS = 80
-#: 每晚为卡住最多的几个知识点写讲课建议。
+#: 每小时为卡住最多的几个知识点写讲课建议。
 ADVICE_POINTS = 3
 MAX_ADVICE_CHARS = 400
 #: 讲课建议里交给模型的误解条数。

@@ -180,8 +180,13 @@ def _world():
         ),
         ("ci activity sweep", "ci_activity.ingest.sweep", "sessions"),
         (
-            "learning analysis nightly",
-            "space.learning_insight_analysis.run_nightly",
+            "learning analysis recent",
+            "space.learning_insight_analysis.run_recent",
+            "sessions",
+        ),
+        (
+            "learning class aggregates",
+            "space.learning_insight_analysis.run_class_aggregates",
             "sessions",
         ),
         (
@@ -552,7 +557,8 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("relay balance check", 126),
         ("credit warnings", 125),
         ("ci activity sweep", 300),
-        ("learning analysis nightly", 3600),
+        ("learning analysis recent", 60),
+        ("learning class aggregates", 3600),
         ("learning practice queue", 900),
     ]
     # Every process serves requests that read the platform model roles, so that

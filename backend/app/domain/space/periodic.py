@@ -1,4 +1,4 @@
-"""The space domain's clock: the nightly 学情分析 (§ learning analysis, step 2)
+"""The space domain's clock: 学情分析's two halves (§ learning analysis, step 2)
 and the practice sets teachers push (step 4)."""
 
 from app.core.background import PeriodicJobs
@@ -7,13 +7,21 @@ from app.domain.space import learning_insight_analysis, learning_practice_servic
 
 
 def register_periodic_jobs(jobs: PeriodicJobs, *, sessions: SessionFactory) -> None:
-    # Hourly: the job itself decides whether it is night yet
-    # (``learning_analysis_run_hour``) and whether a board's run for today is
-    # done, so a deploy or a missed tick only delays the night by an hour.
+    # Every minute: whoever has words past their cursor and has stopped
+    # talking. A member's judgment appears within a minute or two of the
+    # conversation ending, not the next morning.
     jobs.register(
-        "learning analysis nightly",
+        "learning analysis recent",
+        60,
+        lambda: learning_insight_analysis.run_recent(sessions),
+    )
+    # Hourly: the cross-member side — grouping questions into clusters and
+    # writing teaching advice — reads a whole class per call, so it stays off
+    # the minute's clock. Both passes spend the same board's daily cap.
+    jobs.register(
+        "learning class aggregates",
         3600,
-        lambda: learning_insight_analysis.run_nightly(sessions),
+        lambda: learning_insight_analysis.run_class_aggregates(sessions),
     )
     # The practice sets teachers pushed (§ step 4) are written off the request,
     # a few at a time, under the same daily cap as the night; a member who

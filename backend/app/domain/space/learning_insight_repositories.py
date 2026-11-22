@@ -92,15 +92,28 @@ class LearningConversationReads:
         return list(rows.all())
 
     async def pending_pairs(
-        self, *, space_id: int, since: datetime | None
+        self,
+        *,
+        space_id: int,
+        since: datetime | None,
+        settled: datetime | None = None,
     ) -> list[PendingPair]:
         """(member, 题目) pairs with words past their cursor, in this board.
 
         One statement: the member's messages in the board's 题目 projects, said
         after ``since`` (the moment the analysis was switched on), joined to the
         person who wrote them and to that pair's cursor, kept only past it.
+
+        ``settled`` leaves out a pair whose newest unread word is newer than
+        it: a person still typing, or an AI reply not written yet, is read on a
+        later pass rather than mid-sentence.
         """
         cursor = SpaceLearningCursor
+        unread = or_(
+            cursor.id.is_(None),
+            tuple_(Block.created_at, Block.id)
+            > tuple_(cursor.last_block_at, cursor.last_block_id),
+        )
         stmt = (
             select(User.id, Block.author, Project.external_task_id)
             .select_from(Block)
@@ -121,19 +134,21 @@ class LearningConversationReads:
                 Task.deleted_at.is_(None),
                 *member_words(),
                 *readable_rooms(),
-                or_(
-                    cursor.id.is_(None),
-                    tuple_(Block.created_at, Block.id)
-                    > tuple_(cursor.last_block_at, cursor.last_block_id),
-                ),
+                unread,
             )
             .group_by(User.id, Block.author, Project.external_task_id)
-            # The pair whose oldest unread word is oldest goes first: a capped
-            # night leaves the newest talk, not the same people, for tomorrow.
+            # The pair whose oldest unread word is oldest goes first: a pass cut
+            # short by the cap leaves the newest talk, not the same people,
+            # for the next one.
             .order_by(func.min(Block.created_at).asc())
         )
         if since is not None:
             stmt = stmt.where(Block.created_at >= since)
+        if settled is not None:
+            # A word said a moment ago may still be followed by another one and
+            # by the AI's reply; only words past ``settled`` pick the pair, and
+            # the read stops there too (``member_messages``'s ``until``).
+            stmt = stmt.where(Block.created_at <= settled)
         rows = (await self._session.execute(stmt)).all()
         return [
             PendingPair(user_id=int(uid), handle=str(handle), task_id=int(task_id))
@@ -148,8 +163,13 @@ class LearningConversationReads:
         since: datetime | None,
         after: tuple[datetime, uuid.UUID] | None,
         limit: int,
+        until: datetime | None = None,
     ) -> list[Said]:
-        """The member's next ``limit`` messages in this 题目, oldest first."""
+        """The member's next ``limit`` messages in this 题目, oldest first.
+
+        ``until`` stops at the last word that had settled when the pass began:
+        what they say while the model is reading is the next pass's batch.
+        """
         stmt = (
             select(Block)
             .select_from(Block)
@@ -172,6 +192,8 @@ class LearningConversationReads:
                 tuple_(Block.created_at, Block.id)
                 > tuple_(literal(at), literal(block_id))
             )
+        if until is not None:
+            stmt = stmt.where(Block.created_at <= until)
         rows = (await self._session.scalars(stmt)).all()
         return [_said(block) for block in rows]
 
