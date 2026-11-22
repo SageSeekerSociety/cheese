@@ -1,5 +1,5 @@
 import { test, expect, type Locator, type Page } from '@playwright/test';
-import { api, apiLogin, openFirstProject, projectIdOf } from './helpers';
+import { api, apiLogin, clickFirstProject, openFirstProject, projectIdOf } from './helpers';
 import { fieldDefects, TOKEN_FIELDS } from './field-layout';
 
 // Parallel so CI shards split this file by test rather than handing one shard
@@ -518,7 +518,7 @@ async function textOverlaps(scope: Locator): Promise<string[]> {
 test.describe('表单字段不会互相压住，也不会被裁掉', () => {
   test('artifact comparison keeps diff lines vertical on desktop and mobile', async ({ page }) => {
     await apiLogin(page);
-    await page.locator('.app-rail-item--tile').first().click();
+    await clickFirstProject(page);
     await page.waitForURL(/\/projects\/[^/]+/);
     const projectId = await projectIdOf(page);
     const artifactId = '00000000-0000-0000-0000-000000000123';
@@ -575,7 +575,7 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
 
   test('「修改 AI 队友」对话框', async ({ page }) => {
     await apiLogin(page);
-    await page.locator('.app-rail-item--tile').first().click();
+    await clickFirstProject(page);
     await page.waitForURL(/\/projects\/[^/]+/);
     const projectId = await projectIdOf(page);
 
@@ -835,8 +835,9 @@ test.describe('表单字段不会互相压住，也不会被裁掉', () => {
   });
 });
 
-// 侧栏顶上项目名那一条，和右边内容区的页头是同一条线：一样高、顶在同一处，两条底
-// 线接成一条。这几页以前各画各的大标题，那条线到了这几页就断在半空——从房间切到
+// 侧栏顶上那一条（桌面上是项目切换器，写你在哪儿，见 ProjectSwitcher.vue；左边那一列
+// 方块栏 2026-11-16 拿掉之前是项目名那一行），和右边内容区的页头是同一条线：一样高、
+// 顶在同一处，两条底线接成一条。这几页以前各画各的大标题，那条线到了这几页就断在半空——从房间切到
 // 成员页，页头一会儿有一会儿没有。量的是渲染出来的盒子，因为这种错 vitest 和类型检
 // 查都看不见。项目设置不在这里：它是盖在整个窗口上的一层，没有这条页头。
 test('项目里每一页的页头都和侧栏项目名那一条对齐', async ({ page }) => {
@@ -850,12 +851,47 @@ test('项目里每一页的页头都和侧栏项目名那一条对齐', async ({
     await page.goto(`${projectPath}/${sub}`);
     const head = page.locator('.app-page__head');
     await expect(head).toBeVisible();
-    const [side, main] = await Promise.all([page.locator('.rail-header').boundingBox(), head.boundingBox()]);
+    const [side, main] = await Promise.all([page.getByTestId('sidebar-frame-top').boundingBox(), head.boundingBox()]);
     expect(side, sub).not.toBeNull();
     expect(main, sub).not.toBeNull();
     expect(main!.y, `${sub} · top`).toBeCloseTo(side!.y, 0);
     expect(main!.height, `${sub} · height`).toBeCloseTo(side!.height, 0);
   }
+});
+
+// 侧栏头里团队名那根链接（「知是」那一行）只该占字本身那么宽。这一列是 flex column，
+// 链接默认被 stretch 拉成整列宽，名字右边那一大片空白也成了链接的一部分——点在那儿进
+// 了团队页，报上来是「点空白跳回首页」。这个错只有渲染出来的盒子看得见，vitest 量不到。
+test("侧栏头的团队名链接只盖住字，右侧空白交给切换器", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await apiLogin(page);
+  await openFirstProject(page);
+
+  const team = page.getByTestId("project-switcher").locator("a.frame-top__team");
+  await expect(team).toBeVisible();
+  const box = await team.boundingBox();
+  expect(box, "the team link must have a rendered box").not.toBeNull();
+
+  // 链接里那段字自己占多宽：和链接的盒子比，拉成整列就会宽出一大截。
+  const textWidth = await team.evaluate((el) => {
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    return range.getBoundingClientRect().width;
+  });
+  expect(box!.width - textWidth, "链接盒子不该比自己的字宽出一截（拉成整列就是那个 bug）").toBeLessThan(8);
+
+  // 字右边同一行的空白处，指针落在切换器按钮里、而不是那根链接：点它开的是项目列表。
+  const hit = await page.evaluate(
+    ({ right, y }) => {
+      const el = document.elementFromPoint(right, y);
+      if (!el) return "nothing";
+      const inLink = el.closest("a.frame-top__team") ? "team-link" : "other";
+      const inSwitcher = el.closest('[data-testid="project-switcher"]') ? "switcher" : "outside";
+      return `${inLink}/${inSwitcher}`;
+    },
+    { right: box!.x + box!.width + 8, y: box!.y + box!.height / 2 }
+  );
+  expect(hit).toBe("other/switcher");
 });
 
 // 设置是盖在整个窗口上的一层（SettingsOverlay），它里面的下拉菜单和对话框却由 Vuetify
@@ -1380,11 +1416,11 @@ test.describe('设置浮层：目录钉左缘、内容列在剩余空间居中�
   });
 });
 
-// 工作面板的每一格都住在 `tabbody` 里，而 `tabbody` 是一条 flex 行（`WorkPanel.vue`）：
+// 桌面上工作面板的每一格是布局区里的一块（`WorkPane`，`WorkPanel.vue`），里面是一条 flex 行：
 // 没写 `flex` 的那一格会按内容收缩——内容多宽它就多宽，右边空着。规则那一格就是这样：
 // 空状态那两行字多宽，面板就多宽，「新建」右侧的刷新键停在半路。判据因此不是「内容有多
-// 宽」而是**它住的那条 flex 行有多宽**。vitest 量不到坐标，typecheck / stylelint 也不
-// 看这个，只有屏幕上量得出来。
+// 宽」而是**它住的那一格有多宽**。vitest 量不到坐标，typecheck / stylelint 也不看这个，
+// 只有屏幕上量得出来。
 test('房间面板的「例行事务」那一格铺满整条面板', async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   await apiLogin(page);
@@ -1395,17 +1431,17 @@ test('房间面板的「例行事务」那一格铺满整条面板', async ({ pa
   // 它们会收进溢出菜单——点不到不代表这一格不存在。
   await page.goto(`${new URL(page.url()).pathname}?tab=routines`);
 
-  const pane = page.locator('.tabbody .routine-panel');
+  const pane = page.locator('.work-pane .routine-panel');
   await expect(pane).toBeVisible();
   const widths = await pane.evaluate((el) => {
-    const body = el.closest('.tabbody');
+    const body = el.closest('.work-pane');
     return {
       pane: el.getBoundingClientRect().width,
       body: body ? body.getBoundingClientRect().width : 0,
     };
   });
   // 量不到那条行就是范围选错了：空范围永远返回「没有缺陷」，所以这里炸掉而不是放过。
-  expect(widths.body, '这一格没住在 .tabbody 里，这条断言等于没做').toBeGreaterThan(0);
+  expect(widths.body, '这一格没住在 .work-pane 里，这条断言等于没做').toBeGreaterThan(0);
   expect(widths.pane, '这一格没画出来').toBeGreaterThan(0);
   // 1px 容差：亚像素与取整。
   expect(

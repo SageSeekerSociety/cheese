@@ -9,7 +9,7 @@
   "close": "关闭任务",
   "closeBody": "写下结论表示已经做完；不写表示不再做。",
   "closeTitle": "关闭这个任务？",
-  "closedHint": "任务已关闭，可以继续讨论",
+  "closedHint": "任务已结束，可以继续讨论",
   "collaborators": "协作者",
   "collaboratorsHint": "可以在任务里和 AI 队友对话",
   "conclusion": "结论",

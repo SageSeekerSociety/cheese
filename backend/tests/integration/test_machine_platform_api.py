@@ -7,12 +7,15 @@ The rules, as a person would state them:
   and resource included), made for the request;
 - whatever the sandbox sent that would say who is calling is not what it is
   served as;
-- the model routes and the socket's own routes are not reached this way;
+- the model routes and the socket's own routes are not reached this way, nor
+  the forge relay, which would hand the sandbox the project's write
+  credential past its forge proxy;
 - what cannot go down the socket is handed the session's credential for a
   minute, asked for right before it is used;
 - nobody but the device link owner is anyone here.
 """
 
+import time
 import uuid
 
 import pytest
@@ -72,7 +75,9 @@ async def test_a_token_the_sandbox_sends_is_not_who_it_is_served_as(client):
 async def test_the_credential_names_the_sessions_lease_and_calls_no_model(client):
     room = await _room(client)
     async with client.test_factory() as db:
-        caller = await caller_of(db, room.old_device, "/old/state")
+        caller = await caller_of(
+            db, room.old_device, "/old/state", str(room.session_id)
+        )
         assert caller is not None
         credential = await credential_of(db, caller)
     claims = scoped_token_claims(credential or "")
@@ -140,7 +145,10 @@ async def test_a_credential_handed_out_lasts_a_minute_and_names_the_session(clie
     assert answer.headers["cache-control"] == "no-store"
     claims = scoped_token_claims(answer.json()["token"])
     assert claims is not None
-    assert claims["session"] == str(room.session_id)
+    # Asked from outside the sandbox for no command: the environment's own
+    # credential, which names no agent and no session.
+    assert "session" not in claims and "a" not in claims
+    assert claims["t"] == str(room.conversation_id)
     assert held_by_a_machine(claims)
     assert claims["exp"] - time.time() <= 61
     refused = client.get(
@@ -191,6 +199,14 @@ async def test_sandbox_forge_token_on_socket_returns_placeholder_to_sandbox_and_
         async def granted_permissions(self):
             return {"contents": "write"}
 
+        # A channel's session keeps nothing and is handed the reading token;
+        # which one is not what this asks.
+        async def read_token(self):
+            return "ghs_real_single_repo_token", "2026-10-27T10:00:00Z"
+
+        async def read_permissions(self):
+            return {"contents": "read"}
+
     async def tokens_for_project(_id, _session):
         return Minter()
 
@@ -213,3 +229,97 @@ async def test_sandbox_forge_token_on_socket_returns_placeholder_to_sandbox_and_
     )
     assert from_proxy.status_code == 200, from_proxy.text
     assert from_proxy.json()["data"]["token"] == "ghs_real_single_repo_token"
+
+
+async def test_the_forge_relay_is_not_reached_from_the_sandbox(client, monkeypatch):
+    """The relay that carries git to a GitHub-bound project's forge puts the
+    project's write credential on what it carries. A sandbox reaches its forge
+    only through the proxy outside it, which refuses what a session may not
+    write (a push to the default branch); asked on its socket, the relay would
+    carry that push past the proxy."""
+    from types import SimpleNamespace
+
+    import httpx
+
+    room = await _room(client, in_task=True)
+    binding = SimpleNamespace(
+        kind="github_app",
+        repo="acme/widgets",
+        url="https://github.com/acme/widgets.git",
+        api_url="https://api.github.com",
+        default_branch="main",
+    )
+
+    async def binding_for_project(_id, _session):
+        return binding
+
+    class Minter:
+        async def installation_token(self):
+            return "ghs_real_single_repo_token", "unused"
+
+        async def read_token(self):
+            return "ghs_real_single_repo_token", "unused"
+
+    async def tokens_for_project(_id, _session):
+        return Minter()
+
+    monkeypatch.setattr(
+        "app.domain.project.forge.binding_for_project", binding_for_project
+    )
+    monkeypatch.setattr(
+        "app.domain.project.forge.tokens_for_project", tokens_for_project
+    )
+    reached = []
+
+    async def forge(request):
+        reached.append((request, await request.aread()))
+        return httpx.Response(200, stream=httpx.ByteStream(b"0000"))
+
+    original = httpx.AsyncClient
+    monkeypatch.setattr(
+        "app.api.routes.forge_token.httpx.AsyncClient",
+        lambda **kwargs: original(transport=httpx.MockTransport(forge), **kwargs),
+    )
+    # A push starts by asking for the refs it may update.
+    answer = _ask(
+        client,
+        f"sandbox/forge/{room.project_id}/acme/widgets.git/info/refs"
+        "?service=git-receive-pack",
+        device=room.old_device,
+    )
+
+    assert answer.status_code == 403
+    assert reached == []
+
+
+async def test_a_runtime_that_names_no_attachment_still_has_its_preview_served(
+    client,
+):
+    """A machine still on an older runtime names no attachment: its preview
+    helper's tunnel is the environment's, and is carried under the seat the
+    room's preview is served under."""
+    from app.domain.agent.preview_hub import preview_hub
+    from app.domain.topic_membership.services import TopicMemberService
+
+    room = await _room(client)
+    handed = client.get(
+        "/machine/proxy-credential",
+        headers={
+            "x-device-connection-secret": "owner-secret",
+            "x-machine-device": room.old_device,
+            "x-machine-state": "/old/state",
+            "x-cheese-proxy-proof": machine_proxy_proof(str(room.project_id)),
+        },
+    )
+    assert handed.status_code == 200, handed.text
+    async with client.test_factory() as db:
+        seat = await TopicMemberService(db).resolve_agent_handle(room.topic_id)
+
+    with client.websocket_connect(
+        "/preview/tunnel",
+        headers={"Authorization": f"Bearer {handed.json()['token']}"},
+    ):
+        deadline = time.monotonic() + 5
+        while not preview_hub.is_online(room.conversation_id, seat):
+            assert time.monotonic() < deadline, "the tunnel was not carried"
+            time.sleep(0.01)

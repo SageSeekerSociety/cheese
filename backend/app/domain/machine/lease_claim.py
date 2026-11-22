@@ -1,10 +1,11 @@
-"""The claim a session's lease carries while its executor is installed.
+"""The claim an environment carries while its executor is installed.
 
-Taking a session's hands claims its lease (`session_work._attempt`): while the
-claim stands, every other attempt of that session waits for the installation
-holding it instead of starting a second one beside it. It ends when the
-installation does — handed over as ready, or lapsed on failure — and, when
-the backend process running the installation is gone, by not being renewed.
+Taking hands in an environment claims it (`session_work._attempt`): while the
+claim stands, every other attempt there — a session's, another session's, a
+person's — waits for the installation holding it instead of starting a second
+one beside it. It ends when the installation does — handed over as ready, or
+lapsed on failure — and, when the backend process running the installation is
+gone, by not being renewed.
 """
 
 import asyncio
@@ -12,15 +13,14 @@ import logging
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent_session.models import AgentSession
-from app.domain.agent_session.services import AgentSessionService
+from app.domain.environment.models import Environment
 
 logger = logging.getLogger(__name__)
 
-# A claim on a session's lease stands this long past the last word from the
+# A claim on an environment stands this long past the last word from the
 # installation holding it, which renews it every CLAIM_RENEW_S while it runs
 # (`kept`). An installation whose backend process is gone — a deploy's
 # restart, a crash, an OOM kill — stops renewing, and its claim lapses within
@@ -67,15 +67,18 @@ def still_preparing(lease: dict | None) -> bool:
 
 
 @asynccontextmanager
-async def kept(bind, session_id, claim: str, *, since: datetime):
-    """Keep ``claim`` on the session's lease standing while the work inside
-    runs, and stop renewing it the moment that work ends, however it ends.
+async def kept(
+    bind, environment_id, claim: str, *, since: datetime, most_s: float = CLAIM_MOST_S
+):
+    """Keep ``claim`` on the environment standing while the work inside runs,
+    and stop renewing it the moment that work ends, however it ends.
 
+    ``most_s`` includes the longer install budget when restoring a root backup.
     The renewal is the only thing that says the installation is alive: when
     this process exits it goes with it, and the claim lapses unrenewed within
     ``CLAIM_TTL_S``. The writes that end the claim come after this exits, so a
     renewal can never land after them and stand the claim up again."""
-    renewing = asyncio.ensure_future(_renew(bind, session_id, claim, since))
+    renewing = asyncio.ensure_future(_renew(bind, environment_id, claim, since, most_s))
     try:
         yield
     finally:
@@ -84,37 +87,47 @@ async def kept(bind, session_id, claim: str, *, since: datetime):
             await renewing
 
 
-async def _renew(bind, session_id, claim: str, since: datetime) -> None:
-    most = since + timedelta(seconds=CLAIM_MOST_S)
+async def _renew(
+    bind, environment_id, claim: str, since: datetime, most_s: float
+) -> None:
+    most = since + timedelta(seconds=most_s)
     while True:
         await asyncio.sleep(CLAIM_RENEW_S)
         until = min(datetime.now(UTC) + timedelta(seconds=CLAIM_TTL_S), most)
         try:
             async with AsyncSession(bind, expire_on_commit=False) as db:
-                row = await AgentSessionService(db).by_id(session_id, lock=True)
-                lease = (row.work_lease if row is not None else None) or {}
-                if row is None or lease.get("claim") != claim:
-                    # Handed over, lapsed, or taken by a later attempt: the
-                    # claim is no longer this installation's to keep.
-                    return
-                row.work_lease = {**lease, "claim_until": until.isoformat()}
+                renewed = await db.execute(
+                    update(Environment)
+                    .where(Environment.id == environment_id, Environment.claim == claim)
+                    .values(claim_until=until)
+                )
                 await db.commit()
         except Exception:  # the next beat tries again
             # One missed beat is not the installation's death; a database that
             # stays away for the whole TTL lets the claim lapse, as it should.
-            logger.warning("could not renew the claim of session %s", session_id)
+            logger.warning(
+                "could not renew the claim of environment %s", environment_id
+            )
             continue
+        if not renewed.rowcount:  # type: ignore[attr-defined]
+            # Handed over, lapsed, or taken by a later attempt: the claim is
+            # no longer this installation's to keep.
+            return
         if until >= most:
             return
 
 
-async def moved(db, session_id, claim) -> bool:
-    """Another request of this session holds the installation; it has moved
-    on once its claim is gone or has lapsed."""
-    lease = await db.scalar(
-        select(AgentSession.work_lease).where(AgentSession.id == session_id)
-    )
-    if (lease or {}).get("claim") != claim:
+async def moved(db: AsyncSession, environment_id, claim) -> bool:
+    """Another request holds the installation in this environment; it has
+    moved on once its claim is gone or has lapsed."""
+    found = (
+        await db.execute(
+            select(Environment.claim, Environment.claim_until).where(
+                Environment.id == environment_id
+            )
+        )
+    ).first()
+    if found is None or found.claim != claim:
         return True
-    until = lease.get("claim_until")
-    return not until or datetime.fromisoformat(until) <= datetime.now(UTC)
+    until = found.claim_until
+    return until is None or until <= datetime.now(UTC)

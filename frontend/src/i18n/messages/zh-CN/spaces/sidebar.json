@@ -7,5 +7,6 @@
   "members": "成员",
   "settings": "设置",
   "tasks": "题目",
-  "newTasks": "上次查看后新发布 {n} 道题目"
+  "newTasks": "上次查看后新发布 {n} 道题目",
+  "myInsight": "我的学习洞察"
 }

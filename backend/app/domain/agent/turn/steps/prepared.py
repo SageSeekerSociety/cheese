@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import Protocol
 
 from app.domain.agent.harness import SessionRef
-from app.domain.agent.session_host.contract import Image
+from app.domain.agent.session_host.contract import ColdCompaction, Image, PrivateText
 from app.domain.delivery.input_identity import InputRegistrar
 from app.domain.memory.scopes import MemoryScope
 
@@ -23,6 +23,7 @@ class SessionSender(Protocol):
         on_mark: Callable[[uuid.UUID], None],
         register_input: InputRegistrar,
         resume_token: str | None = None,
+        retired_token: str | None = None,
         model: str | None = None,
         env: dict[str, str] | None = None,
         acting: str | None = None,
@@ -32,6 +33,9 @@ class SessionSender(Protocol):
         owes_reply: bool = False,
         session_opening: str = "",
         opening_changes: str = "",
+        cold: ColdCompaction | None = None,
+        private: tuple[PrivateText, ...] = (),
+        on_private: Callable[[], None] | None = None,
     ) -> bool: ...
 
 
@@ -50,11 +54,28 @@ class PreparedSend:
     # apart from `consumed_ids`: those are the blocks this turn answers for and
     # stamps, while the window it read also carried other seats' messages.
     read_through: tuple[datetime, uuid.UUID] | None
+    # Every block the prompt carries: read by the seat once it is handed over.
+    read_ids: list[uuid.UUID]
     turn_images: list[Image]
     replay_notice: str | None
     resume_session_id: str | None
+    retired_session_id: str | None
     harness: str
     needs_place: bool
+    # A turn the platform started still owes a visible act (`Profile.answers_the_platform`):
+    # the channel's main line is woken by its tasks and by its turn among
+    # teammates named together, and ending such a turn on words nobody sees is
+    # the failure it is held to once.
+    answers_the_platform: bool
     keeps_nothing: bool
     sender: SessionSender
     activate: Callable[[SessionRef], Awaitable[None]]
+    # Compact a conversation gone cold before this turn's input
+    # (`Profile.compacts_when_cold`, the model's cache lifetime); None: never.
+    cold: ColdCompaction | None = None
+    # Members' `communication` notes for this turn, each readable only by its
+    # owner in the session's records (`PrivateText`), and what the
+    # conversation holds of them once they are given: ``talk/<handle>`` →
+    # digest, kept with what it was told (`remember_opening`).
+    private: tuple[PrivateText, ...] = ()
+    talk_told: tuple[tuple[str, str], ...] = ()

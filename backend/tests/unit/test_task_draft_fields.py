@@ -248,3 +248,31 @@ def test_cheese_says_a_task_started_directly_locks_its_team_when_it_starts():
 
     assert "team_locking: 开始做这道题后锁定" in view
     assert "申请通过" not in view and "报名通过" not in view
+
+
+KNOWING = drafts.Space(
+    id=7,
+    name="系统与网络实验室",
+    categories={},
+    tags={},
+    zone=ZoneInfo("Asia/Shanghai"),
+    knowledge_points={"相关子查询": 11, "GROUP BY 与 HAVING": 12},
+)
+
+
+def test_knowledge_points_are_named_from_the_space_list_once_each():
+    fields = drafts.from_agent(
+        {"knowledge_points": ["相关子查询", "GROUP BY 与 HAVING", "相关子查询"]},
+        KNOWING,
+        {},
+    )
+
+    assert fields["knowledgePointIds"] == [11, 12]
+
+
+def test_a_knowledge_point_the_space_does_not_list_is_refused_by_name():
+    with pytest.raises(BadRequestError) as refused:
+        drafts.from_agent({"knowledge_points": ["派生表"]}, KNOWING, {})
+
+    assert "派生表" in str(refused.value)
+    assert "相关子查询" in str(refused.value)

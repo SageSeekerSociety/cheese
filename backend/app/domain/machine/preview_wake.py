@@ -35,13 +35,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.redis import get_redis_client
 from app.domain.agent.device_hub import device_hub
-from app.domain.agent_session.models import AgentSession
-from app.domain.machine import lifecycle
+from app.domain.environment import services as environment_rows
+from app.domain.environment.models import EnvironmentAttachment
+from app.domain.machine import lifecycle, occupants
 from app.domain.machine.models import SandboxHome
-from app.domain.machine.repositories import CloudHostRepository
 from app.domain.machine.services import ACTIVE_STEP, HostPool
-from app.domain.machine.session_work import _session_author
-from app.domain.project.services import ProjectService
 from app.domain.room_task.place import Place
 
 logger = logging.getLogger("cheese.machine.preview_wake")
@@ -70,48 +68,34 @@ async def _never_gone() -> bool:
     return False
 
 
-async def find_seat_session(
-    db: AsyncSession,
-    *,
-    project_id: uuid.UUID,
-    conversation_id: uuid.UUID,
-    seat: str,
-) -> AgentSession | None:
-    """The most recent ``AgentSession`` in ``conversation_id`` acting as ``seat``."""
-    project = await ProjectService(db).get(project_id)
-    if project is None:
-        return None
-    rows = await db.scalars(
-        select(AgentSession)
-        .where(AgentSession.conversation_id == conversation_id)
-        .order_by(AgentSession.updated_at.desc())
-    )
-    for row in rows:
-        if row.agent_handle == seat:
-            return row
-        if await _session_author(db, project, row.agent_handle) == seat:
-            return row
-    return None
-
-
-async def has_sandbox(db: AsyncSession, session_id: uuid.UUID) -> bool:
-    """Whether the session's sandbox still exists, running or frozen.
+async def sandbox_to_wake(
+    db: AsyncSession, conversation_id: uuid.UUID
+) -> uuid.UUID | None:
+    """The environment the conversation points to, when its sandbox still
+    exists, running or frozen; None otherwise.
 
     A home that is on its way out (``stopped_at`` set) counts as gone: what it
     held is already being taken apart, so waking nothing would help."""
-    home = await CloudHostRepository(db).current_home(session_id)
+    environment = await environment_rows.environment_of_conversation(
+        db, conversation_id
+    )
+    if environment is None:
+        return None
+    home = await occupants.home_of_environment(db, environment.id)
     # A parked one runs nothing to wake: its session starts it again.
-    return home is not None and home.stopped_at is None and home.parked_at is None
+    if home is None or home.stopped_at is not None or home.parked_at is not None:
+        return None
+    return environment.id
 
 
 async def touch_preview_activity(
     db: AsyncSession,
     conversation_id: uuid.UUID,
     seat: str,
-    *,
-    project_id: uuid.UUID | None = None,
 ) -> list[asyncio.Task[bool]]:
-    """Refresh ``SandboxHome.active_at`` when a reader browses an app preview.
+    """Refresh ``SandboxHome.active_at`` when a reader browses an app preview:
+    the sandbox of the environment the conversation points to, where the
+    ``seat``'s app is served from.
 
     Throttled in-memory and in SQL to ``ACTIVE_STEP`` (1 minute) so bursts of
     asset requests from a dev server cost at most one row update per minute.
@@ -136,24 +120,10 @@ async def touch_preview_activity(
             _preview_touched.pop(k, None)
     _preview_touched[key] = now_mono
     try:
-        session_row = (
-            await find_seat_session(
-                db,
-                project_id=project_id,
-                conversation_id=conversation_id,
-                seat=seat,
-            )
-            if project_id is not None
-            else await db.scalar(
-                select(AgentSession)
-                .where(
-                    AgentSession.conversation_id == conversation_id,
-                    AgentSession.agent_handle == seat,
-                )
-                .order_by(AgentSession.updated_at.desc())
-            )
+        environment = await environment_rows.environment_of_conversation(
+            db, conversation_id
         )
-        if session_row is None:
+        if environment is None or environment.sandbox_home_id is None:
             return []
         now = datetime.now(UTC)
         cutoff = now - ACTIVE_STEP
@@ -161,7 +131,7 @@ async def touch_preview_activity(
             await db.execute(
                 update(SandboxHome)
                 .where(
-                    SandboxHome.session_id == session_row.id,
+                    SandboxHome.id == environment.sandbox_home_id,
                     SandboxHome.stopped_at.is_(None),
                     or_(
                         SandboxHome.active_at.is_(None),
@@ -178,7 +148,7 @@ async def touch_preview_activity(
             return []
         await db.commit()
         if any(frozen_at is not None for _home_id, frozen_at in updated):
-            return [schedule_preview_thaw(db.bind, session_id=session_row.id)]
+            return [schedule_preview_thaw(db.bind, environment_id=environment.id)]
         return []
     except Exception:
         logger.warning(
@@ -191,34 +161,39 @@ async def touch_preview_activity(
         return []
 
 
+async def _mark_awake(db: AsyncSession, hub, environment_id: uuid.UUID):
+    """`HostPool.mark_awake` for the environment."""
+    return await HostPool(db, hub=hub).mark_awake(environment_id)
+
+
 def schedule_preview_thaw(
-    bind, *, session_id: uuid.UUID, hub=None
+    bind, *, environment_id: uuid.UUID, hub=None
 ) -> asyncio.Task[bool]:
     """Thaw a frozen sandbox a preview is being read from, in the background.
 
     A reader opening the preview should not wait a host round trip for it, and
     a host that cannot thaw it must not break the preview request: the mark is
-    left for the session's next tool call to thaw again."""
+    left for the next tool call there to thaw again."""
     task = asyncio.create_task(
-        thaw_preview_on_machine(bind, session_id=session_id, hub=hub)
+        thaw_preview_on_machine(bind, environment_id=environment_id, hub=hub)
     )
     _THAW_TASKS.add(task)
     task.add_done_callback(_THAW_TASKS.discard)
     return task
 
 
-async def thaw_preview_on_machine(bind, *, session_id: uuid.UUID, hub=None) -> bool:
+async def thaw_preview_on_machine(bind, *, environment_id: uuid.UUID, hub=None) -> bool:
     """Wake a frozen sandbox somebody is browsing, without a model turn.
 
     Its processes are resumed the way a tool call's wake does it: the home is
     marked under the pool's lock and the host call runs with no database lock
     held (`lifecycle.thaw_if_asked`). Returns whether there was a frozen home
-    to wake; a failed thaw is logged and leaves `THAW_KEY` behind, which the
+    to wake; a failed thaw is logged and leaves the thaw asked for, which the
     session's next tool call retries."""
     hub = hub or device_hub
     try:
         async with AsyncSession(bind, expire_on_commit=False) as db:
-            marked = await HostPool(db, hub=hub).mark_awake(session_id)
+            marked = await _mark_awake(db, hub, environment_id)
             await db.commit()
             if marked is None:
                 return False
@@ -228,7 +203,7 @@ async def thaw_preview_on_machine(bind, *, session_id: uuid.UUID, hub=None) -> b
             await lifecycle.thaw_if_asked(
                 db,
                 hub,
-                session_id=session_id,
+                environment_id=environment_id,
                 device_id=device_id,
                 work_resource=work_resource,
             )
@@ -238,10 +213,86 @@ async def thaw_preview_on_machine(bind, *, session_id: uuid.UUID, hub=None) -> b
         return False
 
 
+async def wake_for_files(
+    bind, conversation_id: uuid.UUID, *, user_id: int | None = None, hub=None
+) -> None:
+    """Thaw the frozen sandbox that holds a conversation's working copy before
+    a person's read or save reaches it (`repository.ports.WakeWorkingCopy`).
+
+    A frozen sandbox's executor is stopped with the rest of it, so the file
+    request would wait out its deadline and fail; opening or saving a task's
+    files is using the sandbox, as opening its preview is. Waited for, since
+    the request needs it awake; one that is not frozen costs one read. A
+    thaw that fails is logged (`thaw_preview_on_machine`) and the request
+    goes on to say the machine did not answer.
+
+    A person reading or saving the files is using the sandbox as its teammate
+    does: its idle clock moves to now (at most once per ``ACTIVE_STEP``), so
+    the idle sweep does not take it away under somebody editing in it. The
+    person's attachment there (``user_id``) has acted then too, on the same
+    step."""
+    async with AsyncSession(bind, expire_on_commit=False) as db:
+        environment = await environment_rows.environment_of_conversation(
+            db, conversation_id
+        )
+        if environment is None or environment.sandbox_home_id is None:
+            return
+        now = datetime.now(UTC)
+        await db.execute(
+            update(SandboxHome)
+            .where(
+                SandboxHome.id == environment.sandbox_home_id,
+                SandboxHome.stopped_at.is_(None),
+                SandboxHome.frozen_at.is_(None),
+                SandboxHome.active_at <= now - ACTIVE_STEP,
+            )
+            .values(active_at=now)
+        )
+        if user_id is not None:
+            await db.execute(
+                update(EnvironmentAttachment)
+                .where(
+                    EnvironmentAttachment.environment_id == environment.id,
+                    EnvironmentAttachment.user_id == user_id,
+                    EnvironmentAttachment.acted_at <= now - ACTIVE_STEP,
+                )
+                .values(acted_at=now)
+            )
+        await db.commit()
+        if not await _frozen(db, environment.sandbox_home_id):
+            return
+    await thaw_preview_on_machine(bind, environment_id=environment.id, hub=hub)
+
+
+async def _frozen(db: AsyncSession, home_id: uuid.UUID) -> bool:
+    return (
+        await db.scalar(
+            select(SandboxHome.id).where(
+                SandboxHome.id == home_id,
+                SandboxHome.frozen_at.is_not(None),
+                SandboxHome.stopped_at.is_(None),
+            )
+        )
+        is not None
+    )
+
+
+async def is_frozen(db: AsyncSession, conversation_id: uuid.UUID) -> bool:
+    """Whether the sandbox holding a conversation's working copy — that of
+    the environment it points to — is frozen: a request sent to it would wait
+    out its deadline, and asking costs no thaw."""
+    environment = await environment_rows.environment_of_conversation(
+        db, conversation_id
+    )
+    if environment is None or environment.sandbox_home_id is None:
+        return False
+    return await _frozen(db, environment.sandbox_home_id)
+
+
 async def wake_preview_on_machine(
-    bind, *, place: Place, session_id: uuid.UUID, hub=None
+    bind, *, place: Place, environment_id: uuid.UUID, hub=None
 ) -> bool:
-    """Bring the session's own sandbox back, thawing it if it was frozen.
+    """Bring the environment's sandbox back, thawing it if it was frozen.
 
     No launch command runs and no model turn is spent: a frozen sandbox's
     processes resume in place, so an app it was running goes on running.
@@ -251,7 +302,7 @@ async def wake_preview_on_machine(
     hub = hub or device_hub
     try:
         async with AsyncSession(bind, expire_on_commit=False) as db:
-            marked = await HostPool(db, hub=hub).mark_awake(session_id)
+            marked = await _mark_awake(db, hub, environment_id)
             await db.commit()
             if marked is None:
                 return False
@@ -264,7 +315,7 @@ async def wake_preview_on_machine(
             await lifecycle.thaw_if_asked(
                 db,
                 hub,
-                session_id=session_id,
+                environment_id=environment_id,
                 device_id=device_id,
                 work_resource=work_resource,
             )
@@ -282,7 +333,7 @@ def schedule_preview_wake(
     bind,
     *,
     place: Place,
-    session_id: uuid.UUID,
+    environment_id: uuid.UUID,
     fallback: Callable[[], None],
     dedup_key: str = "",
     hub=None,
@@ -296,7 +347,7 @@ def schedule_preview_wake(
             woken = await wake_preview_on_machine(
                 bind,
                 place=place,
-                session_id=session_id,
+                environment_id=environment_id,
                 hub=hub,
             )
             if not woken:

@@ -15,6 +15,7 @@ from app.api.space_deps import (
     require_reviewed_space,
 )
 from app.api.space_payloads import (
+    SpaceAdminRelationRow,
     TeachingRequest,
     _admin_to_api_model,
     _build_full_space_payload,
@@ -156,6 +157,8 @@ async def _hydrate_members(
     *,
     user_repo: UserRepository,
     profile_repo: UserProfileRepository,
+    db,
+    viewer_id: int | None,
 ) -> list[dict]:
     """Roster rows, with the people batched into one lookup: a per-row lookup
     makes rendering a board cost grow with the class."""
@@ -163,6 +166,8 @@ async def _hydrate_members(
         [member.user_id for member in members],
         user_repo=user_repo,
         profile_repo=profile_repo,
+        db=db,
+        viewer_id=viewer_id,
     )
     return [_member_to_api_model(member, people[member.user_id]) for member in members]
 
@@ -189,8 +194,8 @@ async def get_space(
 
     # 私有指导只对这块板的管理员可见（#944 的第二种可见性）。一次判定同时决定空间
     # 与项目集两处的 `teaching` —— 一个屏幕上的两份配置要么都看得到，要么都看不到。
-    may_manage = auth_user.user_id > 0 and await space_seats.runs(
-        db, space_id, auth_user.user_id
+    may_manage = await space_seats.SPACE.may(
+        db, space, auth_user.user_id, SpacePermission.edit_settings
     )
 
     categories = None
@@ -208,7 +213,11 @@ async def get_space(
     # admins / classificationTopics 都由这一个构建器给齐：前端拿到任何
     # 一份 Space 响应都能直接用（它的 store 会用响应覆盖本地状态）。
     space_data = await _build_full_space_payload(
-        space, service=service, db=db, include_private=may_manage
+        space,
+        service=service,
+        db=db,
+        viewer_id=auth_user.user_id,
+        include_private=may_manage,
     )
     _ = queryClassificationTopics  # Accepted for parity with NT API but always populated.
 
@@ -249,19 +258,31 @@ async def get_spaces(
     space_ids = [s.id for s in spaces]
     topics_by_space = await service.list_classification_topics_for_spaces(space_ids)
 
+    # People are hydrated once for the whole page, not once per space: the
+    # viewer's remark is one query per page instead of one per space. The
+    # relations themselves are still read per space — that debt predates this
+    # change and `tests/integration/test_list_endpoints_do_not_scale.py` tracks it.
+    admins_by_space: dict[int, Sequence[SpaceAdminRelationRow]] = {
+        s.id: await service.list_admins(s.id) for s in spaces
+    }
+    everyone = [rel.user_id for rels in admins_by_space.values() for rel in rels]
+    # Users, profiles, avatars and the viewer's remarks are each one query for
+    # the page, not one per space.
+    people = await _hydrate_people(
+        everyone,
+        user_repo=user_repo,
+        profile_repo=profile_repo,
+        db=db,
+        viewer_id=auth_user.user_id,
+    )
+
     items: list[dict] = []
     for s in spaces:
         dto = _space_to_api_model(s)
         if queryMyRank:
             dto["myRank"] = await service.get_user_rank(s.id, viewer_id)
 
-        admin_relations = await service.list_admins(s.id)
-        # 一次取齐所有管理员的人；头像判据（挑过没有）也在 _hydrate_people 里。
-        people = await _hydrate_people(
-            [rel.user_id for rel in admin_relations],
-            user_repo=user_repo,
-            profile_repo=profile_repo,
-        )
+        admin_relations = admins_by_space.get(s.id, [])
         dto["admins"] = [
             _admin_to_api_model(rel, people[rel.user_id]) for rel in admin_relations
         ]
@@ -298,7 +319,9 @@ async def create_space(
     db=Depends(get_db),
 ) -> dict:
     if await service.exists_by_name(payload.name):
-        raise ConflictError(f"Space with name '{payload.name}' already exists")
+        # 一句目录里的句子：这条提示会原样出现在「新建空间」弹窗里（弹窗显示服务端
+        # 自己那句话），写死一句英文只会让人不知道该怎么办。
+        raise ConflictError(say("spaceNameTaken"))
 
     task_templates = _expect_list(payload.task_templates, "taskTemplates")
     classification_topic_ids: list[int] = payload.classification_topics or []
@@ -329,7 +352,7 @@ async def create_space(
     # 就会 404「Space not found」（合并队列 run 36296605673 实测）。
     await db.commit()
     space_data = await _build_full_space_payload(
-        space, service=service, db=db, include_private=True
+        space, service=service, db=db, viewer_id=auth_user.user_id, include_private=True
     )
     return ok({"space": space_data})
 
@@ -378,7 +401,7 @@ async def patch_space(
             topic_ids=classification_topic_ids,
         )
     space_data = await _build_full_space_payload(
-        space, service=service, db=db, include_private=True
+        space, service=service, db=db, viewer_id=auth_user.user_id, include_private=True
     )
     return ok({"space": space_data})
 
@@ -417,7 +440,9 @@ async def list_space_members(
     if (
         space is not None
         and space.open_scope is not None
-        and not await space_seats.runs(db, space_id, auth_user.user_id)
+        and not await space_seats.SPACE.may(
+            db, space, auth_user.user_id, SpacePermission.manage_members
+        )
     ):
         raise ForbiddenError(say("openSpaceMembersAdminsOnly"))
     members = await service.list_members(space_id)
@@ -425,6 +450,8 @@ async def list_space_members(
         members,
         user_repo=UserRepository(session=db),
         profile_repo=UserProfileRepository(session=db),
+        db=db,
+        viewer_id=auth_user.user_id,
     )
     return ok({"members": items})
 
@@ -449,6 +476,13 @@ async def add_space_member(
         raise NotFoundError(
             "User not found", data={"type": "user", "id": payload.user_id}
         )
+    await space_seats.SPACE.refuse_own_seat(
+        db,
+        space_id,
+        auth_user.user_id,
+        SpacePermission.manage_members,
+        seats=payload.user_id,
+    )
     member = await service.add_member(
         space_id=space_id,
         target_user_id=payload.user_id,
@@ -457,6 +491,8 @@ async def add_space_member(
         [member],
         user_repo=user_repo,
         profile_repo=UserProfileRepository(session=db),
+        db=db,
+        viewer_id=auth_user.user_id,
     )
     return ok({"member": items[0]})
 

@@ -53,7 +53,7 @@ from app.domain.assistant.models import AssistantConversation
 from app.domain.conversation.models import Conversation, ConversationKind
 from app.domain.conversation.services import of_rooms, room_column, room_of
 from app.domain.identity.actor import Actor
-from app.domain.machine.environments import environment_of
+from app.domain.machine.environments import default_for, environment_of
 from app.domain.machine.models import SandboxHome
 from app.domain.membership.roster import roster
 from app.domain.project.services import ProjectService
@@ -128,6 +128,21 @@ class SandboxHolder(Protocol):
         """Where ``session``, working for this holder, does its work."""
         ...
 
+    async def default_environment(
+        self, db: AsyncSession, session: AgentSession
+    ) -> Sandbox | SelfHosted:
+        """The default of the conversation ``session`` works in: what the
+        environment its agents of the default share is of, which that
+        conversation points to whenever anybody uses it."""
+        ...
+
+    async def default_of(
+        self, db: AsyncSession, conversation_id: uuid.UUID
+    ) -> Sandbox | SelfHosted:
+        """The default of ``conversation_id``, one of the holder's
+        conversations (`default_environment`)."""
+        ...
+
 
 @dataclass(frozen=True, slots=True)
 class Room:
@@ -194,6 +209,24 @@ class Room:
             db, session, topic, await task_of(db, self, session), project
         )
 
+    async def default_environment(
+        self, db: AsyncSession, session: AgentSession
+    ) -> Sandbox | SelfHosted:
+        return await self.default_of(db, session.conversation_id)
+
+    async def default_of(
+        self, db: AsyncSession, conversation_id: uuid.UUID
+    ) -> Sandbox | SelfHosted:
+        # Its task's default, else its room's, its project's or the
+        # deployment's (``environments.default_for``).
+        topic = await db.get(Topic, self.id)
+        if topic is None:
+            raise NotFoundError(say("topicNotFound"))
+        project = await ProjectService(db).get_or_404(self.project_id)
+        return default_for(
+            topic, await task_in(db, self, conversation_id), project.settings
+        ).environment
+
 
 @dataclass(frozen=True, slots=True)
 class Personal:
@@ -252,6 +285,16 @@ class Personal:
     ) -> Sandbox | SelfHosted:
         # A standard sandbox on the platform's machines, always: nobody's own
         # computer serves a person's 芝士, and a whole VM is a project's.
+        return Sandbox(spec=STANDARD)
+
+    async def default_environment(
+        self, db: AsyncSession, session: AgentSession
+    ) -> Sandbox | SelfHosted:
+        return Sandbox(spec=STANDARD)
+
+    async def default_of(
+        self, db: AsyncSession, conversation_id: uuid.UUID
+    ) -> Sandbox | SelfHosted:
         return Sandbox(spec=STANDARD)
 
 
@@ -349,9 +392,17 @@ async def _kind(
 async def task_of(db: AsyncSession, room: Room, session: AgentSession) -> Task | None:
     """The task ``session`` works in, when it works in one of the room's tasks
     rather than in the room itself."""
-    if session.conversation_id == room.id:
+    return await task_in(db, room, session.conversation_id)
+
+
+async def task_in(
+    db: AsyncSession, room: Room, conversation_id: uuid.UUID
+) -> Task | None:
+    """The task ``conversation_id`` is, when it is one of the room's tasks
+    rather than the room itself."""
+    if conversation_id == room.id:
         return None
-    return await db.get(Task, session.conversation_id)
+    return await db.get(Task, conversation_id)
 
 
 async def require_project_member(

@@ -23,6 +23,7 @@ import uuid
 from typing import TYPE_CHECKING
 
 from app.core.sentences import say
+from app.domain.agent.model_catalog import scene_of
 from app.domain.agent.queries import (
     _bail_notice,
     _model_policy_call,
@@ -84,11 +85,9 @@ async def check_model_policy(
     """Pass the tier policy for the model this turn is about to occupy; return
     the frames that stop it, or ``None`` once the turn may go on."""
     if provider.deferred_work and project is not None and needs_place:
-        conversation = await AgentSessionService(session).ensure(
+        await AgentSessionService(session).ensure(
             place.conversation_id, agent.handle, harness=harness
         )
-        if conversation.execution_request is None:
-            conversation.execution_request = {"generation": str(uuid.uuid4())}
     if project is not None:
         actor_handle = acting_agent or agent.handle
         tiers = (await team_terms(session, project.team_id)).model_tiers
@@ -100,7 +99,7 @@ async def check_model_policy(
         proposed = await _pass_policy_gate(
             session,
             place.room_id,
-            _model_policy_call(project, agent),
+            _model_policy_call(project, agent, scene=scene_of(place.task_id)),
             policy,
             actor=actor_handle,
         )

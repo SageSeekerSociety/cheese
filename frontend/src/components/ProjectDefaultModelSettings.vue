@@ -1,12 +1,11 @@
 <script setup lang="ts">
-// 项目默认模型（#1365）：主线（房间聊天）用哪一档、分身用哪一档。
+// 项目主模型（#1365）：没单独设置模型的 AI 队友用它。不设就是「自动」：对话、任务、分身
+// 各用平台指的模型，下拉第一项把这三个写出来。
 //
 // 只吃 props、只往上发事件（`frontend_grade.py` 的 A 级）：取数与发请求在
 // `composables/useProjectDefaultModelSettings.ts` 里，由设置页接线。编辑草稿（还没保存
-// 的那个下拉值、分身那一档）留在这一层：那份 `state` 一换（首次取到、或保存后服务端
-// 回话）草稿就归位，是这一件自己一眼看得见的事。
-//
-// 之前只能手改数据库，对应事故就是「agent 配了 deepseek，主线静默换到订阅 sonnet」。
+// 的那个下拉值）留在这一层：那份 `state` 一换（首次取到、或保存后服务端回话）草稿就
+// 归位，是这一件自己一眼看得见的事。
 import type { ProjectDefaultModel } from '@/api'
 
 import { computed, ref, watch } from 'vue'
@@ -30,54 +29,56 @@ const props = defineProps<{
   saveError: string
 }>()
 
-const emit = defineEmits<{ (e: 'save', model: string | null, subagent: string | null): void }>()
+const emit = defineEmits<{ (e: 'save', model: string | null): void }>()
 
-// 本地编辑态：用户在下拉里选了一个值但还没保存。null = 清掉显式设置（回落部署默认）。
+// 本地编辑态：用户在下拉里选了一个值但还没保存。null = 「自动」（清掉项目主模型）。
 // undefined = 没动过（跟着服务端给的走）。`state` 一换就归位，见下面的 watch。
 const draft = ref<string | null | undefined>(undefined)
-const subagentDraft = ref<string | null>(null)
 
 watch(
   () => props.state,
-  (state) => {
+  () => {
     draft.value = undefined
-    subagentDraft.value = state?.subagent_model ?? null
   },
   { immediate: true }
 )
 
-const effective = computed({
+const selected = computed({
   get() {
     if (!props.state) return null
-    const model = draft.value !== undefined ? draft.value : props.state.model
-    return model ?? props.state.deployment_default
+    return draft.value !== undefined ? draft.value : props.state.model
   },
   set(model: string | null) {
     draft.value = model
   },
 })
 
-const mainItems = computed(() => (props.state ? withSaved(props.state.choices, props.state.model) : []))
-const subagentItems = computed(() =>
-  props.state
-    ? [{ id: null, label: t('work.models.inheritMain') }, ...withSaved(props.state.choices, props.state.subagent_model)]
-    : []
+/** 「自动」那一项：写明三个场合此刻各用哪个模型。 */
+const automaticLabel = computed(() => {
+  const automatic = props.state?.automatic
+  if (!automatic?.conversation || !automatic.task || !automatic.subagent) return t('work.models.automaticPlain')
+  return t('work.models.automatic', {
+    conversation: automatic.conversation.label,
+    task: automatic.task.label,
+    subagent: automatic.subagent.label,
+  })
+})
+
+const items = computed(() =>
+  props.state ? [{ id: null, label: automaticLabel.value }, ...withSaved(props.state.choices, props.state.model)] : []
 )
 
 const dirty = computed(() => {
   if (!props.state) return false
-  const server = props.state.model ?? null
-  const now = draft.value !== undefined ? draft.value : server
-  return now !== server || subagentDraft.value !== (props.state.subagent_model ?? null)
+  return draft.value !== undefined && draft.value !== (props.state.model ?? null)
 })
 
 function save() {
-  const target = draft.value !== undefined ? draft.value : props.state?.model ?? null
-  emit('save', target, subagentDraft.value)
+  emit('save', selected.value)
 }
 
-/** 恢复默认：清掉显式设置（发出去的是 null，回落部署默认）。 */
-function resetToDeploymentDefault() {
+/** 改回自动：清掉项目主模型（发出去的是 null）。 */
+function resetToAutomatic() {
   draft.value = null
 }
 </script>
@@ -89,8 +90,8 @@ function resetToDeploymentDefault() {
     <template v-if="state">
       <div class="d-flex flex-column" style="gap: 24px; max-width: 480px">
         <v-select
-          v-model="effective"
-          :items="mainItems"
+          v-model="selected"
+          :items="items"
           item-title="label"
           item-value="id"
           :item-props="modelChoiceProps"
@@ -101,20 +102,6 @@ function resetToDeploymentDefault() {
           hide-details
           :label="t('work.models.main')"
         />
-        <v-select
-          v-model="subagentDraft"
-          :items="subagentItems"
-          item-title="label"
-          item-value="id"
-          :item-props="modelChoiceProps"
-          :disabled="saving"
-          autocomplete="off"
-          density="compact"
-          variant="outlined"
-          :label="t('work.models.subagent')"
-          :hint="t('work.models.subagentHint')"
-          persistent-hint
-        />
         <div class="d-flex align-center" style="gap: 12px">
           <BaseButton kind="primary" size="sm" :disabled="saving || !dirty" @click="save">
             {{ t('work.projectSettings.defaultModelBlock.save') }}
@@ -124,7 +111,7 @@ function resetToDeploymentDefault() {
             kind="secondary"
             size="sm"
             :disabled="saving"
-            @click="resetToDeploymentDefault"
+            @click="resetToAutomatic"
           >
             {{ t('work.projectSettings.defaultModelBlock.reset') }}
           </BaseButton>

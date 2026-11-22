@@ -46,7 +46,7 @@ async function openDoc(page: Page, content: string) {
   });
 
   await page.goto(`/projects/${projectId}/topics/${room.id}/tasks/${task.id}?tab=overview`);
-  const prose = page.locator('.work-panel .doc-editor .doc-prose');
+  const prose = page.locator('.work-pane .doc-editor .doc-prose');
   await expect(prose).toBeVisible({ timeout: 30_000 });
   // 顶栏那两颗按钮在文档加载完（loading 落下去）之后才出现，等大纲那颗就够。
   await expect(page.getByRole('button', { name: '大纲', exact: true })).toBeVisible({ timeout: 30_000 });

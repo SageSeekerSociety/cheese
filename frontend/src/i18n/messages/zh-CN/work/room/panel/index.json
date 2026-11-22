@@ -10,7 +10,5 @@
   "open": "打开概览",
   "openFiles": "打开文件",
   "pickTopic": "选择一个频道查看文档",
-  "split": "和上一个页签并排看",
-  "tabDetail": "{label}（{detail}）",
-  "unsplit": "收回一列"
+  "tabDetail": "{label}（{detail}）"
 }

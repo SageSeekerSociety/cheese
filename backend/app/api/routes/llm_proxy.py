@@ -73,6 +73,7 @@ from app.domain.identity.handles import agent_instance_handle
 from app.domain.policy import gate
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task import binding
+from app.domain.room_task.place import PlaceResolver
 from app.domain.usage.budgets import CreditBudgets
 from app.domain.usage.ledger import project_with_payer
 from app.domain.usage.services import UsageService
@@ -162,9 +163,34 @@ def _upstream_url(path: str) -> str:
     return f"{base}/{path.lstrip('/')}"
 
 
-def _default_catalog_id(choices: dict[str, dict]) -> str | None:
-    default = next((c for c in choices.values() if c.get("default")), None)
-    return default["id"] if default else None
+def _pick_or_none(
+    scene: model_catalog.Scene,
+    choices: dict[str, dict],
+    project_settings: dict | None,
+    teammate: dict | None,
+) -> model_catalog.Pick | None:
+    """``model_catalog.pick``, or None where its choice is one the catalogue
+    cannot serve: a subagent naming another model is not refused for it."""
+    try:
+        return model_catalog.pick(
+            scene, choices, project_settings=project_settings, teammate=teammate
+        )
+    except ValidationError:
+        return None
+
+
+async def _session_scene(db: AsyncSession, claims: dict) -> model_catalog.Scene:
+    """The scene of the conversation a session's credential names (``t``): a
+    task when it is a task's own, else a conversation."""
+    named = claims.get("t")
+    try:
+        conversation = uuid.UUID(named) if isinstance(named, str) and named else None
+    except ValueError:
+        conversation = None
+    if conversation is None:
+        return model_catalog.Scene.conversation
+    place = await PlaceResolver(db).conversation(conversation)
+    return model_catalog.scene_of(place.task_id if place is not None else None)
 
 
 def _offerable_model_ids(choices: dict[str, dict]) -> set[str]:
@@ -177,14 +203,14 @@ def _offerable_model_ids(choices: dict[str, dict]) -> set[str]:
     return {cid for cid, c in choices.items() if c.get("supply") == GATEWAY}
 
 
-async def _bind_requested_subagent_model(
-    agents,
-    project,
+def _bind_requested_subagent_model(
     choices: dict[str, dict],
     requested: str,
-    parent_handle: str | None,
-    policy: gate.Policy,
-):
+    *,
+    project_settings: dict | None,
+    parent_pick: model_catalog.Pick | None,
+    child_pick: model_catalog.Pick | None,
+) -> model_catalog.Pick:
     """分身指定了模型时的绑定：翻译成目录 id，校验它在项目模型目录内。
 
     指定模型是 subagent 机制自己的能力，与平台 AI 队友（有身份的参与者）
@@ -193,33 +219,23 @@ async def _bind_requested_subagent_model(
     「指定了却不生效」那个旧行为（I27 的另一种长相）。
 
     体里的名字就是这个分身的模型，没有「回显」要认：会话启动时
-    ``CLAUDE_CODE_SUBAGENT_MODEL`` 钉着分身默认（``agent/chat.py``），没指定
-    的分身体里写的就是它；和父会话同名只能是主 agent 指定了父会话那个模型。
-    父会话自己在跑的模型因此总是可指定的，跨池也一样 —— 它已经在这个席位
-    上跑着了。
+    ``CLAUDE_CODE_SUBAGENT_MODEL`` 钉着这位队友分身用的模型（``child_pick``，
+    ``agent/gateway_usage.py``），没指定的分身体里写的就是它；和父会话同名只
+    能是主 agent 指定了父会话那个模型。父会话自己在跑的模型因此总是可指定的，
+    跨池也一样 —— 它已经在这个席位上跑着了。
+
+    绑上的若正是「自动」替父会话或分身挑的那个模型，它就仍算自动挑的
+    （``Pick.automatic``）：方案的档位不限它。
     """
     requested_id = binding.catalog_id(requested, choices)
-    parent = await agents.for_seat_handle(project, parent_handle)
-    if parent is None:
-        parent = await agents.for_project(project)
-    settings_ = project.settings or {}
-    # The same order the parent's own admission resolves in: seat, project
-    # default, catalogue default.
-    parent_id = (
-        ((parent.configuration or {}).get("model") if parent else None)
-        or settings_.get("default_model")
-        or _default_catalog_id(choices)
-    )
     allowed = _offerable_model_ids(choices)
-    # 父会话的模型和项目显式配的两个默认（主模型、分身默认）也合法：它们跨
-    # 池也真跑得起来（供给跟着绑定走），主 agent 复述它们不该吃到一个拒绝。
-    # 但只列目录里还在的 —— 列一个 resolve 绑不上的,是把人从一个拒绝指到另
-    # 一个拒绝。
+    # 父会话的模型、分身用的模型和项目主模型也合法：它们跨池也真跑得起来（供给
+    # 跟着绑定走），主 agent 复述它们不该吃到一个拒绝。但只列目录里还在的 ——
+    # 列一个 resolve 绑不上的，是把人从一个拒绝指到另一个拒绝。
     for configured in (
-        parent_id,
-        settings_.get("default_model"),
-        settings_.get("default_subagent_model"),
-        model_catalog.subagent_default(settings_, choices, policy),
+        parent_pick.model if parent_pick else None,
+        child_pick.model if child_pick else None,
+        (project_settings or {}).get("default_model"),
     ):
         if isinstance(configured, str) and configured and configured in choices:
             allowed.add(configured)
@@ -232,7 +248,13 @@ async def _bind_requested_subagent_model(
         raise ValidationError(
             say("subagentModelNotAllowed", model=repr(requested), offer=offer)
         )
-    return binding.resolve(None, choices, agent_model=requested_id)
+    automatic = any(
+        p is not None and p.automatic and p.model == requested_id
+        for p in (parent_pick, child_pick)
+    )
+    return model_catalog.Pick(
+        binding.resolve(None, choices, agent_model=requested_id), automatic=automatic
+    )
 
 
 async def _require_model_caller(
@@ -371,16 +393,21 @@ async def admission(
     requested = (
         child_model or (request.headers.get("x-cheese-requested-model") or "").strip()
     )
-    agents = AgentInstanceService(db)
+    # The teammate whose session this is — for a subagent, the one that spawned
+    # it: a subagent runs on what that teammate's subagents are set to.
     agent = None
-    if project is not None and not is_subagent:
+    if project is not None:
+        agents = AgentInstanceService(db)
         agent = await agents.for_seat_handle(project, claims.get("a"))
         if agent is None:
             agent = await agents.for_project(project)
-    choices = model_catalog.catalog(project.settings if project else None)
+    project_settings = project.settings if project else None
+    teammate = agent.configuration if agent else None
+    choices = model_catalog.catalog(project_settings)
+    scene = await _session_scene(db, claims)
     # What the project's subagents may run without asking: the gate below
-    # judges the bound model by it, and the platform subagent default is only
-    # offered to a project entitled to it by the same gate.
+    # judges the bound model by it. A main turn passed the same gate when it
+    # was assembled.
     policy = (
         gate.policy_of(
             project.settings,
@@ -391,30 +418,25 @@ async def admission(
         else None
     )
     try:
-        if project is not None and policy is not None and requested:
-            bound = await _bind_requested_subagent_model(
-                agents,
-                project,
+        if policy is not None and requested:
+            picked = _bind_requested_subagent_model(
                 choices,
                 requested,
-                claims.get("a"),
-                policy,
+                project_settings=project_settings,
+                parent_pick=_pick_or_none(scene, choices, project_settings, teammate),
+                child_pick=_pick_or_none(
+                    model_catalog.Scene.subagent, choices, project_settings, teammate
+                ),
             )
         else:
-            bound = binding.resolve(
-                None,
+            picked = model_catalog.pick(
+                model_catalog.Scene.subagent if is_subagent else scene,
                 choices,
-                agent_model=agent.configuration.get("model") if agent else None,
-                default_model=(
-                    model_catalog.subagent_default(project.settings, choices, policy)
-                    if policy is not None
-                    else (project.settings or {}).get("default_model")
-                )
-                if project
-                else None,
+                project_settings=project_settings,
+                teammate=teammate,
             )
+        bound = picked.binding
         if policy is not None and project is not None:
-            choice = choices[bound.model]
             place = claims.get("t")
             try:
                 place_id = uuid.UUID(place) if place else None
@@ -423,13 +445,8 @@ async def admission(
             outcome = await chat._pass_policy_gate(
                 db,
                 place_id,
-                gate.Call(
-                    resource=gate.Resource.model,
-                    subject=bound.model,
-                    label=choice["label"],
-                    tier=choice["tier"],
-                    approver=project.owner_handle or "",
-                    overseas=choice["overseas"],
+                model_catalog.gate_call(
+                    picked, choices, approver=project.owner_handle or ""
                 ),
                 policy,
                 actor=claims.get("a") or "",
@@ -607,7 +624,11 @@ async def machine_model(
 
     The sandbox holds no token; the caller is the session leasing it now
     (``machine_caller``). The credential the checks below read is made here,
-    for this one call, and never leaves this process."""
+    for this one call, and never leaves this process. A command a person or
+    the environment itself started holds no seat a model call could be made
+    under, and is refused."""
+    if caller.agent_handle is None:
+        raise ForbiddenError()
     token = mint_scoped_token(
         project_id=caller.project_id,
         topic_id=caller.conversation_id,

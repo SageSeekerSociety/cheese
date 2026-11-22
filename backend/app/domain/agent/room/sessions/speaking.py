@@ -19,13 +19,16 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from app.domain.agent.harness import SessionRef
+from app.domain.agent.harness.driven.runner import PRIVATE_TEXT
 from app.domain.agent.harness.driven.subscription import Seat
 from app.domain.agent.room.sessions.records import Live
 from app.domain.agent.room.stopwatch import timed
 from app.domain.agent.service import AgentSessionInfo
 from app.domain.agent.session_host.contract import (
+    ColdCompaction,
     Image,
     InputUnconfirmed,
+    PrivateText,
     Prompt,
     SessionError,
 )
@@ -53,6 +56,7 @@ async def send(
     on_mark: Callable[[uuid.UUID], None],
     register_input: InputRegistrar,
     resume_token: str | None = None,
+    retired_token: str | None = None,
     model: str | None = None,
     env: dict[str, str] | None = None,
     acting: str | None = None,
@@ -62,13 +66,26 @@ async def send(
     owes_reply: bool = False,
     session_opening: str = "",
     opening_changes: str = "",
+    cold: ColdCompaction | None = None,
+    private: tuple[PrivateText, ...] = (),
+    on_private: Callable[[], None] | None = None,
 ) -> bool:
     """Put a message into the seat's session, as work ``work_id``, starting
     the session if it has to be. True = the session's runner took it.
 
+    ``cold`` asks the runner to compact a conversation that goes on but has
+    gone cold before it reads the message (`ColdCompaction`). A compacted
+    conversation is told the whole opening again, not what changed, so the
+    runner is handed that message too and says it if it compacts.
+
     ``session_opening`` is the project state a new conversation is handed in
     front of its first message; ``opening_changes`` the part of it that
     changed since a conversation that goes on last heard (`_with_project_state`).
+    ``private`` goes ahead of it as blocks only their owners may read in the
+    session's records (`PrivateText`); one the conversation already ``held``
+    is said again only to a new conversation, which holds nothing. Only a
+    runner that stamps such blocks is handed them (`PRIVATE_TEXT`), and
+    ``on_private`` hears that it was.
 
     An ack, not an answer: what the agent does about it arrives through the
     seat's reading — possibly minutes later, possibly to a different process
@@ -89,6 +106,7 @@ async def send(
             session,
             system_prompt=system_prompt,
             resume_token=resume_token,
+            retired_token=retired_token,
             model=model,
             env=env,
             acting=acting,
@@ -97,9 +115,27 @@ async def send(
             phases=mark.phases,
         )
         mark.lap()
+        said = message
         message = svc._with_project_state(
             seat, live, resume_token, session_opening, opening_changes, message
         )
+        # A new conversation has nothing to compact and is told the whole
+        # opening already.
+        fresh = live.conversation != resume_token
+        cold_text = f"{session_opening}\n\n{said}" if session_opening else said
+        if cold is None or fresh:
+            cold, cold_text = None, ""
+        # A conversation compacted before it reads this (``cold``) keeps only
+        # a summary of what it held, so it is told every note again, as it is
+        # told the whole opening.
+        cold_private = private if cold is not None else ()
+        if private and not svc.host.takes(live.ref, PRIVATE_TEXT):
+            # An earlier release's runner, still at work when this one was
+            # deployed: it would write the notes where everyone reads them.
+            private, cold_private = (), ()
+        elif private and on_private is not None:
+            on_private()
+        private = tuple(p for p in private if fresh or not p.held)
         pictures = tuple(images or ())
         on_mark(work_id)
         await svc._consume(
@@ -143,7 +179,16 @@ async def send(
             await svc._submit(
                 live,
                 identity,
-                Prompt(work_id, message, images=pictures, owes_reply=owes_reply),
+                Prompt(
+                    work_id,
+                    message,
+                    images=pictures,
+                    owes_reply=owes_reply,
+                    cold=cold,
+                    cold_text=cold_text,
+                    private=private,
+                    cold_private=cold_private,
+                ),
                 steer=False,
                 register_input=register_input,
             )

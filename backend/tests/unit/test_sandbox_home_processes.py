@@ -10,12 +10,33 @@ The kernel's files are written here in its own format, and the paths the host
 program reads are pointed at them.
 """
 
+import builtins
+import json
 import shutil
 from pathlib import Path
 
 import pytest
 
 from app.domain.machine import sandbox_home
+from app.domain.machine.lifecycle import program
+
+
+def test_disk_readings_work_without_unix_archive_support(tmp_path, monkeypatch, capsys):
+    script = program("disk", live=[], grace_s=0)
+    real_import = builtins.__import__
+
+    def import_without_resource(name, *args, **kwargs):
+        if name == "resource":
+            raise ModuleNotFoundError("No module named 'resource'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(builtins, "__import__", import_without_resource)
+    exec(script, {"__name__": "__main__"})
+
+    answer = json.loads(capsys.readouterr().out)
+    assert answer["filesystem"]["bytes"] > 0
+    assert answer["homes"] == []
 
 
 @pytest.fixture

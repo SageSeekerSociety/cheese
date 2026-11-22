@@ -103,9 +103,10 @@ const natural = ref({ width: 0, height: 0 })
 const standaloneRegion = ref<RasterRegion | null>(null)
 
 const tool = ref<SketchTool>('select')
-// 「在图上说」那一行只在批注模式里摆（没有模式的地方照旧摆）。切回「看」时笔收起来，
-// 拖动只是在看图；画了没发的笔画还在，那一行留着，免得画好的东西没处可发。
-const marking = usePreviewMarking({ readOnlyToo: true })
+// 「在图上说」那一行只在有地方接它的预览里摆：只读预览（资料库、交付的某一版）画了没处
+// 交，那一排按键按不动，不如不摆。切回「看」时笔收起来，拖动只是在看图；画了没发的笔画
+// 还在，那一行留着，免得画好的东西没处可发。
+const marking = usePreviewMarking()
 watch(marking, (on) => {
   if (!on) tool.value = 'select'
 })
@@ -360,6 +361,7 @@ useDesignShortcuts({
   cancelGesture,
   deleteSelected,
   exitSelection: () => cancelSelection(),
+  exitRegion,
 })
 
 const { discardPrompt, discardKeep, discardCard, answerDiscard, trapDiscardFocus } = useDesignDiscardGuard({
@@ -371,6 +373,18 @@ const { discardPrompt, discardKeep, discardCard, answerDiscard, trapDiscardFocus
 
 function cancelSelection() {
   tool.value = 'select'
+}
+/**
+ * 撤掉框着的那一块，撤掉了就报 true。
+ *
+ * 只有这一格自己管着选区时才撤（`activeRegion === undefined`）：宿主递了 `activeRegion`
+ * 的那几处（房间里的预览），框出来的一块在宿主手里，撤它得由宿主那张定位卡接 Esc 去做；
+ * 这里再撤一次，图和卡就对不上了。
+ */
+function exitRegion(): boolean {
+  if (props.activeRegion !== undefined || !standaloneRegion.value) return false
+  standaloneRegion.value = null
+  return true
 }
 function loaded(event: Event) {
   const current = image.value

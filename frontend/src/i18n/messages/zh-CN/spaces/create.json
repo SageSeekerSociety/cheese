@@ -7,5 +7,6 @@
   "open": "新建空间",
   "ownership": "提交后待平台管理员审核，通过后可以发布题目",
   "placeholder": "例如：程序设计练习",
-  "submit": "提交审核"
+  "submit": "提交审核",
+  "avatarFailed": "上传头像失败，换一张或稍后重试"
 }

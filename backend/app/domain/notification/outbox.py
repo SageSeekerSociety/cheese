@@ -14,7 +14,15 @@ from sqlalchemy import or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.domain.notification.models import ChannelDelivery
-from app.domain.notification.names import names_for, with_names
+from app.domain.notification.names import (
+    handles_in,
+    handles_of_ids,
+    names_for_reader,
+    snapshot_id_swaps,
+    user_ids_in,
+    with_names,
+    with_snapshot_names,
+)
 from app.domain.notification.preferences import (
     default_preferences,
     local_time,
@@ -22,7 +30,12 @@ from app.domain.notification.preferences import (
 )
 from app.domain.notification.preferences_models import PreferencesRepository
 from app.domain.notification.push import push_text
-from app.domain.user.services import languages_by_ids, timezones_by_ids
+from app.domain.user.services import (
+    languages_by_ids,
+    names_by_handles,
+    timezones_by_ids,
+    usernames_by_ids,
+)
 
 LEASE_SECONDS = 120
 
@@ -67,11 +80,51 @@ class ChannelIntentHandler:
             if self.push_enabled and intents[d.delivery_key].push
         ]
         languages = await languages_by_ids(self.session, pushed)
-        # A push names people by name, not by the room's <@handle> token.
-        names = await names_for(
-            self.session,
-            *(d.payload for d in deliveries if d.recipient_id in pushed),
+        # A push names people by name, not by the room's <@handle> token, and
+        # each recipient reads their own names: a personal remark is private to
+        # whoever set it, so one map for the whole batch would either leak it to
+        # the others or lose it for its owner. The public names are one query for
+        # the whole batch; the remarks are one per recipient, since the table is
+        # keyed by who set them.
+        payloads_by_recipient: dict[int, list[dict]] = {}
+        for d in deliveries:
+            if d.recipient_id in pushed:
+                payloads_by_recipient.setdefault(d.recipient_id, []).append(d.payload)
+        referenced_ids: set[int] = set()
+        for payloads in payloads_by_recipient.values():
+            for payload in payloads:
+                referenced_ids |= user_ids_in(payload)
+        # A person may be named by an entity reference rather than a token
+        # (`requester` in a join request); their handle is what carries a remark.
+        handles_per_recipient: dict[int, set[str]] = {
+            recipient_id: set() for recipient_id in payloads_by_recipient
+        }
+        for recipient_id, payloads in payloads_by_recipient.items():
+            found = handles_per_recipient[recipient_id]
+            for payload in payloads:
+                found |= handles_in(payload)
+        referents = await usernames_by_ids(self.session, referenced_ids)
+        referent_handles = set(referents.values())
+        for found in handles_per_recipient.values():
+            found |= referent_handles
+        all_handles = set().union(*handles_per_recipient.values())
+        public_names = (
+            await names_by_handles(self.session, sorted(all_handles))
+            if all_handles
+            else {}
         )
+        viewer_handles = await handles_of_ids(self.session, list(payloads_by_recipient))
+        swaps_by_recipient: dict[int, dict[str, str]] = {}
+        names_by_recipient: dict[int, dict[str, str]] = {}
+        for recipient_id, handles in handles_per_recipient.items():
+            named = await names_for_reader(
+                self.session,
+                sorted(handles),
+                public_names,
+                viewer_handle=viewer_handles.get(recipient_id),
+            )
+            names_by_recipient[recipient_id] = named
+            swaps_by_recipient[recipient_id] = snapshot_id_swaps(named, referents)
         for delivery in deliveries:
             intent = intents[delivery.delivery_key]
             common = {
@@ -87,9 +140,16 @@ class ChannelIntentHandler:
             if intent.digest:
                 channels.append(("digest", common))
             if self.push_enabled and intent.push:
+                # This push goes to one person, so their own remarks name people
+                # in it — the same rule the inbox row follows.
+                named = names_by_recipient.get(delivery.recipient_id, {})
                 title, body = push_text(
                     delivery.type,
-                    with_names(delivery.payload, names),
+                    with_snapshot_names(
+                        with_names(delivery.payload, named),
+                        named,
+                        swaps_by_recipient.get(delivery.recipient_id, {}),
+                    ),
                     languages.get(delivery.recipient_id),
                 )
                 channels.append(

@@ -1,10 +1,11 @@
-"""A turn in a task's own conversation carries nobody's private memory, the
-task owner's included.
+"""A turn in a task's own conversation carries none of a person's private
+memory beyond how they want to be talked to, the task owner's included.
 
 A task's conversation is the shared room's: its session goes on to work for
 whoever speaks there next, and what it read for one person would still be in
 reach of the next one (`turn_speakers`). Only a person's private chat carries
-their private memory.
+their whole private memory; here the owner's index points at no
+`communication` note, so nothing of theirs is laid down or pointed at.
 """
 
 import uuid

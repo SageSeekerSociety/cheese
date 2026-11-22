@@ -32,6 +32,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.domain.block.models import Block, BlockKind
+from app.domain.machine import occupants
 from app.domain.machine.disk_guard import DiskGuard
 from app.domain.machine.models import CloudHost
 from app.domain.machine.repositories import CloudHostRepository
@@ -272,7 +273,7 @@ def test_a_full_host_is_still_read_after_its_last_sandbox_goes(cloud):  # noqa: 
     async def gone():
         async with cloud.client.test_request_factory() as db:
             repo = CloudHostRepository(db)
-            await repo.delete_home(await repo.current_home(seat.session))
+            await repo.delete_home(await occupants.home_of(db, seat.session))
             await db.commit()
 
     run(cloud, gone)
@@ -287,7 +288,7 @@ def idle_for(case, seat, minutes: int) -> None:
 
     async def go():
         async with case.client.test_request_factory() as db:
-            home = await CloudHostRepository(db).current_home(seat.session)
+            home = await occupants.home_of(db, seat.session)
             home.active_at = datetime.now(UTC) - timedelta(minutes=minutes)
             await db.commit()
 

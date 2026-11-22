@@ -17,8 +17,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.domain.agent.harness.prompt import build_session_opening, teaching_section
 from app.domain.memory.files_store import IndexSection, MemoryIndex
+from app.domain.prompts import build_session_opening, teaching_section
 from app.domain.task.protocol import Protocol, Teaching, resolve
 from app.domain.task.teaching import TeachingContext
 
@@ -456,10 +456,10 @@ def test_fill_substitutes_the_goals_variable() -> None:
 def test_a_teaching_change_waits_for_the_next_session() -> None:
     """教学配置**不**是逐轮重说的现状：一个会话保持开场那一份，直到下一次新会话。
 
-    这是 #8d772257 定的语义（`harness/prompt.py` 模块说明第 3 条），#4525 把它写进
+    这是 #8d772257 定的语义（`prompts/render.py` 模块说明第 3 条），#4525 把它写进
     了 `TRACKED_SECTIONS` 的注释里。往一个上下文里全是旧范围的会话塞新范围，比让它
     按旧的做完这一轮更糟。"""
-    from app.domain.agent.harness.prompt import TRACKED_SECTIONS
+    from app.domain.prompts import TRACKED_SECTIONS
 
     assert "teaching" not in TRACKED_SECTIONS
 
@@ -540,3 +540,60 @@ def test_private_guidance_is_omitted_from_the_response_unless_asked() -> None:
     assert teaching_to_api(teaching, include_private=True)["privatePrompt"] == (
         "参考答案是 42"
     )
+
+
+# ── 引导为主的两项保护（学情分析第 4 步）─────────────────────────────────────
+
+
+def test_the_guards_are_off_unless_written_and_only_count_in_guide_mode() -> None:
+    """已有的空间不会自己打开：没写就是关着；写了但方式不是「引导为主」也不生效。"""
+    assert not Teaching.from_json({"mode": "guide"}).ladder
+    on = Teaching.from_json(
+        {"mode": "guide", "hint_ladder": True, "output_check": True}
+    )
+    assert on.ladder and on.checks_output
+    other = Teaching.from_json(
+        {"mode": "example", "hint_ladder": True, "output_check": True}
+    )
+    assert not other.ladder and not other.checks_output
+    # 一个字符串不是开关。
+    assert not Teaching.from_json({"mode": "guide", "hint_ladder": "yes"}).ladder
+
+
+def test_the_guards_ride_with_the_level_that_picks_the_way_of_helping() -> None:
+    space = {"mode": "guide", "hint_ladder": True, "output_check": True}
+    keeps = resolve(
+        space=_space(space),
+        task=_task({"teaching": {"system_prompt": "只用 SQL 标准语法。"}}),
+        project=_project(),
+    )
+    assert keeps.teaching.ladder and keeps.teaching.checks_output
+
+    own = resolve(
+        space=_space(space),
+        task=_task({"teaching": {"mode": "guide", "hint_ladder": True}}),
+        project=_project(),
+    )
+    assert own.teaching.ladder and not own.teaching.checks_output
+
+    elsewhere = resolve(
+        space=_space(space),
+        task=_task({"teaching": {"mode": "free", "system_prompt": "随便问"}}),
+        project=_project(),
+    )
+    assert not elsewhere.teaching.ladder and not elsewhere.teaching.checks_output
+
+
+def test_the_ladder_is_said_to_the_agent_only_when_it_is_on() -> None:
+    def section(raw: dict) -> str:
+        return (
+            teaching_section(
+                TeachingContext(course=None, teaching=Teaching.from_json(raw))
+            )
+            or ""
+        )
+
+    assert "提示阶梯" in section({"mode": "guide", "hint_ladder": True})
+    assert "[[hint:" in section({"mode": "guide", "hint_ladder": True})
+    assert "提示阶梯" not in section({"mode": "guide"})
+    assert "提示阶梯" not in section({"mode": "example", "hint_ladder": True})

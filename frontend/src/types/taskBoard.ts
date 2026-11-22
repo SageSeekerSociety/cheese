@@ -9,6 +9,7 @@ import type {
   TaskSubmissionSchemaEntry,
   TaskSubmitterType,
   TaskTeamMembershipLockPolicy,
+  TaskTestSuite,
 } from '@/types'
 
 // 添加参与者身份类型
@@ -59,8 +60,11 @@ export type PostTaskRequestData = {
   /** 这道题指定的默认队友（#944）：平台预设的名字（如 `academic-research`）。
    *  省略 = 不用说（沿用项目集 / 空间）；空串 = 明确这道题不要默认队友。 */
   defaultRole?: string
+  /** 这道题归在这块板的哪几个知识点下（§ learning analysis, step 1）。整份替换。 */
+  knowledgePointIds?: number[]
   rubric?: TaskRubricLine[]
   rubricPublic?: boolean
+  testSuite?: TaskTestSuite[]
   stages?: TaskStage[]
 }
 
@@ -86,9 +90,12 @@ export type PatchTaskRequestData = {
   teaching?: SpaceTeaching
   /** 这道题指定的默认队友（#944）。省掉 = 不动；空串 = 清掉这道题的覆盖。 */
   defaultRole?: string
+  /** 这道题归在这块板的哪几个知识点下（§ learning analysis, step 1）。整份替换；省掉它 = 不动。 */
+  knowledgePointIds?: number[]
   /** 评分要点：整份替换；省掉它 = 不动。 */
   rubric?: TaskRubricLine[]
   rubricPublic?: boolean
+  testSuite?: TaskTestSuite[]
   /** 阶段：整份替换；省掉它 = 不动。 */
   stages?: TaskStage[]
   endedAt?: number | null
@@ -125,6 +132,8 @@ export type PostTaskSubmissionReviewRequestData = {
   accepted: boolean
   score: number
   comment: string
+  /** 老师改测试点那一行的分：改成几分、为什么（原因必填，学生看得到）。`null` 是恢复按测试点算。 */
+  testsOverride?: { score: number; reason: string } | null
 }
 
 export type PatchTaskSubmissionReviewRequestData = Partial<PostTaskSubmissionReviewRequestData>

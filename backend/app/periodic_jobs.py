@@ -29,12 +29,15 @@ from app.domain.delivery.agent import (
     dispatch_pending as dispatch_pending_work,
 )
 from app.domain.delivery.agent import (
+    record_seat_instruction,
     record_task_instruction,
 )
 from app.domain.delivery.ledger import deliver, settle_card
 from app.domain.delivery_events import DeliveryEvent, NotificationType
 from app.domain.docs_site import periodic as docs_periodic
 from app.domain.integration import periodic as integration_periodic
+from app.domain.judge import periodic as judge_periodic
+from app.domain.machine import hand_in
 from app.domain.machine import periodic as machine_periodic
 from app.domain.memory import periodic as memory_periodic
 from app.domain.notification import periodic as notification_periodic
@@ -43,7 +46,9 @@ from app.domain.review import periodic as review_periodic
 from app.domain.routine import periodic as routine_periodic
 from app.domain.run_record import periodic as run_record_periodic
 from app.domain.session_record import periodic as session_record_periodic
+from app.domain.space import periodic as space_periodic
 from app.domain.task import periodic as task_periodic
+from app.domain.task_notices import notices as task_notices
 from app.domain.task_notices import periodic as task_notices_periodic
 from app.domain.task_quiet import periodic as task_quiet_periodic
 from app.domain.team.repositories import TeamRepository
@@ -57,6 +62,8 @@ PERIODIC_JOB_NAMES = (
     "forge credential cache cleanup",
     "forge orphan account sweep",
     "quiet task reminder",
+    "neglected task warning",
+    "neglected task close",
     "task deadline reminder",
     "pr poll",  # forge_bound: PR status reads
     "task pr poll",  # forge_bound: task branch/PR reads
@@ -69,10 +76,13 @@ PERIODIC_JOB_NAMES = (
     "checklist reminder",
     "task state reminder",
     "gate sweep",
+    "deploy blocked marks",
     "cloud host pool sweep",
     "cloud sandbox lifecycle",
     "cloud compute metering",
     "cloud warm pool",
+    "cloud sandbox images",
+    "sandbox root backup cleanup",
     "sandbox disk guard",
     "subscription usage ingest",
     "backend error flush",
@@ -97,6 +107,7 @@ PERIODIC_JOB_NAMES = (
     "feishu authorization renewal",
     "task deadline sweep",
     "starter code pushes",
+    "judge runs",
     "memory dream",
     "memory history retention",
     "platform model roles refresh",
@@ -104,6 +115,8 @@ PERIODIC_JOB_NAMES = (
     "relay balance check",
     "credit warnings",
     "ci activity sweep",  # forge_bound: GitHub Actions run/job reads
+    "learning analysis nightly",
+    "learning practice queue",
 )
 
 
@@ -211,7 +224,15 @@ def periodic_jobs(
         get_runner=get_runner,
         last_activity=last_activity,
     )
-    task_quiet_periodic.register_periodic_jobs(jobs, sessions=sessions)
+    task_quiet_periodic.register_periodic_jobs(
+        jobs,
+        sessions=sessions,
+        chat=chat,
+        settle_card=settle_card,
+        announce=announce,
+        record_seat=record_seat_instruction,
+        machines=checkout_sweep.sweep,
+    )
     task_notices_periodic.register_periodic_jobs(jobs, sessions=sessions)
     review_periodic.register_periodic_jobs(
         jobs,
@@ -221,8 +242,10 @@ def periodic_jobs(
         gate_nudge_factory=gate_nudges,
         settle_card=settle_card,
         record_instruction=record_task_instruction,
+        record_seat=record_seat_instruction,
         dispatch_pending=dispatch_pending,
         task_teammate=task_teammate,
+        uncommitted=hand_in.uncommitted,
         machines=checkout_sweep.sweep,
     )
     machine_periodic.register_periodic_jobs(
@@ -249,6 +272,7 @@ def periodic_jobs(
         sessions=sessions,
         chat=chat,
         get_runner=get_runner,
+        announce=announce,
         machines=checkout_sweep.sweep,
     )
     docs_periodic.register_periodic_jobs(jobs, sessions=sessions)
@@ -268,10 +292,20 @@ def periodic_jobs(
     task_periodic.register_periodic_jobs(
         jobs, sessions=sessions, starter_settled=starter_settled
     )
+
+    # A judging's result is told by task_notices, a layer above the judge
+    # domain, so the telling is handed in from here.
+    async def judge_settled(run_id: int) -> None:
+        async with sessions() as session:
+            await task_notices.judged(session, run_id=run_id, at=datetime.now(UTC))
+            await session.commit()
+
+    judge_periodic.register_periodic_jobs(jobs, sessions=sessions, judged=judge_settled)
     ci_activity_periodic.register_periodic_jobs(jobs, sessions=sessions)
     thread_periodic.register_periodic_jobs(
         jobs, sessions=sessions, running=running_conversations
     )
+    space_periodic.register_periodic_jobs(jobs, sessions=sessions)
     return jobs.ordered(PERIODIC_JOB_NAMES)
 
 

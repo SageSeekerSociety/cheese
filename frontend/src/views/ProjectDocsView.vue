@@ -12,6 +12,7 @@ import { holdRevealUntil } from '@/composables/useRevealGate'
 
 import { deleteMemory, getProjectWeeklies, listMemory, listMemoryChanges, restoreMemoryChange } from '../api'
 import { getProjectOverview } from '../api/projectDocuments'
+import { memberName } from '../lib/agentNames'
 import { mayIn } from '../lib/projectPermissions'
 import { refRoute } from '../lib/refDirectory'
 import { relTime } from '../lib/relTime'
@@ -50,9 +51,13 @@ const AUTHOR = myHandle()
 const router = useRouter()
 // 单测里这一页是孤立渲染的，没有 store：队友名字就用默认的。
 const workspace = getCurrentInstance()?.appContext.config.globalProperties.$pinia ? useWorkspaceStore() : null
-// 周报里写到的人读成他的名字。周报不通知任何人，所以是名字引用，不是 @chip。
+// 周报里写到的人读成他的名字：查看者给他设过个人备注就是备注，否则是他的原名
+// （`memberName` 那一条规矩，和名册、聊天里的人名同一处）。周报不通知任何人，
+// 所以是名字引用，不是 @chip。
 const weeklyNames = computed(() => ({
-  mentionNames: Object.fromEntries((workspace?.members ?? []).map((m) => [m.user_handle, m.name || m.user_handle])),
+  mentionNames: Object.fromEntries(
+    (workspace?.members ?? []).map((m) => [m.user_handle, memberName(m) || m.user_handle])
+  ),
   topicTitles: {},
 }))
 const agentName = useProjectAgentName()

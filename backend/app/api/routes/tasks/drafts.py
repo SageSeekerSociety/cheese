@@ -34,6 +34,7 @@ from app.api.task_deps import (
     get_task_service,
 )
 from app.api.task_serialization import (
+    _enrich_task_knowledge_points,
     _enrich_task_models,
     _enrich_task_topics,
     _task_requirements,
@@ -58,6 +59,7 @@ from app.domain.assistant import changes
 from app.domain.attachment.reading import read_document
 from app.domain.library import records as library_records
 from app.domain.space import permissions as space_seats
+from app.domain.space.learning_analysis_service import SpaceLearningAnalysisService
 from app.domain.space.material_service import SpaceMaterialService
 from app.domain.space.services import SpaceLabels, SpaceService
 from app.domain.task import drafts, package
@@ -192,9 +194,13 @@ async def _task_as_form(db, task, *, private: bool) -> dict:
     private guidance comes with it; anyone else gets the form without it."""
     service = TaskService.of(db)
     model = _task_to_api_model(task, include_private_teaching=private)
-    model.update(await _task_requirements(service, task.id))
+    model.update(await _task_requirements(service, task.id, teacher=private))
+    # 表单只用 name/mentors 的 handle/题面这些，`_enrich_task_models` 里
+    # 跟读的人有关的那几样（creator、admins、导师的 remark）到这儿都被裁掉了，
+    # 所以不传 viewer：传了只会白多一次备注查询。
     model = (await _enrich_task_models(db, [model], space_id=task.space_id))[0]
     await _enrich_task_topics(db, [model])
+    await _enrich_task_knowledge_points(db, [model])
     return drafts.task_form(model)
 
 
@@ -471,7 +477,13 @@ async def _space_terms(db, spaces: SpaceService, space_id: int, user_id: int):
         await _zone(db, user_id),
         user_id=user_id,
         materials=await _library(db, space_id, user_id),
+        knowledge_points=await _knowledge_points(db, space_id),
     )
+
+
+async def _knowledge_points(db, space_id: int) -> dict[str, int]:
+    """The space's 知识点清单 by name: what 芝士 may tag a 题目 with."""
+    return await SpaceLearningAnalysisService.of(db).point_ids_by_name(space_id)
 
 
 async def _draft_text(db, spaces: SpaceService, row, user_id: int) -> str:

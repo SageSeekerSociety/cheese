@@ -1,5 +1,7 @@
 <script setup lang="ts">
 // 频道右侧的一格文件页签：把 `useProjectFile` 的取数接到 `ProjectFileView` 上。
+import type { NavTarget } from '../lib/navTarget'
+
 import { useProjectFile } from '../composables/useProjectFile'
 
 import ProjectFileView from './panels/ProjectFileView.vue'
@@ -11,7 +13,20 @@ const props = defineProps<{
   lines: { start: number; end: number } | null
 }>()
 
-const emit = defineEmits<{ (e: 'open-task', taskId: string): void }>()
+const emit = defineEmits<{
+  (e: 'open-task', taskId: string): void
+  (e: 'navigate', to: NavTarget): void
+}>()
+
+// 「在资料库打开」：同一份文件在资料库 › 项目文件里，旁边是整棵目录树和它的改动记录。
+function openInLibrary() {
+  if (!props.projectId) return
+  emit('navigate', {
+    name: 'project-library-files',
+    params: { projectId: props.projectId },
+    query: { file: props.path },
+  })
+}
 
 const file = useProjectFile({
   projectId: () => props.projectId,
@@ -44,5 +59,6 @@ const file = useProjectFile({
     :doc-renderer-missing="file.docRendererMissing.value"
     @open-task="emit('open-task', $event)"
     @download="void file.download()"
+    @open-in-library="openInLibrary"
   />
 </template>

@@ -72,6 +72,16 @@ def _changed_on_screen(card: AcceptCard) -> bool:
 
 
 def _tell(session: Session, card: AcceptCard) -> None:
+    # The project's sidebar observes the channel row, not each task socket.
+    # Its payload includes my_tasks; a card-only CI/merge change changes it too.
+    stage(
+        session,
+        SHOW_ONCE_COMMITTED,
+        (
+            str(card.topic_id),
+            {"type": "state", "resource": "topics", "id": str(card.topic_id)},
+        ),
+    )
     for channel in _channels(card):
         for resource in _RESOURCES:
             stage(

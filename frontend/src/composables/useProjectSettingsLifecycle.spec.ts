@@ -181,7 +181,7 @@ it('clears a default-model save failure on leaving its section', async () => {
     })
   )
   await flush()
-  await state.save(null, null)
+  await state.save(null)
   expect(state.saveError.value).toBe('save failed')
   active.value = false
   await flush()

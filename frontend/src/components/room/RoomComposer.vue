@@ -33,7 +33,7 @@ import { vGuideAnchor } from '@/composables/useGuideAnchors'
 import { useRoomMentionPicker } from '@/composables/useRoomMentionPicker'
 
 import { pastedTextName } from '../../lib/attachments'
-import { expandComposerMentions, mentionsAgent as containsAgentMention } from '../../lib/composerMentions'
+import { expandComposerMentions, handToMentions, isAgentIn, receiversOf } from '../../lib/composerMentions'
 import { searchLibraryFiles } from '../../lib/libraryApi'
 import { linkableDocuments } from '../../lib/linkableDocuments'
 import { PENDING_NOTES, sendableCount as countSendable } from '../../lib/pendingNotes'
@@ -285,12 +285,11 @@ function pickActiveMention(): boolean {
 // token (<@handle> / <#topicId>) at send time. The rules live in the shared
 // module so this stays identical to the backend's backstop.
 function expandMentions(text: string): string {
-  return expandComposerMentions(
-    text,
-    props.agentSeat,
-    props.mentionPool,
-    props.topicList.filter((t) => t.kind !== 'root')
-  )
+  return expandComposerMentions(text, props.agentSeat, props.mentionPool, topicsForLinks())
+}
+/** 这根栏里的 @ 名单（话题那一侧的排除根话题，理由见上面 expandMentions）。 */
+function topicsForLinks() {
+  return props.topicList.filter((t) => t.kind !== 'root')
 }
 
 // 图片输入: paste (screenshot) or pick images; they upload to the topic's
@@ -311,9 +310,7 @@ function expandMentions(text: string): string {
 // 名册到了之后，@ 名单上别的 AI 队友也算叫：一个话题可以 @ 好几位，@ 到的那位
 // 就是开这一轮的那位（不在房间里的会被请进来）。只认座位那一位时，@ 第二位队友
 // 发出去，那颗按钮不亮，看起来就像只有芝士叫得动。
-function mentionsAgent(expanded: string): boolean {
-  return containsAgentMention(expanded, props.agentSeat, props.mentionPool)
-}
+const mentionsAgent = (expanded: string) => isAgentIn(expanded, props.agentSeat, props.mentionPool)
 
 // 这条草稿发出去交给谁：问后端（`useAddressing`）。问的就是发送时会发出去的那一份——展开
 // 成 <@handle> 之后的正文、回复对象、有没有正文——所以它说的就是发出去之后会发生的事。
@@ -389,24 +386,26 @@ watch(
 const restingMate = computed<Mate | null>(
   () => mates.value.find((m) => m.handle === preferred.value) ?? mates.value[0] ?? null
 )
-// 名册还没到时头像照样画出来（按名字配色、灰着、点不动），这一行不会因为它晚到而跳一下。
-// 没 @ 谁、却交给了一位（回复了它、任务里不用 @）：画的是那一位。
+// 名册还没到时头像照样画出来（按名字配色、灰着、点不动），不会因为它晚到而跳一下。
+// 正文里 @ 了谁就画**后端说的全部接收者**：一条消息给点到的每一位各记一条投递。
+const receivers = computed<Mate[]>(() => receiversOf(addressing.value?.teammates, draftMates.value, mateOf))
 const shownMates = computed<Mate[]>(() => {
-  if (draftMates.value.length) return draftMates.value.slice(0, 2)
+  if (receivers.value.length) return receivers.value.slice(0, 2)
   const agent = addressing.value?.agent
   return [agent ? mateOf(agent) : restingMate.value ?? { handle: '', label: props.agentName }]
 })
-// 任务负责人那里、交给过队友的支线里，每句都交给队友：头像常亮，是规则不是开关。支线这一条
-// 读后端的回答（`reason: 'thread'`），只 @ 了人时回答不交给，头像就照常闭眼、可点。和 AI
-// 队友私聊时没有这颗头像。
+// 任务负责人那里、交给过队友的支线里、项目里只有自己一个人时的频道主线上，每句都交给队友：
+// 头像常亮，是规则不是开关。后两条读后端的回答（`reason: 'thread'`、`'alone'`），只 @ 了人
+// 时回答不交给，头像就照常闭眼、可点。和 AI 队友私聊时没有这颗头像。
+const everyLine = (reason: string | null | undefined) => reason === 'thread' || reason === 'alone'
 const summonFixed = computed(
-  () => (props.alwaysSummon && props.handOff !== false) || addressing.value?.reason === 'thread'
+  () => (props.alwaysSummon && props.handOff !== false) || everyLine(addressing.value?.reason)
 )
 const summonShown = computed(() => !(props.alwaysSummon && props.handOff === false))
 
-// 输入框空着时那句提示语说这条交给谁。交给过队友的支线里，每句都交给它，提示语就写
-// 「回复芝士…」；没交给过任何队友的支线照旧是房间给的那句（「在支线中回复」）。判据是后端
-// 对空草稿的回答（`reason: 'thread'`），和头像读的是同一个。记的是最近一次**空草稿**的回答：
+// 输入框空着时那句提示语说这条交给谁。交给过队友的支线里、只有自己一个人的项目的频道主线上，
+// 每句都交给它，提示语就写「回复芝士…」；没交给过任何队友的支线照旧是房间给的那句（「在支线中
+// 回复」）。判据是后端对空草稿的回答（`reason: 'thread'`、`'alone'`），和头像读的是同一个。记的是最近一次**空草稿**的回答：
 // 提示语只在空着时看得见，打字时的回答（只 @ 了人就不交给）不归它，清空之后也不用等一次来回。
 const emptyAnswer = ref<Addressing | null>(null)
 watch([addressing, addressingFresh], ([now, fresh]) => {
@@ -417,7 +416,8 @@ watch(
   () => (emptyAnswer.value = null)
 )
 const placeholderText = computed(() => {
-  const agent = emptyAnswer.value?.reason === 'thread' ? emptyAnswer.value.agent : null
+  const answer = emptyAnswer.value
+  const agent = answer && everyLine(answer.reason) ? answer.agent : null
   return agent ? t('work.room.composer.placeholderThread', { name: mateOf(agent).label }) : props.hint
 })
 const peopleOnly = computed(() => !addressing.value?.agent && !!addressing.value?.people.length)
@@ -480,8 +480,7 @@ function askRecipient(now: Addressing | null) {
 // 动。所以这几个入口在那一瞬间是关着的（见 `summonReady`），宁可少一个入口，
 // 也不要一个点了不算数的入口。
 function withAgentMention(text: string, mate: Mate | null = restingMate.value): string {
-  if (!mate || mentionsAgent(expandMentions(text))) return text
-  return `<@${mate.handle}> ${text}`
+  return handToMentions(text, mate, mates.value, props.mentionPool, topicsForLinks(), false)
 }
 
 // 摘掉正文里对这位的第一处 @。只摘第一处：正文里别处还提着它（「照 @芝士 说的改」）
@@ -687,9 +686,18 @@ defineExpose({
   focus() {
     void nextTick(() => composerInput.value?.focus?.())
   },
-  /** 在正文前面 @ 上这个频道平时交给的那位（仅你可见那一句的「交给芝士」）。已经 @ 了队友就不动。 */
-  addAgentMention() {
-    if (summonReady.value) draft.value = withAgentMention(draft.value)
+  /** 在正文前面 @ 上想说这句话的那位（仅你可见那一句的「交给芝士」）。
+   *
+   *  **写哪位由叫的人说**，不是这里挑「平时交给的那位」：那一句上写着谁的名字，@ 出来的
+   *  就得是谁。草稿里已经 @ 着别人也一样——那是上一次留下的，这一下点的是「交给这一位」，
+   *  换掉它（只换开头那几位，正文里说到的人不动，见 handToMentions）。 */
+  addAgentMention(handle?: string) {
+    if (!summonReady.value) return
+    // 叫的人指定了谁，就写谁；找不着（名册刚换过、那一位已经不在这间房了）**什么都不写**，
+    // 不退回「平时交给的那位」——那一退正是这次要消灭的错：屏幕上说着一个人，@ 出来另一个。
+    const mate = handle ? mates.value.find((m) => m.handle === handle) ?? null : restingMate.value
+    if (mate)
+      draft.value = handToMentions(draft.value, mate, mates.value, props.mentionPool, topicsForLinks(), !!handle)
     void nextTick(() => composerInput.value?.focus?.())
   },
   askRecipient,
@@ -840,6 +848,7 @@ defineExpose({
             :guided="!!guided"
             :mates="mates"
             :shown="shownMates"
+            :receivers="receivers"
             :on="summonOn"
             :fixed="summonFixed"
             :ready="summonReady"

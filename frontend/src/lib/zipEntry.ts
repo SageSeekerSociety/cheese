@@ -14,6 +14,8 @@ interface Entry {
   name: string
   method: number
   compressed: number
+  /** 解压后多大（中央目录里记的数）：先看大小再决定解不解，防一个小 zip 解出几个 GB。 */
+  size: number
   /** 这一条本地头在文件里的偏移。真正的起始位置要到取字节时才算，见 `readZipEntry`。 */
   local: number
 }
@@ -67,6 +69,7 @@ function entries(bytes: ArrayBuffer): Entry[] | null {
     if (at + 46 > view.byteLength || view.getUint32(at, true) !== CENTRAL_ENTRY) return null
     const method = view.getUint16(at + 10, true)
     const compressed = view.getUint32(at + 20, true)
+    const size = view.getUint32(at + 24, true)
     const nameLength = view.getUint16(at + 28, true)
     const extraLength = view.getUint16(at + 30, true)
     const commentLength = view.getUint16(at + 32, true)
@@ -75,7 +78,7 @@ function entries(bytes: ArrayBuffer): Entry[] | null {
     at += 46 + nameLength + extraLength + commentLength
     // 只读中央目录，不碰各条的本地头：一份几十个部件的文件里，一条诡异的本地头不该
     // 让整份档案都读不出来（调用方常常只要其中一条）。
-    out.push({ name, method, compressed, local })
+    out.push({ name, method, compressed, size, local })
   }
   return out
 }
@@ -83,6 +86,11 @@ function entries(bytes: ArrayBuffer): Entry[] | null {
 /** 这一份 zip 里有哪些条目（名字原样，带目录）。不是读得懂的 zip 时给空数组。 */
 export function listZipEntries(bytes: ArrayBuffer): string[] {
   return entries(bytes)?.map((entry) => entry.name) ?? []
+}
+
+/** 这一份 zip 里的条目和各自解压后的大小；不是读得懂的 zip 时给 null（和空 zip 分开）。 */
+export function listZipSizes(bytes: ArrayBuffer): { name: string; size: number }[] | null {
+  return entries(bytes)?.map((entry) => ({ name: entry.name, size: entry.size })) ?? null
 }
 
 /** `name` 那一条的内容；没有这一条、或者这一份不是读得懂的 zip，给 null。 */

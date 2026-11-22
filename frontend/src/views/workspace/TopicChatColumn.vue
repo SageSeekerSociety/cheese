@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import type { AgentControlState, Block, ChatAttachment, ProjectMemberRow, RoomTask, Topic } from '@/cx_types'
+import type { AgentFailureLine } from '@/lib/agentFailures'
 import type { DocReviewRequest } from '@/lib/docReview'
 import type { OpenedDocument } from '@/lib/docReview'
 import type { MemberActivityLine } from '@/lib/memberActivity'
@@ -8,6 +9,7 @@ import type { ChapterRow } from '@/types/chapters'
 import type { SubmitPreviewQuestion } from '../../lib/previewQuestion'
 
 import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { useQuery } from '@tanstack/vue-query'
 
 import { getAvatarUrl } from '@/utils/materials'
@@ -16,6 +18,7 @@ import { attachmentRawUrl, downloadFile } from '@/api/roomFiles'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChatPanel from '@/components/ChatPanel.vue'
 import AgentFeedbackCard from '@/components/feedback/AgentFeedbackCard.vue'
+import AgentNowStrip from '@/components/room/AgentNowStrip.vue'
 import TaskCard from '@/components/room/TaskCard.vue'
 import ThreadRoot from '@/components/room/ThreadRoot.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
@@ -33,7 +36,7 @@ import { useWorkspaceStore } from '@/stores/workspace'
 //
 // 它是一个组件而不是 TopicView 模板里的一段，因为同一段对话要挂在好几个地方：频道
 // 主线和任务页左边那一栏、手机上工作面板「对话」那一格，以及频道页右半边打开的支线
-// 和任务（`beside`，外面套 ThreadPane 的页头）。同一份接线写两遍是这几处早晚长歪的
+// （`beside`，外面套 ThreadPane 的页头）。同一份接线写两遍是这几处早晚长歪的
 // 原因：谁说话叫醒 AI 队友、输入框写什么、任务等审阅时那一条，都只在这里定。
 defineOptions({ name: 'TopicChatColumn' })
 
@@ -69,10 +72,12 @@ const props = defineProps<{
   composerClosed?: string | null
   /** 这里的提问已经不再等回答，见 ChatPanel。 */
   askClosed?: boolean
-  /** 采纳那一条此刻挂在别处（专注模式里它在面板底部），这里不再放一份。 */
+  /** 采纳那一条此刻挂在别处（对话看不见时它贴在工作面板底部），这里不再放一份。 */
   acceptElsewhere?: boolean
   /** 手机上：采纳那一条只放「审阅」，决定在「改动」页底部。 */
   acceptReviewButton?: boolean
+  /** 正在就地采纳的那件任务（主线上交付那几颗按钮）。 */
+  adoptingTask?: string | null
   // 换过 AI 队友之后 +1，对话栏据此重拉名册（它显示的 AI 名字来自那份名册）。
   // 同样必须一路透传：漏掉它不报错，只是换完队友对话里还写着上一个的名字。
 }>()
@@ -95,6 +100,8 @@ const emit = defineEmits<{
   // 芝士摆出来一份东西：面板立刻看一眼当前预览。必须一路透传，漏掉的话「预览」
   // 那一格又回到等轮询。
   (e: 'preview-shown'): void
+  // 页面开着时主线上实时来了一行交付（打开时已经在的不算）：页面决定要不要打开它。
+  (e: 'delivery-arrived', taskId: string): void
   // 消息的 ⋯ 里钉成章节/取消章节，或书签条里取消：这一页拿着这段对话的地址，由它去改。
   (e: 'chapter', block: Block): void
   (e: 'unchapter', target: Block | string): void
@@ -109,6 +116,8 @@ const emit = defineEmits<{
   (e: 'open-thread', block: Block): void
   (e: 'open-topic', topicId: string): void
   (e: 'open-card', taskId: string): void
+  /** 主线上交付那几颗按钮：去看这件任务的改动或预览，或者就地采纳这一版。 */
+  (e: 'delivery', act: { taskId: string; view: 'changes' | 'preview' | 'adopt' | 'return' }): void
   // AI 队友一条回复上的「查看过程」：右半边换成那一轮的现场。
   (e: 'open-process', turnId: string): void
   // 话题此刻处在哪一段，由采纳框说了算——头部的状态词和面板开在哪一格都读它。
@@ -131,7 +140,7 @@ const rejecting = ref(false)
 const conversationId = computed(() => props.taskId ?? props.threadId ?? props.topic.id)
 const store = useWorkspaceStore()
 
-// 这一栏是任务时，那件任务（任务页、右半边页头读的是同一份）。
+// 这一栏是任务时，那件任务（任务页页头读的是同一份）。
 const taskRead = useQuery(
   computed(() => ({ ...roomTaskQuery(props.taskId ?? ''), enabled: !!props.taskId })),
   queryClient
@@ -147,12 +156,9 @@ const alwaysSummon = computed(
     !closed.value &&
     (task.value.owner_handle === viewer.value || (task.value.contributor_handles ?? []).includes(viewer.value))
 )
-const hint = computed(() => {
-  if (closed.value) return t('work.task.closedHint')
-  return props.beside && task.value ? t('work.room.thread.taskPlaceholder') : null
-})
+const hint = computed(() => (closed.value ? t('work.task.closedHint') : null))
 
-// 它挂着的那条主线消息：右半边打开的支线和任务都有；任务页上只有支线原地转成的那件
+// 它挂着的那条主线消息：右半边打开的支线有；任务页上只有支线原地转成的那件
 // 有，前面写它来自哪个频道（另开的任务，来源在「概览」顶上那一行）。
 const fromThread = computed(() => !!task.value?.from_thread)
 const threadRead = useQuery(
@@ -165,7 +171,7 @@ const threadRead = useQuery(
 const thread = computed(() => threadRead.data.value ?? null)
 const root = computed<Block | null>(() => (props.beside || fromThread.value ? thread.value?.root ?? null : null))
 // 从那条消息本身另开的任务，列在它下面；从支线里某句回复拆出去的，挂在那句下面
-// （ChatPanel）；这段对话自己转成的那件写在页头，不再列一遍。
+// （ChatPanel）。
 const madeRead = useQuery(
   computed(() => {
     const rootId = props.beside ? root.value?.id : undefined
@@ -224,6 +230,22 @@ async function join() {
 const linkDown = computed(() => !!chatRef.value?.linkDown)
 const submitQuestion: SubmitPreviewQuestion = (request) => chatRef.value?.submitQuestion(request) ?? false
 
+const router = useRouter()
+const agentLines = ref<MemberActivityLine[]>([])
+const agentFailureLines = ref<AgentFailureLine[]>([])
+// 「重新登录」：回到项目设置里那位队友的卡片，卡片上写原因和怎么做。
+function reloginTeammate(handle: string) {
+  void router.push({
+    name: 'project-settings',
+    params: { projectId: props.topic.project_id, section: 'agents' },
+    query: { focus: handle, why: 'login_expired' },
+  })
+}
+function onActivity(lines: MemberActivityLine[]) {
+  agentLines.value = lines
+  emit('activity', lines)
+}
+
 defineExpose({
   linkDown,
   reloadFeedback: () => feedbackRef.value?.reload(),
@@ -236,6 +258,8 @@ defineExpose({
 
 <template>
   <div class="chat-col">
+    <!-- 进频道或支线页就能看到：每位 AI 此刻在干什么（和输入框上方那一行同一份数据）。 -->
+    <AgentNowStrip :lines="agentLines" :failures="agentFailureLines" @relogin="reloginTeammate" />
     <ChatPanel
       ref="chatRef"
       :topic="topic"
@@ -246,6 +270,7 @@ defineExpose({
       :ask-closed="askClosed"
       :always-summon="alwaysSummon"
       :place-state="task?.status ?? null"
+      :adopting-task="adoptingTask ?? null"
       :in-thread="beside"
       hide-header
       :show-composer="!rejecting"
@@ -264,9 +289,11 @@ defineExpose({
       @agent-control="emit('agent-control', $event)"
       @site-block="emit('site-block', $event)"
       @site-turns="emit('site-turns', $event)"
-      @activity="emit('activity', $event)"
+      @activity="onActivity"
+      @failures="agentFailureLines = $event"
       @state-changed="(resource: string, id?: string) => emit('state-changed', resource, id)"
       @preview-shown="emit('preview-shown')"
+      @delivery-arrived="emit('delivery-arrived', $event)"
       @mention-click="emit('mention-click', $event)"
       @open-file="(path) => emit('open-file', path)"
       @open-resource="
@@ -277,6 +304,7 @@ defineExpose({
       @open-thread="emit('open-thread', $event)"
       @open-topic="emit('open-topic', $event)"
       @open-card="emit('open-card', $event)"
+      @delivery="emit('delivery', $event)"
       @open-process="emit('open-process', $event)"
     >
       <!-- 验收卡贴在输入框上方，不在时间线末尾：它是一个等人做的决定，要一直看得

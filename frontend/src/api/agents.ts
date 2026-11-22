@@ -10,13 +10,24 @@ import { request } from './http'
 // backend lands separately, so a 404 here has to reach the caller as a 404 (see
 // `isEndpointMissing`) rather than as an empty list that reads like "no agents".
 
-// Project main and native subagent model defaults.
+/** 「自动」背后某一个场合此刻用的模型；平台没指就是 null。 */
+export interface AutomaticModel {
+  id: string
+  label: string
+}
+
+// The project main model, and what 「自动」 runs on when it is unset.
 export interface ProjectDefaultModel {
-  subagent_model: string | null
-  /** 项目显式设的模型；null = 没设，走 deployment_default */
+  /** 项目主模型；null = 没设，即「自动」 */
   model: string | null
-  /** 没设显式默认时，部署兜底算出来的那个 */
+  /** 没设项目主模型时，目录标为默认的那个（对话场合的平台模型） */
   deployment_default: string | null
+  /** 「自动」时三个场合各用哪个模型：对话、任务、分身 */
+  automatic: {
+    conversation: AutomaticModel | null
+    task: AutomaticModel | null
+    subagent: AutomaticModel | null
+  }
   /** 当前项目能用的全部模型，每个带 default 标记（项目显式设过的那条=True） */
   choices: AgentFieldChoice[]
 }
@@ -25,14 +36,11 @@ export function getProjectDefaultModel(projectId: string): Promise<ProjectDefaul
   return request(`/projects/${encodeURIComponent(projectId)}/default-model`)
 }
 
-export function setProjectDefaultModel(
-  projectId: string,
-  model: string | null,
-  subagentModel?: string | null
-): Promise<ProjectDefaultModel> {
+/** 设项目主模型；null 改回「自动」。 */
+export function setProjectDefaultModel(projectId: string, model: string | null): Promise<ProjectDefaultModel> {
   return request(`/projects/${encodeURIComponent(projectId)}/default-model`, {
     method: 'PUT',
-    body: JSON.stringify({ model, subagent_model: subagentModel }),
+    body: JSON.stringify({ model }),
   })
 }
 

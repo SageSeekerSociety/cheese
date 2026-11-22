@@ -11,6 +11,7 @@ import type {
   TaskProgress,
   TaskStage,
   TaskSubmission,
+  TaskUsage,
   TeamSummary,
 } from '@/types'
 import type {
@@ -46,6 +47,20 @@ export namespace TaskBoardApi {
 
   export const update = (taskId: number, data: PatchTaskRequestData) =>
     axiosRequest<{ task: Task }>({ url: `/tasks/${taskId}`, method: 'PATCH', data }, true)
+
+  /** 平台管理员的待审核题目（`/admin/tasks`）：所有空间里还没审的题，最早发的在前，
+   *  每道带着它的空间、话题和提交要求。 */
+  export const unreviewedEverywhere = (pageStart?: string) =>
+    axiosRequest<{ tasks: Task[]; page: EncodedCursorPage }>(
+      { url: '/admin/tasks', method: 'GET', params: { pageStart } },
+      true
+    )
+
+  /** 平台管理员通过或驳回一道题，不必在它的空间里。 */
+  export const reviewAsPlatformAdmin = (
+    taskId: number,
+    data: { approved: 'APPROVED' | 'DISAPPROVED'; rejectReason?: string }
+  ) => axiosRequest<{ task: Task }>({ url: `/admin/tasks/${taskId}/review`, method: 'POST', data }, true)
 
   export const del = (taskId: number) => axiosMutation({ url: `/tasks/${taskId}`, method: 'DELETE' }, true)
 
@@ -191,19 +206,21 @@ export namespace TaskBoardApi {
       true
     )
 
-  /** 交一版：`stage` 是交哪个阶段（阶段的 id），不分阶段的题不带。 */
+  /** 交一版：`stage` 是交哪个阶段（阶段的 id），不分阶段的题不带。`codeSha` 是页面上给学生
+   *  看的那一版代码：项目默认分支已经挪走时后端答 409（`submissionCodeMoved`）。 */
   export const createSubmission = (
     taskId: number,
     participantId: number,
     data: PostTaskSubmissionRequestData[],
-    stage: string | null = null
+    stage: string | null = null,
+    codeSha: string | null = null
   ) =>
     axiosRequest<{ submission: TaskSubmission }>(
       {
         url: `/tasks/${taskId}/participants/${participantId}/submissions`,
         method: 'POST',
         data,
-        params: stage ? { stage } : undefined,
+        params: stage || codeSha ? { ...(stage ? { stage } : {}), ...(codeSha ? { codeSha } : {}) } : undefined,
       },
       true
     )
@@ -247,7 +264,7 @@ export namespace TaskBoardApi {
       stage?: string
     }
   ) =>
-    axiosRequest<{ submissions: TaskSubmission[]; page: Page }>(
+    axiosRequest<{ submissions: TaskSubmission[]; page: Page; usage?: TaskUsage }>(
       { url: `/tasks/${taskId}/participants/${participantId}/submissions`, method: 'GET', params },
       true
     )

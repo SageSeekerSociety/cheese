@@ -1,0 +1,1 @@
+Your step checklist has not moved for ⟦slot:minutes⟧ minutes, and it is the only place a reader can see how far you have got. Call todo_write now: mark the steps that are done completed and the one you are on in_progress. Ignore this only if the turn is already finished.

@@ -19,6 +19,7 @@ from app.core.errors import (
 from app.core.sentences import exception_text, listing, say
 from app.domain.deliverables import artifacts
 from app.domain.library import service as library
+from app.domain.notice_meta import EVENT_TASK_FILED
 from app.domain.review import (
     archive,
     commit_message,
@@ -33,10 +34,13 @@ from app.domain.review.models import (
     GateOutcome,
 )
 from app.domain.review.schemas import AcceptCardOut
+from app.domain.review.services.notices import _announce_of
+from app.domain.review.task_landing import record_at_origin, tell_opener_filed
 from app.domain.room_task import progress
+from app.domain.room_task.lock_order import lock_task_for_change
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import PlaceResolver
-from app.domain.room_task.services import TaskService
+from app.domain.room_task.services import TaskService, said_title
 from app.domain.topic.models import Topic, TopicStatus
 
 if TYPE_CHECKING:  # `github_pr` stays a lazy import at every call site
@@ -152,20 +156,27 @@ async def create_card(
     about: str | None = None,
     deliver: str | None = None,
     deliver_url: str | None = None,
-    completes_task: bool = True,
     admits_reviewer: ReviewerAdmission,
+    handed_in_by: str | None = None,
 ) -> AcceptCard:
+    """File a version of the task's delivery for review.
+
+    ``handed_in_by`` is the member who handed it in themselves
+    (`machine.hand_in`), not the task's AI teammate: the card keeps it, the
+    hand-in records that person's line where the task came from, and nobody is
+    woken to say it again."""
     focus = clean_focus(focus)
     topic = await self._topic_or_404(topic_id)
     task = await TaskService(self._session).require_in_room(topic_id, task_id)
     if topic.status == TopicStatus.archived:
         raise ValidationError(say("topicArchivedNoReview"))
-    # A task whose last delivery landed is over, even while its AI teammate is
-    # still writing it up (`room_task.closing`).
+    # A task whose last delivery landed is over, even while it waits for its
+    # deploy (`review.deploy_wait`) or its AI teammate is still writing it up
+    # (`room_task.closing`).
     if (
         task.status != TaskStatus.open
         or task.closing_since is not None
-        or not task.branch_name
+        or task.deploying_since is not None
     ):
         raise ValidationError(say("taskEndedOrNoBranch"))
     subject = (change_subject or "").strip()
@@ -185,6 +196,13 @@ async def create_card(
     hands_over_repository = (
         not (deliver or "").strip() and not (deliver_url or "").strip()
     )
+    if hands_over_repository and not task.branch_name:
+        # deferred-import: tests replace this name on app.domain.project.forge
+        from app.domain.project.forge import binding_for_project
+
+        if await binding_for_project(task.project_id, self._session) is None:
+            raise ValidationError(say("taskNoRepositoryToMerge"))
+        raise ValidationError(say("taskEndedOrNoBranch"))
     if hands_over_repository:
         _no_artifact_action(artifact, new_artifact, about)
     else:
@@ -257,6 +275,17 @@ async def create_card(
             hidden=await artifacts.hidden_from_room(self._session, topic.id),
         )
         await artifacts.describe(self._session, declared, about=about)
+    # Filing writes in the task and at the conversation it came from: both
+    # named first, in the task lock order (`room_task.lock_order`). Taken here,
+    # after the forge and machine reads above, so those seconds hold up no one
+    # writing in the task; read again under it, the task may have ended since.
+    await lock_task_for_change(self._session, task.id)
+    if (
+        task.status != TaskStatus.open
+        or task.closing_since is not None
+        or task.deploying_since is not None
+    ):
+        raise ValidationError(say("taskEndedOrNoBranch"))
     card = await self._repo.add(
         topic_id=topic_id,
         task_id=task.id,
@@ -278,7 +307,7 @@ async def create_card(
         ),
         deliverable_name=snapshot[0] if snapshot else None,
         deliverable_url=(deliver_url or "").strip() or None,
-        completes_task=completes_task,
+        handed_in_by=handed_in_by,
     )
     if snapshot is not None:
         await asyncio.to_thread(
@@ -298,7 +327,31 @@ async def create_card(
     # The card says where the task stands now (等审): what its teammate
     # reported before it is over.
     progress.clear(task)
-    await self._announce_filed(topic, card, task)
+    await self._announce_filed(topic, card, task, by=handed_in_by)
+    # The AI teammate that opened the task from the channel's main line is
+    # told what was handed in, to say so there in its own words; where nobody
+    # is told, the place the task came from records that a version is in for
+    # review: the card it filed, as filed. The card's state is told elsewhere.
+    # A version a member handed in is recorded there by its hand-in, which
+    # knows whether they adopt it in the same go (`machine.hand_in`).
+    if handed_in_by is None and not await tell_opener_filed(
+        self._session,
+        task,
+        card,
+        version=len(existing) + 1,
+        reviewers=reviewers,
+        record_seat=self._record_seat,
+    ):
+        await record_at_origin(
+            self._session,
+            task,
+            EVENT_TASK_FILED,
+            say("taskFiledForReview", title=said_title(task)),
+            announce=_announce_of(self),
+            refers={
+                "delivery": {"card_id": str(card.id), "version": len(existing) + 1}
+            },
+        )
     if is_new:
         await self._announce_new_artifact(topic, declared.name, task_id=task.id)
     await self._warn_about_a_second_pending_migration(topic, task.id)
@@ -872,6 +925,8 @@ async def _render(
         "armed_at": (
             card.auto_merge_armed_at.isoformat() if card.auto_merge_armed_at else None
         ),
+        # 布防的人采纳了这一版（「提交并采纳」），不是打开了自动合并。
+        "adopting": bool(card.auto_merge_armed_by and card.auto_merge_adopts),
     }
     # 快检说了什么。Gates nothing — the PR's real CI decides (#296) — but a
     # red one has to be in front of the person about to accept. A check

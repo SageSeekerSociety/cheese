@@ -11,6 +11,7 @@ from app.api.teams_deps import (
     get_team_service,
     load_application_maps,
 )
+from app.api.user_remarks import remarks_for_viewer
 from app.api.write_access import ROUTE_DECIDES, Can
 from app.auth import can
 from app.auth.checker import require_auth_user
@@ -143,6 +144,7 @@ def _team_to_api_model(
     users_map: dict | None = None,
     profiles_map: dict | None = None,
     avatars_map: dict | None = None,
+    remarks_map: dict[str, str] | None = None,
 ) -> dict:
     created_at_ms = (
         int(team.created_at.timestamp() * 1000) if team.created_at is not None else 0
@@ -170,6 +172,7 @@ def _team_to_api_model(
                     profiles_map.get(rel.user_id),
                     fallback_id=rel.user_id,
                     avatar_id=avatars_map.get(rel.user_id),
+                    remarks_map=remarks_map,
                 )
             elif rel.role == TeamMemberRole.ADMIN:
                 admin_relations.append(rel)
@@ -195,6 +198,7 @@ def _team_to_api_model(
                 profiles_map.get(rel.user_id),
                 fallback_id=rel.user_id,
                 avatar_id=avatars_map.get(rel.user_id),
+                remarks_map=remarks_map,
             )
             for rel in ordered
         ]
@@ -247,6 +251,7 @@ def _member_to_api_model(
     users_map: dict | None = None,
     profiles_map: dict | None = None,
     avatars_map: dict | None = None,
+    remarks_map: dict[str, str] | None = None,
 ) -> dict:
     """TeamMember representation with the full User shape the frontend expects."""
     created_at_ms = (
@@ -270,6 +275,7 @@ def _member_to_api_model(
         profiles_map.get(rel.user_id),
         fallback_id=rel.user_id,
         avatar_id=avatars_map.get(rel.user_id),
+        remarks_map=remarks_map,
     )
     return {
         "role": role_name,
@@ -281,8 +287,8 @@ def _member_to_api_model(
 
 
 async def _load_team_user_maps(
-    db, members: Sequence[TeamUserRelation]
-) -> tuple[dict, dict, dict]:
+    db, members: Sequence[TeamUserRelation], *, viewer_id: int | None = None
+) -> tuple[dict, dict, dict, dict]:
     """Bulk-load User + UserProfile records, and the avatars they picked.
 
     ``avatars_map`` 是 ``user_id -> 挑过的头像 id``（``chosen_avatar_ids`` 的答案，
@@ -292,12 +298,13 @@ async def _load_team_user_maps(
     """
     user_ids = list({rel.user_id for rel in members})
     if not user_ids:
-        return {}, {}, {}
+        return {}, {}, {}, {}
     user_repo = UserRepository(session=db)
     profile_repo = UserProfileRepository(session=db)
     users_map = await user_repo.get_by_ids(user_ids)
     profiles_map, avatars_map = await profile_repo.profiles_and_chosen_avatars(user_ids)
-    return users_map, profiles_map, avatars_map
+    remarks_map = await remarks_for_viewer(db, viewer_id, users_map)
+    return users_map, profiles_map, avatars_map, remarks_map
 
 
 _ROLE_NAME_TO_VALUE = {
@@ -341,6 +348,7 @@ async def _emit_team_models(
     teams: Sequence[Team],
     *,
     current_user_id: int | None = None,
+    viewer_id: int | None = None,
 ) -> list[dict]:
     """Batch-load members and user/profile/avatar maps across all teams in one round."""
     if not teams:
@@ -352,7 +360,11 @@ async def _emit_team_models(
             t.id: list(await service.get_team_members(team_id=t.id)) for t in teams
         }
     all_members = [m for rels in members_by_team.values() for m in rels]
-    users_map, profiles_map, avatars_map = await _load_team_user_maps(db, all_members)
+    users_map, profiles_map, avatars_map, remarks_map = await _load_team_user_maps(
+        db,
+        all_members,
+        viewer_id=viewer_id if viewer_id is not None else current_user_id,
+    )
     return [
         _team_to_api_model(
             team,
@@ -361,6 +373,7 @@ async def _emit_team_models(
             users_map=users_map,
             profiles_map=profiles_map,
             avatars_map=avatars_map,
+            remarks_map=remarks_map,
         )
         for team in teams
     ]
@@ -386,7 +399,9 @@ async def get_teams(
     )
     has_more = len(teams) > page_size
     teams_to_emit = teams[:page_size]
-    items = await _emit_team_models(db, service, teams_to_emit)
+    items = await _emit_team_models(
+        db, service, teams_to_emit, viewer_id=auth_user.user_id
+    )
     next_start = str(offset + page_size) if has_more else None
     return ok(
         {
@@ -420,9 +435,24 @@ async def get_my_teams(
     # Personal team first, then the rest by recency (stable for the sidebar).
     teams.sort(key=lambda t: (t.personal_owner_user_id is None, -t.id))
     items = await _emit_team_models(
-        db, service, teams, current_user_id=auth_user.user_id
+        db,
+        service,
+        teams,
+        current_user_id=auth_user.user_id,
+        viewer_id=auth_user.user_id,
     )
     return ok({"teams": items})
+
+
+async def _viewer_permissions(db, team_id: int, user_id: int) -> list[str]:
+    """What the person asking may do to the team (``viewerPermissions``): its
+    settings are offered to whoever holds them, and that is not always someone
+    on it — a platform admin manages every shared team without a seat."""
+    return [
+        permission.value
+        for permission in TeamPermission
+        if await team_seats.TEAM.allows(db, team_id, user_id, permission)
+    ]
 
 
 async def _team_profile(
@@ -434,7 +464,9 @@ async def _team_profile(
 ) -> dict:
     """One team shape, whether it was reached by id or by its join link."""
     members = list(await service.get_team_members(team_id=team.id))
-    users_map, profiles_map, avatars_map = await _load_team_user_maps(db, members)
+    users_map, profiles_map, avatars_map, remarks_map = await _load_team_user_maps(
+        db, members, viewer_id=user_id
+    )
     data = _team_to_api_model(
         team,
         members=members,
@@ -442,7 +474,9 @@ async def _team_profile(
         users_map=users_map,
         profiles_map=profiles_map,
         avatars_map=avatars_map,
+        remarks_map=remarks_map,
     )
+    data["viewerPermissions"] = await _viewer_permissions(db, team.id, user_id)
     if not data.get("joined"):
         data["joinStatus"] = await membership_service.join_status(team.id, user_id)
     return ok({"team": data})
@@ -486,7 +520,9 @@ async def join_team(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
-    team = await service.visible_team(team_id, auth_user.user_id)
+    # Asking to join is the person acting for themselves: the team must be
+    # one they find by who they are, not one only their oversight shows them.
+    team = await service.team_to_join(team_id, auth_user.user_id)
     await membership_service.join(
         user_id=auth_user.user_id,
         team=team,
@@ -508,7 +544,11 @@ async def get_team_join_link(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     service: TeamService = Depends(get_team_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
 ) -> dict:
+    await team_seats.TEAM.refuse_way_in(
+        db, team_id, auth_user.user_id, TeamPermission.edit_settings
+    )
     team = await service.join_link(team_id=team_id)
     return _join_link_payload(team)
 
@@ -523,7 +563,11 @@ async def update_team_join_link(
     payload: JoinLinkSettings,
     service: TeamService = Depends(get_team_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
 ) -> dict:
+    await team_seats.TEAM.refuse_way_in(
+        db, team_id, auth_user.user_id, TeamPermission.edit_settings
+    )
     team = await service.join_link(team_id=team_id, approval=payload.approval)
     return _join_link_payload(team)
 
@@ -537,7 +581,11 @@ async def reset_team_join_link(
     team_id: Annotated[int, Path(ge=1, alias="teamId")],
     service: TeamService = Depends(get_team_service),
     auth_user: AuthUserInfo = Depends(require_auth_user),
+    db=Depends(get_db),
 ) -> dict:
+    await team_seats.TEAM.refuse_way_in(
+        db, team_id, auth_user.user_id, TeamPermission.edit_settings
+    )
     team = await service.join_link(team_id=team_id, reset=True)
     return _join_link_payload(team)
 
@@ -601,7 +649,17 @@ async def get_team_members(
     viewer = team_seats.seat_named(
         next((r.role for r in relations if r.user_id == auth_user.user_id), None)
     )
-    users_map, profiles_map, avatars_map = await _load_team_user_maps(db, relations)
+    # The owner already removes everyone below; oversight is asked only of
+    # whoever it could add to (one read fewer for the owner's own page).
+    overseer = False
+    if viewer is not team_seats.Seat.owner:
+        team = await team_seats.TEAM.load(db, team_id)
+        overseer = team is not None and await team_seats.TEAM.overseen_by(
+            db, team, auth_user.user_id
+        )
+    users_map, profiles_map, avatars_map, remarks_map = await _load_team_user_maps(
+        db, relations, viewer_id=auth_user.user_id
+    )
     members = [
         {
             **_member_to_api_model(
@@ -609,9 +667,12 @@ async def get_team_members(
                 users_map=users_map,
                 profiles_map=profiles_map,
                 avatars_map=avatars_map,
+                remarks_map=remarks_map,
             ),
             "canRemove": rel.user_id != auth_user.user_id
-            and team_seats.may_remove(viewer, _seat(rel.role), own=False),
+            and team_seats.may_remove(
+                viewer, _seat(rel.role), own=False, oversees=overseer
+            ),
         }
         for rel in relations
     ]
@@ -654,7 +715,9 @@ async def create_team(
         handle=payload.handle,
     )
     members = list(await service.get_team_members(team_id=team.id))
-    users_map, profiles_map, avatars_map = await _load_team_user_maps(db, members)
+    users_map, profiles_map, avatars_map, remarks_map = await _load_team_user_maps(
+        db, members, viewer_id=auth_user.user_id
+    )
     return ok(
         {
             "team": _team_to_api_model(
@@ -664,6 +727,7 @@ async def create_team(
                 users_map=users_map,
                 profiles_map=profiles_map,
                 avatars_map=avatars_map,
+                remarks_map=remarks_map,
             )
         },
         "Team created",
@@ -682,6 +746,12 @@ async def patch_team(
     service: TeamService = Depends(get_team_service),
     db=Depends(get_db),
 ) -> dict:
+    if payload.visibility is not None:
+        # Who can find the team and ask to join it is a way in, like its link:
+        # a platform admin who only oversees the team leaves it as the team set it.
+        await team_seats.TEAM.refuse_way_in(
+            db, team_id, auth_user.user_id, TeamPermission.edit_settings
+        )
     team = await service.update_team(
         team_id=team_id,
         name=payload.name,
@@ -692,19 +762,22 @@ async def patch_team(
         handle=payload.handle,
     )
     members = list(await service.get_team_members(team_id=team_id))
-    users_map, profiles_map, avatars_map = await _load_team_user_maps(db, members)
-    return ok(
-        {
-            "team": _team_to_api_model(
-                team,
-                members=members,
-                current_user_id=auth_user.user_id,
-                users_map=users_map,
-                profiles_map=profiles_map,
-                avatars_map=avatars_map,
-            )
-        }
+    users_map, profiles_map, avatars_map, remarks_map = await _load_team_user_maps(
+        db, members, viewer_id=auth_user.user_id
     )
+    data = _team_to_api_model(
+        team,
+        members=members,
+        current_user_id=auth_user.user_id,
+        users_map=users_map,
+        profiles_map=profiles_map,
+        avatars_map=avatars_map,
+        remarks_map=remarks_map,
+    )
+    data["viewerPermissions"] = await _viewer_permissions(
+        db, team_id, auth_user.user_id
+    )
+    return ok({"team": data})
 
 
 @router.delete(
@@ -742,14 +815,20 @@ async def delete_team_member(
     service: TeamService = Depends(get_team_service),
     db=Depends(get_db),
 ) -> Response:
-    # The caller is on the team (``Can`` above), so the roster is theirs to
-    # read and asking about the target tells them nothing new.
+    # The caller reads the roster (``Can`` above), so asking about the target
+    # tells them nothing new.
+    team = await team_seats.TEAM.load(db, team_id)
     actor = await team_seats.seat_of(db, team_id, auth_user.user_id)
     target = await team_seats.seat_of(db, team_id, user_id)
-    if target is None:
+    if team is None or target is None:
         raise NotFoundError.for_resource("team_member", f"{team_id}/{user_id}")
     can.refuse_unless(
-        team_seats.may_remove(actor, target, own=user_id == auth_user.user_id),
+        team_seats.may_remove(
+            actor,
+            target,
+            own=user_id == auth_user.user_id,
+            oversees=await team_seats.TEAM.overseen_by(db, team, auth_user.user_id),
+        ),
         TeamPermission.manage_members,
         team_id,
     )
@@ -771,6 +850,9 @@ async def patch_team_member_role(
     db=Depends(get_db),
 ) -> dict:
     mapped_role = _parse_role(payload.role, allow_owner=False)
+    await team_seats.TEAM.refuse_own_seat(
+        db, team_id, auth_user.user_id, TeamPermission.change_roles, seats=user_id
+    )
 
     await service.update_team_member_role(
         team_id=team_id,
@@ -785,19 +867,22 @@ async def patch_team_member_role(
             "Resource team not found", data={"type": "team", "id": team_id}
         )
     members = list(await service.get_team_members(team_id=team_id))
-    users_map, profiles_map, avatars_map = await _load_team_user_maps(db, members)
-    return ok(
-        {
-            "team": _team_to_api_model(
-                team,
-                members=members,
-                current_user_id=auth_user.user_id,
-                users_map=users_map,
-                profiles_map=profiles_map,
-                avatars_map=avatars_map,
-            )
-        }
+    users_map, profiles_map, avatars_map, remarks_map = await _load_team_user_maps(
+        db, members, viewer_id=auth_user.user_id
     )
+    data = _team_to_api_model(
+        team,
+        members=members,
+        current_user_id=auth_user.user_id,
+        users_map=users_map,
+        profiles_map=profiles_map,
+        avatars_map=avatars_map,
+        remarks_map=remarks_map,
+    )
+    data["viewerPermissions"] = await _viewer_permissions(
+        db, team_id, auth_user.user_id
+    )
+    return ok({"team": data})
 
 
 @router.put(
@@ -813,6 +898,13 @@ async def put_team_owner(
     db=Depends(get_db),
 ) -> dict:
     """把团队交给另一位成员：他成为所有者，原所有者降为管理员。只有所有者能交。"""
+    await team_seats.TEAM.refuse_own_seat(
+        db,
+        team_id,
+        auth_user.user_id,
+        TeamPermission.transfer,
+        seats=payload.user_id,
+    )
     await service.transfer_team_owner(
         team_id=team_id, new_owner_user_id=payload.user_id
     )
@@ -822,19 +914,22 @@ async def put_team_owner(
             "Resource team not found", data={"type": "team", "id": team_id}
         )
     members = list(await service.get_team_members(team_id=team_id))
-    users_map, profiles_map, avatars_map = await _load_team_user_maps(db, members)
-    return ok(
-        {
-            "team": _team_to_api_model(
-                team,
-                members=members,
-                current_user_id=auth_user.user_id,
-                users_map=users_map,
-                profiles_map=profiles_map,
-                avatars_map=avatars_map,
-            )
-        }
+    users_map, profiles_map, avatars_map, remarks_map = await _load_team_user_maps(
+        db, members, viewer_id=auth_user.user_id
     )
+    data = _team_to_api_model(
+        team,
+        members=members,
+        current_user_id=auth_user.user_id,
+        users_map=users_map,
+        profiles_map=profiles_map,
+        avatars_map=avatars_map,
+        remarks_map=remarks_map,
+    )
+    data["viewerPermissions"] = await _viewer_permissions(
+        db, team_id, auth_user.user_id
+    )
+    return ok({"team": data})
 
 
 @router.post(
@@ -858,6 +953,9 @@ async def add_team_member_entry(
         raise BadRequestError(f"Invalid role: {role_str}. Must be MEMBER or ADMIN")
 
     team_id = team.id
+    await team_seats.TEAM.refuse_own_seat(
+        db, team_id, auth_user.user_id, TeamPermission.manage_members, seats=user_id
+    )
     if role_val == TeamMemberRole.ADMIN:
         await _refuse_admin_grant(db, team_id, auth_user.user_id)
 
@@ -914,9 +1012,13 @@ async def list_team_join_requests(
         page_start=pageStart,
         page_size=pageSize,
     )
-    users_map, profiles_map, avatars_map, teams_map = await load_application_maps(
-        db, apps
-    )
+    (
+        users_map,
+        profiles_map,
+        avatars_map,
+        teams_map,
+        remarks_map,
+    ) = await load_application_maps(db, apps, viewer_id=auth_user.user_id)
     items = [
         application_to_api_model(
             app,
@@ -924,6 +1026,7 @@ async def list_team_join_requests(
             profiles_map=profiles_map,
             avatars_map=avatars_map,
             teams_map=teams_map,
+            remarks_map=remarks_map,
         )
         for app in apps
     ]
@@ -995,9 +1098,13 @@ async def list_team_invitations(
         page_start=pageStart,
         page_size=pageSize,
     )
-    users_map, profiles_map, avatars_map, teams_map = await load_application_maps(
-        db, apps
-    )
+    (
+        users_map,
+        profiles_map,
+        avatars_map,
+        teams_map,
+        remarks_map,
+    ) = await load_application_maps(db, apps, viewer_id=auth_user.user_id)
     items = [
         application_to_api_model(
             app,
@@ -1005,6 +1112,7 @@ async def list_team_invitations(
             profiles_map=profiles_map,
             avatars_map=avatars_map,
             teams_map=teams_map,
+            remarks_map=remarks_map,
         )
         for app in apps
     ]
@@ -1030,6 +1138,13 @@ async def create_team_invitation(
     db=Depends(get_db),
 ) -> dict:
     role = _parse_role(payload.role, allow_owner=False)
+    await team_seats.TEAM.refuse_own_seat(
+        db,
+        team_id,
+        auth_user.user_id,
+        TeamPermission.manage_members,
+        seats=payload.user_id,
+    )
     if role == TeamMemberRole.ADMIN:
         await _refuse_admin_grant(db, team_id, auth_user.user_id)
     app = await membership_service.create_team_invitation(
@@ -1039,9 +1154,13 @@ async def create_team_invitation(
         role=role,
         message=payload.message,
     )
-    users_map, profiles_map, avatars_map, teams_map = await load_application_maps(
-        db, [app]
-    )
+    (
+        users_map,
+        profiles_map,
+        avatars_map,
+        teams_map,
+        remarks_map,
+    ) = await load_application_maps(db, [app], viewer_id=auth_user.user_id)
     return ok(
         {
             "invitation": application_to_api_model(
@@ -1050,6 +1169,7 @@ async def create_team_invitation(
                 profiles_map=profiles_map,
                 avatars_map=avatars_map,
                 teams_map=teams_map,
+                remarks_map=remarks_map,
             )
         },
         "Invitation created",

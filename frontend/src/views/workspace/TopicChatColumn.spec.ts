@@ -172,3 +172,84 @@ describe('对话栏的接线', () => {
     expect(seen[0]?.length).toBe(2)
   })
 })
+
+describe('主线上来了一行交付', () => {
+  function deliveryLine(id: string, taskId: string) {
+    return {
+      id,
+      project_id: 'p1',
+      conversation_id: topic.id,
+      kind: 'event',
+      author_type: 'platform',
+      author: 'system',
+      content: '「报名表」已提交审阅',
+      reply_to: null,
+      refs: [],
+      shown_as: 'happening',
+      meta: {
+        event_type: 'task_filed',
+        severity: 'info',
+        who: 'platform',
+        task_id: taskId,
+        delivery: { card_id: `card-${taskId}`, version: 1 },
+      },
+      created_at: new Date().toISOString(),
+    }
+  }
+
+  // 页面据此决定要不要当场打开那件交付：打开频道时已经在主线上的那一行不算到达。
+  it('页面开着时实时到的才报，打开时已经在的不报', async () => {
+    history = [deliveryLine('old-line', 't-old')]
+    const { emitted } = render(Column, {
+      props: { topic, members: [], topicList: [] },
+      global: { plugins: [vuetify, createPinia(), i18n], stubs: stubbedChildren },
+    })
+    await settle()
+    await settle()
+    sockets.at(-1)?.onopen?.()
+    sockets.at(-1)?.onmessage?.({
+      data: JSON.stringify({ type: 'event_block', block: deliveryLine('new-line', 't-new') }),
+    })
+    await settle()
+    expect(emitted()['delivery-arrived']).toEqual([['t-new']])
+    // A reconnect replays what the room already showed: the same line is not a new arrival.
+    sockets.at(-1)?.onmessage?.({
+      data: JSON.stringify({ type: 'event_block', block: deliveryLine('new-line', 't-new') }),
+    })
+    await settle()
+    expect(emitted()['delivery-arrived']).toEqual([['t-new']])
+  })
+
+  // A task the main line's teammate opened has no platform line for its hand-in: the
+  // teammate's own message about the task is what arrives.
+  it('开任务的队友带着任务说的话实时到了，也报这件任务', async () => {
+    history = []
+    const { emitted } = render(Column, {
+      props: { topic, members: [], topicList: [] },
+      global: { plugins: [vuetify, createPinia(), i18n], stubs: stubbedChildren },
+    })
+    await settle()
+    await settle()
+    sockets.at(-1)?.onopen?.()
+    sockets.at(-1)?.onmessage?.({
+      data: JSON.stringify({
+        type: 'user_block',
+        block: {
+          id: 'said-1',
+          project_id: 'p1',
+          conversation_id: topic.id,
+          kind: 'message',
+          author_type: 'participant',
+          author: 'cheese-0a1b2c3d4e5f',
+          content: '报名表做好了，等你审阅',
+          reply_to: null,
+          refs: [],
+          meta: { task_tag: 't-tagged' },
+          created_at: new Date().toISOString(),
+        },
+      }),
+    })
+    await settle()
+    expect(emitted()['delivery-arrived']).toEqual([['t-tagged']])
+  })
+})

@@ -1,0 +1,12 @@
+{
+  "type": "stream.close",
+  "origin": "server",
+  "why": "The server is done with the stream; the connector closes the executor's connection.",
+  "frame": {
+    "t": "stream.close",
+    "id": "stream-3f9a1c7e5b2d4086a1e9c7b5d3f1a2b4"
+  },
+  "meaning": {
+    "stream_id": "stream-3f9a1c7e5b2d4086a1e9c7b5d3f1a2b4"
+  }
+}

@@ -30,6 +30,8 @@ LIVE_ONLY = (
     "activity",
     "comment_activity",
     "thread_status",
+    # 已读: a reconnect reads them back whole (`GET /topics/{id}/reads`).
+    "reads",
 )
 
 TYPING = "typing"

@@ -3118,6 +3118,52 @@ def test_the_picker_searches_by_handle_and_by_nickname(client, as_admin):
     assert _searched(client, as_admin, "彭文博")[0]["already_admin"] is True
 
 
+def test_the_picker_puts_the_person_whose_whole_handle_was_typed_first(
+    client, as_admin
+):
+    """打全了一个人的 handle 或昵称，他就在候选的第一行，不被 `limit` 截掉。
+
+    选择器没有翻页：只按字母排的话，二十个排在他前面、只是**含着**这串字的账号
+    把他挤出这一页，而打全了的那串已经是能打出的最准的词，换不出更好的说法。
+    """
+    from tests.conftest import seed_user
+
+    for n in range(3):
+        seed_user(client, f"fb-a{n}fb-ziyi")
+    seed_user(client, "fb-ziyi-x")
+    seed_user(client, "fb-ziyi")
+    seed_user(client, "fb-zz")
+    _nickname_user(client, "fb-zz", "fb-ziyi的朋友")
+
+    def handles(q: str, limit: int) -> list[str]:
+        r = client.get(
+            "/admin/users",
+            params={"q": q, "limit": limit},
+            headers=session_auth_headers(as_admin),
+        )
+        assert r.status_code == 200, r.text
+        return [row["handle"] for row in r.json()["data"]["items"]]
+
+    assert handles("fb-ziyi", 1) == ["fb-ziyi"]
+    # 大小写不同也算打全了。
+    assert handles("FB-ZIYI", 1) == ["fb-ziyi"]
+    # 以它开头的（handle 或昵称）排在只是含着它的前面。
+    assert handles("fb-ziyi", 10)[:3] == ["fb-ziyi", "fb-ziyi-x", "fb-zz"]
+
+
+def test_a_wildcard_in_the_picker_is_a_character_not_syntax(client, as_admin):
+    """handle 里允许下划线；搜 `fb_w_` 不该把 `fb-wxwu` 这种也带出来。"""
+    from tests.conftest import seed_user
+
+    seed_user(client, "fb_w_wu")
+    seed_user(client, "fb-wxwu")
+
+    assert [row["handle"] for row in _searched(client, as_admin, "fb_w_")] == [
+        "fb_w_wu"
+    ]
+    assert _searched(client, as_admin, "fb%w") == []
+
+
 # --- 删掉一条反馈 -------------------------------------------------------------
 
 

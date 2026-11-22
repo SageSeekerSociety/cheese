@@ -183,9 +183,9 @@ class SessionStore(Protocol):
     跑机器了，取消归档等于给它一个新身份，旧身份不能再被认领。
     """
 
-    async def resume_token(
+    async def conversation(
         self, conversation_id: uuid.UUID, agent_handle: str, *, harness: str
-    ) -> str | None: ...
+    ) -> tuple[str, int] | None: ...
 
     async def remember(
         self,
@@ -194,6 +194,7 @@ class SessionStore(Protocol):
         agent_handle: str,
         resume_token: str,
         harness: str,
+        generation: int,
     ) -> None: ...
 
     async def forget_room(self, room_id: uuid.UUID) -> None: ...

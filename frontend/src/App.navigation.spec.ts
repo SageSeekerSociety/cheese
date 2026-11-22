@@ -156,22 +156,19 @@ it('keeps the room header usable when the app changes between desktop and mobile
   }
 })
 
-it('desktop rail opens 待办 from 首页, the first tile, with no separate 待办 tile', async () => {
-  const app = await mountApp('/', 1280)
-  try {
-    expect(app.failures).toEqual([])
-    const rail = app.container.querySelector('.app-rail')
-    expect(rail).not.toBeNull()
-    // 首页那一格点开就是待办：桌面上到得了 /inbox，而且只有这一条路，不再多一格。
-    const labels = Array.from(rail!.querySelectorAll('a[aria-label]')).map((a) => a.getAttribute('aria-label'))
-    expect(labels[0]).toBe('首页')
-    expect(labels).not.toContain('待办')
-    expect(rail!.querySelectorAll('a[href="/inbox"]')).toHaveLength(1)
-    // 点这一格走的是和项目格同一套 Vuetify 链接，所以这里只证明它到得了：
-    // 这套测试的假路由只要从 /projects/:id 出栈就崩（与本改动
-    // 无关——换成去 /spaces 同样崩），点进去的路由跳转留给真环境验证。
-  } finally {
-    app.dispose()
+it('desktop project pages reach 待办 in one click from the 首页 entry', async () => {
+  // 项目页侧栏头写的是这个项目：回首页靠侧栏头下面那一行「首页」，侧栏看不见时它住在顶栏。
+  // 这里的路由不带侧栏，所以是顶栏那一处。
+  for (const path of ['/projects/p1/topics/t1', '/projects/p1']) {
+    const app = await mountApp(path, 1280)
+    try {
+      expect(app.failures).toEqual([])
+      const toInbox = Array.from(app.container.querySelectorAll('a[href="/inbox"]'))
+      expect(toInbox, path).toHaveLength(1)
+      expect(toInbox[0].getAttribute('aria-label'), path).toMatch(/^首页/)
+    } finally {
+      app.dispose()
+    }
   }
 })
 

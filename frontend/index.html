@@ -95,10 +95,10 @@
     </script>
     <!--
       Boot splash, desktop app only. The app opens on its own page
-      (desktop/shell/index.html) and hands the window over with the rail's home
-      tile in the middle; this paints the same tile as the first frame, so the
-      switch between the two pages does not show. lib/desktopSplash.ts then lands
-      it in the rail. Keep the tile identical to the one in desktop/shell. The
+      (desktop/shell/index.html) and hands the window over with the home tile in
+      the middle; this paints the same tile as the first frame, so the switch
+      between the two pages does not show. lib/desktopSplash.ts then lands it on
+      the sidebar's home mark. Keep the tile identical to the one in desktop/shell. The
       grounds are --canvas of both themes, set before style.css has loaded; the
       tile is brand paint, the same in both.
     -->
@@ -211,11 +211,24 @@
           // is wide enough (useWorkspaceLayout PANEL_OPEN_MIN).
           var pane = window.innerWidth - 64 - side
           var panel = typeof layout.panelOpen === 'boolean' ? layout.panelOpen : pane >= 1000
-          if (panel)
-            html.style.setProperty(
-              '--sx-chat-w',
-              (Number(layout.chatPct) || (window.innerWidth >= 1440 ? 45 : 50)) + '%'
-            )
+          // The conversation's share of the room: the arrangement the layout area keeps for
+          // it (AppShell's `cheesex.area.room`, cells `conversation` and `work`), else the
+          // room's default (TopicView).
+          var chat = window.innerWidth >= 1440 ? 45 : 50
+          var cells = {}
+          var walk = function (node) {
+            if (!node) return
+            if (node.children) node.children.forEach(walk)
+            else if (node.panels)
+              node.panels.forEach(function (id) {
+                cells[id] = node.size
+              })
+          }
+          var area = json('cheesex.area.room')
+          if (area && area.v === 1) walk(area.root)
+          if (cells.conversation > 0 && cells.work > 0)
+            chat = (cells.conversation / (cells.conversation + cells.work)) * 100
+          if (panel) html.style.setProperty('--sx-chat-w', chat + '%')
         } catch (e) {
           // Whatever went wrong, the generic frame is never wrong for long.
         }
@@ -541,12 +554,14 @@
         right: 16px;
         width: 72px;
       }
+      /* 左边那一列方块栏 2026-11-16 拿掉了（Navigation/appNav.ts）：骨架也不再画它，
+         侧栏从窗口左缘开始。 */
       #sx-boot-skeleton .sx-rail {
         position: absolute;
         top: 32px;
         left: 0;
         bottom: 0;
-        display: flex !important;
+        display: none !important;
         flex-direction: column;
         align-items: center;
         width: 64px;
@@ -588,7 +603,7 @@
       #sx-boot-skeleton .sx-body {
         position: absolute;
         top: 32px;
-        left: 64px;
+        left: 0;
         right: 0;
         bottom: 0;
         display: flex !important;

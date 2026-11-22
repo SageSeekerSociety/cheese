@@ -66,6 +66,8 @@ OP_REQ = 1  # backend → machine: an HTTP request, header + body in one frame
 OP_WS_OPEN = 2  # backend → machine: open a WebSocket to the app
 OP_WS_MSG = 3  # both ways: one WebSocket message
 OP_CLOSE = 4  # both ways: this stream is over
+#: Whose command a preview helper was started by, as the sandbox told it.
+ATTACHMENT_HEADER = "X-Cheese-Attachment"
 OP_RESP = 5  # machine → backend: status + headers, body follows
 OP_DATA = 6  # machine → backend: one body chunk
 OP_END = 7  # machine → backend: the body is complete
@@ -981,6 +983,11 @@ def run(
             headers = {CAPS_HEADER: ",".join(sorted(CAPABILITIES))}
             if tokens is not None:
                 headers["Authorization"] = f"Bearer {tokens.get()}"
+            elif os.environ.get("CHEESE_ATTACHMENT"):
+                # Whose preview it is: the attachment of the command that
+                # started it, which the relay outside the sandbox asks the
+                # platform's credential for (`forge_proxy`).
+                headers[ATTACHMENT_HEADER] = os.environ["CHEESE_ATTACHMENT"]
             sock, answered = open_ws(
                 url,
                 ca_path=ca_path,

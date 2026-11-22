@@ -47,7 +47,7 @@ from app.domain.room_task.place import place_or_404
 from app.domain.search import bm25
 from app.domain.topic.models import Topic
 from app.domain.topic_membership.services import TopicMemberService
-from app.domain.user.services import faces_by_handle
+from app.domain.user.services import faces_by_handle, remarks_by_handles
 
 router = APIRouter(prefix="", tags=["project-context"])
 
@@ -191,11 +191,30 @@ async def search_project_context(
     shelf = await shelf_for(db, project_id)
     terms = bm25.words(q)
     await bm25.serial_scans(db)
+    viewer_handle = actor.handle if actor.authenticated else None
     hits = (
-        await search_everything(db, project_id, q, terms, readable, limit, shelf)
+        await search_everything(
+            db,
+            project_id,
+            q,
+            terms,
+            readable,
+            limit,
+            shelf,
+            viewer_handle=viewer_handle,
+        )
         if groups is None
         else await _page(
-            db, project_id, q, terms, readable, groups, limit, offset, shelf
+            db,
+            project_id,
+            q,
+            terms,
+            readable,
+            groups,
+            limit,
+            offset,
+            shelf,
+            viewer_handle=viewer_handle,
         )
     )
     body: dict = {
@@ -222,6 +241,7 @@ async def _page(
     limit: int,
     offset: int,
     shelf: Shelf,
+    viewer_handle: str | None = None,
 ) -> dict[str, list[dict]]:
     hits: dict[str, list[dict]] = {"records": [], "tasks": [], "library": []}
     in_readable = list(readable)
@@ -258,7 +278,9 @@ async def _page(
             ]
         ranked.sort(key=lambda pair: -pair[0])
         hits["records"] = [record for _, record in ranked[offset : offset + limit]]
-        await _name_authors(db, project_id, hits["records"])
+        await _name_authors(
+            db, project_id, hits["records"], viewer_handle=viewer_handle
+        )
     if "tasks" in groups and in_readable:
         tasks = await db.scalars(
             select(Task)
@@ -354,7 +376,11 @@ def _doc_record(
 
 
 async def _name_authors(
-    db: AsyncSession, project_id: uuid.UUID, records: list[dict]
+    db: AsyncSession,
+    project_id: uuid.UUID,
+    records: list[dict],
+    *,
+    viewer_handle: str | None = None,
 ) -> None:
     """Give each record the name its author goes by now, beside the handle it
     stores: a teammate of this project by the name the roster gives it, with
@@ -374,12 +400,15 @@ async def _name_authors(
             teammates[member.handle] = named
             teammates[member.instance_handle] = named
     faces = await faces_by_handle(db, authors - teammates.keys())
+    # The reader's own remark wins over every public name: this text is only
+    # shown to them, and the roster names people the same way.
+    remarks = await remarks_by_handles(db, viewer_handle, authors)
     for record in records:
         name, source = teammates.get(record["author"]) or (
             faces.get(record["author"], (None, None))[0],
             None,
         )
-        record["author_name"] = name
+        record["author_name"] = remarks.get(record["author"]) or name
         record["author_name_source"] = source
 
 
@@ -405,6 +434,7 @@ async def search_everything(
     readable: dict[uuid.UUID, Topic],
     limit: int,
     shelf: Shelf,
+    viewer_handle: str | None = None,
 ) -> dict[str, list[dict]]:
     """``shelf`` is the project's library as the caller reads it
     (`project_library.shelf_for`)."""
@@ -459,7 +489,7 @@ async def search_everything(
                     .limit(limit)
                 )
             ]
-        await _name_authors(db, project_id, records)
+        await _name_authors(db, project_id, records, viewer_handle=viewer_handle)
         hits["records"] = records
         tasks = await db.scalars(
             select(Task)
@@ -585,7 +615,7 @@ async def _agent_hits(
     for room in hits.get("rooms", []):
         lines.append(f"- 频道「{room['room_title']}」（{room_ref(room['room_id'])}）")
     for task in hits.get("tasks", []):
-        state = "进行中" if task["status"] == "open" else "已结束"
+        state = "未结束" if task["status"] == "open" else "已结束"
         lines.append(
             f"- 任务「{task['title']}」（{await task_ref(task['id'])}），{state}："
             f"{task['snippet']}"
@@ -610,6 +640,77 @@ async def _agent_hits(
     return lines
 
 
+async def _search_from(
+    db: AsyncSession, resolver: ActorResolver, conversation: uuid.UUID, q: str
+) -> str:
+    """cheese_find from a conversation: its project's hits, each with what the
+    session's own tools read it by — a message or a document paragraph by
+    ``cheese_chat(action=get)`` with its ``message_id`` and ``topic``, a task's
+    conversation by its ``topic``, a library file by its name."""
+    place = await place_or_404(db, conversation)
+    readable, _, _ = await _readable_rooms(
+        db, resolver.for_reading(), place.project_id, conversation
+    )
+    terms = bm25.words(q)
+    await bm25.serial_scans(db)
+    hits = await search_everything(
+        db,
+        place.project_id,
+        q,
+        terms,
+        readable,
+        AGENT_HITS,
+        await shelf_for(db, place.project_id),
+    )
+    numbers: dict[str, int | None] = {}
+
+    async def task_number(task_id: str) -> int | None:
+        if task_id not in numbers:
+            found = await address.thing_by_id(
+                db, address.Numbered.task, uuid.UUID(task_id)
+            )
+            numbers[task_id] = found.number if found else None
+        return numbers[task_id]
+
+    lines: list[str] = []
+    for room in hits.get("rooms", []):
+        lines.append(f"- 频道「{room['room_title']}」（topic: {room['room_id']}）")
+    for task in hits.get("tasks", []):
+        state = "未结束" if task["status"] == "open" else "已结束"
+        number = await task_number(task["id"])
+        named = f"任务 #{number}" if number is not None else "任务"
+        lines.append(
+            f"- {named}「{task['title']}」，{state}"
+            f"（topic: {task['id']}）：{task['snippet']}"
+        )
+    for record in hits.get("records", []):
+        channel = f"频道「{record['room_title']}」"
+        # A conversation inside the channel is a task or one of its 支线.
+        inner = record.get("task_id")
+        number = await task_number(inner) if inner else None
+        where = (
+            channel
+            if not inner
+            else f"任务 #{number}"
+            if number is not None
+            else f"{channel}的一条支线"
+        )
+        kind = _RECORD_NAMES.get(record["kind"], "文档段落")
+        name, handle = record.get("author_name"), record["author"]
+        who = f"{name}（handle: {handle}）" if name and name != handle else handle
+        lines.append(
+            f"- {kind}，{who}，在{where}（message_id: {record['id']}，topic: "
+            f"{record.get('task_id') or record['room_id']}）：{record['snippet']}"
+        )
+    for found in hits.get("library", []):
+        lines.append(f"- 资料库文件：{found['path']}")
+    for artifact in hits.get("artifacts", []):
+        lines.append(f"- 产物「{artifact['name']}」：{artifact.get('about') or ''}")
+    if not lines:
+        return f"在这个项目里没有搜到「{q}」。每个词都要命中：换个说法或少几个词再搜。"
+    return "\n".join(lines)
+
+
 @router.post(
     "/assistant/agent/search", include_in_schema=False, dependencies=[ROUTE_DECIDES]
 )
@@ -617,8 +718,16 @@ async def agent_search(
     body: AgentSearchIn, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """cheese_find: what the person can read that matches, across their
-    projects or in one, in 芝士's words with the ref of each hit."""
+    projects or in one, in 芝士's words with the ref of each hit.
+
+    A session in a channel, a 支线 or a task asks with the credential minted
+    in its conversation: it searches that conversation's project, and only
+    what everyone its answer reaches may read (`_readable_rooms` with the
+    conversation), whatever ``project`` says."""
     q = _query(body.query)
+    conversation = resolver.credential_conversation()
+    if conversation is not None:
+        return ok({"text": await _search_from(db, resolver, conversation, q)})
     actor = await resolver.resolve()
     if not actor.authenticated:
         raise AuthenticationRequiredError(say("invalidToken"))

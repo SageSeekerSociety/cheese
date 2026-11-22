@@ -44,7 +44,7 @@ const emit = defineEmits<{
   toggle: [code: string]
   addItem: [list: 'ask' | 'allow', text: string]
   removeItem: [list: 'ask' | 'allow', index: number]
-  routine: [id: string, action: 'pause' | 'resume' | 'delete']
+  routine: [id: string, action: 'pause' | 'resume' | 'delete' | 'run-now']
   memoryEnabled: [on: boolean]
   memoryEdit: [name: string, description: string, text: string]
   memoryDelete: [name: string]
@@ -567,6 +567,17 @@ function last(r: AssistantRoutine): string {
               </BaseButton>
               <BaseButton kind="ghost" size="sm" :disabled="saving" @click="openForm(r)">
                 {{ t('account.assistant.routines.edit') }}
+              </BaseButton>
+              <!-- 和频道那边同一个动作：现在就跑一次。补全中的先让它补上，
+                   所以不在那一档给这颗按钮。 -->
+              <BaseButton
+                v-if="r.state !== 'filling'"
+                kind="ghost"
+                size="sm"
+                :disabled="saving"
+                @click="emit('routine', r.id, 'run-now')"
+              >
+                {{ t('account.assistant.routines.runNow') }}
               </BaseButton>
               <!-- A rule that fires once is either waiting or done: nothing to
                    pause. A filling one is stopped only by 芝士 giving up. -->

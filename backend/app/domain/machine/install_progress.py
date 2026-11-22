@@ -31,7 +31,6 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 from app.core.live_frames import show_once_committed
 from app.core.sentences import say, with_keys
 from app.domain.agent.announce import announce
-from app.domain.agent_session.models import AgentSession
 from app.domain.block.models import Block, BlockKind
 from app.domain.block.schemas import BlockOut
 from app.domain.conversation.services import room_of
@@ -77,10 +76,10 @@ class InstallProgress:
     the install ends. An install that downloads nothing shows nothing."""
 
     def __init__(
-        self, bind: AsyncEngine, *, session_id: uuid.UUID, device_id: str
+        self, bind: AsyncEngine, *, conversation_id: uuid.UUID, device_id: str
     ) -> None:
         self._bind = bind
-        self._session_id = session_id
+        self._conversation_id = conversation_id
         self._device_id = device_id
         self._latest: tuple[int, int] | None = None
         self._news = asyncio.Event()
@@ -193,12 +192,11 @@ class InstallProgress:
                 self._shown = block.id
 
     async def _line(self, db: AsyncSession) -> tuple[uuid.UUID, str] | None:
-        """The conversation the session works in and the computer's name."""
-        session = await db.get(AgentSession, self._session_id)
+        """The conversation the install is for and the computer's name."""
         device = await sql_device_service(db).get_device(self._device_id)
-        if session is None or device is None:
+        if device is None:
             return None
-        return session.conversation_id, device.name
+        return self._conversation_id, device.name
 
     async def _open(self, db: AsyncSession, conversation_id: uuid.UUID) -> Block | None:
         """The line to rewrite: this install's own, or the one an earlier

@@ -76,7 +76,10 @@ async def preview_tunnel(websocket: WebSocket) -> None:
     hub = connection_hub(websocket)
     token = credentials.presented(websocket.headers)
     claims = scoped_token_claims(token) or {}
-    seat = claims.get("a")
+    # A teammate's own credential names its seat; the environment's (a
+    # runtime that named no attachment) names the seat the conversation's
+    # preview is served under (``pv``).
+    seat = claims.get("a") or claims.get("pv")
     issued = claims.get("iat")
     try:
         # The conversation the helper serves: a room, or one of its tasks. A

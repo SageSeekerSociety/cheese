@@ -26,6 +26,7 @@ from app.domain.machine.models import (
     CloudHost,
     MachineStatus,
     WarmMachine,
+    sandbox_image_ready,
     warm_pool_target,
 )
 from app.domain.machine.repositories import CloudHostRepository
@@ -132,6 +133,7 @@ class WarmPoolService:
             if (
                 not warm.device_id
                 or warm.sandbox_disk_gb is None
+                or not sandbox_image_ready(warm)
                 or not device_hub.is_online(warm.device_id)
             ):
                 continue
@@ -171,6 +173,7 @@ class WarmPoolService:
                 memory_mb=body["memoryMb"],
                 disk_gb=body["diskGb"],
                 sandbox_disk_gb=warm.sandbox_disk_gb,
+                sandbox_image=warm.sandbox_image,
                 status=MachineStatus.starting,
                 ip=warm.ip,
                 ai_mode=body.get("aiMode", "none"),
@@ -540,6 +543,7 @@ class WarmPoolService:
                 sandboxes=True,
             )
             row.sandbox_disk_gb = enrollment.sandbox_disk_gb(output)
+            row.sandbox_image = enrollment.sandbox_image.default_image()["reference"]
             row.enrolled_at = datetime.now(UTC)
             row.bootstrap_key = None
         if row.device_id and device_hub.is_online(row.device_id):

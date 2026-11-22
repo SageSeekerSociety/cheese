@@ -40,12 +40,15 @@ OWNER_ONLY = {
     # make, out of this guard's sight.
     APP / "api" / "routes" / "connector" / "devices.py",
     APP / "api" / "routes" / "connector" / "screen.py",
+    APP / "api" / "routes" / "connector" / "terminal.py",
+    APP / "api" / "routes" / "connector" / "language.py",
     APP / "domain" / "agent" / "device_hub" / "__init__.py",
     APP / "domain" / "agent" / "device_hub" / "calls.py",
     APP / "domain" / "agent" / "device_hub" / "inbound.py",
     APP / "domain" / "agent" / "device_hub" / "link.py",
     APP / "domain" / "agent" / "device_hub" / "local_fs.py",
     APP / "domain" / "agent" / "device_hub" / "sessions.py",
+    APP / "domain" / "agent" / "device_hub" / "streams.py",
     APP / "domain" / "agent" / "device_hub" / "viewers.py",
     APP / "domain" / "agent" / "device_hub_rpc.py",
 }

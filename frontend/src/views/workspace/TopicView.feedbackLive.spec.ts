@@ -109,7 +109,6 @@ function setup() {
     topics: [TOPIC],
     members: [],
     unreadMap: {},
-    chatPct: 50,
     rememberPlace: vi.fn(),
     loadingTopics: false,
     accessDenied: null,
@@ -122,7 +121,6 @@ function setup() {
     openProject: vi.fn(),
     refreshTopics: vi.fn(),
     refreshUnread: vi.fn(),
-    setChatPct: vi.fn(),
   })
   const router = createRouter({
     history: createMemoryHistory(),

@@ -21,7 +21,6 @@ from app.core.config import settings
 from app.domain.agent import machine_launcher
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, mint_session_token
-from app.domain.agent.harness.prompt import PLATFORM_NOTICE
 from app.domain.agent.place import seat_key
 from app.domain.agent.room import sessions as pkg
 from app.domain.agent.room.sessions.records import Live, _home
@@ -36,6 +35,7 @@ from app.domain.agent.session_host.contract import (
 )
 from app.domain.agent.session_host.contract import SessionRef as CoreRef
 from app.domain.project_skill.service import session_skill_files
+from app.domain.prompts import NoticeType, notice_template
 
 
 async def ensure(
@@ -44,6 +44,7 @@ async def ensure(
     *,
     system_prompt: str,
     resume_token: str | None = None,
+    retired_token: str | None = None,
     model: str | None = None,
     env: dict[str, str] | None = None,
     acting: str | None = None,
@@ -118,6 +119,7 @@ async def ensure(
             model=model or model_roles.model("agent_model"),
             gone_after_s=pkg.RUNNER_GONE_S,
             resume_token=resume_token,
+            retired_token=retired_token,
             model_settings=ModelSettings(effort=effort),
             env={
                 **launched_env,
@@ -141,7 +143,7 @@ async def ensure(
             skills=session_skill_files(session.project_id),
             # The marker platform instructions carry in this room, so the
             # one a harness raises is not a second convention to learn.
-            notice=PLATFORM_NOTICE,
+            notice=notice_template(NoticeType.harness),
         )
         access = Access(
             prepared.token,

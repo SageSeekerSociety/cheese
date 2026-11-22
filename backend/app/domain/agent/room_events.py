@@ -18,7 +18,6 @@
 还是这条线）。
 """
 
-import asyncio
 import logging
 import uuid
 
@@ -26,10 +25,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.domain.agent.announce import announce
-from app.domain.agent.event_lines import (
-    _Changeset,
-    _diff_file_stats,
-)
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.queries import _block_payload
 from app.domain.agent.run_records import record_now
@@ -40,16 +35,6 @@ from app.domain.notice_meta import RUN_RECORD_EVENTS
 from app.domain.room_task.place import PlaceResolver
 
 logger = logging.getLogger(__name__)
-
-#: How far back a turn's change summary walks the topic branch's history.
-#: Rendering the diff is `event_lines.py`'s job; how far back to look is this
-#: side's (the git half is environment, that half is the contract).
-_CHANGE_COMMIT_WALK = 30
-
-#: How many of a channel's open tasks have their history read at once. Each one
-#: is a forge round trip, and the baseline is read in the turn's tail; a channel
-#: a dozen tasks deep used to spend that tail on them one after another.
-_BASELINE_CONCURRENCY = 6
 
 
 async def _turn_seat(session: AsyncSession, turn_id: uuid.UUID) -> str | None:
@@ -172,109 +157,3 @@ async def _keep_run_record(
         turn_id=turn_id,
         seat=seat,
     )
-
-
-async def _turn_changeset(
-    sessions: async_sessionmaker,
-    project_id: uuid.UUID,
-    topic_id: uuid.UUID,
-    known_commits: set[str] | None,
-) -> _Changeset | None:
-    """This turn's net effect on the topic branch, or None when there is none.
-
-    The agent commits and pushes its own work, so "the commits that were not
-    there at turn start" is exactly what this turn delivered. Best-effort and
-    off the event loop: the numbers are a courtesy, and no turn should die
-    (or stall) over them.
-    """
-    if known_commits is None:
-        return None
-
-    commits = await _known_commits(sessions, project_id, topic_id)
-    if commits is None:
-        return None
-
-    async def _collect() -> _Changeset | None:
-        # deferred-import: tests replace this name on app.domain.repository.forge_files
-        from app.domain.repository.forge_files import ProjectFiles
-
-        fresh = [h for h in commits if h not in known_commits]
-        if not fresh:
-            return None
-        totals: dict[str, dict] = {}
-        async with sessions() as session:
-            files = ProjectFiles(session, project_id, None)
-            for sha in fresh:
-                for entry in _diff_file_stats(await files.commit_diff(sha)):
-                    acc = totals.setdefault(
-                        entry["path"],
-                        {"path": entry["path"], "added": 0, "removed": 0},
-                    )
-                    acc["added"] += entry["added"]
-                    acc["removed"] += entry["removed"]
-        files = sorted(
-            totals.values(), key=lambda f: (-(f["added"] + f["removed"]), f["path"])
-        )
-        if not files:
-            return None  # a commit that changed nothing (empty snapshot)
-        return _Changeset(commits=fresh, files=files)
-
-    try:
-        return await _collect()
-    except Exception:  # never fail a turn over its summary
-        logger.warning("change summary failed for topic %s", topic_id)
-        return None
-
-
-async def _known_commits(
-    sessions: async_sessionmaker, project_id: uuid.UUID, topic_id: uuid.UUID
-) -> set[str] | None:
-    """The topic branch's commits right now — the baseline the turn's change
-    summary is measured against. None when it cannot be read (see
-    HookWorkState.known_commits)."""
-    try:
-        # deferred-import: tests replace this name on app.domain.repository.forge_files
-        from app.domain.repository.forge_files import ProjectFiles
-
-        # deferred-import: tests replace this name on app.domain.room_task.services
-        from app.domain.room_task.services import TaskService
-
-        async with sessions() as session:
-            # A closed task takes no more commits, and its branch is often
-            # deleted; a channel holds every task its project ever ran.
-            tasks = await TaskService(session).open_branches_in_room(topic_id)
-            task_ids = [task.id for task in tasks]
-
-        # The ids, not the rows: that session is closed before the walks start,
-        # and one AsyncSession is not driven from two coroutines at once, so
-        # each walk reads its branch in a session of its own.
-        limit = asyncio.Semaphore(_BASELINE_CONCURRENCY)
-
-        async def _walk(task_id: uuid.UUID) -> list[str]:
-            async with limit, sessions() as session:
-                # Each history is a forge request: the connection goes back
-                # to the pool while it is in flight.
-                history = await ProjectFiles(
-                    session, project_id, task_id, release_session=True
-                ).history()
-            return [row["sha"] for row in history[-_CHANGE_COMMIT_WALK:]]
-
-        walking = [asyncio.create_task(_walk(task_id)) for task_id in task_ids]
-        try:
-            walked = await asyncio.gather(*walking)
-        except BaseException:
-            # One unreadable branch costs the whole baseline, as it did when the
-            # walks were one after another; stop the rest so nothing outlives
-            # the turn's tail.
-            for task in walking:
-                task.cancel()
-            raise
-        commits = set()
-        for shas in walked:
-            commits.update(shas)
-        return commits
-    except Exception:  # no baseline just means no summary
-        logger.warning(
-            "commit baseline unreadable for topic %s", topic_id, exc_info=True
-        )
-        return None

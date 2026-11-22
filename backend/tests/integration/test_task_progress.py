@@ -189,7 +189,9 @@ class _Chat:
         self.session_factory = client.test_factory
         self.told: list[tuple[uuid.UUID, str]] = []
 
-    async def notify_running_session(self, topic_id: uuid.UUID, notice: str) -> bool:
+    async def notify_running_session(
+        self, topic_id: uuid.UUID, notice: str, *, kind=None
+    ) -> bool:
         self.told.append((topic_id, notice))
         return True
 
@@ -386,12 +388,12 @@ def test_a_teammate_that_never_reported_is_asked_once_its_session_has_run_a_whil
 # —— one task, one state: a card's facts beat what the teammate said ——————————
 
 
-def _file_card(client, project_id: str, task_id: str) -> dict:
+def _file_card(
+    client, project_id: str, task_id: str, *, content="fixed the login"
+) -> dict:
     """The task's work handed over for review, as its teammate files it."""
     declare_task(uuid.UUID(project_id), uuid.UUID(task_id))
-    machine_commits(
-        uuid.UUID(project_id), uuid.UUID(task_id), {"login.txt": "fixed the login"}
-    )
+    machine_commits(uuid.UUID(project_id), uuid.UUID(task_id), {"login.txt": content})
     room = _task(client, task_id)["room_id"]
     filed = client.post(
         f"/topics/{task_id}/accept-card",
@@ -486,11 +488,32 @@ def test_a_returned_card_puts_the_task_back_to_work(client):
     assert returned.status_code == 200, returned.text
 
     task = _task(client, task_id)
-    assert task["progress_state"] == "working"
-    assert task["presentation"]["phrase"] == "running"
-    # Nobody reported it: the reviewer did not say the task is being worked on.
+    assert task["progress_state"] is None
+    assert task["presentation"]["phrase"] == "bounced"
+    # A return is not evidence that the teammate has already resumed work.
     assert task["progress_set_by"] is None
-    assert _report(client, project_id, task_id, seat, "waiting").status_code == 200
+    for state, phrase in [
+        ("working", "running"),
+        ("waiting", "waiting"),
+        ("blocked", "blocked"),
+    ]:
+        assert _report(client, project_id, task_id, seat, state).status_code == 200
+        task = _task(client, task_id)
+        assert task["presentation"]["phrase"] == phrase
+        assert task["card"]["status"] == "rejected"  # history is preserved
+
+    # Filing again replaces the current card; a second return must clear the
+    # previous repair report, rather than borrowing its old 'waiting' state.
+    again = _file_card(client, project_id, task_id, content="fixed the login edge case")
+    assert (
+        client.post(
+            f"/accept-cards/{again['id']}/reject",
+            json={"decided_by": "alice", "note": "还缺边界处理"},
+            headers=session_auth_headers("alice"),
+        ).status_code
+        == 200
+    )
+    assert _task(client, task_id)["presentation"]["phrase"] == "bounced"
 
 
 def test_a_reopened_task_starts_from_open(client):

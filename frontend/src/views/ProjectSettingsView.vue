@@ -8,12 +8,14 @@ import { useBranchProtection } from '@/composables/useBranchProtection'
 import { signInWithGithub } from '@/composables/useGithubSignIn'
 import { useProjectAddress } from '@/composables/useProjectAddress'
 import { useProjectArchive } from '@/composables/useProjectArchive'
+import { useProjectAvatar } from '@/composables/useProjectAvatar'
 import { useProjectComputeSettings } from '@/composables/useProjectComputeSettings'
 import { useProjectCreditBudget } from '@/composables/useProjectCreditBudget'
 import { useProjectDefaultModelSettings } from '@/composables/useProjectDefaultModelSettings'
 import { useProjectEnvironmentSettings } from '@/composables/useProjectEnvironmentSettings'
 import { useProjectExport } from '@/composables/useProjectExport'
 import { useProjectMcpSettings } from '@/composables/useProjectMcpSettings'
+import { useProjectName } from '@/composables/useProjectName'
 import { useProjectRoles } from '@/composables/useProjectRoles'
 import { useProjectSettings } from '@/composables/useProjectSettings'
 import { useProjectTaskNamingSettings } from '@/composables/useProjectTaskNamingSettings'
@@ -23,8 +25,8 @@ import { handOverChannel, listChannels, stepIntoChannel } from '@/api/channels'
 import { diagnoseRoomEnvironment } from '@/api/environment'
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import ProjectAvatar from '@/components/common/ProjectAvatar.vue'
 import SettingsOverlay from '@/components/common/SettingsOverlay.vue'
-import UserAvatar from '@/components/common/UserAvatar.vue'
 import DeviceSessionsSwitch from '@/components/DeviceSessionsSwitch.vue'
 import McpServerDialog from '@/components/McpServerDialog.vue'
 import ProjectComputeSettings from '@/components/ProjectComputeSettings.vue'
@@ -38,11 +40,14 @@ import AttributionSettings from '@/components/settings/AttributionSettings.vue'
 import BranchProtectionSection from '@/components/settings/BranchProtectionSection.vue'
 import CreditsPanel from '@/components/settings/CreditsPanel.vue'
 import ForgeRepoStatus from '@/components/settings/ForgeRepoStatus.vue'
+import GithubMigrateSettings from '@/components/settings/GithubMigrateSettings.vue'
 import GithubRepoSettings from '@/components/settings/GithubRepoSettings.vue'
 import ProjectAddressSection from '@/components/settings/ProjectAddressSection.vue'
+import ProjectAvatarSection from '@/components/settings/ProjectAvatarSection.vue'
 import ProjectChannelSettings from '@/components/settings/ProjectChannelSettings.vue'
 import ProjectCreditBudget from '@/components/settings/ProjectCreditBudget.vue'
 import ProjectExportSection from '@/components/settings/ProjectExportSection.vue'
+import ProjectNameSection from '@/components/settings/ProjectNameSection.vue'
 import ProjectRoleDetail from '@/components/settings/ProjectRoleDetail.vue'
 import ProjectRoleList from '@/components/settings/ProjectRoleList.vue'
 import RoleCreateDialog from '@/components/settings/RoleCreateDialog.vue'
@@ -108,6 +113,8 @@ const {
   load,
   saveUpstream,
   connectGithubRepo,
+  migrateUrl,
+  migrateToGithub,
   consumeGithubCallbackNotice,
 } = useProjectSettings(() => props.projectId)
 
@@ -153,6 +160,9 @@ const { archiving, archiveError, archiveProject } = useProjectArchive(
 )
 
 const address = useProjectAddress(() => props.projectId)
+const avatar = useProjectAvatar(() => props.projectId)
+const naming = useProjectName(() => props.projectId)
+const projectAvatar = computed(() => projectRead.data.value?.avatar ?? project.value?.avatar ?? null)
 // 「角色和权限」：一张角色清单，点开一个角色是它自己那一页（地址上的 `?role=`），页上
 // 拨它的权限，⋯ 里改名、删除，内置角色改过权限的可以恢复默认（#4795）。
 const roleKey = computed(() => {
@@ -160,6 +170,16 @@ const roleKey = computed(() => {
   return section.value === 'roles' && typeof asked === 'string' ? asked : null
 })
 const openRole = computed(() => roles.roles.value.find((r) => r.key === roleKey.value) ?? null)
+// 频道顶部红行的「重新登录」带着 `?focus=<队友>&why=login_expired` 过来：地址归这一页读，
+// 往下传给「AI 队友」那一节，由它把那位队友的卡片滚到眼前、展开登录过期的红条。
+const agentFocus = computed(() => {
+  const asked = router.currentRoute.value.query.focus
+  return typeof asked === 'string' ? asked : ''
+})
+const agentFocusWhy = computed(() => {
+  const asked = router.currentRoute.value.query.why
+  return typeof asked === 'string' ? asked : ''
+})
 function showRole(key: string | null) {
   void router.push({ query: key ? { role: key } : {} })
 }
@@ -226,6 +246,7 @@ const agentName = computed(() => workspace.agentName || t('work.room.defaultAgen
 
 /** 九栏；归档只有所有者看得到。 */
 const SECTIONS = computed(() => [
+  { group: 'project', key: 'profile', icon: 'mdi-card-account-details-outline' },
   { group: 'collab', key: 'roles', icon: 'mdi-shield-account-outline' },
   ...(managesChannels.value ? [{ group: 'collab', key: 'channels', icon: 'mdi-pound' }] : []),
   ...(editsSettings.value ? [{ group: 'collab', key: 'address', icon: 'mdi-link-variant' }] : []),
@@ -240,10 +261,10 @@ const SECTIONS = computed(() => [
 ])
 
 const groups = computed(() =>
-  ['collab', 'ai', 'run', 'code', 'data', 'danger']
+  ['project', 'collab', 'ai', 'run', 'code', 'data', 'danger']
     .map((group) => ({
       key: group,
-      title: group === 'danger' ? undefined : t(`work.projectSettings.groups.${group}`),
+      title: group === 'danger' || group === 'project' ? undefined : t(`work.projectSettings.groups.${group}`),
       items: SECTIONS.value
         .filter((s) => s.group === group)
         .map((s) => ({
@@ -261,7 +282,7 @@ const groups = computed(() =>
 // 那条提示在「仓库与署名」里，就落到那一栏。开页那一刻认一次，之后提示读完、地址上
 // 的参数被清掉，也不会跳回第一栏。
 const query = router.currentRoute.value.query
-const landing = query.github_install ? 'repository' : 'agents'
+const landing = query.github_install ? 'repository' : 'profile'
 
 /** 当前这一栏。地址上没写栏时：桌面落到第一栏（GitHub 回来时落到仓库），手机上是目录。 */
 const section = computed(() => {
@@ -354,7 +375,7 @@ function close() {
 
     <template #head>
       <div class="whose">
-        <UserAvatar :name="projectName" size="32" kind="org" />
+        <ProjectAvatar :id="projectId" :name="projectName" :avatar="projectAvatar" :size="32" />
         <div class="whose__text">
           <span class="whose__name">{{ projectName }}</span>
           <span class="whose__sub">{{ t('work.projectSettings.title') }}</span>
@@ -417,7 +438,7 @@ function close() {
            在栏之间切换不再等。 -->
       <div v-else class="reveal-gate settings-body" :class="{ 'reveal-gate--waiting': !revealed }">
         <template v-if="section === 'agents'">
-          <AgentTeamSettings :project-id="projectId" />
+          <AgentTeamSettings :project-id="projectId" :focus="agentFocus" :why="agentFocusWhy" />
           <section class="page-section">
             <div class="page-section-head">
               <v-icon size="14" class="c-faint">mdi-brain</v-icon>
@@ -582,6 +603,15 @@ function close() {
             @save="saveUpstream"
           />
           <ForgeRepoStatus v-if="forgeConnection?.kind === 'forgejo'" :forge="forgeConnection" />
+          <GithubMigrateSettings
+            v-if="forgeConnection?.kind === 'forgejo' && forgeConnection.connected"
+            :url="migrateUrl"
+            :moving="connectingGithubRepo"
+            :notice="githubRepoNotice"
+            @update:url="migrateUrl = $event"
+            @move="migrateToGithub()"
+            @clear-notice="githubRepoNotice = null"
+          />
           <GithubRepoSettings
             v-if="forgeConnection?.kind === 'github_app'"
             :forge="forgeConnection"
@@ -599,6 +629,26 @@ function close() {
             manage-to="/users/settings/security"
             @save="saveAttribution"
             @sign-in-github="signInWithGithub"
+          />
+        </template>
+
+        <template v-else-if="section === 'profile'">
+          <ProjectNameSection
+            :name="projectName"
+            :readonly="!editsSettings"
+            :saving="naming.saving.value"
+            :error="naming.error.value"
+            @save="naming.save"
+          />
+          <ProjectAvatarSection
+            :project-id="projectId"
+            :name="projectName"
+            :avatar="projectAvatar"
+            :readonly="!editsSettings"
+            :saving="avatar.saving.value"
+            :error="avatar.error.value"
+            @save="avatar.save"
+            @upload="avatar.upload"
           />
         </template>
 

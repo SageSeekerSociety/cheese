@@ -1,0 +1,8 @@
+{
+  "all": "Read by everyone",
+  "dialog": "Read status",
+  "none": "None",
+  "read": "Read",
+  "some": "Read by {count}",
+  "unread": "Unread"
+}

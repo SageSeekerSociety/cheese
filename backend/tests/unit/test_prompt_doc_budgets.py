@@ -6,11 +6,8 @@
 多长、全文去哪读）——静默截断读起来就是「全文就这么长」。
 """
 
-from app.domain.agent.harness.prompt import (
-    build_session_opening,
-    fit_doc_to_budget,
-)
 from app.domain.memory.files_store import IndexSection, MemoryIndex
+from app.domain.prompts import build_session_opening, fit_doc_to_budget
 
 HINT = "用 `cheese_doc(action=get)` 读全文"
 

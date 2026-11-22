@@ -24,7 +24,6 @@ from app.domain.agent.harness.pi.launch import (
     provider,
 )
 from app.domain.agent.harness.pi.subscription import Subscription
-from app.domain.agent.harness.prompt import SUBAGENT_RULES
 from app.domain.agent.session_host.contract import (
     Access,
     Image,
@@ -38,6 +37,7 @@ from app.domain.agent.session_host.driver import (
     Wire,
     start_private_executor,
 )
+from app.domain.prompts import SUBAGENT_RULES
 
 #: How long a launch may take: the first after a pin bump downloads pi, and
 #: every one waits for the runner to answer (`host.STARTUP_S`).

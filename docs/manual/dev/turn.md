@@ -125,9 +125,9 @@ steps:
 
 执行环境按 `(对话, 队友)` 记在 `agent_environments` 上（`agent.environment`），不跟会话行，所以换骨架开出的新会话行还是同一个环境。它是两种之一：某种规格的沙箱（`{"kind": "sandbox", "spec": ...}`），或者指定一台团队设备、不进沙箱（`{"kind": "self_hosted", "device_id": ...}`）。规格之间是平级的：`standard` 和 `vm` 是平台的机器，`team_devices` 是项目所在团队接入的设备。沙箱从不点名机器，放在哪台由规格定（`machine/environments.py` 的 `device_for_spec`，平台的规格交给 `HostPool.place`）；指定整台设备只有设备所在团队的管理员能选，AI 队友不能。
 
-一位队友第一次要手时（`machine/session_work._attempt`），平台按 任务的默认 → 房间的默认（`topics.default_environment`）→ 项目的默认 → 标准沙箱 取一份写成它自己的（`environments.environment_of`），之后默认再改也不动它。工作目录是队友的：每条会话在它那台机器上按自己这一代（`execution_request.generation`，落在租约的 `resource_id` 上）开一份工作目录和执行器状态（`device_home_dir`），几位队友互不看见对方没推送的改动。
+一位队友第一次要手时（`machine/session_work._attempt`），平台按 任务的默认 → 房间的默认（`topics.default_environment`）→ 项目的默认 → 标准沙箱 取一份写成它自己的（`environments.environment_of`），之后默认再改也不动它。工作目录是执行环境的：一个环境在它那台机器上开一份工作目录和执行器状态（`environments.resource_id`，`device_home_dir`）。选择和对话默认一样的几位队友接在对话指向的同一个环境上，看得见彼此没推送的改动；选择是自己的队友在一个只属于自己的环境里。
 
-换一位队友的环境（`PUT /topics/{id}/sessions/{session}/environment`，人从成员名册改，或芝士用 `cheese_session(action=environment)` 改自己的）只搬这一位：`switch_environment` 让它在离开的那台上做一次尽力而为的 checkpoint（`session_work.checkpoint`，等价 `cheese sync --all`，最多等 `PUSH_WAIT_S`），推没推上去、那台连不连得上都照常换。推不上去的提交和没提交的改动跟着那台机器一起没了，平台不留底。checkpoint 前那台上的执行器若还是旧版本，先按新版本重新拉起再做，否则修过的 `cheese sync` 在那台上还是旧的行为。离开平台机器上的沙箱时，它在宿主机上的位置还给池子；离开虚拟机沙箱时那台虚拟机随即删掉。改房间或任务的默认（`PUT /topics/{id}/environment-default`）不搬任何人。
+换一位队友的环境（`PUT /topics/{id}/sessions/{session}/environment`，人从成员名册改，或芝士用 `cheese_session(action=environment)` 改自己的）只搬这一位：`switch_environment` 让它在离开的那台上做一次尽力而为的 checkpoint（`session_work.checkpoint`，等价 `cheese sync --all`，最多等 `PUSH_WAIT_S`）。checkpoint 推送失败本身不阻止换环境；推不上去的提交随源目录删除而丢失，任务目录里没提交的改动由 checkpoint 另存、新环境打开任务目录时放回（见 [tasks.md](tasks.md)）。使用 OCI 镜像的标准云端 sandbox 还会停止执行器、保存根目录 upper；保存失败时保留源 home 并使换环境请求报错，超限则记录状态并继续，规则见[根目录快照](../../remote-execution.md#根目录快照)。checkpoint 前那台上的执行器若还是旧版本，先按新版本重新拉起再做，否则修过的 `cheese sync` 在那台上还是旧的行为。离开平台机器上的沙箱时，它在宿主机上的位置还给池子；离开虚拟机沙箱时那台虚拟机随即删掉。改房间或任务的默认（`PUT /topics/{id}/environment-default`）不搬任何人。
 
 ### 会话按座位分开 {#seats-session}
 

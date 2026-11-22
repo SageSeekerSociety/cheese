@@ -1,8 +1,22 @@
 {
   "retrying": "{name}调用的模型出错了，正在自动重试",
+  "retryingShort": "调用的模型出错了，正在自动重试",
   "separator": " · ",
   "typingMany": "多人正在输入…",
   "typingOne": "{name}正在输入…",
   "typingTwo": "{first}和{second}正在输入…",
-  "working": "{name}正在工作…"
+  "working": "{name}正在工作…",
+  "workingShort": "正在工作",
+  "failure": {
+    "failedLogin": "登录已过期，已停止 {time}",
+    "failedModel": "调用的模型出错了，已停止 {time}",
+    "failedOther": "这次没做完，已停止 {time}",
+    "relogin": "重新登录",
+    "hintLogin": "重新登录后它会自动接着做，不用重发消息",
+    "hintModel": "多半稍后就好，在对话里点「重试」",
+    "hintOther": "在对话里看这条失败记录的原话",
+    "reasonLogin": "它用的 Claude 账号登录已过期，刷新不了",
+    "reasonModel": "调用的模型出错了（服务侧故障）",
+    "reasonOther": "这一轮没做完"
+  }
 }

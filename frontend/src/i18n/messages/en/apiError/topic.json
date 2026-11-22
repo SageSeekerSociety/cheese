@@ -22,7 +22,6 @@
   "deleteChannelSignIn": "Sign in to delete a channel",
   "messageOrAttachment": "Type a message or add an attachment",
   "noDefaultModel": "This project has no default model available. Check the model service",
-  "pastTaskNoBranch": "A past task has no working branch to depend on",
   "privateChatHasNoTasks": "A direct chat has no tasks; create one in a channel",
   "privateChatHasNoThreads": "A direct chat has no threads; start one in a channel",
   "privateChatProjectMembersOnly": "Can't start a direct chat with someone outside this project",
@@ -63,5 +62,18 @@
   "threadRestoreNotYours": "Only whoever started this thread, or a channel admin, can restore it",
   "threadRestoreSignIn": "Sign in to restore this thread",
   "threadNotFound": "Thread not found",
-  "addressingChanged": "This message would no longer go to an AI teammate, so it was not sent"
+  "addressingChanged": "This message would no longer go to an AI teammate, so it was not sent",
+  "chatTaskUnknown": "This channel has no task {task}. Its tasks are listed in the section on the channel's open tasks.",
+  "coordinateFromMainLine": "Only a channel's main line coordinates tasks this way.",
+  "coordinateOwnTasksOnly": "The main line closes or reopens only the tasks it opened.",
+  "coordinateTellClosed": "This task has ended and takes nothing more. Reopen it to go on.",
+  "coordinateAlreadyClosed": "This task is already closed.",
+  "coordinateCloseWhileReviewWaits": "This task has a delivery waiting for review and cannot be closed: closing would void it, which is the reviewer's decision.",
+  "coordinateAcceptNothingWaiting": "This task has no delivery waiting for review.",
+  "coordinateAcceptReviewerWordOnly": "You can adopt for a reviewer only in a turn that {reviewer} started by asking for it. Tell {reviewer} the delivery is waiting for their review.",
+  "coordinateAcceptNewerDelivery": "This version was handed in after {reviewer} sent that message, so they have not seen it. Tell {reviewer} the new version is waiting for their review.",
+  "chatRepliesMainLineOnly": "Quick replies are for a channel's main line only; to ask for an answer in a task or a thread, ask a question.",
+  "reportFromOwnTask": "Only a task's own session reports to the main line.",
+  "reportNotOpenedByMainLine": "This task was not opened from the main line, so there is no one to report to; ask in the task itself.",
+  "teammateTaskNotNamed": "Only an AI teammate a member named can take this task: {teammate} was not named in this message."
 }

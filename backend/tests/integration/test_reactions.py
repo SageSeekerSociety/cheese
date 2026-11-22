@@ -1,9 +1,8 @@
-"""Emoji reactions (Slack semantics): the toggle API, the aggregated GET
-payload, the live WS broadcast, and 芝士's deterministic 👀 receipt on the
-message that summoned it (a platform action, never AI-generated text)."""
+"""Emoji reactions (Slack semantics): the toggle API, the add-only entry an AI
+teammate reacts through, the aggregated GET payload and the live WS broadcast.
+The platform itself reacts to nothing."""
 
 import asyncio
-import time
 import uuid
 
 import pytest
@@ -19,7 +18,6 @@ from tests.integration.conftest import (
     post_project,
     project_service,
     registered,
-    room_agent_seat,
     room_socket,
     session_auth_headers,
 )
@@ -69,25 +67,6 @@ def _block_reactions(client, topic_id: str, block_id: str) -> list[dict]:
     return next(b for b in blocks if b["id"] == block_id)["reactions"]
 
 
-def _await_reactions(
-    client, topic_id: str, block_id: str, tries: int = 200
-) -> list[dict]:
-    """The block's reactions once 芝士's 👀 has landed.
-
-    The receipt that places it is reported by the harness on its own task, so it
-    is not ordered against the turn's own frames — asking the durable state is
-    the only way to ask this question without racing. That looseness IS the
-    change: the mark used to be emitted by the platform the instant it accepted
-    the message, which made it perfectly ordered and perfectly untrue.
-    """
-    for _ in range(tries):
-        reactions = _block_reactions(client, topic_id, block_id)
-        if reactions:
-            return reactions
-        time.sleep(0.02)
-    raise AssertionError(f"no reaction ever landed on block {block_id}")
-
-
 def test_toggle_adds_then_removes(client):
     topic_id = _create_topic(client)
     block_id = _post_message(client, topic_id, "大家看看这个", "alice")
@@ -102,6 +81,23 @@ def test_toggle_adds_then_removes(client):
     assert out["toggled"] == "removed"
     assert out["reactions"] == []
     assert _block_reactions(client, topic_id, block_id) == []
+
+
+def test_reacting_again_with_the_add_only_entry_keeps_the_reaction(client):
+    """An AI teammate that reacts to a message it already reacted to leaves
+    one reaction, not none: the entry it reacts through only ever adds."""
+    topic_id = _create_topic(client)
+    block_id = _post_message(client, topic_id, "周五前定下来", "alice")
+    for _ in range(2):
+        r = client.post(
+            f"/blocks/{block_id}/reactions",
+            json={"emoji": "👍", "add_only": True},
+            headers=session_auth_headers("bob"),
+        )
+        assert r.status_code == 200
+    assert _block_reactions(client, topic_id, block_id) == [
+        {"emoji": "👍", "count": 1, "authors": ["bob"]}
+    ]
 
 
 def test_aggregate_groups_by_emoji_with_authors(client):
@@ -180,9 +176,9 @@ def test_reaction_on_missing_block_is_404(client):
     assert r.status_code == 404
 
 
-def test_summon_gets_cheese_seen_receipt(client):
-    """芝士 collega-style ack: the summoning message gets a 👀 by "cheese" the
-    moment the turn starts — broadcast live and persisted on the block."""
+def test_a_message_an_ai_teammate_reads_gets_no_reaction_from_the_platform(client):
+    """Reading a message puts no reaction on it: what an AI teammate reacts
+    with, if anything, is its own to choose (`chat_react`)."""
     # 芝士 answers in a 支线: that is where it is called and acknowledges.
     topic_id = in_thread(client, _create_topic(client), "alice")
     with room_socket(client, topic_id, "alice") as ws:
@@ -194,14 +190,8 @@ def test_summon_gets_cheese_seen_receipt(client):
                 break
 
     user_block = next(f for f in frames if f["type"] == "user_block")["block"]
-    agent = room_agent_seat(client, topic_id)
-    expected = [{"emoji": "👀", "count": 1, "authors": [agent]}]
-    assert _await_reactions(client, topic_id, user_block["id"]) == expected
-    # It is broadcast as well as persisted, so a room that is already open sees
-    # it appear. Its POSITION is not asserted: see `_await_reactions`.
-    for ack in (f for f in frames if f["type"] == "reaction"):
-        assert ack["block_id"] == user_block["id"]
-        assert ack["reactions"] == expected
+    assert _block_reactions(client, topic_id, user_block["id"]) == []
+    assert not [f for f in frames if f["type"] == "reaction"]
 
 
 def test_unsummoned_message_gets_no_receipt(client):

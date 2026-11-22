@@ -44,6 +44,7 @@ from app.domain.block.asked import (
     Awaited,
     answerable,
     may_answer,
+    pending_replies,
     settled,
     skipped_by,
 )
@@ -294,9 +295,32 @@ class AwaitingQueries:
         # 跳过、或者被提问的那位撤回的；过期的除外，那道题还收回答。他自己跳过的也
         # 不收：跳过之后他说的话是说话，不是回答。上面的 SQL 只是先筛一遍，谁能答由
         # `may_answer` 定。
+        first = (await self._session.scalars(stmt)).all()
+        # A question he has already replied to in his own words (still pending,
+        # `block.asked.PENDING`) keeps taking his words: the first one may have
+        # been a question about it, and what he says next is no longer his
+        # "first word" since it was asked.
+        again = (
+            []
+            if not first_word_only
+            else [
+                block
+                for block in (
+                    await self._session.scalars(
+                        select(Block)
+                        .where(Block.id.in_(candidates), *asked_filter)
+                        .order_by(Block.created_at, Block.id)
+                        .with_for_update()
+                        .execution_options(populate_existing=True)
+                    )
+                ).all()
+                if any(e.get("by") == reply.author for e in pending_replies(block.meta))
+            ]
+        )
+        seen = {block.id for block in first}
         return [
             block
-            for block in (await self._session.scalars(stmt)).all()
+            for block in (*first, *(b for b in again if b.id not in seen))
             if may_answer(block.meta, reply.author)
             and answerable(block.meta)
             and reply.author not in skipped_by(block.meta)

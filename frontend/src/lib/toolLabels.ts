@@ -60,6 +60,7 @@ export const TOOL_LABELS: Record<string, string> = {
   // 工具表说出来。`cheese_<命令>` 那几条（`cheese_worktree` 等）给旧记录用：pi
   // 房间曾把 CLI 的命令当工具，现在和别的骨架一样在 bash 里跑 `cheese …`。
   chat_send: 'toolLabels.chatSend',
+  chat_react: 'toolLabels.chatReact',
   'cheese_chat.edit': 'toolLabels.chatEdit',
   todo_write: 'toolLabels.todoWrite',
   'cheese_chat.list': 'toolLabels.cheeseChatList',
@@ -74,6 +75,7 @@ export const TOOL_LABELS: Record<string, string> = {
   cheese_canvas: 'toolLabels.cheeseCanvas',
   cheese_room: 'toolLabels.cheeseRoom',
   cheese_card: 'toolLabels.cheeseCard',
+  cheese_hand_in: 'toolLabels.cheeseHandIn',
   cheese_feedback: 'toolLabels.cheeseFeedback',
   cheese_skill: 'toolLabels.cheeseSkill',
   cheese_session: 'toolLabels.cheeseSession',
@@ -104,6 +106,12 @@ export const TOOL_LABELS: Record<string, string> = {
   'cheese_task.close': 'toolLabels.cheeseCloseTask',
   'cheese_task.reopen': 'toolLabels.cheeseReopenTask',
   'cheese_task.state': 'toolLabels.cheeseTaskState',
+  'cheese_task.tell': 'toolLabels.cheeseTaskTell',
+  'cheese_task.look': 'toolLabels.cheeseTaskLook',
+  'cheese_task.report': 'toolLabels.cheeseTaskReport',
+  'cheese_task.accept': 'toolLabels.cheeseTaskAccept',
+  'cheese_hand_in.prepare': 'toolLabels.cheeseHandInPrepare',
+  'cheese_hand_in.confirm': 'toolLabels.cheeseHandInConfirm',
   cheese_push_fix: 'toolLabels.cheesePushFix',
   'cheese_web.fetch': 'toolLabels.cheeseFetch',
   // 个人芝士的工具（backend/sandbox/cheese 的 DELEGATED_TOOLS）。

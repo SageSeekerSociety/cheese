@@ -24,6 +24,7 @@ modules that do mount one.
 
 from fastapi import Depends
 
+from app.api.user_remarks import remarks_for_viewer
 from app.db.session import get_db
 from app.domain.team.services import TeamService, team_service
 from app.domain.team.summary import team_summary
@@ -35,7 +36,12 @@ async def get_team_service(db=Depends(get_db)) -> TeamService:
 
 
 def _user_payload(
-    user, profile, *, fallback_id: int, avatar_id: int | None = None
+    user,
+    profile,
+    *,
+    fallback_id: int,
+    avatar_id: int | None = None,
+    remarks_map: dict[str, str] | None = None,
 ) -> dict:
     """Build a User-shaped dict matching frontend `User` type expectations.
 
@@ -49,6 +55,7 @@ def _user_payload(
             "id": fallback_id,
             "username": "",
             "nickname": "",
+            "remark": None,
             "avatarId": None,
             "intro": "",
             "question_count": 0,
@@ -63,6 +70,7 @@ def _user_payload(
         "id": user.id,
         "username": user.username,
         "nickname": nickname,
+        "remark": (remarks_map or {}).get(user.username),
         "avatarId": avatar_id,
         "intro": profile.intro if profile else "",
         "question_count": 0,
@@ -77,6 +85,7 @@ def application_to_api_model(
     profiles_map: dict | None = None,
     avatars_map: dict | None = None,
     teams_map: dict | None = None,
+    remarks_map: dict[str, str] | None = None,
 ) -> dict:
     """TeamMembershipApplication payload aligned with the frontend type.
 
@@ -103,6 +112,7 @@ def application_to_api_model(
             profiles_map.get(app.user_id),
             fallback_id=app.user_id,
             avatar_id=avatars_map.get(app.user_id),
+            remarks_map=remarks_map,
         ),
         "team": team_summary(teams_map.get(app.team_id), fallback_id=app.team_id),
         "initiator": _user_payload(
@@ -110,6 +120,7 @@ def application_to_api_model(
             profiles_map.get(app.initiator_id),
             fallback_id=app.initiator_id,
             avatar_id=avatars_map.get(app.initiator_id),
+            remarks_map=remarks_map,
         ),
         "type": app.type,
         "status": app.status,
@@ -127,19 +138,22 @@ def application_to_api_model(
             profiles_map.get(app.processed_by_id),
             fallback_id=app.processed_by_id,
             avatar_id=avatars_map.get(app.processed_by_id),
+            remarks_map=remarks_map,
         )
     else:
         payload["processedBy"] = None
     return payload
 
 
-async def load_application_maps(db, apps) -> tuple[dict, dict, dict, dict]:
+async def load_application_maps(
+    db, apps, *, viewer_id: int
+) -> tuple[dict, dict, dict, dict, dict]:
     """Bulk-fetch User+UserProfile+chosen-avatar+Team for a batch of applications.
 
     Public for the same reason as `application_to_api_model` above.
     """
     if not apps:
-        return {}, {}, {}, {}
+        return {}, {}, {}, {}, {}
     user_ids = set()
     team_ids = set()
     for app in apps:
@@ -155,4 +169,5 @@ async def load_application_maps(db, apps) -> tuple[dict, dict, dict, dict]:
     profiles_map = await profile_repo.get_profiles_by_user_ids(list(user_ids))
     avatars_map = await profile_repo.chosen_avatar_ids(list(user_ids))
     teams_map = await service.get_teams_by_ids(list(team_ids))
-    return users_map, profiles_map, avatars_map, teams_map
+    remarks_map = await remarks_for_viewer(db, viewer_id, users_map)
+    return users_map, profiles_map, avatars_map, teams_map, remarks_map

@@ -148,5 +148,16 @@
   "starterCompressionUnsupported": "{path} in the archive uses an unsupported compression method. Compress it again as a standard zip",
   "claimInProgress": "The project for this claim is being created. Try again in a moment",
   "starterIgnoreUnreadable": "The ignore rules in {path} in the archive can't be read. So that the files it lists are not committed, the archive can't be starter code",
-  "projectFromTaskByStarting": "This page is out of date: refresh the task page and click “Start this task” to create its project"
+  "projectFromTaskByStarting": "This page is out of date: refresh the task page and click “Start this task” to create its project",
+  "githubMigrationCardsPending": "{count} delivery card(s) in this project are still waiting for review, and they point at PRs on the platform repository. Accept or return them before moving to GitHub",
+  "githubMigrationNotHosted": "Only a project whose repository is hosted on the platform can move to GitHub",
+  "githubMigrationPushFailed": "Pushing the code to GitHub didn't succeed, and the GitHub repository was left unchanged. Try again later",
+  "githubMigrationSourceEmpty": "The platform repository has no branches yet, so there is nothing to move",
+  "githubMigrationStarterPending": "The task's starter code is still being written to the platform repository. Move once it's done",
+  "githubMigrationTargetNotEmpty": "This GitHub repository already has other content. Use an empty repository; the platform never overwrites existing commits",
+  "projectAvatarEmoji": "Use a single emoji",
+  "projectAvatarHue": "This colour is not available",
+  "projectAvatarIcon": "This icon is not available",
+  "projectAvatarImage": "This image is not available. Upload it again",
+  "projectAvatarText": "Use up to 2 CJK characters or 4 letters and digits"
 }

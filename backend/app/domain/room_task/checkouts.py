@@ -16,7 +16,7 @@ cannot make, so it is declared in `ports.py` and handed in by whoever builds
 us (`app.domain.agent.checkout_sweep` implements it).
 
 Two moments start it. A task closing, for every machine the room holds a
-lease on — the current ones and those it has left (`retained_leases`), whose
+environment on — those its sessions are attached to and those they left, whose
 checkouts stay behind when a room moves. And a machine connecting, for every
 lease on it: a machine that was offline when its task closed is swept the
 moment it is back, including one the room has left and will never start an
@@ -27,14 +27,13 @@ checkout something still had open is tried again on the next run.
 import logging
 import uuid
 
-from sqlalchemy import cast, or_, select
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core import background
 from app.core.db import after_own_commit
-from app.domain.agent_session.models import LEASE_DEVICE, AgentSession
 from app.domain.conversation.services import of_room, room_column
+from app.domain.environment.models import Environment
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.ports import SweepCheckouts
 from app.domain.topic.models import Topic, TopicStatus
@@ -63,43 +62,24 @@ async def remove_closed_checkouts(
     places: dict[tuple[str, str], tuple[uuid.UUID, uuid.UUID]] = {}
     closed: dict[uuid.UUID, list[str]] = {}
     async with sessions() as db:
-        # The two lease columns and the room, not the rows whole: this runs on
-        # every machine connecting, and decoding every session's request and
-        # every room's columns held the event loop up to 400 ms.
-        retained = AgentSession.execution_request["retained_leases"]
+        # The environment's machine and home and the room, not the rows whole:
+        # this runs on every machine connecting.
         query = (
-            select(AgentSession.work_lease, retained, Topic.project_id, Topic.id)
-            .select_from(AgentSession)
-            .join(Topic, Topic.id == room_column(AgentSession.conversation_id))
+            select(
+                Environment.device_id,
+                Environment.resource_id,
+                Topic.project_id,
+                Topic.id,
+            )
+            .join(Topic, Topic.id == room_column(Environment.topic_id))
             .where(Topic.status != TopicStatus.archived)
         )
         if room_id is not None:
-            query = query.where(of_room(AgentSession.conversation_id, room_id))
+            query = query.where(of_room(Environment.topic_id, room_id))
         if device_id is not None:
-            # Only the sessions holding a lease on that machine, now or left.
-            # The retained arm has no index, so this still scans the sessions,
-            # in the database: what it spares is decoding them here.
-            query = query.where(
-                or_(
-                    LEASE_DEVICE == device_id,
-                    cast(AgentSession.execution_request, JSONB)[
-                        "retained_leases"
-                    ].contains([{"device_id": device_id}]),
-                )
-            )
-        for work_lease, retained_leases, project_id, topic_id in (
-            await db.execute(query)
-        ).all():
-            for lease in [
-                *(retained_leases or []),
-                *([work_lease] if work_lease else []),
-            ]:
-                device, resource = lease.get("device_id"), lease.get("resource_id")
-                if not device or not resource:
-                    continue
-                if device_id is not None and device != device_id:
-                    continue
-                places[(device, resource)] = (project_id, topic_id)
+            query = query.where(Environment.device_id == device_id)
+        for device, resource, project_id, topic_id in (await db.execute(query)).all():
+            places[(device, resource)] = (project_id, topic_id)
         rooms = {room for _project, room in places.values()}
         if rooms:
             rows = await db.execute(

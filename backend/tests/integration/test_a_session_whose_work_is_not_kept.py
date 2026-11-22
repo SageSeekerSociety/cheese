@@ -1,4 +1,5 @@
-"""A 支线's session keeps nothing; a task's keeps its work.
+"""A session in a channel — its main line or a 支线 — keeps nothing; a task's
+keeps its work.
 
 On a machine that is its own it reads, runs and changes files like any session:
 that is how it finds out what is wrong. What it does there never reaches the
@@ -25,11 +26,13 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from sqlalchemy import select
 
+from app.core.config import settings
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
 from app.domain.agent import execution
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
+from app.domain.machine.caller import machine_proxy_proof
 from app.domain.project.github_app import GitHubAppTokens
 from app.domain.topic.models import Topic
 from app.domain.user.models import User
@@ -41,12 +44,14 @@ from tests.integration.conftest import (
     session_auth_headers,
 )
 from tests.support.devices import enrollment_team, place_in_project_team
+from tests.support.environments import attach_anew
 
 pytestmark = pytest.mark.anyio
 
 
 async def _session(client, place: str, *, own: bool | None = True) -> dict:
-    """An agent session in a 支线 (``place="thread"``) or a task, holding a
+    """An agent session in a channel's main line (``place="channel"``), a 支线
+    (``place="thread"``) or a task, holding a
     machine of the project's; ``own`` is what its lease says about the
     machine, None for a lease recorded before it said anything."""
     project = post_project(client, json={"name": "Scratch"}, owner="alice").json()[
@@ -67,6 +72,8 @@ async def _session(client, place: str, *, own: bool | None = True) -> dict:
                 f"/blocks/{root}/upgrade", headers=session_auth_headers("alice")
             )
             assert made.json()["data"]["id"] == conversation, made.text
+    elif place == "channel":
+        conversation = room["id"]
     else:
         conversation = open_task(client, room["id"], "Task", owner="alice")["id"]
     project_id, room_id = uuid.UUID(project["id"]), uuid.UUID(room["id"])
@@ -104,20 +111,24 @@ async def _session(client, place: str, *, own: bool | None = True) -> dict:
             "channel": "device",
         }
         generation = str(uuid.uuid4())
-        session.execution_request = {"generation": generation}
-        session.work_lease = {
-            "kind": "device",
-            "status": "ready",
-            "session_id": str(session.id),
-            "generation": generation,
-            "resource_id": resource,
-            "room_resource_id": resource,
-            "device_id": device.device_id,
-            "workspace": "/work",
-            "mcp_servers": [],
-            "url": f"http://api/topics/{conversation}/execution/session-{resource}",
-            **({} if own is None else {"own": own}),
-        }
+        await attach_anew(
+            db,
+            session,
+            {
+                "kind": "device",
+                "status": "ready",
+                "session_id": str(session.id),
+                "generation": generation,
+                "resource_id": resource,
+                "room_resource_id": resource,
+                "device_id": device.device_id,
+                "workspace": "/work",
+                "state": "/work/state",
+                "mcp_servers": [],
+                "url": f"http://api/topics/{conversation}/execution/session-{resource}",
+                **({} if own is None else {"own": own}),
+            },
+        )
         session_id = str(session.id)
         await db.commit()
     launch = mint_scoped_token(
@@ -167,7 +178,7 @@ MCP = ("mcp", {"server": "tracker", "method": "tools/call"})
 MCP_TOOL = ("invoke", {"id": "4", "tool": "create_issue", "server": "tracker"})
 
 
-@pytest.mark.parametrize("place", ["thread"])
+@pytest.mark.parametrize("place", ["thread", "channel"])
 @pytest.mark.parametrize("call", [BASH, SHELL, WRITE, EDIT, READ])
 async def test_on_its_own_machine_it_reads_runs_and_changes_files(
     client, monkeypatch, place, call
@@ -178,7 +189,7 @@ async def test_on_its_own_machine_it_reads_runs_and_changes_files(
     remote.assert_awaited()
 
 
-@pytest.mark.parametrize("place", ["thread"])
+@pytest.mark.parametrize("place", ["thread", "channel"])
 @pytest.mark.parametrize("call", [SYNC, MCP, MCP_TOOL])
 async def test_nothing_it_does_is_carried_off_the_machine(
     client, monkeypatch, place, call
@@ -272,12 +283,40 @@ def _forge_token(client, monkeypatch, held: dict) -> dict:
     return response.json()["data"]
 
 
-@pytest.mark.parametrize("place", ["thread"])
+@pytest.mark.parametrize("place", ["thread", "channel"])
 async def test_its_forge_token_reads_and_never_pushes(client, monkeypatch, place):
     held = await _session(client, place)
     data = _forge_token(client, monkeypatch, held)
     assert data["token"] == "reads"
     assert data["read_only"] is True
+
+
+@pytest.mark.parametrize("place", ["thread", "task"])
+async def test_the_environments_own_credential_pushes_only_from_a_task(
+    client, monkeypatch, place
+):
+    """The credential an environment is handed for itself — what goes
+    outside its sandbox, or a command nobody named — keeps its
+    conversation's rule: a 支线's never gets the token that pushes."""
+    held = await _session(client, place)
+    async with client.test_factory() as db:
+        project = (await db.get(Topic, uuid.UUID(held["room"]))).project_id
+    monkeypatch.setattr(settings, "device_connection_secret", "owner-secret")
+    handed = client.get(
+        "/machine/proxy-credential",
+        headers={
+            "x-device-connection-secret": "owner-secret",
+            "x-machine-device": held["device"],
+            "x-machine-state": "/work/state",
+            "x-cheese-proxy-proof": machine_proxy_proof(str(project)),
+        },
+    )
+    assert handed.status_code == 200, handed.text
+    data = _forge_token(
+        client, monkeypatch, {**held, "machine": handed.json()["token"]}
+    )
+    assert data["read_only"] is (place == "thread")
+    assert data["token"] == ("reads" if place == "thread" else "pushes")
 
 
 @pytest.mark.parametrize("place", ["task", "became"])

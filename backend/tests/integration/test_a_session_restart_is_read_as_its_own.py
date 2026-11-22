@@ -1,9 +1,12 @@
 """Which process an event is about is the epoch it carries, and only the seat's
 current registration's process ending ends its session.
 
-- A runner that died with its process is followed by a new one, which reports
-  the earlier process's ending for it: that ending is not the restarted
-  session's, which this process keeps holding.
+- A runner that died with its process ends the session then: the machine's
+  answer that it is not there is that process's exit, and what was handed to
+  it stops holding its seat.
+- The runner started after it reports the earlier process's ending for it:
+  that ending is not the restarted session's, which this process keeps
+  holding.
 - A start that finds the runner still there reads that runner's own ending as
   the session's: the host lets the session go.
 - This process registering the runner again, while a read under the epoch it
@@ -24,14 +27,14 @@ from collections.abc import Awaitable, Callable
 from types import SimpleNamespace
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from app.domain.agent import runner_reports
 from app.domain.agent.device_hub import DeviceCallError
 from app.domain.agent.harness.claude_code.runner import LIVE_LAUNCH, Runner
 from app.domain.agent.harness.driven import lifecycle
 from app.domain.agent.models import SessionState
-from app.domain.agent.reads import Report, SessionExited
+from app.domain.agent.reads import Ended, Report, SessionExited
 from app.domain.agent.session_host import host as host_module
 from app.domain.agent.session_host.contract import (
     Access,
@@ -40,7 +43,9 @@ from app.domain.agent.session_host.contract import (
     SessionSpec,
 )
 from app.domain.agent.session_host.host import SessionHost
+from app.domain.agent.session_state import SeatKey
 from app.domain.conversation.models import Conversation
+from app.domain.delivery.input_holds import seat_has_unfinished_input
 from tests.turn_log import a_topic
 
 SEAT = "cheese-test"
@@ -125,7 +130,12 @@ def _access(project_id, place_id) -> Access:
     )
 
 
-def _reader(host: SessionHost, ref, handed: list, errors: list, apply=None):
+def _reader(
+    host: SessionHost, ref, handed: list, errors: list, apply=None, every=False
+):
+    """Reads the session as the room does, applying each report (each event,
+    for ``every``) before taking the next."""
+
     async def run():
         reading = host.read(ref)
         try:
@@ -133,7 +143,7 @@ def _reader(host: SessionHost, ref, handed: list, errors: list, apply=None):
             while True:
                 try:
                     handed.append(item.event)
-                    if apply is not None and isinstance(item.event, Report):
+                    if apply is not None and (every or isinstance(item.event, Report)):
                         await apply(item.event)
                 except Exception as exc:  # the room's `_poll`: thrown back
                     errors.append(exc)
@@ -182,14 +192,16 @@ async def test_an_earlier_process_exit_after_a_restart_keeps_the_session(
     reader = _reader(host, ref, handed, errors, apply=apply)
     await asyncio.sleep(0.3)
 
-    # The runner dies with its process: nothing reports its ending.
+    # The runner dies with its process: nothing reports its ending, and the
+    # reading of it ends.
     hub.runner = None
-    await asyncio.sleep(0.3)
+    await asyncio.wait_for(reader, 5)
     assert running.answering is False
 
-    # What `speaking.send` does after `_NotThere`: start again, then say it.
+    # The next message starts the session again, and it is read again.
     await host.start(ref, spec, access)
-    host._wake(running)
+    running = host._running[ref]
+    reader = _reader(host, ref, handed, errors, apply=apply)
     await asyncio.sleep(0.6)
     async with db_factory() as session:
         row = await session.scalar(
@@ -210,6 +222,98 @@ async def test_an_earlier_process_exit_after_a_restart_keeps_the_session(
     )
     assert row is not None and row.exited_at is None
     assert host._running.get(ref) is running, "the restarted session was forgotten"
+
+
+@pytest.mark.anyio
+async def test_a_runner_gone_unreported_stops_holding_its_seat(
+    tmp_path, fast, db_factory
+):
+    """A message handed to a session whose runner then vanishes without a
+    word (killed, or its machine rebooted) does not keep the seat from the
+    next message: the seat reads as idle and nothing unread holds it."""
+    topic = await a_topic(db_factory)
+    async with db_factory() as session:
+        project = (await session.get(Conversation, topic)).project_id
+    chat = SimpleNamespace(
+        session_factory=db_factory, live=SimpleNamespace(unread_inputs={})
+    )
+    key = SeatKey(topic, SEAT, "claude-code")
+
+    async def apply(event):
+        if isinstance(event, Report):
+            await runner_reports.apply(chat, event)
+        elif isinstance(event, Ended) and event.epoch is not None:
+            await runner_reports.gone(chat, key, event.epoch)
+
+    hub = _Hub()
+    host = SessionHost(
+        hub=hub,
+        screens=_Screens(hub, tmp_path / "state"),  # type: ignore[arg-type]
+        session_factory=db_factory,
+    )
+    ref = SessionRef("claude-code", "p/x/seat")
+    await host.start(ref, SessionSpec("S", "m"), _access(project, topic))
+    handed: list = []
+    reader = _reader(host, ref, handed, [], apply=apply, every=True)
+    await asyncio.sleep(0.3)
+
+    # The session takes a message and starts on it.
+    work = uuid.uuid4()
+    async with db_factory() as session:
+        await session.execute(
+            text(
+                "INSERT INTO native_inputs (id, project_id, conversation_id, "
+                "recipient_handle, harness, native_session_id, input_id, "
+                "work_id, held_block_ids, released_block_ids, block_ids, "
+                "registered_at) VALUES (:id, :project, :topic, :seat, "
+                "'claude-code', 'conv', :work, :work, '[]', '[]', '[]', now())"
+            ),
+            {
+                "id": uuid.uuid4(),
+                "project": project,
+                "topic": topic,
+                "seat": SEAT,
+                "work": work,
+            },
+        )
+        await session.commit()
+    runner = hub.runner
+    assert runner is not None
+    runner._emit(
+        lifecycle.INPUT,
+        status=lifecycle.WRITTEN,
+        input_id=str(work),
+        work_id=str(work),
+        session_id="conv",
+    )
+    runner._emit(
+        lifecycle.STATUS,
+        worker_status=lifecycle.RUNNING,
+        work_id=str(work),
+        unsolicited=False,
+    )
+    runner.announce()
+    await asyncio.sleep(0.4)
+
+    async def seat():
+        async with db_factory() as session:
+            state = await session.scalar(
+                select(SessionState).where(
+                    SessionState.conversation_id == topic,
+                    SessionState.agent_handle == SEAT,
+                )
+            )
+            held = await seat_has_unfinished_input(session, topic, SEAT)
+            return state.worker_status, held
+
+    assert await seat() == (lifecycle.RUNNING, True)
+
+    # Its runner is gone with its process, and reports nothing.
+    hub.runner = None
+    await asyncio.wait_for(reader, 5)
+
+    assert await seat() == (lifecycle.IDLE, False)
+    assert host._running.get(ref) is None
 
 
 @pytest.mark.anyio

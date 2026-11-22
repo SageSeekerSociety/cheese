@@ -332,6 +332,9 @@ def test_only_retired_notices_stored_on_old_rooms_are_historical():
         "deployFailedTo",
         "mainChecksFailed",
         "mainChecksFailedReopened",
+        "changeSummary",
+        "changeSummaryFiles",
+        "changeSummaryFilesMore",
         "actorCheese",
         "askAnswerUndelivered",
         "askAnswerUndeliveredDetail",
@@ -368,6 +371,9 @@ def test_only_retired_notices_stored_on_old_rooms_are_historical():
         "subagentStart",
         "subagentStopEmpty",
         "titleAutoRenamed",
+        "taskLanded",
+        "taskStepLanded",
+        "taskHandedInBy",
         "computeAnyDevice",
         "computeCloud",
         "computeCloudVm",
@@ -405,6 +411,8 @@ def test_only_retired_notices_stored_on_old_rooms_are_historical():
         "cliModelLimitReachedHint",
         "turnWedged",
         "turnWedgedDetail",
+        "settingSubagentModel",
+        "settingInheritMain",
     }
     assert HISTORICAL_NOTICE_KEYS <= NOTICE_MESSAGES.keys()
     assert not HISTORICAL_NOTICE_KEYS & ERROR_MESSAGES.keys()

@@ -268,19 +268,17 @@ def room(empty_doc: bool) -> tuple[str, str]:
     The one function to change when the platform moves things between the
     system prompt and the conversation."""
     from app.core.config import settings
-    from app.domain.agent.harness.prompt import (
-        build_session_opening,
-        build_system_prompt,
-    )
-    from app.domain.agent.skills import NATIVE_CHAT_GUIDANCE
+    from app.domain.agent.skills import load_skill
+    from app.domain.prompts import Facts, Kind, render_opening, render_system
 
-    system = build_system_prompt(
-        settings.agent_system_prompt,
-        NATIVE_CHAT_GUIDANCE,
-        has_doc=True,
-        keeps_memory=True,
+    system = render_system(
+        Kind.task,
+        Facts(has_doc=True, memory_synced=True),
+        skill=load_skill,
+        base=settings.agent_system_prompt,
     )
-    opening = build_session_opening(
+    opening = render_opening(
+        Kind.task,
         doc="" if empty_doc else DOC,
         roster=ROSTER,
         topics=TOPICS,
@@ -290,7 +288,7 @@ def room(empty_doc: bool) -> tuple[str, str]:
 
 
 def build() -> None:
-    from app.domain.agent.harness.prompt import platform_prompt, publication_prompt
+    from app.domain.prompts import Kind, platform_prompt, render_notice
 
     tools = platform_tools() + CLAUDE_TOOLS
     listing = skill_listing()
@@ -299,7 +297,7 @@ def build() -> None:
         said = platform_prompt(text) if who == "platform" else f"[{who}]: {text}"
         # A new session's first message: the project state, then the turn
         # (`RoomSessions._with_project_state`).
-        turn = "\n\n".join(filter(None, [state, publication_prompt(said)]))
+        turn = "\n\n".join(filter(None, [state, render_notice(Kind.task, said)]))
         print(
             json.dumps(
                 {

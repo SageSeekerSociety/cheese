@@ -15,6 +15,8 @@ export interface ModelFormPayload {
   name?: string
   label: string
   selectable: boolean
+  /** 缓存闲置多久失效，秒；0 清掉。没动过这一项时不带。 */
+  cache_lifetime_s?: number
   capabilities: {
     reasoning: boolean
     vision: boolean
@@ -78,6 +80,8 @@ interface ModelSeed {
   selectable: boolean
   /** 每条在用的线路都有价（或标了免费）。编辑时上架开关的闸门。 */
   priced: boolean
+  /** 缓存闲置多久失效，秒；没填是 null。 */
+  cache_lifetime_s?: number | null
   capabilities: {
     reasoning?: boolean
     vision?: boolean
@@ -120,6 +124,9 @@ const adaptiveThinking = ref(false)
 // 只有标过、或这次关掉，才写回网关。
 const midConversationSystem = ref(true)
 const midConversationSystemMarked = ref(false)
+// 缓存有效期按分钟填，存成秒（网关的 `cheese_cache_lifetime_s`）。空着是没填。
+const cacheMinutes = ref('')
+const seededMinutes = ref('')
 
 /** 对话框每次**打开**都从 seed 重填一遍：上一次留下的半截输入不该跟着下一次打开回来，
  *  而编辑的预填值又必须是最新的那一行。 */
@@ -137,6 +144,8 @@ watch(
     adaptiveThinking.value = s?.capabilities.adaptive_thinking ?? false
     midConversationSystem.value = s?.capabilities.mid_conversation_system ?? true
     midConversationSystemMarked.value = s?.capabilities.mid_conversation_system !== undefined
+    seededMinutes.value = s?.cache_lifetime_s ? String(s.cache_lifetime_s / 60) : ''
+    cacheMinutes.value = seededMinutes.value
   },
   { immediate: true }
 )
@@ -163,7 +172,13 @@ watch(
 
 const nameOk = computed(() => NAME_RE.test(name.value.trim()))
 
-const valid = computed(() => props.mode === 'edit' || (nameOk.value && draftValid(source.value)))
+/** 空，或 1–10080 的整数分钟（服务端最多收七天）。 */
+const cacheOk = computed(() => {
+  const raw = cacheMinutes.value.trim()
+  return raw === '' || (/^\d+$/.test(raw) && Number(raw) >= 1 && Number(raw) <= 10080)
+})
+
+const valid = computed(() => cacheOk.value && (props.mode === 'edit' || (nameOk.value && draftValid(source.value))))
 
 function close() {
   emit('update:modelValue', false)
@@ -182,6 +197,10 @@ function submit() {
   }
   if (midConversationSystemMarked.value || !midConversationSystem.value) {
     payload.capabilities.mid_conversation_system = midConversationSystem.value
+  }
+  const minutes = cacheMinutes.value.trim()
+  if (minutes !== seededMinutes.value.trim()) {
+    payload.cache_lifetime_s = minutes === '' ? 0 : Number(minutes) * 60
   }
   if (props.mode === 'add') {
     payload.name = name.value.trim()
@@ -221,6 +240,17 @@ function submit() {
         variant="outlined"
         density="comfortable"
         :label="t('models.dialog.field.label')"
+        hide-details="auto"
+      />
+      <v-text-field
+        v-model="cacheMinutes"
+        autocomplete="off"
+        inputmode="numeric"
+        variant="outlined"
+        density="comfortable"
+        :label="t('models.dialog.field.cacheMinutes')"
+        :hint="t('models.dialog.field.cacheMinutesHint')"
+        :error="!cacheOk"
         hide-details="auto"
       />
       <!-- 第一条线路：只在新增时出现。编辑时线路在详情抽屉里一条条改。 -->

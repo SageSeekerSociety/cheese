@@ -47,6 +47,10 @@ async def test_project_response_waits_for_commit(monkeypatch, commit_fails):
         ai_mode="collaborative",
         root_topic_id=uuid.uuid4(),
         created_at=datetime.now(UTC),
+        avatar_kind=None,
+        avatar_glyph=None,
+        avatar_hue=None,
+        avatar_image_id=None,
     )
     monkeypatch.setattr(db, "async_session_factory", lambda: session)
     # The payload names the owning team by handle; this fake session answers

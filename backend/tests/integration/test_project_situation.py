@@ -223,7 +223,7 @@ def test_the_situation_is_written_by_the_projects_own_model_on_its_key(
             ids = [
                 i for i, c in catalog(row.settings).items() if c["supply"] == GATEWAY
             ]
-            row.settings = {**(row.settings or {}), "default_subagent_model": ids[-1]}
+            row.settings = {**(row.settings or {}), "default_model": ids[-1]}
             await session.commit()
             return ids[-1]
 

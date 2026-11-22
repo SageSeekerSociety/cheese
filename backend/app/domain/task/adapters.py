@@ -89,10 +89,20 @@ class TaskTerms:
         if task is None:
             return AcceptedTerms(default_role=None, compute_credits=0.0)
         protocol = await protocol_for_task(self._session, task)
+        shared_with: tuple[int, ...] = ()
+        if protocol.once_per_person:
+            # Every 题目 of the same 分组, deleted ones too: a pack someone was
+            # given from a 题目 that was later removed still counts.
+            rows = await self._session.scalars(
+                select(Task.id).where(Task.category_id == task.category_id)
+            )
+            shared_with = tuple(sorted({task.id, *rows}))
         return AcceptedTerms(
             default_role=protocol.default_role,
             compute_credits=protocol.compute_credits,
             pack_prompt=protocol.pack_prompt,
+            model=protocol.model,
+            shared_with=shared_with,
         )
 
     async def starter(self, task_id: int) -> StarterSource | None:

@@ -30,9 +30,16 @@ const props = withDefaults(
     changes: PanelChangesBundle
     /** 这件任务的批注，宿主从采纳卡那份里递进来。 */
     review?: ReviewBundle | null
+    /** 这件任务有「文件」那一格：打开的文件可以去那里编辑。 */
+    canEdit?: boolean
   }>(),
-  { readOnly: false, review: null }
+  { readOnly: false, review: null, canEdit: false }
 )
+
+const emit = defineEmits<{
+  /** 在任务的「文件」那一格编辑这份文件。 */
+  'edit-file': [path: string]
+}>()
 
 const {
   taskLoadError,
@@ -52,15 +59,12 @@ const {
   treeFiles,
   allFiles,
   openPath,
-  fileDraft,
-  fileSaving,
-  fileDirty,
+  fileText,
   fileVersion,
   fileBinary,
   fileTooLarge,
   fileBytes,
   fileReadOnly,
-  fileConflict,
   openDiff,
   openDiffLines,
   effectiveView,
@@ -73,7 +77,6 @@ const {
   openImageError,
   collapsedDirs,
   revealTick,
-  draftCount,
   docBytes,
   docLoading,
   docError,
@@ -91,24 +94,14 @@ const {
   selectFile,
   closeFile,
   selectVersion,
-  openFile,
   toggleDir,
   downloadOpenFile,
-  saveFile,
-  overwriteFile,
-  fileMerge,
-  resolveMerge,
-  cancelMerge,
-  reloadOpenFile,
 } = props.changes
 
 // 展示组件往上发的两件事是「换了个值」，不是「做了个动作」：这里落回取数那一层那
 // 几个 ref 上。写成函数而不是模板里的行内赋值，是为了让类型检查看得见。
-function setView(v: 'diff' | 'edit') {
+function setView(v: 'diff' | 'text') {
   fileView.value = v
-}
-function setDraft(v: string) {
-  fileDraft.value = v
 }
 // ⋯ 里的刷新和首屏那次加载走同一条路，只是不转圈。
 function refresh() {
@@ -127,9 +120,6 @@ function onSelectVersion(source: FileSource) {
 function onDownload() {
   void downloadOpenFile()
 }
-
-// 地址里的 chip 指到某个文件时，工作面板会拿着文件路径来开这一格。
-defineExpose({ openFile })
 </script>
 
 <template>
@@ -155,15 +145,13 @@ defineExpose({ openFile })
     :tree-files="treeFiles"
     :all-files="allFiles"
     :open-path="openPath"
-    :file-draft="fileDraft"
-    :file-saving="fileSaving"
-    :file-dirty="fileDirty"
+    :file-text="fileText"
     :file-version="fileVersion"
     :file-binary="fileBinary"
     :file-too-large="fileTooLarge"
     :file-bytes="fileBytes"
     :file-read-only="fileReadOnly"
-    :file-conflict="fileConflict"
+    :can-edit="props.canEdit && !props.readOnly"
     :open-diff="openDiff"
     :open-diff-lines="openDiffLines"
     :effective-view="effectiveView"
@@ -182,14 +170,11 @@ defineExpose({ openFile })
     :open-image-error="openImageError"
     :collapsed-dirs="collapsedDirs"
     :reveal-tick="revealTick"
-    :draft-count="draftCount"
     :doc-bytes="docBytes"
     :doc-loading="docLoading"
     :doc-error="docError"
     :doc-renderer-missing="docRendererMissing"
     :review="props.review"
-    :file-merge="fileMerge"
-    :agent-name="props.review?.agentName ?? ''"
     @select-file="onSelectFile"
     @close-file="closeFile"
     @select-version="onSelectVersion"
@@ -197,14 +182,9 @@ defineExpose({ openFile })
     @toggle-dir="toggleDir"
     @refresh="refresh"
     @download="onDownload"
-    @save="saveFile"
-    @overwrite="overwriteFile"
-    @resolve-merge="resolveMerge"
-    @cancel-merge="cancelMerge"
+    @edit-file="emit('edit-file', $event)"
     @toggle-compare="toggleCompare"
-    @reload="reloadOpenFile"
     @view-changed="setView"
-    @draft-changed="setDraft"
   >
     <!-- 这次交付的情况，宿主塞进来（这一格是场景，自己不读采纳卡）。 -->
     <template #head><slot name="head" /></template>

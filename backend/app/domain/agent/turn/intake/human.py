@@ -2,7 +2,7 @@
 
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
 
@@ -20,7 +20,7 @@ from app.domain.agent.mentions import (
     person_mentions,
 )
 from app.domain.agent.queries import _agent_at
-from app.domain.agent.turn.intake.rooms import _is_dm
+from app.domain.agent.turn.intake.rooms import _is_dm, only_person_in_project
 from app.domain.agent.turn.store.human import (
     CallAdmission,
     HumanHandoff,
@@ -32,6 +32,7 @@ from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block
 from app.domain.delivery.mention import mentioned_handles, record_mentions
 from app.domain.identity.handles import (
+    agent_instance_handle,
     looks_like_agent_handle,
     names_a_person,
     recipient_seat,
@@ -41,7 +42,7 @@ from app.domain.room_task import naming
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.place import Place
 from app.domain.room_task.services import TaskService
-from app.domain.thread.services import answered_in, thread_teammate
+from app.domain.thread.services import thread_teammate
 from app.domain.topic_membership.services import TopicMemberService
 
 
@@ -114,6 +115,18 @@ async def _read_human(
         else None
     )
     agent = thread_agent or agent
+    # A person alone in the project talks in its channels to its AI teammate:
+    # every message there is for it, as in a private chat. With anyone else in
+    # the project, a channel's main line is people talking to each other, and
+    # only a message that calls the teammate reaches it.
+    alone = (
+        place.task is None
+        and place.thread is None
+        and seats is None
+        and names_a_person(author)
+        and not _names_only_people(mentions.content)
+        and await only_person_in_project(session, topic.project_id, author, roster)
+    )
     recipient = {
         "instance_id": str(agent.instance_id),
         "handle": agent.handle,
@@ -129,6 +142,7 @@ async def _read_human(
             and names_a_person(author)
             and not _names_only_people(mentions.content)
         )
+        or alone
         or (seats is not None and looks_like_agent_handle(seats[1])),
     }
     return HumanPreparation(
@@ -152,7 +166,8 @@ class Addressing:
     ``mention`` (it @-s the teammate), ``reply`` (it replies to the teammate's
     message), ``task`` (its owner or a collaborator speaks in an open task),
     ``thread`` (a person speaks in a 支线 a teammate was handed),
-    ``private`` (a private chat with the teammate). ``people`` are the persons it
+    ``private`` (a private chat with the teammate), ``alone`` (the only person
+    in the project speaks in a channel's main line). ``people`` are the persons it
     @-s. ``place`` is ``channel``, ``task`` or ``private``; ``task_status`` the
     task's status when it is said in one."""
 
@@ -161,6 +176,10 @@ class Addressing:
     people: list[str]
     place: str
     task_status: str | None
+    #: 这条消息会叫起来的**全部**队友，第一位是 `agent`（有的话），按正文里点到的
+    #: 先后排。一条消息给点到的每一位队友各记一条投递（`delivery/mention.py`），不只
+    #: 第一位，所以输入框要说“会交给谁”就得说全：只说第一位，屏幕上就少了一位。
+    teammates: list[dict] = field(default_factory=list)
 
     def as_json(self) -> dict:
         return {
@@ -169,6 +188,7 @@ class Addressing:
             "people": self.people,
             "place": self.place,
             "task_status": self.task_status,
+            "teammates": self.teammates,
         }
 
 
@@ -207,6 +227,8 @@ async def preview_addressing(
             else "thread"
             if place.thread is not None
             else "private"
+            if _is_dm(place.room)
+            else "alone"
         )
     if with_text:
         parent = await reply_parent(session, place, reply_to)
@@ -224,6 +246,39 @@ async def preview_addressing(
                 if f"<@{admission.addressed}>" in prepared.content
                 else "reply"
             )
+    # 这条会叫起来的全部队友：正文里点到、又在这间房的每一个席位各记一条投递
+    # （`delivery/mention.py` 的 `named_seats`），所以名单按正文里点到的先后排，同一位
+    # 只算一次。第一位同时是 `agent`（为它开一轮的那位）；`record_mentions` 会跳过它。
+    seats = [
+        h
+        for h in dict.fromkeys(mentioned_handles(prepared.content))
+        if h in set(prepared.agent_handles) and h != author
+    ]
+    # 名字取自这封信自己已经读过的那张名册（`person_mentions` 为每个被 @ 到的席位都写了
+    # 一行）：这里是输入框每次停顿都会问一次的地方，再读一遍实例表就是白读。
+    #
+    # 只列**这个项目里真有实例**的席位（`named_seats` 就是那张表）：还挂着共用 `cheese`
+    # 席位的老房间、或者只坐在名册上却没有实例的座位，`record_mentions` 叫不起来，列进来
+    # 就是说这条会交给一个不会醒的队友。私聊里名册是空的（`person_mentions` 不给），那时
+    # 名字从实例表补——不拿 handle 顶，那是人看不到的一串。
+    # 显示名可能是空的（模型默认就是空串）：那一位仍叫得出名字才写名字，否则留 handle。
+    names = {row["handle"]: row["name"] for row in prepared.roster if row.get("name")}
+    missing = [
+        seat for seat in seats if seat in prepared.named_seats and seat not in names
+    ]
+    if missing:
+        # 同一个服务类的读法是缓存的（`person_mentions` 几行前刚读过这张表），
+        # 私聊里名册永远是空的，这条就是每次预览都走的那一下。
+        instances = await AgentInstanceService(session).list_for_project(project.id)
+        for instance in instances:
+            handle = agent_instance_handle(instance.id)
+            if handle in missing and instance.display_name:
+                names[handle] = instance.display_name
+    teammates = [
+        {"handle": seat, "name": names.get(seat) or seat}
+        for seat in seats
+        if seat in prepared.named_seats
+    ]
     agent = None
     if recipient["mentioned"] and may_summon:
         instance = await AgentInstanceService(session).get_in_project(
@@ -233,6 +288,12 @@ async def preview_addressing(
             "handle": recipient_seat(recipient),
             "name": instance.display_name,
         }
+    # 一句谁也没 @ 的话，也可能被规矩叫起一位（回复它、任务里、交给过它的支线里）：
+    # 那一位同样是这条会叫到的，`teammates` 要是空的就是在少报。
+    if agent is not None and all(t["handle"] != agent["handle"] for t in teammates):
+        teammates = [agent, *teammates]
+    if not may_summon:
+        teammates = []
     people = [
         h
         for h in dict.fromkeys(mentioned_handles(prepared.content))
@@ -250,6 +311,7 @@ async def preview_addressing(
             else "channel"
         ),
         task_status=place.task.status.value if place.task is not None else None,
+        teammates=teammates,
     )
 
 
@@ -308,9 +370,14 @@ async def refuse_call(
     的：那位的投递不重复记。无名可指的消息（只有附件、没有正文）到不了这里。
     """
     topic = place.room
-    seat = next(
-        (h for h in prepared.agent_handles if f"<@{h}>" in prepared.content), None
-    )
+    # The first teammate the message names, by where it stands in the text: a
+    # message that names several wakes them in that order (`record_mentions`).
+    named = [
+        h
+        for h in mentioned_handles(prepared.content)
+        if h in set(prepared.agent_handles)
+    ]
+    seat = named[0] if named else None
     if seat is None and reply_author is not None:
         # 名册是现问的：`person_mentions` 只在正文里有 `@` 时才填这两个名单，
         # 而这条路一句 `@` 都没有。
@@ -352,7 +419,7 @@ async def record_human_effects(
             session,
             project_id=place.project_id,
             room_id=place.room_id,
-            conversation_id=await answered_in(session, user_block),
+            conversation_id=user_block.conversation_id,
             block_id=user_block.id,
             author=author,
             content=user_block.content,
@@ -360,6 +427,9 @@ async def record_human_effects(
             by_agent=False,
             occurred_at=datetime.now(UTC),
             skip=frozenset({addressed} if addressed else ()),
+            # In a channel's main line the others take their turn one after
+            # another, each seeing what the one before said.
+            after=addressed if place.inner_id is None else None,
         )
     return answered
 

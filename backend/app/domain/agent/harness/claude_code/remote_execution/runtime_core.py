@@ -58,6 +58,10 @@ _OWN = (
     "runtime_commands",
     "runtime_context",
     "runtime_calls",
+    # A person's shells (`Executor.terminals`).
+    "runtime_terminal",
+    # Language servers beside a task's checkout (`Executor.languages`).
+    "runtime_language",
     "portable",
     "darwin",
     "mcp_process",
@@ -135,6 +139,39 @@ BASH_INLINE_CHARS = 30_000
 COMMAND_ID = re.compile(r"[A-Za-z0-9_-]{1,80}")
 
 
+def identity(caller):
+    """The variables that name whose a command is, from the ``caller`` the
+    platform put on the call that started it (`routes/execution.py`): the
+    attached session (``CHEESE_ATTACHMENT``), the conversation it works
+    (``CHEESE_TOPIC``) and the seat it acts under (``CHEESE_AUTHOR``).
+
+    Laid over that one command's environment and nothing else: this executor's
+    own environment says where it is, never who is asking, so the next call's
+    command does not inherit them. A call with no caller is the environment's
+    own operation — a person's save, a probe — and names nobody."""
+    if not isinstance(caller, dict):
+        return {}
+    named = {
+        "CHEESE_ATTACHMENT": caller.get("attachment"),
+        "CHEESE_TOPIC": caller.get("conversation"),
+        "CHEESE_AUTHOR": caller.get("author"),
+    }
+    return {name: str(value) for name, value in named.items() if value}
+
+
+def task_checkout(executor, params):
+    """The task's checkout, as `task_fs` reads it: the room's workspace for a
+    task with no checkout of its own (``in_workspace``)."""
+    if params.get("in_workspace"):
+        return executor.root
+    home = Path(executor.env["HOME"]).resolve()
+    root = (
+        home / ".cheese" / "tasks" / str(uuid.UUID(str(params["task_id"])))
+    ).resolve()
+    root.relative_to(home)
+    return root
+
+
 def stamp():
     # This shipped script also runs on hosts with Python 3.9.
     return datetime.now(timezone.utc).isoformat()  # noqa: UP017
@@ -193,9 +230,11 @@ def socket_directory(state):
     """The directory this state's service binds its sockets in. A sandboxed
     executor (`confinement.sandbox_argv`) is shown this one directory of the
     machine's /tmp and nothing else there, so its sockets cannot sit beside
-    every other room's."""
+    every other room's. Socket paths use the connector's host UID even when
+    that user maps to UID 0 inside the sandbox."""
     digest = hashlib.sha256(str(Path(state).resolve()).encode()).hexdigest()[:24]
-    return f"/tmp/cheese-execution-{os.getuid()}-{digest}"
+    uid = os.environ.get("CHEESE_CONNECTOR_UID", str(os.getuid()))
+    return f"/tmp/cheese-execution-{uid}-{digest}"
 
 
 def platform_socket_directory(state):
@@ -205,7 +244,8 @@ def platform_socket_directory(state):
     asks of the platform it asks there, and the connector says whose it is by
     which socket it came in on."""
     digest = hashlib.sha256(str(Path(state).resolve()).encode()).hexdigest()[:24]
-    return f"/tmp/cheese-platform-{os.getuid()}-{digest}"
+    uid = os.environ.get("CHEESE_CONNECTOR_UID", str(os.getuid()))
+    return f"/tmp/cheese-platform-{uid}-{digest}"
 
 
 def connect(state):

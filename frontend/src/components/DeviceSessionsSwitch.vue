@@ -136,7 +136,7 @@ watch(open, (value) => {
     <p v-if="loadError" role="alert" class="bs-error">{{ loadError }}</p>
     <v-progress-linear v-else-if="loading" indeterminate />
     <template v-else>
-      <BaseEmptyState v-if="!sessions.length" size="inline" :title="t('work.bulkSwitch.empty')" />
+      <BaseEmptyState v-if="!sessions.length" size="inline" align="center" :title="t('work.bulkSwitch.empty')" />
       <template v-else>
         <v-checkbox
           :model-value="allSelected"

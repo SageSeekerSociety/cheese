@@ -118,7 +118,7 @@ async function remembered(call: () => Promise<AssistantMemory>) {
   })
 }
 
-async function routine(id: string, action: 'pause' | 'resume' | 'delete') {
+async function routine(id: string, action: 'pause' | 'resume' | 'delete' | 'run-now') {
   await run(async () => {
     const now = await setAssistantRoutine(id, action)
     routines.value = now.routines

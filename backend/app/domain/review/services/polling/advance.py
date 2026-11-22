@@ -11,7 +11,7 @@ from app.domain.review.models import AcceptCard, AcceptStatus
 from app.domain.review.repositories import AcceptCardRepository
 from app.domain.review.services import poll_claim
 from app.domain.review.services._shared import logger
-from app.domain.review.task_landing import delivery_landed
+from app.domain.review.task_landing import Landed, delivery_landed
 from app.domain.room_task.models import TaskStatus
 from app.domain.room_task.services import TaskService
 from app.domain.topic.models import Topic
@@ -155,27 +155,35 @@ async def _advance_github_card(
 
 async def _mark_task_merged(
     self: pkg.AcceptService, card: AcceptCard, *, delivered_head: str | None = None
-) -> bool:
-    """Record ``card``'s merge on its task; False when it does not land there.
+) -> Landed | None:
+    """Record ``card``'s merge on its task; None when it does not land there.
 
     A merge the task has already had does not land again — see
     `task_landing._already_landed`. A caller that has words for a batch that
-    just landed says them on this answer."""
+    just landed says them on this answer. What the channel's main line that
+    adopted it in this very `accept` is to read in its reply is kept on the
+    service (`AcceptService.for_adopter`)."""
     if card.task_id is None:
-        return False
+        return None
 
     task = await TaskService(self._session).require_in_room(card.topic_id, card.task_id)
-    return await delivery_landed(
+    landed = await delivery_landed(
         self._session,
         task,
         by=card.decided_by,
         head=delivered_head,
         pr_number=card.pr_number,
-        completes=card.completes_task,
         handed_over=card.created_at,
         record_instruction=self._record_instruction,
         task_teammate=self._task_teammate,
+        announce=self._announce,
+        card_id=card.id,
+        record_seat=self._record_seat,
+        adopting_seat=self._adopting_seat,
     )
+    if landed is not None and landed.for_adopter is not None:
+        self.for_adopter = landed.for_adopter
+    return landed
 
 
 async def note_poll_crashed(

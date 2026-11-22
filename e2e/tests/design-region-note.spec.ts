@@ -128,8 +128,13 @@ createApp({setup(){return()=>h('main',{style:'padding:24px;width:860px;height:66
 ])}}).use(i18n).mount('#fixture');
 </script></body></html>`
 }
+
+// 只读预览（`FileBytesPreview` / `ArtifactVersionPreview`）不摆画图工具条：那里画了没处交，
+// 框选是默认工具（`tool` 一开始就是 `'select'`），不用先点按钮。有工具条的地方照旧先点一下，
+// 钉住「那颗键真的能把工具切回框选」。
 async function dragImage(page: Page, small = false) {
-  await page.getByRole('button', { name: '标一处', exact: true }).click()
+  const select = page.getByRole('button', { name: '标一处', exact: true })
+  if (await select.count()) await select.click()
   const image = await page.locator('.design-image img').boundingBox()
   if (!image) throw new Error('No decoded image layout')
   await page.mouse.move(image.x + (small ? 20 : 80), image.y + (small ? 8 : 70))
@@ -167,7 +172,9 @@ for (const kind of ['file', 'version'] as const) {
     await page.setViewportSize({ width: 1280, height: 760 })
     await page.route('**/__standalone-region__', route => route.fulfill({ contentType: 'text/html', body: standaloneFixture(kind) }))
     await page.goto('/__standalone-region__', { waitUntil: 'commit' })
-    await expect(page.getByRole('button', { name: '标一处', exact: true })).toBeEnabled({ timeout: 60_000 })
+    // 只读预览：没有地方交标注，画图工具条整条不摆，框选层一上来就能拖（#5357 的意图）。
+    await expect(page.getByRole('group', { name: '图上的一块' })).toBeVisible({ timeout: 60_000 })
+    await expect(page.locator('.sketch-toolbar')).toHaveCount(0)
     await dragImage(page)
     await expect(page.locator('.design-image__selection')).toHaveCount(1)
     const region = regionLine(page)
@@ -180,7 +187,8 @@ for (const kind of ['file', 'version'] as const) {
     await page.evaluate(() => (window as unknown as { fixture: { replace: () => void } }).fixture.replace())
     await expect(page.locator('.design-image__selection')).toHaveCount(0)
     await expect(region).toHaveCount(0)
-    await expect(page.getByRole('button', { name: '标一处', exact: true })).toBeEnabled()
+    // 换一版之后照样没有工具条，也照样能直接拖。
+    await expect(page.locator('.sketch-toolbar')).toHaveCount(0)
     await dragImage(page)
     await expect(page.locator('.design-image__selection')).toHaveCount(1)
   })
