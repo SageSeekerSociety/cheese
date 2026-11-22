@@ -170,6 +170,16 @@ const roleKey = computed(() => {
   return section.value === 'roles' && typeof asked === 'string' ? asked : null
 })
 const openRole = computed(() => roles.roles.value.find((r) => r.key === roleKey.value) ?? null)
+// 频道顶部红行的「重新登录」带着 `?focus=<队友>&why=login_expired` 过来：地址归这一页读，
+// 往下传给「AI 队友」那一节，由它把那位队友的卡片滚到眼前、展开登录过期的红条。
+const agentFocus = computed(() => {
+  const asked = router.currentRoute.value.query.focus
+  return typeof asked === 'string' ? asked : ''
+})
+const agentFocusWhy = computed(() => {
+  const asked = router.currentRoute.value.query.why
+  return typeof asked === 'string' ? asked : ''
+})
 function showRole(key: string | null) {
   void router.push({ query: key ? { role: key } : {} })
 }
@@ -428,7 +438,7 @@ function close() {
            在栏之间切换不再等。 -->
       <div v-else class="reveal-gate settings-body" :class="{ 'reveal-gate--waiting': !revealed }">
         <template v-if="section === 'agents'">
-          <AgentTeamSettings :project-id="projectId" />
+          <AgentTeamSettings :project-id="projectId" :focus="agentFocus" :why="agentFocusWhy" />
           <section class="page-section">
             <div class="page-section-head">
               <v-icon size="14" class="c-faint">mdi-brain</v-icon>

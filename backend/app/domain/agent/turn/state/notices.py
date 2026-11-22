@@ -15,6 +15,7 @@ from app.domain.agent.platform_failures import (
     classify_cli_notice,
     classify_platform_failure,
     is_compaction_refused,
+    is_login_expired,
     is_provider_out_of_credit,
     is_request_refused,
 )
@@ -33,6 +34,9 @@ _TOOL_ACTION = {
 #: A failure on the model's side of the call: the room says only that calling
 #: the model went wrong (`model_error_notice`).
 MODEL_ERROR_CODE = "model_error"
+#: The login the teammate runs on expired and could not be refreshed: only a
+#: person signing in again helps, so no retry is offered (`login_expired_notice`).
+LOGIN_EXPIRED_CODE = "login_expired"
 #: The turn ran on a model connection the project's own people added, and its
 #: account has no money left: theirs to top up (`own_out_of_credit_notice`).
 OWN_OUT_OF_CREDIT_CODE = "own_out_of_credit"
@@ -94,6 +98,24 @@ def model_error_notice(text: str | None) -> tuple[str, dict]:
             retryable=True,
         ),
         "code": MODEL_ERROR_CODE,
+    }
+
+
+def login_expired_notice(text: str | None) -> tuple[str, dict]:
+    """The room's line for a turn that stopped because the login it runs on
+    expired. Not ``model_error_notice``: that one offers a retry, and a retry
+    uses the same login and fails the same way. The line says what to do; the
+    service's own words stay one click away."""
+    said = scrub_secrets((text or "").strip())
+    return say("turnFailedLoginExpired"), {
+        **notice(
+            EVENT_TURN_FAILED,
+            severity=SEVERITY_ERROR,
+            who=WHO_HUMAN,
+            detail=said or None,
+            detail_label=say("labelServiceWords") if said else None,
+        ),
+        "code": LOGIN_EXPIRED_CODE,
     }
 
 
@@ -200,6 +222,8 @@ def _turn_failure_notice(
         # telling the reader to retry is the one piece of advice that is wrong
         # here — every retry re-sends the same over-long conversation.
         return context_full_notice(detail, own=own)
+    if is_login_expired(detail):
+        return login_expired_notice(detail)
     out_of_credit = is_provider_out_of_credit(detail)
     if out_of_credit and own:
         # The turn ran on the team's or member's own model connection
