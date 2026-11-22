@@ -1,14 +1,15 @@
-"""每晚的学情分析：读谁的什么、写下什么、什么时候不推进、什么时候收手。
+"""学情分析：读谁的什么、写下什么、什么时候不推进、什么时候收手。
 
-真库（``business_db_factory``）、真的分析任务（``run_nightly``），只有网关是假的：
+真库（``business_db_factory``）、真的分析任务（``run_recent`` 与聚合那一半），只有网关是假的：
 一个 MockTransport 签 key、报价、按测试排好的话作答（或者答 500）。每条用例断的
 都是分析之后库里能读回来的东西 —— 判断、依据、游标、归类、调用次数 —— 以及模型
 读到了什么（它收到的那份材料）。
 
 规则（先写下来、再写的代码）：
 
-- 正常一晚：成员在题目房间里的发言被读，判断带着依据写下，提问被归类，游标停在读过
-  的最后一条；同一天再醒一次不再调用；
+- 正常一轮：成员在题目房间里的发言被读，判断带着依据写下，提问被归类，游标停在读过
+  的最后一条；没有新发言时不再调用；
+- 刚说完的话先不读：最新一条不到停顿时间的人，这一轮不动；
 - 模型调用失败：什么都不写，游标不动，下一次醒来重读同一批；
 - 每块板每天的调用上限：到了就停，没轮到的成员留到明天（游标不动）；
 - 退出这块板的成员不再被读；
@@ -52,8 +53,10 @@ from app.domain.topic.models import new_private_chat
 from app.domain.usage import pricing
 from tests.integration.conftest import project_service, registered
 
-#: 「这一晚」：Asia/Shanghai 03:00，过了默认的 2 点开跑。
-NIGHT = datetime(2026, 11, 17, 3, 0, tzinfo=learning_insight_analysis.LOCAL_ZONE)
+#: 「这一轮」：任何时刻都跑，只要新发言已经过了停顿时间。
+PASS_AT = datetime(2026, 11, 17, 3, 0, tzinfo=learning_insight_analysis.LOCAL_ZONE)
+#: 停顿多长（秒）：一条发言要说多久之前才读。
+SETTLE = 120
 SAID_AT = datetime(2026, 11, 16, 6, 0, tzinfo=UTC)
 POINT = "相关子查询"
 
@@ -109,7 +112,7 @@ def gateway(monkeypatch) -> Gateway:
     monkeypatch.setattr(settings, "llm_gateway_admin_base", "http://gateway")
     monkeypatch.setattr(settings, "llm_gateway_admin_key", "sk-master")
     monkeypatch.setattr(settings, "learning_analysis_model", "deepseek-flash")
-    monkeypatch.setattr(settings, "learning_analysis_run_hour", 2)
+    monkeypatch.setattr(settings, "learning_analysis_settle_seconds", SETTLE)
     monkeypatch.setattr(settings, "learning_analysis_daily_calls_per_space", 50)
     monkeypatch.setattr(settings, "learning_analysis_batch_messages", 40)
     pricing.forget()
@@ -223,14 +226,20 @@ async def _rows(factory, model, **where):
         return list((await session.scalars(stmt)).all())
 
 
-async def _night(factory, gateway: Gateway, now: datetime = NIGHT):
-    return await learning_insight_analysis.run_nightly(
+async def _pass(factory, gateway: Gateway, now: datetime = PASS_AT):
+    return await learning_insight_analysis.run_recent(
+        factory, now=now, transport=gateway.transport
+    )
+
+
+async def _aggregates(factory, gateway: Gateway, now: datetime = PASS_AT):
+    return await learning_insight_analysis.run_class_aggregates(
         factory, now=now, transport=gateway.transport
     )
 
 
 @pytest.mark.anyio
-async def test_a_night_reads_a_members_words_and_writes_judgments_with_evidence(
+async def test_a_pass_reads_a_members_words_and_writes_judgments_with_evidence(
     business_db_factory, gateway
 ):
     factory = business_db_factory
@@ -269,7 +278,7 @@ async def test_a_night_reads_a_members_words_and_writes_judgments_with_evidence(
             ],
         )
     )
-    counts = await _night(factory, gateway)
+    counts = await _pass(factory, gateway)
     assert counts["calls"] == 1
 
     # 模型读到了成员的两条话，以及跟在第一条后面的那段芝士回复（作为上下文）。
@@ -294,23 +303,43 @@ async def test_a_night_reads_a_members_words_and_writes_judgments_with_evidence(
     assert cursor.last_block_id == second
     assert cursor.messages_read == 2
 
-    # 同一天再醒一次：这一晚已经跑完，不再调用。
-    again = await _night(factory, gateway, NIGHT + timedelta(hours=1))
+    # 过一会儿再醒：没有新发言，不再调用。
+    again = await _pass(factory, gateway, PASS_AT + timedelta(hours=1))
     assert again["calls"] == 0
     assert len(gateway.asked) == 1
 
 
 @pytest.mark.anyio
-async def test_nothing_runs_before_the_night_starts(business_db_factory, gateway):
+async def test_a_word_said_a_moment_ago_waits_for_the_burst_to_end(
+    business_db_factory, gateway
+):
+    """刚说完的话先不读：回答可能随后就到，同一句话一句一次调用也太贵。"""
     factory = business_db_factory
     async with factory() as session:
         world = await _board(session, ["ann"])
-        _say(session, world["people"]["ann"], "问一个问题", SAID_AT)
+        ann = world["people"]["ann"]
+        said = _say(session, ann, "还在打字的时候问的一句", SAID_AT)
+        _say(
+            session,
+            ann,
+            "用 t.dept 引用外层。",
+            SAID_AT + timedelta(seconds=10),
+            author=CHEESE_HANDLE,
+        )
         await session.commit()
 
-    counts = await _night(factory, gateway, NIGHT.replace(hour=1))
-    assert counts["calls"] == 0
-    assert gateway.asked == []
+    # 一分钟后就醒了：AI 刚回完，这一句还没放下。
+    counts = await _pass(factory, gateway, SAID_AT + timedelta(minutes=1))
+    assert counts["calls"] == 0 and gateway.asked == []
+
+    # 这一句放下之后：读它，回复也作为上下文进去。
+    gateway.answers.append(
+        _answer([{"point": POINT, "level": "weak", "summary": "x", "evidence": ["m1"]}])
+    )
+    counts = await _pass(factory, gateway, SAID_AT + timedelta(minutes=5))
+    assert counts["calls"] == 1
+    (cursor,) = await _rows(factory, SpaceLearningCursor, user_id=ann["user_id"])
+    assert cursor.last_block_id == said
 
 
 @pytest.mark.anyio
@@ -325,7 +354,7 @@ async def test_a_failed_call_writes_nothing_and_leaves_the_cursor_where_it_was(
         await session.commit()
 
     gateway.answers.append(500)
-    counts = await _night(factory, gateway)
+    counts = await _pass(factory, gateway)
     assert counts["failed"] == 1
     assert await _rows(factory, SpaceLearningJudgment, user_id=ann["user_id"]) == []
     assert await _rows(factory, SpaceLearningCursor, user_id=ann["user_id"]) == []
@@ -339,7 +368,7 @@ async def test_a_failed_call_writes_nothing_and_leaves_the_cursor_where_it_was(
             [{"point": POINT, "level": "shaky", "summary": "x", "evidence": ["m1"]}]
         )
     )
-    await _night(factory, gateway, NIGHT + timedelta(hours=1))
+    await _pass(factory, gateway, PASS_AT + timedelta(hours=1))
     assert "WHERE 里为什么不能写 AVG？" in gateway.asked[-1]
     (cursor,) = await _rows(factory, SpaceLearningCursor, user_id=ann["user_id"])
     assert cursor.last_block_id == said
@@ -358,17 +387,17 @@ async def test_the_daily_cap_stops_the_night_and_leaves_the_rest_for_tomorrow(
         await session.commit()
 
     gateway.answers.append(_answer([]))
-    counts = await _night(factory, gateway)
+    counts = await _pass(factory, gateway)
     assert counts["calls"] == 1
     assert counts["capped"] == 1
     (run,) = await _rows(factory, SpaceLearningRun, space_id=world["space_id"])
-    assert run.capped and run.finished_at is not None
-    # 只有一个人被读了；另一个人的游标没动，明晚接着读。
+    assert run.capped
+    # 只有一个人被读了；另一个人的游标没动，明天接着读。
     cursors = await _rows(factory, SpaceLearningCursor, space_id=world["space_id"])
     assert len(cursors) == 1
 
     gateway.answers.append(_answer([]))
-    tomorrow = await _night(factory, gateway, NIGHT + timedelta(days=1))
+    tomorrow = await _pass(factory, gateway, PASS_AT + timedelta(days=1))
     assert tomorrow["calls"] == 1
     cursors = await _rows(factory, SpaceLearningCursor, space_id=world["space_id"])
     assert len(cursors) == 2
@@ -394,7 +423,7 @@ async def test_a_member_who_left_the_space_is_no_longer_read(
         membership.deleted_at = datetime.now(UTC)
         await session.commit()
 
-    counts = await _night(factory, gateway)
+    counts = await _pass(factory, gateway)
     assert counts["calls"] == 0
     assert gateway.asked == []
     assert await _rows(factory, SpaceLearningCursor, user_id=ann["user_id"]) == []
@@ -430,7 +459,7 @@ async def test_a_judgment_that_points_at_nothing_it_read_is_dropped(
             ]
         )
     )
-    await _night(factory, gateway)
+    await _pass(factory, gateway)
     assert await _rows(factory, SpaceLearningJudgment, user_id=ann["user_id"]) == []
     # 答案读得出来，只是没有站得住的判断：这一批算读过了。
     (cursor,) = await _rows(factory, SpaceLearningCursor, user_id=ann["user_id"])
@@ -453,7 +482,7 @@ async def test_a_private_chat_is_not_read(business_db_factory, gateway):
         await session.commit()
 
     gateway.answers.append(_answer([]))
-    await _night(factory, gateway)
+    await _pass(factory, gateway)
     (prompt,) = gateway.asked
     assert "频道里的问题" in prompt
     assert "私聊里的心里话" not in prompt
@@ -503,7 +532,7 @@ async def test_a_disputed_judgment_is_rechecked_and_the_mark_is_cleared(
             [{"point": POINT, "level": "mastered", "summary": "z", "evidence": ["m1"]}]
         )
     )
-    await _night(factory, gateway)
+    await _pass(factory, gateway)
     (prompt,) = gateway.asked
     # 只读游标之后的那条；旧判断带着「成员认为不准」交给模型复核。
     assert "我自己写出来了" in prompt and "旧的问题" not in prompt
@@ -573,8 +602,10 @@ async def test_a_night_names_misconceptions_groups_questions_and_counts_the_week
     )
     gateway.answers.append(json.dumps({"advice": "用一张逐行扫描的示意图讲五分钟。"}))
 
-    counts = await _night(factory, gateway)
-    assert counts["calls"] == 5
+    read = await _pass(factory, gateway)
+    counts = await _aggregates(factory, gateway)
+    assert read["calls"] == 3
+    assert counts["calls"] == 2
     # 第二个成员的那一问里，模型已经看到第一个人那里归纳出的误解，可以照抄。
     assert WRONG in gateway.asked[1]
 
@@ -599,7 +630,7 @@ async def test_a_night_names_misconceptions_groups_questions_and_counts_the_week
     assert (week.stuck_count, week.involved_count) == (3, 3)
     assert week.week_start.weekday() == 0
     (run,) = await _rows(factory, SpaceLearningRun, space_id=world["space_id"])
-    assert run.finished_at is not None and run.calls == 5
+    assert not run.capped and run.calls == 5
 
 
 @pytest.mark.anyio
@@ -609,25 +640,24 @@ async def test_a_failed_grouping_call_leaves_the_questions_for_the_next_tick(
     factory = business_db_factory
     world = await _three_ask(factory)
     gateway.answers.extend([_stuck_answer()] * 3)
+    await _pass(factory, gateway)
     gateway.answers.append(500)
 
-    counts = await _night(factory, gateway)
+    counts = await _aggregates(factory, gateway)
     assert counts["failed"] == 1
     questions = await _rows(factory, SpaceLearningQuestion, space_id=world["space_id"])
     assert len(questions) == 3 and all(q.cluster_id is None for q in questions)
-    (run,) = await _rows(factory, SpaceLearningRun, space_id=world["space_id"])
-    assert run.finished_at is None
     # 按周快照不调模型，照样记下。
     (week,) = await _rows(factory, SpaceLearningWeek, space_id=world["space_id"])
     assert week.stuck_count == 3
     assert await _rows(factory, SpaceLearningAdvice, space_id=world["space_id"]) == []
 
-    # 同一晚稍后再醒：只剩聚类和建议要做。
+    # 下一小时再醒：只剩聚类和建议要做。
     gateway.answers.append(
         json.dumps({"new": [{"label": "怎么引用外层", "q": ["q1", "q2", "q3"]}]})
     )
     gateway.answers.append(json.dumps({"advice": "先讲相关子查询的执行顺序。"}))
-    await _night(factory, gateway, NIGHT + timedelta(hours=1))
+    await _aggregates(factory, gateway, PASS_AT + timedelta(hours=1))
     questions = await _rows(factory, SpaceLearningQuestion, space_id=world["space_id"])
     assert len({q.cluster_id for q in questions}) == 1
     assert None not in {q.cluster_id for q in questions}
@@ -646,8 +676,10 @@ async def test_questions_of_fewer_than_three_people_are_not_grouped(
         await session.commit()
     gateway.answers.extend([_stuck_answer()] * 2)
 
-    counts = await _night(factory, gateway)
-    assert counts["calls"] == 2
+    read = await _pass(factory, gateway)
+    counts = await _aggregates(factory, gateway)
+    assert read["calls"] == 2
+    assert counts["calls"] == 0
     questions = await _rows(factory, SpaceLearningQuestion, space_id=world["space_id"])
     assert all(q.cluster_id is None for q in questions)
 

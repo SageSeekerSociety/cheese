@@ -19,7 +19,7 @@
     "suggestHint": "The AI reads the challenge text and suggests; only “Use” takes effect",
     "suggesting": "Reading the challenge text…"
   },
-  "intro": "Once on, the AI reads members' conversations with AI teammates inside this board's challenges every night, shows the class-wide picture under “Data › Learning analysis”, and lets each member see their own under “My learning insights”.",
+  "intro": "Once on, the AI reads members' conversations with AI teammates inside this board's challenges, shows the class-wide picture under “Data › Learning analysis”, and lets each member see their own under “My learning insights”.",
   "knowledgePoint": {
     "add": "New knowledge point",
     "cancel": "Cancel",
@@ -69,7 +69,7 @@
     "off": "Learning analysis is not on in this space",
     "offDesc": "Once a space admin turns it on, this page sorts your conversations with the AI in its tasks by knowledge point.",
     "emptyTitle": "No analysis yet",
-    "emptyDesc": "Your new messages in this space's tasks are read once a night and sorted by knowledge point. Check back tomorrow.",
+    "emptyDesc": "Your new messages in this space's tasks are sorted by knowledge point within a minute or two of sending them.",
     "noPoints": "This space has no knowledge points listed yet, so there is nothing to sort by.",
     "focusTitle": "Most worth working on",
     "focusNone": "Nothing needs work right now.",

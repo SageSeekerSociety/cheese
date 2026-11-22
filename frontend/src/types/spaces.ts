@@ -145,7 +145,7 @@ export type SpaceLearningNoticeState = {
 
 // ---- 我的学习洞察（§ learning analysis, step 2）-------------------------------------
 //
-// 每晚分析写下的结果，成员只读得到自己的那一份。契约见 `SpacesApi.readMyLearningInsight`
+// 学情分析写下的结果，成员只读得到自己的那一份。契约见 `SpacesApi.readMyLearningInsight`
 // / `disputeLearningJudgment`；服务端在 `app/domain/space/learning_insight_service.py`。
 
 /** AI 判断的三档。「未涉及」不是一档：没有判断（`judgment: null`）就是它。 */

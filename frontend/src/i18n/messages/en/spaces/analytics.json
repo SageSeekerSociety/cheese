@@ -144,7 +144,7 @@
       "notAnalysed": "Fewer than 3 people, not analysed",
       "memberCode": "Member {code}",
       "lede": {
-        "overview": "Only the class as a whole, never a person; updated every night. A group of fewer than 3 people is not analysed.",
+        "overview": "Only the class as a whole, never a person; updated within minutes of new messages. A group of fewer than 3 people is not analysed.",
         "points": "A focus point is one many people ask about; a hard point is one where many of the people involved are stuck. Adjust both lines below; they only change how this page sorts.",
         "questions": "AI groups questions that mean the same thing and ranks them by how many people asked. One person asking ten times counts once.",
         "words": "Words from this week's messages, without filler words or pasted problem text. Only words at least 3 people used are listed.",
@@ -175,7 +175,7 @@
         "focusLink": "See misconceptions and teaching advice",
         "focusEmpty": "Not enough analysis yet",
         "updated": "Last updated {time}",
-        "notYet": "No analysis yet; members' new messages are read every night",
+        "notYet": "No analysis yet; new messages are read within a minute or two of being sent",
         "legacyTitle": "Existing messages and queues"
       },
       "points": {
@@ -219,7 +219,7 @@
         "levelCount": "{level} {n}",
         "noList": "The {n} people who are stuck are not listed.",
         "adviceTitle": "Teaching advice",
-        "adviceEmpty": "When enough people are stuck, teaching advice is written every night for the points most are stuck on.",
+        "adviceEmpty": "When enough people are stuck, teaching advice is written every hour for the points most are stuck on.",
         "exportPoint": "Export this knowledge point",
         "whoTitle": "Who sees what",
         "whoBody": "Teachers see only the class as a whole: counts, misconceptions and anonymous excerpts, never who is stuck. Excerpts drop names and student numbers and show only a code fixed per space. A group of fewer than 3 people is not analysed.",

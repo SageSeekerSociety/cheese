@@ -710,7 +710,7 @@ LEARNING_QUESTION_KINDS = ("concept", "error", "answer", "verify", "other")
 
 
 class SpaceLearningJudgment(Base):
-    """AI 对一个成员在一块板的一个知识点上「现在怎么样」的判断（每晚分析写）。
+    """AI 对一个成员在一块板的一个知识点上「现在怎么样」的判断（学情分析写）。
 
     One row per (board, person, 知识点): the CURRENT judgment, overwritten by the
     next analysis that has something new to say about that point. History is
@@ -943,7 +943,7 @@ class SpaceLearningQuestion(Base):
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
     #: 这条提问一句话的概括（模型的话，不是原文），至多几十字。
     gist: Mapped[str] = mapped_column(Text, nullable=False, default="")
-    #: 归进的高频问题簇（``SpaceLearningCluster``）；每晚分析的聚类那一步写，还没归
+    #: 归进的高频问题簇（``SpaceLearningCluster``）；学情分析的聚类那一步写，还没归
     #: 进去的是 NULL。
     cluster_id: Mapped[int | None] = mapped_column(
         BigInteger,
@@ -1009,7 +1009,7 @@ class SpaceLearningRun(Base):
 class SpaceLearningCluster(Base):
     """一类高频问题：意思相近的几条提问归成的一簇（§ learning analysis, step 3）。
 
-    每晚分析的聚类那一步写：把还没归类的提问（``SpaceLearningQuestion.gist``）交给
+    学情分析的聚类那一步写：把还没归类的提问（``SpaceLearningQuestion.gist``）交给
     模型，归进已有的簇或建新簇。``label`` 是这一类的代表性问题（模型的话），
     ``knowledge_point_id`` 是它多半落在的知识点（说不出就空）。老师的「高频问题」按
     问过的不同人数排 —— 那是读的时候数 ``space_learning_question`` 里归进来的行，
@@ -1051,7 +1051,7 @@ class SpaceLearningCluster(Base):
 
 
 class SpaceLearningMisconception(Base):
-    """一个知识点下的一种常见误解（每晚分析随判断一起归纳）。
+    """一个知识点下的一种常见误解（学情分析随判断一起归纳）。
 
     模型给一条「不稳 / 薄弱」的判断时顺带说出背后的误解；它先看这个知识点已有的误
     解，能对上就用原话，对不上才说一个新的 —— 新的在这里建一行。判断行指向它
@@ -1099,7 +1099,7 @@ class SpaceLearningMisconception(Base):
 
 
 class SpaceLearningAdvice(Base):
-    """一个知识点的讲课建议，模型写、每晚为卡住人数最多的几个知识点刷新。
+    """一个知识点的讲课建议，模型写、每小时为卡住人数最多的几个知识点刷新。
 
     One row per 知识点: the current advice and the stuck count it was written
     for. The nightly pass rewrites it when that count or the leading

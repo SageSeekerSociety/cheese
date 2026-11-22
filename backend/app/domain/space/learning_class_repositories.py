@@ -530,7 +530,7 @@ class LearningClassReads:
 
 
 class LearningClassWrites:
-    """每晚分析在这一步加的写，以及导出记录。"""
+    """学情分析在这一步加的写，以及导出记录。"""
 
     def __init__(self, session: AsyncSession) -> None:
         self._session = session

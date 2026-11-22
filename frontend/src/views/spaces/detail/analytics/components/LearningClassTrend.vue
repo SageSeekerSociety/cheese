@@ -45,7 +45,7 @@
 </template>
 
 <script setup lang="ts">
-// 趋势：各知识点每周卡住的人数（每晚写的按周快照）。不足 3 人的那一周是空点，线在那里断开。
+// 趋势：各知识点每周卡住的人数（学情分析写的按周快照）。不足 3 人的那一周是空点，线在那里断开。
 import type { LearningClassTrend } from '@/types/apiSpaces'
 
 import { computed } from 'vue'

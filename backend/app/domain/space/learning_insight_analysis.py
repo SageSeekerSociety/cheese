@@ -1,8 +1,15 @@
-"""每晚的学情分析：读成员在题目里的新发言，按知识点给出三档判断（step 2）。
+"""学情分析：读成员在题目里的新发言，按知识点给出三档判断（step 2）。
 
-一块开着学情分析的板，每晚一次：对每个「成员 × 题目」，只读游标之后的新发言，交给
+一块开着学情分析的板，每分钟一次：对每个「成员 × 题目」，只读游标之后的新发言，交给
 模型；模型按这块板的知识点给出「掌握 / 不稳 / 薄弱」，每条都指向它依据的那几条消息，
 再把每条提问归到一个知识点、一种类型下。答案写回结果表，游标推进到读过的最后一条。
+
+**等一句话说完再读**：一个人刚发完的那条，AI 的回复通常十几秒后到，所以只读「最新
+一条至少 ``learning_analysis_settle_seconds`` 秒之前」的那些人 —— 连着问几句、AI 回
+完，这一批一起进去，既不会一句一次调用，回复也能作为上下文读到。
+
+老师那一侧的三件（聚类、讲课建议、按周快照）跨人汇总，另有一个低频任务
+（``run_class_aggregates``），不跟着每分钟的读取跑。
 
 **读什么**（与「数据 › 学习」同一份口径，``learning_service.member_words`` /
 ``readable_rooms``）：只读本板题目项目里成员自己的发言；芝士的回复跟在那条发言后面
@@ -10,7 +17,7 @@
 的话。成员退出这块板（不再有成员座位）之后不再读他，已经写下的结果留着。
 
 **知识点**：题目挂了知识点就只用那几个；没挂就把整块板的清单给模型让它归类；清单是
-空的这块板整晚跳过。
+空的这块板整轮跳过。
 
 **不能编的三处**（``parse`` 清洗，库里的 CHECK 兜底）：档位只有三个值；依据只能是这
 一批里成员自己的消息（模型给的编号对不上就丢）；指不出依据的判断整条丢掉。
@@ -18,12 +25,12 @@
 **谁付钱：开启学情分析的那位管理员**（``Space.learning_analysis_enabled_by``）。和第
 1 步同一个道理：空间没有自己的团队或项目可以记账，账本只有按人和按项目两种付费方；
 这件事没有「发问的人」，是那位管理员替这块板要的，所以记在他名下，先过一次
-``Ledger.admit``（没额度就今晚不跑）。成员自己的项目不付这笔：他们没要这份分析，课程的
+``Ledger.admit``（没额度就不跑）。成员自己的项目不付这笔：他们没要这份分析，课程的
 成员「不花任何东西」（``Space.join_approval`` 的注释）。
 
 **刹车**：每块板每天至多 ``learning_analysis_daily_calls_per_space`` 次调用，调用之前先
-记一次（失败的也算），到了就收工、剩下的明晚接着读。模型调用失败或回答读不出来时不推进
-游标，这一批下次再读。
+记一次（失败的也算），到了就收工、今天剩下的新发言明天接着读。模型调用失败或回答读不出
+来时，不推进游标，这个人下次醒来再读。
 """
 
 from __future__ import annotations
@@ -33,7 +40,7 @@ import logging
 import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -70,7 +77,7 @@ from app.domain.usage.ledger import Ledger, Rates, payer_for_person
 
 logger = logging.getLogger(__name__)
 
-#: 「每晚」按这个时区的日历算（与 ``routine.builtin_triage`` 同一个时区）。
+#: 「一天」按这个时区的日历算（与 ``routine.builtin_triage`` 同一个时区）。
 LOCAL_ZONE = ZoneInfo("Asia/Shanghai")
 
 #: 只有这两种座位的人是被分析的成员：管理员与所有者是这门课的老师，他们自己在题里
@@ -317,50 +324,72 @@ def local_day(now: datetime) -> tuple[date, int]:
 
 
 @dataclass
-class _Night:
-    """What one night needs, settled once before any board is read."""
+class _Pass:
+    """What one pass needs, settled once before any board is read."""
 
     day: date
+    now: datetime
     model: str
     rates: Rates
     transport: httpx.AsyncBaseTransport | None
     counts: dict[str, int]
 
 
-async def run_nightly(
+async def _settle(
+    sessions: SessionFactory,
+    now: datetime | None,
+    transport: httpx.AsyncBaseTransport | None,
+    counts: dict[str, int],
+) -> _Pass | None:
+    """A pass with its model and rates, or nothing when the gateway has no
+    price for the model — an unpriced model cannot be charged for, so it is
+    not called at all."""
+    at = now or datetime.now(UTC)
+    day, _hour = local_day(at)
+    model = model_roles.model("learning_analysis_model")
+    rates = Rates.of(model, await pricing.model_rates(transport))
+    if rates is None:
+        logger.warning("learning analysis: %s is not priced; not running", model)
+        return None
+    return _Pass(
+        day=day,
+        now=at,
+        model=model,
+        rates=rates,
+        transport=transport,
+        counts=counts,
+    )
+
+
+async def _board_ids(sessions: SessionFactory) -> list[int]:
+    async with sessions() as session:
+        return [
+            space.id
+            for space in await LearningConversationReads(session).enabled_spaces()
+        ]
+
+
+async def run_recent(
     sessions: SessionFactory,
     *,
     now: datetime | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> dict[str, int]:
-    """One tick of the nightly analysis over every board that has it on.
+    """Read whoever has new words, on every board that has the analysis on.
 
-    Ticks hourly; before ``learning_analysis_run_hour`` (local) it does nothing,
-    and a board whose run for today has finished is not read again today.
-    Returns counts for the runner's log line.
+    Ticks every minute. A person is read once their newest word is at least
+    ``learning_analysis_settle_seconds`` old, so a burst of messages and the AI
+    reply that follows it go in as one batch rather than one call each. A board
+    that has spent its day's calls is skipped until tomorrow.
     """
     counts = {"spaces": 0, "calls": 0, "failed": 0, "capped": 0}
-    day, hour = local_day(now or datetime.now(UTC))
-    if hour < settings.learning_analysis_run_hour:
+    pass_ = await _settle(sessions, now, transport, counts)
+    if pass_ is None:
         return counts
-    model = model_roles.model("learning_analysis_model")
-    rates = Rates.of(model, await pricing.model_rates(transport))
-    if rates is None:
-        # 网关没报这个模型的价：记不了账，也就不跑 —— 与第 1 步同一条界。
-        logger.warning("learning analysis: %s is not priced; not running", model)
-        return counts
-    night = _Night(
-        day=day, model=model, rates=rates, transport=transport, counts=counts
-    )
-    async with sessions() as session:
-        space_ids = [
-            space.id
-            for space in await LearningConversationReads(session).enabled_spaces()
-        ]
-    for space_id in space_ids:
+    for space_id in await _board_ids(sessions):
         async with sessions() as session:
             try:
-                await _analyse_space(session, space_id, night)
+                await _read_board(session, space_id, pass_)
             except Exception:  # one board must not stop the others
                 await session.rollback()
                 counts["failed"] += 1
@@ -368,80 +397,134 @@ async def run_nightly(
     return counts
 
 
-async def _analyse_space(session: AsyncSession, space_id: int, night: _Night) -> None:
+async def run_class_aggregates(
+    sessions: SessionFactory,
+    *,
+    now: datetime | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> dict[str, int]:
+    """Hourly: the cross-member side of the analysis.
+
+    Grouping questions into clusters and writing a point's teaching advice both
+    read a whole class at once; run every minute they would re-ask the same
+    thing about the same people. This pass keeps them hourly, under the same
+    daily call cap as the reads.
+    """
+    counts = {"spaces": 0, "calls": 0, "failed": 0, "capped": 0}
+    pass_ = await _settle(sessions, now, transport, counts)
+    if pass_ is None:
+        return counts
+    for space_id in await _board_ids(sessions):
+        async with sessions() as session:
+            try:
+                await _aggregate_board(session, space_id, pass_)
+            except Exception:  # one board must not stop the others
+                await session.rollback()
+                counts["failed"] += 1
+                logger.exception("learning aggregates failed space=%s", space_id)
+    return counts
+
+
+async def _open_board(
+    session: AsyncSession, space_id: int, pass_: _Pass
+) -> tuple[Space, SpaceLearningRun, list[SpaceKnowledgePoint], GatewayChat] | None:
+    """The board, today's run row, its points and the gateway, or nothing when
+    this board must not be read now (off, no points, no payer, out of credit,
+    no key, or today's calls spent)."""
     space = await session.get(Space, space_id)
     if space is None or not space.learning_analysis_enabled:
-        return
-    runs = SpaceLearningRunRepository(session)
-    run = await runs.of_day(space_id=space_id, day=night.day)
+        return None
+    run = await SpaceLearningRunRepository(session).of_day(
+        space_id=space_id, day=pass_.day
+    )
     await session.commit()
-    if run.finished_at is not None:
-        return
+    if run.capped:
+        # 今天的调用次数用完了：明天的那一行是新的。
+        return None
     points = list(await SpaceKnowledgePointRepository(session).list_for_space(space_id))
     if not points:
-        return
+        return None
     payer_id = space.learning_analysis_enabled_by
     if payer_id is None:
-        return
+        return None
     refused = await Ledger(session).admit(await payer_for_person(session, payer_id))
     await session.commit()
     if refused is not None:
-        logger.info("learning analysis: payer of space=%s refused tonight", space_id)
-        return
-    key = await service_key(session, knowledge_suggestions.key_spec(), night.transport)
+        logger.info("learning analysis: payer of space=%s refused today", space_id)
+        return None
+    key = await service_key(session, knowledge_suggestions.key_spec(), pass_.transport)
     if key is None:
-        return
+        return None
     chat = GatewayChat(
-        key, night.model, max_tokens=_ANSWER_TOKENS, transport=night.transport
+        key, pass_.model, max_tokens=_ANSWER_TOKENS, transport=pass_.transport
     )
-    night.counts["spaces"] += 1
+    pass_.counts["spaces"] += 1
+    return space, run, points, chat
 
+
+async def _read_board(session: AsyncSession, space_id: int, pass_: _Pass) -> None:
+    opened = await _open_board(session, space_id, pass_)
+    if opened is None:
+        return
+    space, run, points, chat = opened
     reads = LearningConversationReads(session)
-    since = space.learning_analysis_enabled_at
-    pairs = await reads.pending_pairs(space_id=space_id, since=since)
+    settled = pass_.now - timedelta(seconds=settings.learning_analysis_settle_seconds)
+    pairs = await reads.pending_pairs(
+        space_id=space_id,
+        since=space.learning_analysis_enabled_at,
+        settled=settled,
+    )
     seats: dict[int, bool] = {}
-    outcome = "done"
     for pair in pairs:
         if pair.user_id not in seats:
             seat = await space_seats.seat_of(session, space_id, pair.user_id)
             seats[pair.user_id] = seat in ANALYSED_SEATS
         if not seats[pair.user_id]:
-            # 不在这块板里了（或者是这门课的老师）：不再读他的新发言。
+            # 不在这块板里了（或者是这门课的老师）：不读他的新发言。
             continue
         outcome = await _analyse_pair(
-            session, space, pair, run, chat, points=points, night=night
+            session, space, pair, run, chat, points=points, pass_=pass_, until=settled
         )
-        if outcome != "done":
-            break
-    # 老师那一侧的两件（聚类、讲课建议）跟在后面，走同一个调用口和上限。
-    ask = _Asker(session=session, space=space, run=run, chat=chat, night=night)
+        if outcome == "capped":
+            pass_.counts["capped"] += 1
+            await SpaceLearningRunRepository(session).finish(run, capped=True)
+            await session.commit()
+            return
+        if outcome == "failed":
+            # 游标没动：这个人下次醒来再读（调用次数照记，上限照样管着）。
+            pass_.counts["failed"] += 1
+
+
+async def _aggregate_board(session: AsyncSession, space_id: int, pass_: _Pass) -> None:
+    opened = await _open_board(session, space_id, pass_)
+    if opened is None:
+        return
+    space, run, points, chat = opened
+    # 老师那一侧的两件（聚类、讲课建议）走同一个调用口和上限。
+    ask = _Asker(session=session, space=space, run=run, chat=chat, pass_=pass_)
     now = datetime.now(UTC)
-    if outcome == "done":
-        outcome = await learning_class_analysis.cluster_questions(
-            session, space_id=space_id, points=points, ask=ask, now=now
-        )
+    outcome = await learning_class_analysis.cluster_questions(
+        session, space_id=space_id, points=points, ask=ask, now=now
+    )
     if outcome == "done":
         outcome = await learning_class_analysis.refresh_advice(
             session, space_id=space_id, points=points, ask=ask, now=now
         )
-    # 按周快照不调模型：今晚读到哪里，就把那时的人数记进这一周。
+    # 按周快照不调模型：读到哪里，就把那时的人数记进这一周。
     await learning_class_analysis.snapshot_week(
-        session, space_id=space_id, points=points, day=night.day, now=now
+        session, space_id=space_id, points=points, day=pass_.day, now=now
     )
     if outcome == "failed":
-        # 游标没动、没归的提问还没归；这一晚稍后的那次醒来再试（调用次数照记，
-        # 上限照样管着）。
-        night.counts["failed"] += 1
-        return
-    if outcome == "capped":
-        night.counts["capped"] += 1
-    await runs.finish(run, capped=outcome == "capped")
-    await session.commit()
+        pass_.counts["failed"] += 1
+    elif outcome == "capped":
+        pass_.counts["capped"] += 1
+        await SpaceLearningRunRepository(session).finish(run, capped=True)
+        await session.commit()
 
 
 @dataclass
 class _Asker:
-    """The one door the night's model calls go through: the board's daily cap,
+    """The one door a pass's model calls go through: the board's daily cap,
     counted before each call, and the spend written to the payer after it.
     ``learning_class_analysis`` asks through it too."""
 
@@ -449,7 +532,7 @@ class _Asker:
     space: Space
     run: SpaceLearningRun
     chat: GatewayChat
-    night: _Night
+    pass_: _Pass
 
     def capped(self) -> bool:
         return self.run.calls >= settings.learning_analysis_daily_calls_per_space
@@ -457,7 +540,7 @@ class _Asker:
     async def __call__(self, *, system: str, prompt: str) -> str | None:
         await SpaceLearningRunRepository(self.session).count_call(self.run)
         await self.session.commit()
-        self.night.counts["calls"] += 1
+        self.pass_.counts["calls"] += 1
         try:
             answer = await self.chat.complete(
                 system=system,
@@ -470,7 +553,7 @@ class _Asker:
                 "learning analysis call failed space=%s", self.space.id, exc_info=True
             )
             return None
-        await _charge(self.session, self.space, answer, self.night)
+        await _charge(self.session, self.space, answer, self.pass_)
         return answer.content
 
 
@@ -482,15 +565,17 @@ async def _analyse_pair(
     chat: GatewayChat,
     *,
     points: list[SpaceKnowledgePoint],
-    night: _Night,
+    pass_: _Pass,
+    until: datetime | None = None,
 ) -> str:
     """Read this member's new words in this 题目, batch by batch, until they
     are all read (``"done"``), the board's cap is reached (``"capped"``) or a
-    call fails (``"failed"``)."""
+    call fails (``"failed"``). ``until`` is where this pass stops reading: the
+    words that had settled when it began."""
     reads = LearningConversationReads(session)
     cursors = SpaceLearningCursorRepository(session)
     judgments = SpaceLearningJudgmentRepository(session)
-    ask = _Asker(session=session, space=space, run=run, chat=chat, night=night)
+    ask = _Asker(session=session, space=space, run=run, chat=chat, pass_=pass_)
     batch_size = max(1, settings.learning_analysis_batch_messages)
     task_names = await reads.task_names([pair.task_id])
     allowed = await reads.task_points(pair.task_id) or points
@@ -509,6 +594,7 @@ async def _analyse_pair(
                 else None
             ),
             limit=batch_size,
+            until=until,
         )
         if not messages:
             return "done"
@@ -565,7 +651,7 @@ async def _analyse_pair(
 
 
 async def _charge(
-    session: AsyncSession, space: Space, answer: Completion, night: _Night
+    session: AsyncSession, space: Space, answer: Completion, pass_: _Pass
 ) -> None:
     """This call's spend, in the name of whoever switched the analysis on."""
     payer_id = space.learning_analysis_enabled_by
@@ -574,8 +660,8 @@ async def _charge(
     await Ledger(session).charge_priced(
         await payer_for_person(session, payer_id),
         user_id=payer_id,
-        model=night.model,
-        rates=night.rates,
+        model=pass_.model,
+        rates=pass_.rates,
         input_tokens=answer.usage.prompt_tokens,
         output_tokens=answer.usage.completion_tokens,
         cache_read_tokens=answer.usage.cache_read_tokens,

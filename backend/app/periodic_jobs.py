@@ -115,7 +115,8 @@ PERIODIC_JOB_NAMES = (
     "relay balance check",
     "credit warnings",
     "ci activity sweep",  # forge_bound: GitHub Actions run/job reads
-    "learning analysis nightly",
+    "learning analysis recent",
+    "learning class aggregates",
     "learning practice queue",
 )
 
