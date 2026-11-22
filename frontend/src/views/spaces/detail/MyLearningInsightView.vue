@@ -49,6 +49,8 @@ const props = defineProps<{
   /** 我在这一页读到的、还开着的领题（每题一行）；没有就画不出回作业那条路。 */
   myTasks?: Array<{ id: number; name: string }>
 }>()
+// 预览站和别处只摆画面、不给这一项：没有它就是不画那条回去的路，不是崩。
+const myTasks = computed(() => props.myTasks ?? [])
 
 const emit = defineEmits<{
   dispute: [judgmentId: number]
