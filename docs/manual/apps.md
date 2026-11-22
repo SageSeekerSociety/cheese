@@ -21,7 +21,7 @@ order: 3
 ### 下载和安装 {#download}
 
 :::walk
-1. 点右上角的头像，选「下载客户端」，打开下载页。下载页的地址是 `okcheese.com/download`，不登录也能打开。
+1. 点左侧栏底部的头像，选「下载客户端」，打开下载页。下载页的地址是 `okcheese.com/download`，不登录也能打开。
 2. 点「下载 Mac 版」或「下载 Windows 版」，下载完成后安装。按钮下方出现第一次打开时的说明。
 
 ```demo-panel

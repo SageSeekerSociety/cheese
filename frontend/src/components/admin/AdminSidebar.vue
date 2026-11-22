@@ -1,7 +1,6 @@
 <template>
   <SecondaryNavigation>
-    <!-- 手机抽屉的头。桌面上顶栏的「首页」就是回去的路，这里不再写。 -->
-    <div v-if="!mdAndUp" class="sidebar-header">
+    <div class="sidebar-header">
       <span class="t-title">{{ t('admin.layout.brand') }}</span>
       <v-spacer></v-spacer>
     </div>
@@ -37,15 +36,14 @@
 
       <!-- 回工作区，不是回反馈中心：`/` 那一格才是「工作区」的家（HomeDefault），
            `admin.layout.leave` 那句「返回工作区」说的是它。指到 `/feedback` 的话，
-           话和去处对不上 —— 从后台回去会落在反馈中心，而不是刚才那个工作台。桌面上顶栏的
-           「首页」就是这条路，这一行只在手机抽屉里画。 -->
-      <v-list-item v-if="!mdAndUp" rounded="lg" prepend-icon="mdi-arrow-left" to="/" :title="t('admin.layout.leave')" />
+           话和去处对不上 —— 从后台回去会落在反馈中心，而不是刚才那个工作台。 -->
+      <v-list-item rounded="lg" prepend-icon="mdi-arrow-left" to="/" :title="t('admin.layout.leave')" />
     </v-list>
   </SecondaryNavigation>
 </template>
 
 <script setup lang="ts">
-// 管理后台的侧栏（`/admin/*` 的 `sidebar` 视图）。和首页、空间的侧栏同一套：手机上的侧栏头、
+// 管理后台的侧栏（`/admin/*` 的 `sidebar` 视图）。和首页、空间的侧栏同一套：侧栏头、
 // `.side-nav` 的行、共用的宽度，手机上是抽屉。门（确认权限中 / 不是管理员）画在内容区
 // （`AdminLayout`），这里只决定画哪几行。
 import { computed } from 'vue'

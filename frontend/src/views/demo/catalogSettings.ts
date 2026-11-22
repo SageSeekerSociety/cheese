@@ -510,16 +510,15 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
     id: 'project-avatar',
     title: 'ProjectAvatar',
     about:
-      '项目格子：侧栏、切换项目的菜单、个人主页、设置页头都画这一个。没挑过就从项目名取字：跳过开头的标点括号，汉字取一个，拉丁字母取两个词的首字母。',
+      '项目格子：侧栏、切换项目的菜单、个人主页、设置页头都画这一个。没挑过就从项目名取字：跳过开头的标点括号，取第一个字母、数字或汉字。',
     file: 'src/components/common/ProjectAvatar.vue',
     component: ProjectAvatar,
     needs: UI,
     args: { size: 48 },
     states: [
-      { name: 'Lab 1', note: '两个词取首字母。', props: { id: 'p-lab-1', name: 'Lab 1' } },
-      { name: 'Lab 2', note: '只差后一个词，格子也不一样。', props: { id: 'p-lab-2', name: 'Lab 2' } },
+      { name: '两个字', note: '只取第一个字。', props: { id: 'p-lab-1', name: '数据结构' } },
       { name: '括号开头', note: '跳过开头的括号。', props: { id: 'p-os', name: '【期末】操作系统' } },
-      { name: '一个词', note: '取前两个字母。', props: { id: 'p-cheese', name: 'Cheese' } },
+      { name: '英文', note: '只取第一个字母。', props: { id: 'p-cheese', name: 'Cheese' } },
       {
         name: '图标',
         note: '挑过的图标和颜色。',

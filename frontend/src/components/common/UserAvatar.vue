@@ -81,8 +81,8 @@ const {
    */
   kind?: 'person' | 'org'
   /**
-   * 没有图时画的字，替掉按 `name` 取的首字母。项目格子（ProjectAvatar）用它画默认的
-   * 两个字母、自定的文字或表情；画图标时走默认插槽。
+   * 没有图时画的字，替掉按 `name` 取的首字母。项目格子（ProjectAvatar）用它画从项目名
+   * 取的第一个字、自定的文字或表情；画图标时走默认插槽。
    */
   label?: string
   /** 没有图时的底色，替掉按 `seed` 派生的那个。必须是 avatarColor 同一亮度的值（`backgroundForHue`）。 */

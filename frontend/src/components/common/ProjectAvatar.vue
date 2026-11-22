@@ -59,7 +59,8 @@ const label = computed(() => {
 })
 const color = computed(() => projectAvatarColor(id, avatar?.hue))
 
-// 字越多字号越小，四个字母也放得下；表情略大一点，单个字形才看得清。
+// 默认格子只有一个字，用 0.5 的边差不多满；自定的文字可以有四个字母，字越多放得越小；
+// 表情略大一点，单个字形才看得清。
 const fontPx = computed(() => {
   if (kind.value === 'emoji') return Math.round(px.value * 0.56)
   const chars = [...label.value]

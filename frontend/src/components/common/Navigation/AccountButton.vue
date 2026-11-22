@@ -1,11 +1,11 @@
 <template>
-  <!-- 我的头像：桌面顶栏最右那一颗，点开用户菜单（设置、外观、退出登录……），菜单往下弹。
-       没登录时是一颗「登录」。 -->
+  <!-- 我的头像：点开用户菜单（设置、外观、退出登录……）。桌面上住在侧栏底，没有侧栏的
+       页面和平板上侧栏收起时住在顶栏右边（appNav.ts）。没登录时是一颗「登录」。 -->
   <v-menu
     v-if="userMenu.loggedIn.value"
     v-model="userMenu.menuOpen.value"
     open-on-click
-    location="bottom end"
+    :location="placement === 'bar' ? 'bottom end' : 'top start'"
     :offset="8"
     transition="scale-transition"
   >
@@ -14,7 +14,7 @@
       <button
         type="button"
         class="account-button"
-        :class="{ 'account-button--open': userMenu.menuOpen.value }"
+        :class="{ 'account-button--named': showName, 'account-button--open': userMenu.menuOpen.value }"
         data-testid="account-button"
         :aria-label="userMenu.nickname.value"
         v-bind="props"
@@ -22,6 +22,7 @@
       >
         <!-- 组件写法而不是 v-tooltip 指令：指令没有开关，浮层开出去就收不回来。 -->
         <v-tooltip
+          v-if="!showName"
           v-model="tipOpen"
           activator="parent"
           location="bottom"
@@ -32,8 +33,9 @@
           :avatar="userMenu.avatar.value ?? ''"
           :name="userMenu.nickname.value"
           :seed="userMenu.currentUser.value?.username"
-          :size="24"
+          :size="28"
         />
+        <span v-if="showName" class="account-button__name" data-user-content>{{ userMenu.nickname.value }}</span>
       </button>
     </template>
     <UserMenuCard :menu="userMenu" />
@@ -54,6 +56,15 @@ import UserMenuCard from './UserMenuCard.vue'
 
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
+
+withDefaults(
+  defineProps<{
+    /** 住在哪：侧栏底（带昵称，菜单往上弹）还是顶栏（只有头像，菜单往下弹）。 */
+    placement?: 'sidebar' | 'bar'
+    showName?: boolean
+  }>(),
+  { placement: 'sidebar', showName: false }
+)
 
 const userMenu = useUserMenu()
 
@@ -81,7 +92,7 @@ useEventListener(
   align-items: center;
   gap: 8px;
   min-width: 0;
-  padding: 2px;
+  padding: 3px;
   color: var(--text);
   text-decoration: none;
   cursor: pointer;
@@ -91,9 +102,23 @@ useEventListener(
   transition: background-color var(--dur-quick) var(--ease-standard);
 }
 
+.account-button--named {
+  flex: 1;
+  padding: 4px 6px;
+}
+
 .account-button:hover,
 .account-button--open {
   background: var(--fill);
+}
+
+.account-button__name {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .account-button--signin {
