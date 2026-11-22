@@ -15,6 +15,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 import AppBar from './AppBar.vue'
 import { provideAppNav } from './appNav'
+import PageSidebarToggle from './PageSidebarToggle.vue'
 
 import i18n, { setLocale } from '@/i18n'
 import { closeFirstPaint } from '@/test/firstPaint'
@@ -40,7 +41,7 @@ beforeAll(() => {
   }
 })
 
-async function mount(loggedIn: boolean, sidebarFolded = ref(false)) {
+async function mount(loggedIn: boolean, sidebarFolded = ref(false), pageHeader = false) {
   // 首帧那道门关着：这一组用例看的是顶栏的形状，不需要它去问任何东西。
   closeFirstPaint()
   const router = createRouter({
@@ -52,7 +53,7 @@ async function mount(loggedIn: boolean, sidebarFolded = ref(false)) {
   // 挂在 `v-layout` 里：顶栏是一条 `v-system-bar`，它要问注入进来的布局算自己的高度
   //（同 `MobileAppBar.slot.spec.ts` 那份）。
   const Host = {
-    components: { AppBar },
+    components: { AppBar, PageSidebarToggle },
     setup: () => {
       provideAppNav({
         items: computed(() => []),
@@ -63,9 +64,10 @@ async function mount(loggedIn: boolean, sidebarFolded = ref(false)) {
         foldSidebar: computed(() => () => (sidebarFolded.value = true)),
         unfoldSidebar: computed(() => (sidebarFolded.value ? () => (sidebarFolded.value = false) : null)),
       })
-      return { loggedIn }
+      return { loggedIn, pageHeader }
     },
-    template: '<v-layout><AppBar :logged-in="loggedIn" has-sidebar /></v-layout>',
+    template:
+      '<v-layout><AppBar :logged-in="loggedIn" has-sidebar /><header v-if="pageHeader"><PageSidebarToggle /></header></v-layout>',
   }
   return render(Host, {
     global: { plugins: [createVuetify({ components, directives }), router, createPinia(), i18n] },
@@ -83,8 +85,20 @@ describe('桌面顶栏', () => {
     expect(container.querySelector('.language-toggle')).toBeNull()
   })
 
-  it('侧栏收起后，展开它的按钮在顶栏上；侧栏开着时顶栏上没有它', async () => {
+  it('侧栏收起后，页头上有一颗展开它的按钮，全页只有这一颗', async () => {
     // A wide window: the sidebar is a cell of the layout, not the tablet's overlay.
+    Object.defineProperty(window, 'innerWidth', { value: 1440, writable: true, configurable: true })
+    const folded = ref(true)
+    const { findAllByRole, queryByRole } = await mount(true, folded, true)
+    const buttons = await findAllByRole('button', { name: '展开侧栏' })
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0].closest('header')).not.toBeNull()
+    await fireEvent.click(buttons[0])
+    expect(folded.value).toBe(false)
+    await vi.waitFor(() => expect(queryByRole('button', { name: '展开侧栏' })).toBeNull())
+  })
+
+  it('页头没有那颗按钮的页面，收起的侧栏从顶栏展开', async () => {
     Object.defineProperty(window, 'innerWidth', { value: 1440, writable: true, configurable: true })
     const folded = ref(true)
     const { findByRole, queryByRole } = await mount(true, folded)

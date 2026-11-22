@@ -22,6 +22,7 @@ import { useDisplay } from 'vuetify'
 
 import { headerCommands } from '@/commands'
 import BaseButton from '@/components/base/BaseButton.vue'
+import PageSidebarToggle from '@/components/common/Navigation/PageSidebarToggle.vue'
 import NavLink from '@/components/common/NavLink.vue'
 
 withDefaults(
@@ -54,6 +55,7 @@ const { mdAndUp } = useDisplay()
     <!-- 手机上页名写在顶栏里（路由的 title），按钮也由顶栏画，这一条只剩状态；没有
          状态就整条不画。 -->
     <header v-if="mdAndUp || $slots.meta" class="app-page__head" :class="`app-page__head--${width}`">
+      <PageSidebarToggle v-if="mdAndUp" class="app-page__sidebar-toggle" />
       <div class="app-page__head-row">
         <h1 v-if="mdAndUp" class="app-page__title t-title">
           <template v-if="parent">
@@ -170,6 +172,38 @@ const { mdAndUp } = useDisplay()
 }
 .app-page__head--admin .app-page__head-row {
   max-width: var(--page-w-admin);
+}
+/* 封顶居中的那几档里，展开侧栏的按钮贴页头最左，标题仍和正文从同一条竖线开始；窗口窄到
+   内容列左边留不出按钮的位置时，这一行往右让出它（百分比按页头的宽度算）。 */
+.app-page__head--read,
+.app-page__head--wide,
+.app-page__head--prose,
+.app-page__head--admin {
+  position: relative;
+}
+.app-page__head--read > .app-page__sidebar-toggle,
+.app-page__head--wide > .app-page__sidebar-toggle,
+.app-page__head--prose > .app-page__sidebar-toggle,
+.app-page__head--admin > .app-page__sidebar-toggle {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  transform: translateY(-50%);
+}
+.app-page__head--read:has(> .app-page__sidebar-toggle) .app-page__head-row {
+  padding-inline-start: clamp(16px, calc(52px - (100% - var(--page-w) - 32px) / 2), 52px);
+}
+.app-page__head--wide:has(> .app-page__sidebar-toggle) .app-page__head-row {
+  padding-inline-start: clamp(16px, calc(52px - (100% - var(--page-w-wide) - 32px) / 2), 52px);
+}
+.app-page__head--prose:has(> .app-page__sidebar-toggle) .app-page__head-row {
+  padding-inline-start: clamp(16px, calc(52px - (100% - var(--page-w-read) - 32px) / 2), 52px);
+}
+.app-page__head--admin:has(> .app-page__sidebar-toggle) .app-page__head-row {
+  padding-inline-start: clamp(16px, calc(52px - (100% - var(--page-w-admin)) / 2), 52px);
+}
+.app-page__head--full:has(> .app-page__sidebar-toggle) {
+  padding-inline-start: 12px;
 }
 /* 满宽那一档的正文自己管内边距，铺满内容区的几页（资料库和在那里打开的文档、产物、项目
    章程、团队的项目和文档）都离左边 24。页头标题跟着它们缩进同样的距离。 */

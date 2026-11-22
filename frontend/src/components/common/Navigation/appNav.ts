@@ -26,7 +26,7 @@ export interface AppNav {
   frame: { top: Component; foot: Component }
   /** 收起侧栏（侧栏头上那颗按钮）。只有侧栏是布局区的一格时（宽档）才有。 */
   foldSidebar: ComputedRef<(() => void) | null>
-  /** 展开收起的侧栏（顶栏最左那颗按钮）。只有宽档里侧栏收着时才有。 */
+  /** 展开收起的侧栏（页头最左那颗按钮）。只有宽档里侧栏收着时才有。 */
   unfoldSidebar: ComputedRef<(() => void) | null>
 }
 

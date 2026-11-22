@@ -355,7 +355,7 @@ const hasSidebar = computed(() => currentRoute.matched.some((record) => record.c
 const pageHost = providePagePanels()
 const { compact: compactDesktop } = useSidebarCollapse()
 const sidebarInArea = computed(() => display.mdAndUp.value && !compactDesktop.value && hasSidebar.value)
-// 宽档里侧栏收起后那一格整个不占地方，展开它的开关在顶栏最左（AppBar）。
+// 宽档里侧栏收起后那一格整个不占地方，展开它的按钮在页头最左（PageSidebarToggle）。
 const sidebarFolded = rememberedFold(SIDEBAR_FOLD_KEY)
 const sidebarShown = computed(() => sidebarInArea.value && !sidebarFolded.value)
 const outlets = pageHost.outlets
@@ -406,7 +406,7 @@ watch(
         }
       : null)
 )
-/** 收起侧栏（侧栏头上那颗按钮）、再展开它（顶栏最左那颗）：宽档里它是布局区的一格。 */
+/** 收起侧栏（侧栏头上那颗按钮）、再展开它（页头最左那颗）：宽档里它是布局区的一格。 */
 function foldSidebar() {
   areaRef.value?.fold('sidebar', true)
 }

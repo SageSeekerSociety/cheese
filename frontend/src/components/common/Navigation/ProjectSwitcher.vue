@@ -139,7 +139,7 @@
         </router-link>
       </div>
     </v-menu>
-    <!-- 宽档里侧栏能收起（布局区那一格），收起之后顶栏最左那颗按钮展开它。 -->
+    <!-- 宽档里侧栏能收起（布局区那一格），收起之后页头最左那颗按钮展开它。 -->
     <BaseButton
       v-if="foldSidebar"
       kind="ghost"

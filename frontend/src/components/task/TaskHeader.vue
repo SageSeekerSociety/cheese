@@ -18,6 +18,7 @@ import { vGuideAnchor } from '@/composables/useGuideAnchors'
 import { takesPartInTask, taskActions } from '@/commands/taskActions'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
+import PageSidebarToggle from '@/components/common/Navigation/PageSidebarToggle.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import EnvironmentMenu from '@/components/EnvironmentMenu.vue'
@@ -271,6 +272,7 @@ function actionTestId(id: string): string | undefined {
 
 <template>
   <div v-guide-anchor="'task-page'" class="task-header" :class="{ 'task-header--bar': !mdAndUp }">
+    <PageSidebarToggle v-if="mdAndUp" />
     <div class="task-header__text">
       <button v-if="mdAndUp" type="button" class="task-header__room t-title" @click="emit('open-room')">
         # {{ topicTitle(room) }}

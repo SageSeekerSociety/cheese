@@ -10,8 +10,8 @@
     :class="{ 'app-system-bar--window-buttons': titleBarInset }"
     :data-tauri-drag-region="titleBarInset ? 'deep' : undefined"
   >
-    <!-- 侧栏的开关。平板横放那一档（960–1180）侧栏默认收起，一直由它管；宽档里侧栏收起后
-         那一格不占地方，展开它的也是这一颗。 -->
+    <!-- 侧栏的开关。平板横放那一档（960–1180）侧栏默认收起，一直由它管。宽档里侧栏收起后，
+         展开它的按钮在页头最左（PageSidebarToggle）；这一页的页头没有画它时，补在这里。 -->
     <BaseButton
       v-if="(compact && hasSidebar) || unfoldSidebar"
       data-sidebar-toggle
@@ -72,6 +72,7 @@ import { homeItemOf, useAppNav } from './appNav'
 import DesktopUpdateReady from './DesktopUpdateReady.vue'
 import HelpAndFeedbackMenu from './HelpAndFeedbackMenu.vue'
 import ParentBackButton from './ParentBackButton.vue'
+import { pageSidebarToggles } from './sidebarToggle'
 
 import CheeseLogo from '@/assets/logo-plain.svg?component'
 import AgentRailEntry from '@/components/assistant/AgentRailEntry.vue'
@@ -91,7 +92,9 @@ const props = withDefaults(defineProps<{ loggedIn: boolean; hasSidebar?: boolean
 
 const { compact, open, toggle } = useSidebarCollapse()
 const appNav = useAppNav()
-const unfoldSidebar = computed(() => (compact.value ? null : appNav?.unfoldSidebar.value ?? null))
+const unfoldSidebar = computed(() =>
+  compact.value || pageSidebarToggles.value > 0 ? null : appNav?.unfoldSidebar.value ?? null
+)
 const sidebarOpen = computed(() => !unfoldSidebar.value && open.value)
 const homeItem = computed(() => homeItemOf(appNav?.items.value ?? []))
 const homeLabel = computed(() => {
