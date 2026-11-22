@@ -20,9 +20,11 @@ export interface AskOption {
 /** 答过这道题的一句话：点了它的一个选项（`option`），或者他自己说的（`note`）；
  *  `skipped` 是被问的人跳过了它，不带选项也不带话，`reply_id` 为 null。
  *  `withdrawn` / `expired` 是提问方收起题的那一条（撤回 / 过了时效）：算题的状态，
- *  不算回答，`by` 是提问方。 */
+ *  不算回答，`by` 是提问方。
+ *  `pending` 是 2026-11-22 以前写下的打字回复（那时要等提问方确认）；现在按作答读，
+ *  前端也照 `note` 画。 */
 export interface AskAnswerEntry {
-  kind: 'option' | 'note' | 'reject' | 'skipped' | 'withdrawn' | 'expired'
+  kind: 'option' | 'note' | 'pending' | 'reject' | 'skipped' | 'withdrawn' | 'expired'
   option: string | null
   note: string | null
   by: string
