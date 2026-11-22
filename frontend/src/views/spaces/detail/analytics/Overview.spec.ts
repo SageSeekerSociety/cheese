@@ -101,9 +101,7 @@ describe('总览看板容器', () => {
   it('学情那一眼单独读：读到了交给画面，读不到整页照旧（不画成失败）', async () => {
     const { LEARNING_CLASS_OVERVIEW } = await import('@/views/demo/catalogLearningClassFixtures')
     // 一遍各读一次：第一次失败、第二次读到。
-    api.getLearningClassOverview
-      .mockRejectedValueOnce(new Error('down'))
-      .mockResolvedValueOnce(LEARNING_CLASS_OVERVIEW)
+    api.getLearningClassOverview.mockRejectedValueOnce(new Error('down')).mockResolvedValueOnce(LEARNING_CLASS_OVERVIEW)
     await renderPage()
     expect(state['failed']).toBe(false)
     expect(state['learning']).toBeNull()
