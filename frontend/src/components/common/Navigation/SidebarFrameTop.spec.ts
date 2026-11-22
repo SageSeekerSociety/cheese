@@ -98,6 +98,7 @@ async function mount(path: string, reorder = vi.fn(), props: { homeArea?: boolea
         loggedIn: computed(() => true),
         frame: { top: SidebarFrameTop, foot: SidebarFrameTop },
         foldSidebar: computed(() => null),
+        unfoldSidebar: computed(() => null),
       })
       return () => h(SidebarFrameTop, props)
     },

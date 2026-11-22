@@ -10,17 +10,18 @@
     :class="{ 'app-system-bar--window-buttons': titleBarInset }"
     :data-tauri-drag-region="titleBarInset ? 'deep' : undefined"
   >
-    <!-- 平板横放那一档（960–1180）：侧栏默认收起，这颗开关管它（原来在左边那一列顶上）。 -->
+    <!-- 侧栏的开关。平板横放那一档（960–1180）侧栏默认收起，一直由它管。宽档里侧栏收起后，
+         展开它的按钮在页头最左（PageSidebarToggle）；这一页的页头没有画它时，补在这里。 -->
     <BaseButton
-      v-if="compact && hasSidebar"
+      v-if="(compact && hasSidebar) || unfoldSidebar"
       data-sidebar-toggle
       icon="mdi-page-layout-sidebar-left"
       size="sm"
-      :aria-expanded="open ? 'true' : 'false'"
+      :aria-expanded="sidebarOpen ? 'true' : 'false'"
       :aria-controls="SIDEBAR_DRAWER_ID"
-      :aria-label="open ? t('navigation.sidebar.collapse') : t('navigation.sidebar.expand')"
-      :title="open ? t('navigation.sidebar.collapse') : t('navigation.sidebar.expand')"
-      @click="toggle"
+      :aria-label="sidebarOpen ? t('navigation.sidebar.collapse') : t('navigation.sidebar.expand')"
+      :title="sidebarOpen ? t('navigation.sidebar.collapse') : t('navigation.sidebar.expand')"
+      @click="unfoldSidebar ? unfoldSidebar() : toggle()"
     />
     <!-- 侧栏上「首页」那一行（回首页，带等你处理的件数）：侧栏看不见的时候（这一页没有侧栏、
          平板上侧栏收着）画在这里，回首页总够得着（Navigation/appNav.ts）。 -->
@@ -71,6 +72,7 @@ import { homeItemOf, useAppNav } from './appNav'
 import DesktopUpdateReady from './DesktopUpdateReady.vue'
 import HelpAndFeedbackMenu from './HelpAndFeedbackMenu.vue'
 import ParentBackButton from './ParentBackButton.vue'
+import { pageSidebarToggles } from './sidebarToggle'
 
 import CheeseLogo from '@/assets/logo-plain.svg?component'
 import AgentRailEntry from '@/components/assistant/AgentRailEntry.vue'
@@ -90,6 +92,10 @@ const props = withDefaults(defineProps<{ loggedIn: boolean; hasSidebar?: boolean
 
 const { compact, open, toggle } = useSidebarCollapse()
 const appNav = useAppNav()
+const unfoldSidebar = computed(() =>
+  compact.value || pageSidebarToggles.value > 0 ? null : appNav?.unfoldSidebar.value ?? null
+)
+const sidebarOpen = computed(() => !unfoldSidebar.value && open.value)
 const homeItem = computed(() => homeItemOf(appNav?.items.value ?? []))
 const homeLabel = computed(() => {
   const item = homeItem.value

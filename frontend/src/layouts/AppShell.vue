@@ -54,13 +54,13 @@
       <!-- 桌面上整块是一个布局区（components/layout-area）：侧栏一格、页面一格；页面要是
            不止一块（对话、工作面板的各页签），它把那几块交给这里（layouts/pagePanels.ts），
            排在页面自己那一格（页头）下面。页签可以拖去分屏、拖进别的格子，格子可以收起、
-           放大，摆法按页面的种类记在这台设备上；侧栏和页头不动，侧栏能收成一条。 -->
+           放大，摆法按页面的种类记在这台设备上；侧栏和页头不动，侧栏能收起。 -->
       <LayoutArea
         v-if="$vuetify.display.mdAndUp"
         ref="areaRef"
         v-model:maximized="pageHost.maximized.value"
         class="app-area"
-        :class="{ 'app-area--edge': !sidebarInArea, 'app-area--alone': !hasSidebar }"
+        :class="{ 'app-area--edge': !sidebarShown, 'app-area--alone': !hasSidebar }"
         :panels="areaPanels"
         :default-arrangement="areaDefault"
         :storage-key="areaKey"
@@ -78,8 +78,7 @@
         </template>
       </LayoutArea>
       <!-- 内容区是一整块 surface，外框（一级导航、侧栏、顶栏）是 canvas：设计规范 §1.4。
-           左边那条线就是侧栏和内容的分界；没有侧栏的页面，这块面挨着一级导航，左上角
-           拐成和侧栏一样的圆角。桌面上它是布局区里页面那一格的内容（传送进去），手机上
+           左边那条线就是侧栏和内容的分界。桌面上它是布局区里页面那一格的内容（传送进去），手机上
            就在这里；同一个实例，跨过断点也不重挂页面。 -->
       <Teleport :to="outlets.page" :disabled="!outlets.page || !$vuetify.display.mdAndUp">
         <div
@@ -243,7 +242,7 @@ import SidebarFrameFoot from '@/components/common/Navigation/SidebarFrameFoot.vu
 import SidebarFrameTop from '@/components/common/Navigation/SidebarFrameTop.vue'
 import OfflineBanner from '@/components/common/OfflineBanner.vue'
 import VersionBadge from '@/components/common/VersionBadge.vue'
-import { LayoutArea } from '@/components/layout-area'
+import { LayoutArea, rememberedFold } from '@/components/layout-area'
 import { t } from '@/i18n'
 import AgentHost from '@/layouts/AgentHost.vue'
 import { providePagePanels } from '@/layouts/pagePanels'
@@ -355,6 +354,9 @@ const hasSidebar = computed(() => currentRoute.matched.some((record) => record.c
 const pageHost = providePagePanels()
 const { compact: compactDesktop } = useSidebarCollapse()
 const sidebarInArea = computed(() => display.mdAndUp.value && !compactDesktop.value && hasSidebar.value)
+// 宽档里侧栏收起后那一格整个不占地方，展开它的按钮在页头最左（PageSidebarToggle）。
+const sidebarFolded = rememberedFold(SIDEBAR_FOLD_KEY)
+const sidebarShown = computed(() => sidebarInArea.value && !sidebarFolded.value)
 const outlets = pageHost.outlets
 const { width: sidebarCellWidth } = useElementSize(computed(() => outlets.sidebar ?? null))
 provide(SIDEBAR_CELL_WIDTH, sidebarCellWidth)
@@ -381,7 +383,7 @@ const areaPanels = computed<LayoutPanel[]>(() => [
     icon: 'mdi-page-layout-sidebar-left',
     bare: true,
     pinned: true,
-    hidden: !sidebarInArea.value,
+    hidden: !sidebarShown.value,
     width: SIDEBAR_WIDTH,
     foldKey: SIDEBAR_FOLD_KEY,
   },
@@ -403,9 +405,12 @@ watch(
         }
       : null)
 )
-/** 收起侧栏（侧栏头上那颗按钮）：宽档里它是布局区的一格，收成一条，点那一条再展开。 */
+/** 收起侧栏（侧栏头上那颗按钮）、再展开它（页头最左那颗）：宽档里它是布局区的一格。 */
 function foldSidebar() {
   areaRef.value?.fold('sidebar', true)
+}
+function unfoldSidebar() {
+  areaRef.value?.fold('sidebar', false)
 }
 const areaDefault = computed<LayoutArrangement>(() => {
   const claim = pageClaim.value
@@ -584,6 +589,7 @@ provideAppNav({
   loggedIn,
   frame: { top: SidebarFrameTop, foot: SidebarFrameFoot },
   foldSidebar: computed(() => (sidebarInArea.value ? foldSidebar : null)),
+  unfoldSidebar: computed(() => (sidebarInArea.value && sidebarFolded.value ? unfoldSidebar : null)),
 })
 
 // rail 的悬停浮层写着第 N 格的快捷键；这里是它真正被绑上的地方。浏览器里是 G 然后 N，
@@ -777,8 +783,7 @@ onBeforeUnmount(
   height: 100%;
   min-width: 0;
 }
-/* 侧栏和页面那一格的底是外框的 canvas：侧栏左上角、没有侧栏时页面左上角那个圆角外面
-   露出来的是它（§1.4），不是格子的 surface。 */
+/* 侧栏和页面那一格的底是外框的 canvas（§1.4），不是格子的 surface。 */
 .app-outlet[data-page-panel='sidebar'],
 .app-outlet[data-page-panel='page'] {
   background: var(--canvas);
@@ -789,7 +794,7 @@ onBeforeUnmount(
 }
 /* 桌面上内容区左边那条线不再由页面那一格画：它要从页头一直贯到对话和面板底下。侧栏在
    布局区里时，那条线就是布局区的分隔线（也是拖它的地方）；侧栏收着（960–1180）或这一页
-   没有侧栏时，布局区自己画，没有侧栏时连同上沿和左上角那个圆角。 */
+   没有侧栏时，布局区自己画，没有侧栏时连同上沿。 */
 .app-pane.app-pane--in-area {
   border-left: 0;
 }
@@ -799,11 +804,9 @@ onBeforeUnmount(
 .app-area--alone {
   overflow: hidden;
   border-top: 1px solid var(--line);
-  border-top-left-radius: 12px;
 }
 .app-area--alone .app-pane--in-area {
   border-top: 0;
-  border-top-left-radius: 0;
 }
 /* 格子里的侧栏宽度跟着格子，拖分隔线时每一帧都在变：不走抽屉自带的 0.2 秒宽度过渡，
    不然这一栏永远缓在半路上、追不上指针。 */
