@@ -1449,3 +1449,23 @@ test('房间面板的「例行事务」那一格铺满整条面板', async ({ pa
     `面板 ${Math.round(widths.body)}px，这一格只有 ${Math.round(widths.pane)}px`
   ).toBeLessThanOrEqual(1);
 });
+
+test('放大一格时，页头和侧栏留在原处', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await apiLogin(page);
+  const rows = await openFirstProject(page);
+  await rows.first().click();
+  await page.waitForURL(/\/channels\//);
+  await page.goto(`${new URL(page.url()).pathname}?tab=routines`);
+  await expect(page.locator('.work-pane .routine-panel')).toBeVisible();
+
+  const sidebar = page.getByTestId('sidebar-frame-top');
+  const head = page.locator('.topic-header');
+  const before = await Promise.all([sidebar.boundingBox(), head.boundingBox()]);
+  await page.locator('[data-layout-maximize]:visible').last().click();
+  await expect(page.getByRole('button', { name: '还原' })).toBeVisible();
+
+  await expect(sidebar).toBeVisible();
+  await expect(head).toBeVisible();
+  expect(await Promise.all([sidebar.boundingBox(), head.boundingBox()])).toEqual(before);
+});

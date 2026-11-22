@@ -132,8 +132,14 @@ const model = shallowRef<LayoutArrangement>({ root: null })
 let collapsed = new Set<string>()
 /** For each collapsed group, the size it opens back to. */
 let expanded = new Map<string, number>()
-/** The group dockview has maximized, if any. */
+/**
+ * The maximized group, if any. Maximizing is done here, by hiding the other cells, and
+ * not with dockview's own maximize: that one hides every other cell, the page head and
+ * the sidebar among them, and those two stay where they are.
+ */
 const maximizedGroup = ref<string | null>(null)
+/** The groups hidden for the maximized one, shown again when it ends. */
+let hiddenForMaximize: string[] = []
 let loading = false
 
 const panelInfo = (id: string) => info.value.get(id)
@@ -160,7 +166,7 @@ function load(arrangement: LayoutArrangement) {
   if (!dock) return
   loading = true
   try {
-    if (dock.hasMaximizedGroup()) dock.exitMaximizedGroup()
+    exitMaximize()
     const next = withCellIds(reconcile(arrangement, declared.value))
     stripped.clear()
     constrained.clear()
@@ -203,7 +209,7 @@ function sync() {
   const dock = api.value
   if (!dock || loading) return
   // Maximizing hides the other cells only for the moment; the arrangement is unchanged.
-  if (dock.hasMaximizedGroup()) return
+  if (maximizedGroup.value) return
   const derived = fromDockview(dock.toJSON(), collapsed, expanded)
   if (hasPlacementFault(derived, declared.value)) {
     load(derived)
@@ -229,12 +235,11 @@ let shownBefore = ''
 function refreshActives() {
   const dock = api.value
   if (!dock) return
-  const maximized = dock.hasMaximizedGroup()
   const shown: string[] = []
   for (const group of dock.groups) {
     const id = group.activePanel?.id
     if (activeOf[group.id] !== id) activeOf[group.id] = id
-    const inSight = group.api.isVisible && !collapsed.has(group.id) && (!maximized || group.api.isMaximized())
+    const inSight = group.api.isVisible && !collapsed.has(group.id)
     if (id && inSight) shown.push(id)
   }
   const key = shown.join('\n')
@@ -257,8 +262,10 @@ function applyPolicies() {
   const dock = api.value
   if (!dock) return
   // The page hid the panels of the maximized cell: the maximize ends with them.
-  const big = dock.groups.find((group) => group.api.isMaximized())
-  if (big && infosOf(big).length && infosOf(big).every((panel) => panel.hidden)) dock.exitMaximizedGroup()
+  const big = dock.groups.find((group) => group.id === maximizedGroup.value)
+  if (maximizedGroup.value && (!big || (infosOf(big).length && infosOf(big).every((panel) => panel.hidden)))) {
+    exitMaximize()
+  }
   /** A cell appeared, disappeared or changed its limits: the room the others had changed. */
   let reshaped = false
   for (const group of dock.groups) {
@@ -296,8 +303,8 @@ function applyPolicies() {
       group.api.setSize({ height: fitHeight })
     }
     const hidden = panels.length > 0 && panels.every((panel) => panel.hidden)
-    // dockview hides the other cells while one is maximized, and shows them again itself.
-    if (!dock.hasMaximizedGroup() && group.api.isVisible === hidden) {
+    // While a cell is maximized the others are hidden for it, and shown again when it ends.
+    if (!maximizedGroup.value && group.api.isVisible === hidden) {
       group.api.setVisible(!hidden)
       // Shown again at the size it had when hidden: its own width may have changed since.
       held.delete(id)
@@ -341,7 +348,7 @@ function restoreHeldWidths(dock: DockviewApi) {
 function collapse(group: DockviewGroupPanel) {
   const dock = api.value
   if (!dock || !canCollapse(model.value, group.id)) return
-  if (dock.hasMaximizedGroup()) dock.exitMaximizedGroup()
+  exitMaximize()
   const column = parentDirection(model.value, group.id) === 'column'
   expanded.set(group.id, column ? group.api.height : group.api.width)
   collapsed.add(group.id)
@@ -360,11 +367,36 @@ function expand(cellId: string, panelId?: string) {
   schedule()
 }
 
-function toggleMaximize(group: DockviewGroupPanel) {
+/** Hides every cell but this one, the page head and the sidebar: it fills what they leave. */
+function enterMaximize(group: DockviewGroupPanel) {
   const dock = api.value
-  if (!dock) return
-  if (dock.hasMaximizedGroup()) dock.exitMaximizedGroup()
-  else if (group.activePanel) dock.maximizeGroup(group.activePanel)
+  if (!dock || maximizedGroup.value === group.id) return
+  exitMaximize()
+  maximizedGroup.value = group.id
+  hiddenForMaximize = []
+  for (const other of dock.groups) {
+    if (other === group || bareGroup(other) || !other.api.isVisible) continue
+    other.api.setVisible(false)
+    hiddenForMaximize.push(other.id)
+  }
+  emit('maximized', group.activePanel?.id ?? null)
+  refreshActives()
+}
+
+function exitMaximize() {
+  const dock = api.value
+  if (!dock || !maximizedGroup.value) return
+  maximizedGroup.value = null
+  for (const id of hiddenForMaximize) dock.getGroup(id)?.api.setVisible(true)
+  hiddenForMaximize = []
+  emit('maximized', null)
+  refreshActives()
+  if (!loading) schedule()
+}
+
+function toggleMaximize(group: DockviewGroupPanel) {
+  if (maximizedGroup.value) exitMaximize()
+  else enterMaximize(group)
 }
 
 /** Fills the area with the cell of this panel; null gives the others their space back. */
@@ -372,12 +404,9 @@ function maximize(id: string | null) {
   const dock = api.value
   if (!dock) return
   const panel = id ? dock.getPanel(id) : undefined
-  if (!panel) {
-    if (dock.hasMaximizedGroup()) dock.exitMaximizedGroup()
-    return
-  }
-  if (panel.group.api.isMaximized() || !panel.group.api.isVisible) return
-  dock.maximizeGroup(panel)
+  if (!panel) return void exitMaximize()
+  if (maximizedGroup.value === panel.group.id || !panel.group.api.isVisible) return
+  enterMaximize(panel.group)
 }
 
 watch(
@@ -505,11 +534,8 @@ function onReady(event: DockviewReadyEvent) {
       visibility.get(panel.id)?.dispose()
       visibility.delete(panel.id)
     }),
-    dock.onDidMaximizedGroupChange((e) => {
-      maximizedGroup.value = e.isMaximized ? e.group.id : null
-      emit('maximized', e.isMaximized ? e.group.activePanel?.id ?? null : null)
-      refreshActives()
-      if (!e.isMaximized) schedule()
+    dock.onDidRemoveGroup((group) => {
+      if (group.id === maximizedGroup.value) exitMaximize()
     }),
     dock.onDidLayoutChange(schedule)
   )
@@ -563,7 +589,7 @@ watch(
     if (request.fold === true) return void collapse(group)
     if (request.fold === false || collapsed.has(group.id)) expand(group.id)
     if (request.fold !== undefined) return
-    if (dock.hasMaximizedGroup() && !group.api.isMaximized()) dock.exitMaximizedGroup()
+    if (maximizedGroup.value && maximizedGroup.value !== group.id) exitMaximize()
     panel.api.setActive()
     refreshActives()
     revealTab(request.id)
@@ -623,7 +649,7 @@ function onDoubleClick(event: MouseEvent) {
   const dock = api.value
   const sash = event.target instanceof Element ? event.target.closest('.dv-sash') : null
   const container = sash?.closest('.dv-split-view-container')
-  if (!dock || !container || dock.hasMaximizedGroup()) return
+  if (!dock || !container || maximizedGroup.value) return
   const horizontal = container.classList.contains('dv-horizontal')
   const children = [...container.querySelectorAll(':scope > .dv-view-container > .dv-view')]
     .filter((view) => view.classList.contains('visible'))
