@@ -23,7 +23,12 @@ def test_a_typed_reply_written_before_2026_11_22_still_counts_as_the_answer():
     meta = {
         "asked": ["mila"],
         "answer_log": [
-            {"kind": "pending", "by": "mila", "note": "这是什么意思？", "at": "2026-11-17T10:00:00Z"}
+            {
+                "kind": "pending",
+                "by": "mila",
+                "note": "这是什么意思？",
+                "at": "2026-11-17T10:00:00Z",
+            }
         ],
     }
     assert answered(meta)

@@ -206,9 +206,7 @@ def answerable(meta: dict | None, handle: str | None = None) -> bool:
     if handle and handle in skipped_by(meta):
         return False
     answer = final_answer(meta)
-    return answer is None or (
-        handle is not None and (answer or {}).get("by") == handle
-    )
+    return answer is None or (handle is not None and (answer or {}).get("by") == handle)
 
 
 def answerable_by(meta: dict | None, handle: str | None) -> bool:

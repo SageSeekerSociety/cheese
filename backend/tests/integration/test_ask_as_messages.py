@@ -171,9 +171,7 @@ def test_clicking_an_option_starts_the_agents_next_turn_with_that_answer(
     )
 
 
-def test_typing_a_reply_answers_the_question(
-    client, stub_hooks, monkeypatch
-):
+def test_typing_a_reply_answers_the_question(client, stub_hooks, monkeypatch):
     """Words of his own answer it, the same as a click (2026-11-22): the card
     shows what he said, and nobody has to confirm it afterwards."""
     _, room = _room(client)
@@ -224,12 +222,17 @@ def test_an_old_pending_row_is_read_as_the_answer(client):
 def test_a_new_question_takes_over_from_the_one_still_waiting(
     client, stub_hooks, monkeypatch
 ):
-    _, room = _room(client)
-    old = _ask_in_a_turn(client, stub_hooks, monkeypatch, room)
+    # Asked of bob: `active_ask` has alice post a message, and since a typed reply
+    # answers a question, her words would settle one asked of her.
+    pid, room = _room(client)
+    seed_user(client, "bob")
+    join_project_team(client, pid, "bob")
+    old = _ask_in_a_turn(client, stub_hooks, monkeypatch, room, to=["bob"])
     new = {
         "questions": [
             {"question": "换个问法？", "options": [{"text": "好"}, {"text": "不好"}]}
-        ]
+        ],
+        "to": ["bob"],
     }
     with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
         response = client.post(f"/topics/{room}/asks", json=new, headers=headers)
@@ -292,12 +295,19 @@ def test_his_own_later_answer_replaces_the_earlier_one_and_keeps_both(
     question = _ask_in_a_turn(client, stub_hooks, monkeypatch, room)
 
     _say(client, room, "alice", {"content": "你先帮老师发个十几题"})
-    _say(client, room, "alice", {"content": "我自己来", "reply_to": question["id"]})
+    # One of the question's own options: a reply that is not settles nothing, it
+    # is words (the same person's second answer).
+    _say(
+        client,
+        room,
+        "alice",
+        {"content": "按项目", "reply_to": question["id"]},
+    )
 
     log = _block(client, room, question["id"])["meta"]["answer_log"]
     assert [(e["by"], e["kind"], e["note"] or e["option"]) for e in log] == [
         ("alice", "note", "你先帮老师发个十几题"),
-        ("alice", "option", "我自己来"),
+        ("alice", "option", "按项目"),
     ]
 
 
@@ -306,8 +316,12 @@ def test_a_question_somebody_answered_is_not_withdrawn_by_the_next_ask(
 ):
     """Asking again replaces a card nobody answered. One that has an answer on it
     stays: withdrawing it would take his words out of the channel."""
-    _, room = _room(client)
-    first = _ask_in_a_turn(client, stub_hooks, monkeypatch, room)
+    # Asked of bob, so that the second ask (not alice's message) is what settles
+    # anything here; alice's words are the answer already on the first card.
+    pid, room = _room(client)
+    seed_user(client, "bob")
+    join_project_team(client, pid, "bob")
+    first = _ask_in_a_turn(client, stub_hooks, monkeypatch, room, to=["bob"])
     _say(client, room, "alice", {"content": "你先帮老师发个十几题"})
 
     with active_ask(client, stub_hooks, monkeypatch, room, actor="alice") as headers:
@@ -315,8 +329,12 @@ def test_a_question_somebody_answered_is_not_withdrawn_by_the_next_ask(
             f"/topics/{room}/asks",
             json={
                 "questions": [
-                    {"question": "换个问法？", "options": [{"text": "好"}, {"text": "不好"}]}
-                ]
+                    {
+                        "question": "换个问法？",
+                        "options": [{"text": "好"}, {"text": "不好"}],
+                    }
+                ],
+                "to": ["bob"],
             },
             headers=headers,
         )
