@@ -306,7 +306,15 @@ describe('我的学习洞察', () => {
   it('领了这块板上的题时，顶上给一条回作业的路，点了去那道题', async () => {
     readMyLearningInsight.mockResolvedValue(insight())
     joinedTasks.mockResolvedValue([
-      { id: 2465, title: 'SQL 聚合函数与分组', intro: null, deadline: null, myDeadline: null, approved: true, ended: false },
+      {
+        id: 2465,
+        title: 'SQL 聚合函数与分组',
+        intro: null,
+        deadline: null,
+        myDeadline: null,
+        approved: true,
+        ended: false,
+      },
       { id: 9, title: '别的板的题', intro: null, deadline: null, myDeadline: null, approved: true, ended: false },
     ])
     taskDetail.mockImplementation((id: number) =>
