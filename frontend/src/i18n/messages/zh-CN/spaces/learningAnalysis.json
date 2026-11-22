@@ -109,7 +109,10 @@
       "verify": "验证思路",
       "other": "其他"
     },
-    "taskQuote": "「{name}」"
+    "taskQuote": "「{name}」",
+    "backToWorkTitle": "做完回到题目",
+    "backToWorkDesc": "巩固题做完，接着做这道题的作业并提交答案。",
+    "backToWorkGo": "回到「{name}」"
   },
   "practice": {
     "title": "巩固练习",

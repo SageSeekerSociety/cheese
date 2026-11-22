@@ -8,11 +8,13 @@
     :starting="practice.starting.value"
     :explanation="practice.explanation.value"
     :explaining="practice.explaining.value"
+    :my-tasks="myTasks"
     @dispute="onDispute"
     @retry="load"
     @practice="onPractice"
     @open-practice="onOpen"
     @explain="onExplain"
+    @open-task="onOpenTask"
   />
   <LearningPracticeDialog
     :practice="practice.current.value"
@@ -36,8 +38,9 @@
 // 可能已经更新了」「你今天已经用了 8 次」这类），比一句「操作失败」有用。
 import type { LearningPracticeSource } from '@/types'
 
+import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 
 import { useMyLearningPractice } from '@/composables/useMyLearningPractice'
 import { useMyLearningInsight } from '@/composables/useSpaceLearningAnalysis'
@@ -46,14 +49,49 @@ import LearningPracticeDialog from './LearningPracticeDialog.vue'
 import MyLearningInsightView from './MyLearningInsightView.vue'
 
 import { axiosErrorMessage } from '@/api/axiosHttp'
+import { TaskBoardApi } from '@/api/taskBoard'
 import { toast } from '@/lib/toast'
 
 const { t } = useI18n()
 const route = useRoute()
+const router = useRouter()
 
 const spaceId = () => Number(route.params.spaceId)
 const { insight, state, disputing, load, dispute } = useMyLearningInsight(spaceId)
 const practice = useMyLearningPractice(spaceId, load)
+
+// 我在这块板领了、还没结束的题：做完巩固题要从这里回到那道题接着做。读不到就不画
+// 那条回去的路（这一页本身照常）。`GET /tasks/joined` 跨空间列我在做的题，按题名读；
+// 它不带空间，所以逐题再问一次详情，留这块板上的（一次至多几个并行，和学生手里的
+// 题数同一量级）。
+const myTasks = ref<Array<{ id: number; name: string }>>([])
+watch(
+  spaceId,
+  async (id) => {
+    myTasks.value = []
+    if (!id) return
+    try {
+      const joined = await TaskBoardApi.joined()
+      if (spaceId() !== id) return
+      const open = joined.filter((task) => !task.ended)
+      const here = await Promise.all(
+        open.map(async (task) => {
+          try {
+            const detail = await TaskBoardApi.detail(task.id)
+            return detail.task.space?.id === id ? { id: task.id, name: task.title } : null
+          } catch {
+            return null
+          }
+        })
+      )
+      if (spaceId() !== id) return
+      myTasks.value = here.filter((task): task is { id: number; name: string } => task !== null)
+    } catch {
+      myTasks.value = []
+    }
+  },
+  { immediate: true }
+)
 
 async function attempt(work: () => Promise<unknown>, fallback: string) {
   try {
@@ -90,6 +128,11 @@ function onRegenerate() {
 
 function onExplain(pointId: number) {
   return attempt(() => practice.explain(pointId), 'spaces.learningAnalysis.practice.explainFailed')
+}
+
+/** 回我领的那道题（说明页；页头的「继续做」回我的项目，交答案在提交表单）。 */
+function onOpenTask(taskId: number) {
+  void router.push({ name: 'TasksDetail', params: { spaceId: String(spaceId()), taskId: String(taskId) } })
 }
 
 function onAnswer(question: number, choice: number) {
