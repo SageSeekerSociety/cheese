@@ -54,13 +54,13 @@
       <!-- 桌面上整块是一个布局区（components/layout-area）：侧栏一格、页面一格；页面要是
            不止一块（对话、工作面板的各页签），它把那几块交给这里（layouts/pagePanels.ts），
            排在页面自己那一格（页头）下面。页签可以拖去分屏、拖进别的格子，格子可以收起、
-           放大，摆法按页面的种类记在这台设备上；侧栏和页头不动，侧栏能收成一条。 -->
+           放大，摆法按页面的种类记在这台设备上；侧栏和页头不动，侧栏能收起。 -->
       <LayoutArea
         v-if="$vuetify.display.mdAndUp"
         ref="areaRef"
         v-model:maximized="pageHost.maximized.value"
         class="app-area"
-        :class="{ 'app-area--edge': !sidebarInArea, 'app-area--alone': !hasSidebar }"
+        :class="{ 'app-area--edge': !sidebarShown, 'app-area--alone': !hasSidebar }"
         :panels="areaPanels"
         :default-arrangement="areaDefault"
         :storage-key="areaKey"
@@ -243,7 +243,7 @@ import SidebarFrameFoot from '@/components/common/Navigation/SidebarFrameFoot.vu
 import SidebarFrameTop from '@/components/common/Navigation/SidebarFrameTop.vue'
 import OfflineBanner from '@/components/common/OfflineBanner.vue'
 import VersionBadge from '@/components/common/VersionBadge.vue'
-import { LayoutArea } from '@/components/layout-area'
+import { LayoutArea, rememberedFold } from '@/components/layout-area'
 import { t } from '@/i18n'
 import AgentHost from '@/layouts/AgentHost.vue'
 import { providePagePanels } from '@/layouts/pagePanels'
@@ -355,6 +355,9 @@ const hasSidebar = computed(() => currentRoute.matched.some((record) => record.c
 const pageHost = providePagePanels()
 const { compact: compactDesktop } = useSidebarCollapse()
 const sidebarInArea = computed(() => display.mdAndUp.value && !compactDesktop.value && hasSidebar.value)
+// 宽档里侧栏收起后那一格整个不占地方，展开它的开关在顶栏最左（AppBar）。
+const sidebarFolded = rememberedFold(SIDEBAR_FOLD_KEY)
+const sidebarShown = computed(() => sidebarInArea.value && !sidebarFolded.value)
 const outlets = pageHost.outlets
 const { width: sidebarCellWidth } = useElementSize(computed(() => outlets.sidebar ?? null))
 provide(SIDEBAR_CELL_WIDTH, sidebarCellWidth)
@@ -381,7 +384,7 @@ const areaPanels = computed<LayoutPanel[]>(() => [
     icon: 'mdi-page-layout-sidebar-left',
     bare: true,
     pinned: true,
-    hidden: !sidebarInArea.value,
+    hidden: !sidebarShown.value,
     width: SIDEBAR_WIDTH,
     foldKey: SIDEBAR_FOLD_KEY,
   },
@@ -403,9 +406,12 @@ watch(
         }
       : null)
 )
-/** 收起侧栏（侧栏头上那颗按钮）：宽档里它是布局区的一格，收成一条，点那一条再展开。 */
+/** 收起侧栏（侧栏头上那颗按钮）、再展开它（顶栏最左那颗）：宽档里它是布局区的一格。 */
 function foldSidebar() {
   areaRef.value?.fold('sidebar', true)
+}
+function unfoldSidebar() {
+  areaRef.value?.fold('sidebar', false)
 }
 const areaDefault = computed<LayoutArrangement>(() => {
   const claim = pageClaim.value
@@ -584,6 +590,7 @@ provideAppNav({
   loggedIn,
   frame: { top: SidebarFrameTop, foot: SidebarFrameFoot },
   foldSidebar: computed(() => (sidebarInArea.value ? foldSidebar : null)),
+  unfoldSidebar: computed(() => (sidebarInArea.value && sidebarFolded.value ? unfoldSidebar : null)),
 })
 
 // rail 的悬停浮层写着第 N 格的快捷键；这里是它真正被绑上的地方。浏览器里是 G 然后 N，

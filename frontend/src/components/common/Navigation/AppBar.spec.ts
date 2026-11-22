@@ -4,15 +4,17 @@
 // 菜单里，顶栏不再画它）。顶栏在 `src/components/**` 下，不能自己去读账号服务
 // （`.claude/rules/architecture.md`），所以这一条能且只能听 prop —— 这两个用例给
 // 顶栏的就是外壳会给它的那两种状态。
+import { computed, ref } from 'vue'
 import { createRouter, createWebHistory } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { render } from '@testing-library/vue'
+import { fireEvent, render } from '@testing-library/vue'
 import { createPinia } from 'pinia'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 
 import AppBar from './AppBar.vue'
+import { provideAppNav } from './appNav'
 
 import i18n, { setLocale } from '@/i18n'
 import { closeFirstPaint } from '@/test/firstPaint'
@@ -38,7 +40,7 @@ beforeAll(() => {
   }
 })
 
-async function mount(loggedIn: boolean) {
+async function mount(loggedIn: boolean, sidebarFolded = ref(false)) {
   // 首帧那道门关着：这一组用例看的是顶栏的形状，不需要它去问任何东西。
   closeFirstPaint()
   const router = createRouter({
@@ -51,8 +53,19 @@ async function mount(loggedIn: boolean) {
   //（同 `MobileAppBar.slot.spec.ts` 那份）。
   const Host = {
     components: { AppBar },
-    setup: () => ({ loggedIn }),
-    template: '<v-layout><AppBar :logged-in="loggedIn" /></v-layout>',
+    setup: () => {
+      provideAppNav({
+        items: computed(() => []),
+        projects: computed(() => []),
+        reorder: () => {},
+        loggedIn: computed(() => loggedIn),
+        frame: { top: blank, foot: blank },
+        foldSidebar: computed(() => () => (sidebarFolded.value = true)),
+        unfoldSidebar: computed(() => (sidebarFolded.value ? () => (sidebarFolded.value = false) : null)),
+      })
+      return { loggedIn }
+    },
+    template: '<v-layout><AppBar :logged-in="loggedIn" has-sidebar /></v-layout>',
   }
   return render(Host, {
     global: { plugins: [createVuetify({ components, directives }), router, createPinia(), i18n] },
@@ -68,5 +81,15 @@ describe('桌面顶栏', () => {
   it('登录之后顶栏不再画语言开关：它在「我」的菜单里', async () => {
     const { container } = await mount(true)
     expect(container.querySelector('.language-toggle')).toBeNull()
+  })
+
+  it('侧栏收起后，展开它的按钮在顶栏上；侧栏开着时顶栏上没有它', async () => {
+    // A wide window: the sidebar is a cell of the layout, not the tablet's overlay.
+    Object.defineProperty(window, 'innerWidth', { value: 1440, writable: true, configurable: true })
+    const folded = ref(true)
+    const { findByRole, queryByRole } = await mount(true, folded)
+    await fireEvent.click(await findByRole('button', { name: '展开侧栏' }))
+    expect(folded.value).toBe(false)
+    await vi.waitFor(() => expect(queryByRole('button', { name: '展开侧栏' })).toBeNull())
   })
 })

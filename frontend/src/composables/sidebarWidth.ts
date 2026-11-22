@@ -18,7 +18,7 @@ export const SIDEBAR_WIDTH: LayoutPanelWidth = {
   storageKey: 'cheesex.sidebarWidth',
 }
 
-/** 宽档里侧栏收成一条没有：所有页面同一个状态，记在这台设备上（`LayoutPanel.foldKey`）。 */
+/** 宽档里侧栏收起没有：所有页面同一个状态，记在这台设备上（`LayoutPanel.foldKey`）。 */
 export const SIDEBAR_FOLD_KEY = 'cheesex.sidebarFolded'
 
 /** 宽档里侧栏那一格此刻的宽度（外壳量出来、交给侧栏的抽屉）；0 是还没量出来。 */
