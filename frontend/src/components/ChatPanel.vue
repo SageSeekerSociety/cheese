@@ -26,7 +26,7 @@ import { useStartSteps } from '../composables/useStartSteps'
 import { useThreadLines } from '../composables/useThreadLines'
 import { memberName } from '../lib/agentNames'
 import { isAgentHandle } from '../lib/authorship'
-import { taskLine, tasksByOrigin } from '../lib/channelTasks'
+import { taskLine, tasksByOrigin, teammateTaskLines } from '../lib/channelTasks'
 import { CHAT_IMAGE_ACTIONS, handOffImageTool, imagePaths } from '../lib/chatImages'
 import { createQuestionSubmit } from '../lib/previewQuestion'
 
@@ -110,6 +110,8 @@ const props = withDefaults(
     chapterIds?: ReadonlySet<string>
     /** 这段对话自己的状态（任务开着还是关了）：变了，输入框重问一次「交给谁」。 */
     placeState?: string | null
+    /** 正在就地采纳的那件任务。 */
+    adoptingTask?: string | null
   }>(),
   {
     alwaysSummon: false,
@@ -198,7 +200,6 @@ const panel = useChatPanel({
   column: () => chatRoot.value,
   agentHandle: () => props.agentHandle,
   alwaysSummon: () => props.alwaysSummon,
-  answersInThread: () => threadable.value,
   showComposer: () => props.showComposer,
   members: () => props.members,
   topicList: () => props.topicList,
@@ -266,10 +267,23 @@ const taskLines = computed(
 )
 const taskOrigins = computed(() => tasksByOrigin(knownTasks.value, props.conversationId))
 const NO_TASKS: TaskLine[] = []
+// 频道主线上 AI 队友说到过的任务：它的话头上挂着这件任务的标签，点开就是它，消息下面不再
+// 另画一张任务卡或一行任务。支线原地转成的那件照旧画在支线那一块顶上。
+const taggedInMainLine = computed(() => {
+  const ids = new Set<string>()
+  if (!mainLine.value) return ids
+  for (const block of panel.timeline.messages.value) {
+    const id = (block.meta as Record<string, unknown> | null | undefined)?.task_tag
+    if (typeof id === 'string') ids.add(id)
+  }
+  return ids
+})
 const tasksByBlock = computed(() => {
   const map = new Map<string, TaskLine[]>()
   for (const [blockId, tasks] of taskOrigins.value) {
-    const lines = tasks.flatMap((task) => taskLines.value.get(task.id) ?? [])
+    const lines = tasks
+      .filter((task) => task.from_thread || !taggedInMainLine.value.has(task.id))
+      .flatMap((task) => taskLines.value.get(task.id) ?? [])
     if (lines.length) map.set(blockId, lines)
   }
   return map
@@ -279,6 +293,21 @@ function taskOf(taskId: string): TaskLine | null {
 }
 function tasksUnder(blockId: string): TaskLine[] {
   return tasksByBlock.value.get(blockId) ?? NO_TASKS
+}
+// AI 队友在主线上开的任务：画在它那条回复下面的一行，只有任务名和负责人。
+const linesByBlock = computed(() => {
+  const map = new Map<string, TaskLine[]>()
+  if (!mainLine.value) return map
+  for (const [blockId, tasks] of teammateTaskLines(knownTasks.value, panel.timeline.messages.value)) {
+    const lines = tasks
+      .filter((task) => !taggedInMainLine.value.has(task.id))
+      .flatMap((task) => taskLines.value.get(task.id) ?? [])
+    if (lines.length) map.set(blockId, lines)
+  }
+  return map
+})
+function taskLinksUnder(blockId: string): TaskLine[] {
+  return linesByBlock.value.get(blockId) ?? NO_TASKS
 }
 
 const {
@@ -321,6 +350,7 @@ const {
   showReplyCue,
   fmtTime,
   isMine,
+  receiptFor,
   displayName,
   authorTitle,
   isExternal,
@@ -405,10 +435,12 @@ const unaskedNotice = computed(() => {
   return messages.slice(at + 1).every((m) => m.turn_id === mine.turn_id) ? mine : null
 })
 // 「交给芝士」：走本来就有的那两步——回复这一条、在正文前面 @ 它。发不发由人决定。
+// @ 的是**这一句上写着名字的那位**（`agentSeat`）：发送框平时画的是最近 @ 过的那位，
+// 这个房间交给的可能是另一位队友，那一句却只能是这个房间的座位说的。
 function askAbout(block: Block) {
   unaskedAfter.value = null
   setReply(block)
-  composerRef.value?.addAgentMention?.()
+  composerRef.value?.addAgentMention?.(agentSeat.value?.handle)
 }
 
 // 输入框旁边那颗队友头像要的两样：正在这一栏里跑一轮的队友，和我上一次交给的那位
@@ -529,7 +561,10 @@ useComposerShortcut({
             :chapter-ids="chapterIds"
             :chapters="chapters"
             :task-of="taskOf"
+            :adopting-task="adoptingTask ?? null"
+            :main-line="mainLine"
             :tasks-under="tasksUnder"
+            :task-links-under="taskLinksUnder"
             :name-of="nameOf"
             :rows="rows"
             :ask-groups="askGroups"
@@ -569,6 +604,7 @@ useComposerShortcut({
             :content-ref="timelineRefs.contentRef"
             :is-agent-block="isAgentBlock"
             :is-mine="isMine"
+            :receipt-of="receiptFor"
             :is-external="isExternal"
             :avatar-of="avatarSrc"
             :display-name="displayName"
@@ -597,6 +633,7 @@ useComposerShortcut({
             @toggle-picker="togglePicker"
             @open-file="(path) => emit('open-file', path)"
             @open-card="emit('open-card', $event)"
+            @delivery="emit('delivery', $event)"
             @open-resource="
               (resource, turnId, review, document) => emit('open-resource', resource, turnId, review, document)
             "
@@ -687,7 +724,12 @@ useComposerShortcut({
       <!-- 输入框那一块。「谁在忙」在它上面单占一格，不压在对话上：时间线底部让出这一
            格，输入框自己不动。没人在忙时这一格不存在，对话区就长回去。 -->
       <div class="composer-zone">
-        <MemberActivity v-if="showComposer" class="composer-activity" :lines="activityLines" />
+        <MemberActivity
+          v-if="showComposer"
+          v-guide-anchor="onProjectLine && activityLines.some((l) => l.kind !== 'typing') ? 'reply-coming' : ''"
+          class="composer-activity"
+          :lines="activityLines"
+        />
         <div v-if="showComposer && composerClosed" class="composer-closed">
           <div class="composer-closed__box t-body">
             <span class="composer-closed__text">{{ composerClosed }}</span>
@@ -700,7 +742,6 @@ useComposerShortcut({
           v-else-if="showComposer"
           ref="composerRef"
           v-model="draft"
-          v-guide-anchor="inThread ? 'thread-composer' : ''"
           :guided="onProjectLine"
           :topic="topic"
           :mention-pool="mentionPool"
@@ -793,7 +834,14 @@ useComposerShortcut({
      has to be able to win. See the comment on the root element. */
   display: flex;
   flex-direction: column;
-  height: 100%;
+  /* 占满「剩下的」高度，不是列高的 100%。两者只在没有兄弟时才相等：频道页在
+     这一栏顶上多了一块「AI 现在在干什么」（TopicChatColumn 的 AgentNowStrip），
+     `height: 100%` 会让这一块和对话加起来比栏高出一块，输入区（`.chat` 的最后
+     一项）连同它被顶到窗口下沿外面，裁掉且没有滚动条。flex 收缩到剩余空间，
+     队友那块要占多高都行。`min-height: 0` 是同一件事的纵向版：不给它，这一项
+     的内容高就是下限，一样撑破。 */
+  flex: 1 1 auto;
+  min-height: 0;
   background: var(--surface);
 }
 /* 时间线的那一块：书签条要浮在它上面，而不是跟着消息滚走。 */

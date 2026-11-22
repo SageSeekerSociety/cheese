@@ -160,6 +160,38 @@ async def test_a_behind_pr_forgejo_is_still_checking_is_not_read_as_a_conflict()
 
 
 @pytest.mark.anyio
+async def test_a_push_forgejo_has_not_taken_in_is_not_read_as_mergeable():
+    """Right after a push the PR reports the new head while its `mergeable`
+    is still the verdict on the previous one; a merge of the new head is
+    refused until Forgejo has taken the push in."""
+    taken_in = {"sha": "old"}
+
+    def server(request):
+        if request.url.path.endswith("/git/refs/pull/7/head"):
+            return httpx.Response(
+                200, json=[{"ref": "refs/pull/7/head", "object": taken_in}]
+            )
+        return httpx.Response(
+            200,
+            json=proposal(title="Report", head={"ref": "task/report", "sha": "new"}),
+        )
+
+    client = ForgejoClient(
+        "https://forge.example/api/v1", transport=httpx.MockTransport(server)
+    )
+    args = dict(owner="acme", repo="docs", number=7, token="secret")
+
+    pushed = await client.pull_request_status(**args)
+    assert pushed.mergeable is None
+    assert pushed.mergeable_state == "unknown"
+
+    taken_in["sha"] = "new"
+    checked = await client.pull_request_status(**args)
+    assert checked.mergeable is True
+    assert checked.mergeable_state == "clean"
+
+
+@pytest.mark.anyio
 async def test_merge_refusal_does_not_echo_secret_or_claim_success_or_conflict():
     def server(request):
         if request.method == "POST":

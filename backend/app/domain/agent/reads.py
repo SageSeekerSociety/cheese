@@ -46,6 +46,11 @@ class Ended:
     #: What its runner recorded of a process that ended before it ever
     #: started, when it recorded that (`Driver.last_words`).
     said: str = ""
+    #: The registration whose process is gone, when the machine itself said
+    #: so of a runner that reports in the lifecycle protocol and never
+    #: reported it: what ``SessionExited`` under that epoch would have ended
+    #: is ended on this.
+    epoch: int | None = None
 
 
 @dataclass(frozen=True)

@@ -176,7 +176,11 @@ async def _review_nudge(
         pr_signals.NudgeKind.review, signature
     )
     body = "\n".join(s.line() for s in signals)
-    asked = sum(1 for s in signals if s.kind == "changes_requested")
+    # 被同一位评审人此后的批准／撤销取代的那条不算还挡着 —— 它照旧说给芝士听，
+    # 但不把卡压成红的（`pr_signals.superseded_change_requests`）。
+    asked = sum(
+        1 for s in signals if s.kind == "changes_requested" and not s.superseded
+    )
     head = say("prReviewChangesRequested") if asked else say("prReviewCommented")
     if capped:
         return pr_signals.PendingNudge(
@@ -209,7 +213,21 @@ async def _review_nudge(
         detail=body,
         detail_label=say("labelReviewComments"),
         note=f"{head}（{len(signals)} 条）",
-        note_code=notes.NoteCode.accept_pr_stalled,
+        # A COMMENTED review (including useful inline feedback) is a notice,
+        # not a rejection. Only an explicit request for changes blocks the card
+        # — and only one nobody has since approved or dismissed.
+        note_code=notes.NoteCode.accept_pr_stalled if asked else None,
+        # 卡面这一句里的「要求改动」已经被人收回了：卡上若还留着旧分类，可以就地
+        # 纠正（只在确认是同一条、同一个提交、来源清楚时）。
+        supersedes_return=any(
+            s.kind == "changes_requested" and s.superseded for s in signals
+        ),
+        # 上一版（还没看出被收回时）写出的那一行：重校拿它认这张红卡。
+        note_before_supersession=(
+            f"{say('prReviewChangesRequested')}（{len(signals)} 条）"
+            if any(s.kind == "changes_requested" for s in signals)
+            else ""
+        ),
         event_type=EVENT_PR_REVIEW,
     )
 
@@ -291,7 +309,7 @@ def _title_nudge(
         signature=pr_signals.signature("pr-title", subject, raw),
         event=say("prTitleDisagrees", pr=card.pr_number),
         content=(
-            f"PR #{card.pr_number}（{card.pr_url}）在 GitHub 上的标题和这张卡不是"
+            f"PR #{card.pr_number}（{card.pr_url}）的标题和这张卡不是"
             f"同一行：\n"
             f"- PR 标题：{shown}\n"
             f"- 卡片标题：{subject}\n"
@@ -300,7 +318,7 @@ def _title_nudge(
             "不合。\n"
             "标题该怎么写是仓库自己的规矩，平台不猜哪一行才对，也不会替你把 PR "
             "标题改回来。要合并，就用 cheese_card(action=describe) 把这张卡的标题改成该落的那"
-            "一行（`subject` 参数）：平台会同时把 GitHub 上的 PR 标题改成它，仓库"
+            "一行（`subject` 参数）：平台会同时把 PR 的标题改成它，仓库"
             "的检查会按新标题重跑。改完等检查绿了，再采纳或等自动合并。\n"
             "如果改的是 PR 标题而不是卡片，请在频道里说清为什么卡片那行才是对的。"
         ),
@@ -309,7 +327,7 @@ def _title_nudge(
         detail=f"PR 标题：{shown}\n提交审阅时的标题：{subject}",
         detail_label=say("labelReason"),
         note=(
-            f"PR #{card.pr_number} 在 GitHub 上的标题和提交审阅时的标题不一致，合并已暂停；"
+            f"PR #{card.pr_number} 的标题和提交审阅时的标题不一致，合并已暂停；"
             "两个标题改成同一行、检查通过后就能合并"
         ),
         note_code=notes.NoteCode.pr_title_disagrees,

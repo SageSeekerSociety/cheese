@@ -18,6 +18,7 @@ and the session process on another, and `Path.home()` is different on each.
 
 from __future__ import annotations
 
+import json
 import ntpath
 import posixpath
 import shlex
@@ -36,14 +37,51 @@ CHECKOUT_TIMEOUT_MS = 600_000
 #: its own file: the CLI's warnings are not the answer, and were the streams
 #: merged, a warning written after the path would be answered as the checkout
 #: (that is exactly what a set-aside snapshot says). The exit status is the
-#: CLI's, and a failure's stderr goes back with it for its message.
+#: CLI's, and a failure's stderr goes back with it for its message. Before the
+#: path, the line the CLI writes with its steps' times (`STEPS_PREFIX`), which
+#: the platform keeps of a slow open (`routes.execution._time_checkout`).
 _CHECKOUT = (
     "out=$(mktemp); err=$(mktemp); "
-    'cheese worktree {topic} >"$out" 2>"$err"; code=$?; '
+    'CHEESE_CHECKOUT_TIMINGS=1 cheese worktree {topic} >"$out" 2>"$err"; code=$?; '
+    'grep -h "^cheese-timings " "$err" | tail -n 1; '
     'tail -n 1 "$out"; '
     'if [ "$code" -ne 0 ]; then cat "$err" >&2; fi; '
     'rm -f "$out" "$err"; exit "$code"'
 )
+
+
+#: How the CLI's line of step times starts (`cheese worktree`).
+STEPS_PREFIX = "cheese-timings "
+
+#: The steps of an open the CLI times, in seconds.
+CHECKOUT_STEPS = ("lock", "seed", "fetch", "give", "deps")
+
+
+def checkout_steps(stdout: str) -> dict[str, float]:
+    """The step times an open's answer carries, or none: an older CLI, or
+    an answer that is not one, says nothing of them."""
+    for line in stdout.splitlines():
+        if not line.startswith(STEPS_PREFIX):
+            continue
+        try:
+            said = json.loads(line[len(STEPS_PREFIX) :])
+        except ValueError:
+            return {}
+        if not isinstance(said, dict):
+            return {}
+        return {
+            step: float(said[step])
+            for step in CHECKOUT_STEPS
+            if isinstance(said.get(step), int | float)
+        }
+    return {}
+
+
+#: What `cheese worktree` says when the place has no checkout to start in, and
+#: that is no failure: a room (``workTaskNotInProject``), or a task whose
+#: project has no repository or no default branch to cut its branch from. The
+#: session works where it starts; the CLI names the same keys (`NO_CHECKOUT`).
+NO_CHECKOUT = ("workTaskNotInProject", "taskWithoutRepository", "forgeNoDefaultBranch")
 
 
 def names_a_directory(value):
@@ -61,32 +99,24 @@ def names_a_directory(value):
 class TaskCheckoutFailed(RuntimeError):
     """The machine could not be asked, or answered something else than a path.
 
-    Not a room: a room is answered ``workTaskNotInProject`` and is no failure
-    at all. A caller that gets this one has not learned where the checkout is,
+    Not a room, nor a task without a checkout: those are answered with one of
+    `NO_CHECKOUT` and are no failure at all. A caller that gets this one has not learned where the checkout is,
     and must not remember it as if it had."""
 
 
 def task_checkout(client, topic, *, notice=True):
     """``topic``'s task checkout on the machine, opened if it is not there.
 
-    None when this session works in a room, and the checkout's path otherwise.
+    None when this session works in a room or in a task without a checkout
+    (`NO_CHECKOUT`), and the checkout's path otherwise.
     Raises ``TaskCheckoutFailed`` for anything else — the machine out of reach,
     a lease still preparing, a command that ended without saying where the
     checkout is. ``notice``: say that on stderr. A launch says it; a command
     being handed to the machine does not, since its stderr is the agent's."""
-    request = {
-        "tool": "Bash",
-        "args": {
-            "command": _CHECKOUT.format(topic=shlex.quote(str(topic))),
-            "timeout": CHECKOUT_TIMEOUT_MS,
-        },
-        "platform": True,
-    }
     answer = {}
     for attempt in range(2):
         try:
-            request["id"] = "task-checkout-" + uuid.uuid4().hex
-            answer = client.call("invoke", request)
+            answer = client.call("invoke", checkout_request(topic))
             break
         except (RuntimeError, OSError, TimeoutError):
             # The first call that takes the machine's hands may be answered
@@ -95,6 +125,28 @@ def task_checkout(client, topic, *, notice=True):
             if attempt:
                 # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
                 raise TaskCheckoutFailed("the machine did not answer") from None
+    return checkout_answered(answer, notice=notice)
+
+
+def checkout_request(topic, prefix="task-checkout-"):
+    """The executor call that opens ``topic``'s checkout: the machine's own
+    Bash, as the platform's call (no project hooks). ``prefix`` names whose
+    call it is in the executor's log."""
+    return {
+        "id": prefix + uuid.uuid4().hex,
+        "tool": "Bash",
+        "args": {
+            "command": _CHECKOUT.format(topic=shlex.quote(str(topic))),
+            "timeout": CHECKOUT_TIMEOUT_MS,
+        },
+        "platform": True,
+    }
+
+
+def checkout_answered(answer, *, notice=False):
+    """Where the checkout is, read off the machine's answer to
+    `checkout_request`: its path, or None when there is no checkout to open
+    (`NO_CHECKOUT`). Raises ``TaskCheckoutFailed`` for anything else."""
     value = answer.get("value") or {}
     said = value.get("stdout") or answer.get("error") or ""
     lines = said.strip().splitlines()
@@ -111,7 +163,7 @@ def task_checkout(client, topic, *, notice=True):
         if names_a_directory(last):
             return last
         failed = True
-    if "workTaskNotInProject" in said:  # a room is not a failure
+    if any(key in said for key in NO_CHECKOUT):
         return None
     if notice:
         # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog

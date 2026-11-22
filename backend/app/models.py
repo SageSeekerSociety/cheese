@@ -26,6 +26,7 @@ from app.domain.delivery import models as delivery  # noqa: F401
 from app.domain.device import models as device  # noqa: F401
 from app.domain.discussion import models as discussion  # noqa: F401
 from app.domain.docs_site import models as docs_site  # noqa: F401
+from app.domain.environment import models as environment  # noqa: F401
 from app.domain.feedback import models as feedback  # noqa: F401
 from app.domain.groups import models as groups  # noqa: F401
 from app.domain.happenings import models as happenings  # noqa: F401
@@ -47,6 +48,7 @@ from app.domain.notification import (
 )
 from app.domain.notification import push_models as notification_push  # noqa: F401
 from app.domain.oauth import models as oauth  # noqa: F401
+from app.domain.onboarding import models as onboarding  # noqa: F401
 from app.domain.passkey import models as passkey  # noqa: F401
 from app.domain.pin import models as pin  # noqa: F401
 from app.domain.project import models as project  # noqa: F401
@@ -54,6 +56,7 @@ from app.domain.project_situation import models as project_situation  # noqa: F4
 from app.domain.project_skill import models as project_skill  # noqa: F401
 from app.domain.questions import models as questions  # noqa: F401
 from app.domain.remote_mcp import models as remote_mcp  # noqa: F401
+from app.domain.repository import models as repository  # noqa: F401
 from app.domain.review import comment_models as review_comments  # noqa: F401
 from app.domain.review import models as review  # noqa: F401
 from app.domain.room_task import models as room_task  # noqa: F401
@@ -62,7 +65,9 @@ from app.domain.run_record import models as run_record  # noqa: F401
 from app.domain.session_record import models as session_record  # noqa: F401
 from app.domain.site import models as site  # noqa: F401
 from app.domain.space import models as space  # noqa: F401
+from app.domain.space import practice_models as space_practice  # noqa: F401
 from app.domain.tag import models as tag  # noqa: F401
+from app.domain.task import judging_models as task_judging  # noqa: F401
 from app.domain.task import models as task  # noqa: F401
 from app.domain.team import models as team  # noqa: F401
 from app.domain.thread import models as thread  # noqa: F401

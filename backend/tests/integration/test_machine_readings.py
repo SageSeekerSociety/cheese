@@ -31,7 +31,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 
 from app.core import alerting
 from app.core.config import settings
-from app.domain.machine import readings
+from app.domain.machine import occupants, readings
 from app.domain.machine.models import HostReading, SandboxHome, SandboxUsage
 from tests.integration.conftest import session_auth_headers
 from tests.integration.test_cloud_host_pool import pool  # noqa: F401 — fixture
@@ -377,7 +377,9 @@ def test_a_host_whose_sandboxes_are_gone_is_still_read(cloud):  # noqa: F811
     async def gone():
         async with cloud.client.test_request_factory() as db:
             home = await db.scalar(
-                select(SandboxHome).where(SandboxHome.session_id == seat.session)
+                select(SandboxHome).where(
+                    SandboxHome.id == occupants.home_of_session_id(seat.session)
+                )
             )
             await db.delete(home)
             await db.commit()

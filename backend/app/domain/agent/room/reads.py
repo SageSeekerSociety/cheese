@@ -21,6 +21,7 @@ from app.domain.agent.live_frames import publish_live
 from app.domain.agent.reads import (
     Abandoned,
     Compacted,
+    Ended,
     Followed,
     Reachable,
     Read,
@@ -85,6 +86,8 @@ class RoomBooks(Protocol):
         read: tuple[tuple[str, tuple[str, ...]], ...] = (),
     ) -> None: ...
 
+    async def process_gone(self, session: SessionRef, epoch: int) -> None: ...
+
     async def confirm_work_abandoned(self, work_id: uuid.UUID) -> None: ...
 
     async def context_compacted(self, session: SessionRef) -> None: ...
@@ -136,6 +139,9 @@ def reader(chat: RoomBooks) -> RoomReader:
             )
         elif isinstance(event, Compacted):
             await chat.context_compacted(session)
+        elif isinstance(event, Ended):
+            if event.epoch is not None:
+                await chat.process_gone(session, event.epoch)
         elif isinstance(event, Writing):
             await publish_live(
                 session.conversation_id,

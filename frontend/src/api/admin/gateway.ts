@@ -139,6 +139,8 @@ export interface GatewayModelInfo {
   sources?: GatewaySource[]
   /** 需开通才能用：只有管理员开通了的团队能看到、能用它。 */
   overseas: boolean
+  /** 缓存闲置多久失效，秒；没填是 null。 */
+  cache_lifetime_s?: number | null
 }
 
 export interface GatewayModelsPayload {
@@ -170,6 +172,8 @@ export interface GatewayModelCreateInput extends GatewaySourceFields {
   selectable?: boolean
   capabilities?: GatewayCapabilities
   overseas?: boolean
+  /** 缓存闲置多久失效，秒。 */
+  cache_lifetime_s?: number
 }
 
 /** 改一个运行时模型（契约 §3.3）。PATCH 语义：只传要改的字段，缺的表示「别动它」。
@@ -187,6 +191,8 @@ export interface GatewayModelUpdateInput {
   prices?: GatewayPrices
   capabilities?: GatewayCapabilities
   overseas?: boolean
+  /** 缓存闲置多久失效，秒；0 清掉。 */
+  cache_lifetime_s?: number
 }
 
 export interface GatewayProjectCredits {
@@ -354,6 +360,8 @@ export interface PlatformRole {
   role: string
   model: string | null
   fallback: string | null
+  /** 没人指过时跟着哪个角色的模型走（`fallback` 就是它现在的模型）；跟部署设置项走时为 null。 */
+  inherits: string | null
   chosen: boolean
   offered_only: boolean
 }

@@ -342,8 +342,10 @@ def test_whole_vms_are_opened_with_one_read_of_their_homes_however_many(cloud):
     room and session."""
     from sqlalchemy import event
 
+    from app.domain.agent_session.models import AgentSession
     from app.domain.machine.models import CloudHost, MachineStatus, SandboxHome
     from app.domain.usage.compute import VM, ComputeMeter
+    from tests.support.environments import works_in
 
     async def observe_new(count: int, *, homeless: int = 0):
         async with cloud.client.test_request_factory() as db:
@@ -368,19 +370,24 @@ def test_whole_vms_are_opened_with_one_read_of_their_homes_however_many(cloud):
                     want[metering.vm_subject(host.id)] = (None, None)
                     continue
                 room = cloud.seats[i % len(cloud.seats)].room
-                session_id = uuid.uuid4()
-                db.add(
-                    SandboxHome(
-                        host_id=host.id,
-                        spec="standard",
-                        project_id=cloud.project_id,
-                        topic_id=room,
-                        room_resource_id=str(room),
-                        resource_id=str(uuid.uuid4()),
-                        session_id=session_id,
-                    )
+                session = AgentSession(
+                    conversation_id=room,
+                    agent_handle=f"vm-agent-{uuid.uuid4().hex[:8]}",
+                    harness="claude-code",
                 )
-                want[metering.vm_subject(host.id)] = (room, session_id)
+                db.add(session)
+                await db.flush()
+                home = SandboxHome(
+                    host_id=host.id,
+                    spec="standard",
+                    project_id=cloud.project_id,
+                    topic_id=room,
+                    room_resource_id=str(room),
+                    resource_id=str(uuid.uuid4()),
+                )
+                db.add(home)
+                await works_in(db, session.id, home)
+                want[metering.vm_subject(host.id)] = (room, session.id)
             await db.commit()
 
             reads: list[str] = []

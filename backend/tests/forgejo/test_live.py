@@ -24,7 +24,6 @@ from app.api.topics_file_sources import source_bytes
 from app.core.config import settings
 from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent.announce import announce
-from app.domain.agent.room_events import _known_commits, _turn_changeset
 from app.domain.project import starter as starter_archive
 from app.domain.project.forge import (
     branch_head,
@@ -39,14 +38,17 @@ from app.domain.repository.forge_files import ProjectFiles
 from app.domain.review.forgejo_pr import ForgejoPRClient
 from app.domain.review.merge_state import compute_merge_state
 from app.domain.review.models import AcceptCard
+from app.domain.room_task.closing import close_task
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.topic.models import Topic
 from tests.integration.conftest import a_team
 from tests.support.review_ports import (
     pumping,
+    record_seat_instruction,
     record_task_instruction,
     settle_card,
     task_teammate,
+    uncommitted,
 )
 
 pytestmark = [
@@ -505,8 +507,10 @@ async def test_forgejo_delivery_reaches_outbound_deployment(db_factory, monkeypa
                 announce,
                 settle_card=settle_card,
                 record_instruction=record_task_instruction,
+                record_seat=record_seat_instruction,
                 dispatch_pending=pumping(chat),
                 task_teammate=task_teammate,
+                uncommitted=uncommitted,
             )
         )
         async with asyncio.timeout(10):
@@ -635,7 +639,8 @@ def _push_with_cli(binding, token, root, author):
 async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
     db_factory, monkeypatch, tmp_path, owner_credit
 ):
-    from app.api.routes.accept import _accept_service, _pr_checks_payload
+    from app.api.accept_service import accept_service
+    from app.api.routes.accept import _pr_checks_payload
     from app.domain.review import services as review_services
     from app.domain.site.services import (
         publication_source,
@@ -698,8 +703,6 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
     owner, repo = binding.repo.split("/", 1)
     publisher = ForgejoPRClient(owner, repo, tokens, api_base=binding.api_url)
     reviewed = await asyncio.to_thread(_push_with_cli, binding, token, tmp_path, author)
-    baseline = await _known_commits(db_factory, binding.project_id, room.id)
-    assert baseline == {reviewed}
     async with db_factory() as session:
         assert await branch_head(binding.project_id, session, "task/report") == reviewed
         files = ProjectFiles(session, binding.project_id, task.id)
@@ -753,11 +756,6 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
             },
         )
         assert check.status_code == 201, check.text
-        changes = await _turn_changeset(
-            db_factory, binding.project_id, room.id, baseline
-        )
-        assert changes is not None and changes.commits == [latest]
-        assert changes.files == [{"path": "appendix.md", "added": 1, "removed": 0}]
         async with db_factory() as session:
             card = AcceptCard(
                 topic_id=room.id,
@@ -783,12 +781,12 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
                     "url": check_url,
                 }
             ]
-            refreshed = await _accept_service(session).push_fix(task.id)
+            refreshed = await accept_service(session).push_fix(task.id)
             assert refreshed["pushed"] is True
             # The checks read closed its session, so the card is read again.
             card = await session.get(AcceptCard, card.id)
             assert card.pr_head_sha == latest and card.rebase_count == 0
-            again = await _accept_service(session).push_fix(task.id)
+            again = await accept_service(session).push_fix(task.id)
             assert again["pushed"] is False
             await session.commit()
         args = dict(owner=owner, repo=repo, number=draft["number"], token=token)
@@ -809,19 +807,25 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
         )
         assert verdict.state == "clean"
         async with db_factory() as session:
-            accepted = await _accept_service(session).accept(
+            accepted = await accept_service(session).accept(
                 card_id=card.id, decided_by="reviewer", head_sha=latest
             )
             await session.commit()
             assert accepted.status.value == "accepted"
             merged_sha = accepted.pr_head_sha
             delivered = await session.get(Task, task.id)
-            # Its last step landed: the task stays open while its agent
-            # writes the summary, and is on its way to closing.
+            # The merge landed and the task goes on: it stays open for its
+            # teammate to judge whether it is done, on the next step's own
+            # branch. Neither the write-up window nor the deploy wait is
+            # opened by a merge — both come only when the teammate closes the
+            # task as done (`review.task_landing`).
             assert delivered.status == TaskStatus.open
-            assert delivered.closing_since is not None
+            assert delivered.closing_since is None
+            assert delivered.deploying_since is None
             assert delivered.accepted_by == "reviewer"
             assert delivered.delivered_head == latest
+            assert delivered.branch_name != "task/report"
+            assert delivered.pr_number is None
             assert (await session.get(Topic, room.id)).status.value == "active"
         assert (await publisher.client.pull_request_status(**args)).merged
         merged_commit = await client.get(
@@ -841,7 +845,7 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
         assert "Reviewed-by: reviewer <reviewer@zhishi.local>" in message
         async with db_factory() as session:
             files = ProjectFiles(session, binding.project_id, None)
-            listed, source = await files.files("committed")
+            listed, source, _dirs = await files.files("committed")
             assert source == "committed"
             assert {item["path"] for item in listed} >= {
                 "report.md",
@@ -871,6 +875,18 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
             )
             assert "+appendix" in await files.diff("committed")
             assert any(row["hash"] == merged_sha[:12] for row in await files.history())
+        # Its teammate judged what landed to be the whole task, and closed it
+        # (`review.task_landing`: a merge alone leaves the task open). The
+        # branch it came in on is deleted; what it delivered stays readable at
+        # the commit that merge left.
+        async with db_factory() as session:
+            await close_task(
+                session,
+                await session.get(Task, task.id),
+                None,
+                conclusion="写完了",
+            )
+            await session.commit()
         deleted = await client.delete(f"/repos/{binding.repo}/branches/task/report")
         assert deleted.status_code == 204
         async with db_factory() as session:

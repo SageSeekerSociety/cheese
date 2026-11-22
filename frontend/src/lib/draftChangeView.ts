@@ -32,6 +32,7 @@ const LABEL_KEYS: Record<string, string> = {
   days_to_submit: 'tasks.form.completion',
   category: 'tasks.form.category',
   tags: 'tasks.form.topics',
+  knowledge_points: 'spaces.learningAnalysis.field.label',
   real_name: 'tasks.form.more.realName',
   registration_start: 'tasks.form.registrationStart',
   team_locking: 'tasks.form.teamLocking.label',
@@ -124,6 +125,10 @@ export function valueText(
       return terms.categories.find((c) => c.id === value)?.name ?? String(value)
     case 'tags':
       return (value as number[]).map((id) => terms.topics.find((topic) => topic.id === id)?.name ?? id).join('、')
+    case 'knowledge_points':
+      return (value as number[])
+        .map((id) => terms.knowledgePoints?.find((point) => point.id === id)?.name ?? id)
+        .join('、')
     case 'stages':
       return (value as TaskStage[]).map((s) => s.name).join('、') || t('tasks.assistant.changes.none')
     case 'submission':

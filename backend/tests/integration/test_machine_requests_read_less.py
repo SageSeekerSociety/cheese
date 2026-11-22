@@ -50,13 +50,16 @@ async def test_a_sandbox_request_reads_its_session_and_room_once(client, monkeyp
     event.listen(Engine, "after_cursor_execute", record)
     try:
         answer = _ask(
-            client, f"topics/{room.topic_id}/agent/control", device=room.old_device
+            client,
+            f"topics/{room.topic_id}/agent/control",
+            device=room.old_device,
+            headers={"x-cheese-attachment": str(room.session_id)},
         )
     finally:
         event.remove(Engine, "after_cursor_execute", record)
 
     assert answer.status_code == 200, answer.text
-    sessions = [s for s in statements if "FROM agent_sessions" in s]
+    sessions = [s for s in statements if "agent_sessions" in s.split(" WHERE ")[0]]
     assert len(sessions) == 1, sessions
     # Its lease names the room's resource, and the route the request names
     # resolves the room before its access check asks for it.

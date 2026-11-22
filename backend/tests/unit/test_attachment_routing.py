@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.domain.agent.harness.prompt import attachment_prompt_line
+from app.domain.agent.harness.lines import attachment_prompt_line
 from app.domain.agent.prompt import offered_attachments
 from app.domain.agent.session_host.contract import Image
 from app.domain.block.models import BlockKind

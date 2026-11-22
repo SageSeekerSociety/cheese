@@ -13,12 +13,19 @@ from sqlalchemy.engine import Engine
 
 from app.domain.room_task.place import PlaceResolver
 from app.domain.topic.models import Topic
-from tests.integration.conftest import post_message, session_auth_headers
+from tests.integration.conftest import (
+    join_project_team,
+    post_message,
+    session_auth_headers,
+)
 from tests.integration.test_the_composer_shows_who_a_message_is_for import _channel
 
 
 def test_marking_a_room_read_reads_its_project_with_the_room(client):
-    _, _root, room = _channel(client)
+    project, _root, room = _channel(client)
+    # Someone else in the project: "hi" stays among people and starts no turn
+    # whose reads would land in the ones counted here.
+    join_project_team(client, project, "bob")
     message = post_message(client, room, "alice", {"content": "hi"})
     mark = lambda: client.post(  # noqa: E731
         f"/topics/{room}/read",

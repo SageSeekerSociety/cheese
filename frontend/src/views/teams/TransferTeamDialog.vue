@@ -14,6 +14,7 @@ import { getAvatarUrl } from '@/utils/materials'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import { t } from '@/i18n'
+import { userName, userOriginalName } from '@/lib/agentNames'
 
 const props = defineProps<{
   /** 要交出去的团队。 */
@@ -72,14 +73,17 @@ function confirm() {
         >
           <template #prepend>
             <UserAvatar
-              :name="m.user.nickname || m.user.username"
+              :name="userName(m.user)"
               :avatar="m.user.avatarId ? getAvatarUrl(m.user.avatarId) : ''"
               :size="28"
               class="me-3"
             />
           </template>
-          <v-list-item-title class="t-body">{{ m.user.nickname || m.user.username }}</v-list-item-title>
-          <v-list-item-subtitle class="t-meta">{{ m.user.username }}</v-list-item-subtitle>
+          <v-list-item-title class="t-body">{{ userName(m.user) }}</v-list-item-title>
+          <v-list-item-subtitle class="t-meta">
+            <span v-if="m.user.remark && userOriginalName(m.user)">({{ userOriginalName(m.user) }}) · </span
+            >{{ m.user.username }}
+          </v-list-item-subtitle>
         </v-list-item>
       </v-list>
       <v-alert v-if="error" type="error" density="comfortable" class="mt-4">{{ error }}</v-alert>

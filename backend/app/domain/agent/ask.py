@@ -31,6 +31,7 @@ from app.domain.block.asked import SKIPPED, asked_of, settled, skipped_by_all
 from app.domain.block.indexed_rows import QUESTION_ROWS
 from app.domain.block.models import Block
 from app.domain.block.questions import (
+    confirm_pending,
     expire_question,
     parse_questions,
     post_questions,
@@ -112,6 +113,25 @@ async def ask(session, *, place, seat, body) -> list:
     else:
         asked, everyone = await _addressees(session, place.room, to)
     request_id = body.get("request_id")
+    open_rows = await _open_questions_of(
+        session, place.conversation_id, seat, asked, everyone
+    )
+    if open_rows and [r.content for r in open_rows] == [q.content for q in questions]:
+        # The same question again: the card already waiting is the one.
+        return open_rows
+    for old in open_rows:
+        # A new question takes over from the old one, so the light follows one.
+        await withdraw_question_by_asker(
+            session, block=old, room_id=place.room_id, handle=seat
+        )
+        show_once_committed(
+            session,
+            old.conversation_id,
+            {
+                "type": "block_updated",
+                "block": BlockOut.model_validate(old).model_dump(mode="json"),
+            },
+        )
     rows = await post_questions(
         session,
         project_id=place.project_id,
@@ -142,6 +162,48 @@ async def ask(session, *, place, seat, body) -> list:
             },
         )
     return rows
+
+
+async def _open_questions_of(
+    session, conversation_id, seat, asked: tuple[str, ...], everyone: bool
+) -> list[Block]:
+    """The seat's own questions here that still wait for an answer and ask the
+    same people the new one does (another person's question is a second wait,
+    not this one's repeat)."""
+    rows = await session.scalars(
+        select(Block)
+        .where(
+            Block.conversation_id == conversation_id,
+            Block.author == seat,
+            QUESTION_ROWS,
+        )
+        .order_by(Block.created_at, Block.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    return [
+        b
+        for b in rows
+        if not settled(b.meta)
+        and asked_of(b.meta) == asked
+        and bool((b.meta or {}).get("asked_all")) == everyone
+    ]
+
+
+async def confirm_answer_by_asker(session, *, block, handle) -> Block:
+    """The asking agent says the typed replies on ``block`` are its answer: the
+    question is answered and its notice settled
+    (`block.questions.confirm_pending`). Writes the caller's session, no commit."""
+    question = await confirm_pending(session, question=block, by=handle)
+    said = " ".join(
+        str(e.get("note") or "")
+        for e in (question.meta or {}).get("answer_log") or []
+        if e.get("kind") == "note"
+    )
+    excerpt = said[:40] + ("…" if len(said) > 40 else "")
+    for notice in await notices_now_answered(session, [question]):
+        await settle(session, notice, {"answered": excerpt})
+    return question
 
 
 def _deadline(body) -> datetime | None:

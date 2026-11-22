@@ -1,0 +1,16 @@
+{
+  "type": "stream.open",
+  "origin": "server",
+  "why": "The server opens a stream to the executor of a state directory and keeps it open. `header` is the first line the connector writes to the executor socket, verbatim: what the stream is for (here a person's terminal). The connector relays bytes from there and ascribes them no meaning.",
+  "frame": {
+    "t": "stream.open",
+    "id": "stream-3f9a1c7e5b2d4086a1e9c7b5d3f1a2b4",
+    "path": "$HOME/.cheese/sandboxes/7d6c5b4a/9f8e7d6c/state",
+    "header": "{\"method\": \"terminal\", \"params\": {\"owner\": \"42\", \"id\": \"t1\"}}"
+  },
+  "meaning": {
+    "stream_id": "stream-3f9a1c7e5b2d4086a1e9c7b5d3f1a2b4",
+    "state": "$HOME/.cheese/sandboxes/7d6c5b4a/9f8e7d6c/state",
+    "header": "{\"method\": \"terminal\", \"params\": {\"owner\": \"42\", \"id\": \"t1\"}}"
+  }
+}

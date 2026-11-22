@@ -44,6 +44,7 @@ from typing import Final
 from app.domain.agent.platform_failures import (
     RUNNER_REPLACED_CODE,
     is_compaction_refused,
+    is_login_expired,
     is_provider_out_of_credit,
     is_request_refused,
 )
@@ -237,6 +238,10 @@ def classify(
         # the same conversation to be refused the same way: an unbounded streak
         # of retries that never looks different from one. The room is told the
         # truth once (`turn.state.notices`).
+        return None
+    if is_login_expired(said):
+        # The same login is used again and refused the same way: only a person
+        # signing in again helps, and the room is told so (`turn.state.notices`).
         return None
     if (
         is_provider_out_of_credit(said)

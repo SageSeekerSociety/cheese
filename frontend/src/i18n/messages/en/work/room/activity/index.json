@@ -1,8 +1,22 @@
 {
   "retrying": "{name}'s call to the model failed, retrying automatically",
+  "retryingShort": "The model call failed, retrying automatically",
   "separator": " · ",
   "typingMany": "Several people are typing…",
   "typingOne": "{name} is typing…",
   "typingTwo": "{first} and {second} are typing…",
-  "working": "{name} is working…"
+  "working": "{name} is working…",
+  "workingShort": "Working",
+  "failure": {
+    "failedLogin": "Login expired, stopped for {time}",
+    "failedModel": "The model call failed, stopped for {time}",
+    "failedOther": "The turn did not finish, stopped for {time}",
+    "relogin": "Sign in again",
+    "hintLogin": "Once signed in again it carries on by itself; no need to resend",
+    "hintModel": "Usually passes soon; press Retry in the conversation",
+    "hintOther": "Read the service's words on the failure in the conversation",
+    "reasonLogin": "The Claude account it runs on has an expired login that could not be refreshed",
+    "reasonModel": "The model call failed (a fault on the service's side)",
+    "reasonOther": "This turn did not finish"
+  }
 }

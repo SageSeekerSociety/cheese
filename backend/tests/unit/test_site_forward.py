@@ -18,8 +18,6 @@ def _env(api: str) -> dict:
         api=api,
         token=mint_scoped_token(project_id="p", topic_id="t"),
         project_id="p",
-        topic_id="t",
-        author="cheese",
         work_resource="r",
     )
 

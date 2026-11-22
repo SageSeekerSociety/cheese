@@ -341,6 +341,9 @@ class TestGetQuestion:
         assert result["author"] == {
             "id": 50,
             "nickname": "alice",
+            # 卡片也带账号与这个查看者的备注；这一条没设备注。
+            "username": None,
+            "remark": None,
             "avatarId": 5,
             "intro": "hi there",
         }

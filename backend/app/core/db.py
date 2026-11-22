@@ -462,8 +462,8 @@ def after_own_commit(
     committed has no parent *or* is a savepoint. Releasing a savepoint commits nothing
     — another connection still reads the rows as they were — so work that opens its own
     session to look at what this commit wrote would read the state from before it.
-    A request does release savepoints: ``review.task_landing.tell_origin`` wraps the
-    line it says in one so that a courtesy line cannot take a landing back with it.
+    A request does release savepoints: ``review.task_landing.record_at_origin`` wraps the
+    line it records in one so that a record cannot take a landing back with it.
     An event fired while a savepoint is still open is therefore left to the commit
     that ends ``session``'s transaction.
 

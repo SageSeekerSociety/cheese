@@ -324,7 +324,7 @@ export const VIEW_SETTINGS_WORKSPACE_ENTRIES_C: CatalogEntry[] = [
           return t('catalog.projectOverviewView.s5.note')
         },
         props: { tasks: [], underway: 0 },
-        expect: '暂无进行中的任务',
+        expect: '暂无未结束的任务',
         expectSelector: '[data-testid="overview-people"] p.ov-empty',
       },
       {

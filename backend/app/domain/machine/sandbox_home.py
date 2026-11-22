@@ -168,6 +168,34 @@ def destroy(cleanup, project, resource) -> dict:
     return {"destroyed": True, "processes": running}
 
 
+def snapshot_root(cleanup, project, resource, image, url) -> dict:
+    """Unmount the upper before archiving; nothing may write while tar reads it."""
+    answer = park(cleanup, project, resource)
+    home, _ = cleanup["resource_paths"](Path.home(), project, resource)
+    if not (cleanup["rootfs"]["layer_for"](home, image) / "upper").is_dir():
+        return {**answer, "status": "absent"}
+    with cleanup["root_images"]["namespace"]() as (userns, _):
+        answer.update(
+            cleanup["rootfs"]["save"](
+                home,
+                image,
+                url,
+                bwrap=str(
+                    Path.home()
+                    / (
+                        os.environ.get("CHEESE_PROFILE_ROOT")
+                        or cleanup["FOOTPRINT_ROOT"]
+                    )
+                    / "runtime/bubblewrap/bwrap"
+                ),
+                namespace=cleanup["root_namespace"](userns),
+                fds=(userns,),
+                put_archive=cleanup["put_archive"],
+            )
+        )
+    return answer
+
+
 def park(cleanup, project, resource) -> dict:
     """Stop a sandbox as `destroy` does — thawed, what runs read, its executor
     and everything else holding its files ended, its cgroup and link taken
@@ -279,7 +307,15 @@ def machine() -> dict:
     pressure = _pressure(PRESSURE_MEMORY)
     if pressure is not None:
         found["memory_pressure"] = pressure
-    found["zswap"] = ZSWAP.is_dir()
+    # On, not only built in: a kernel that has zswap keeps it off until
+    # something turns it on (the enrollment does, `enrollment.DATA_DISK`).
+    try:
+        found["zswap"] = (ZSWAP / "parameters/enabled").read_text().strip() in {
+            "Y",
+            "1",
+        }
+    except OSError:
+        found["zswap"] = False
     usage = _number(CGROUP_ROOT / "cpu.stat", "usage_usec")
     if usage is not None:
         found["cpu_usage_usec"] = usage
@@ -429,6 +465,7 @@ def disk(cleanup, live, grace_s, idle=()) -> dict:
 
 
 ACTIONS = {
+    "snapshot_root": snapshot_root,
     "destroy": destroy,
     "park": park,
     "disk": disk,

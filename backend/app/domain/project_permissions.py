@@ -83,6 +83,12 @@ class Permission(enum.StrEnum):
     mint_webhook_token = "mint_webhook_token"
     #: Put a status line from the machine it works on into the conversation's 现场.
     record_machine_status = "record_machine_status"
+    #: Coordinate the channel's tasks from its main line, and report to the main
+    #: line from a task: tell a task, look into it, close or reopen one.
+    coordinate_tasks = "coordinate_tasks"
+    #: Hand the project's work in to the 题目 it was made from, for a member who
+    #: may hand in on that claim, on that member's own word.
+    hand_in_for_members = "hand_in_for_members"
 
 
 #: What an AI teammate does from inside a conversation it works in, and no
@@ -92,6 +98,8 @@ AGENT_ONLY: frozenset[Permission] = frozenset(
         Permission.note_own_threads,
         Permission.mint_webhook_token,
         Permission.record_machine_status,
+        Permission.coordinate_tasks,
+        Permission.hand_in_for_members,
     }
 )
 

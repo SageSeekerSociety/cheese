@@ -14,7 +14,9 @@ interface DialogOptions<T = any> {
   /** 不可撤销的操作：确认键实心红。 */
   danger?: boolean
   onConfirm?: (value?: any) => T
-  onCancel?: () => void
+  /** 取消时 `wait()` 交回的答案。写了它就是一次回答（`confirm()` 写的是 `false`），
+   *  没写才是「取消」这个错误（`CancelError`，给 `prompt()`、`custom()` 用）。 */
+  onCancel?: () => T
 }
 
 interface DialogInstance<T = any> extends DialogOptions<T> {

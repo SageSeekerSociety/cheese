@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import type { WorkTabMeta } from '@/components/work/workLayout'
+import type { RoomTask } from '@/cx_types'
+import type { PreviewLocate } from '@/lib/previewQuestion'
 import type { TaskSource } from '@/types/taskOrigin'
 import type { TaskOverviewHandle } from './topicView/actions'
 import type { ChatColumnHandle, WorkPanelHandle } from './topicView/shared'
@@ -6,25 +9,32 @@ import type { ChatColumnHandle, WorkPanelHandle } from './topicView/shared'
 import { computed, defineAsyncComponent, onMounted, onUnmounted, provide, ref, toRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
+import { useQuery } from '@tanstack/vue-query'
 
 import { provideAcceptCard } from '@/composables/useAcceptCard'
 import { useChapters } from '@/composables/useChapters'
+import { usePageTitle } from '@/composables/usePageTitle'
 import { useScreenHeader } from '@/composables/useScreenHeader'
 
 import { useTopicActions } from './topicView/actions'
 import { useTopicAddress } from './topicView/address'
+import { useAdoptInPlace } from './topicView/adoptInPlace'
 import { useCardPhase, useTopicConversation } from './topicView/conversation'
+import { useDeliveryTab } from './topicView/delivery'
 import { useTopicHeader } from './topicView/header'
 import { useTopicLive } from './topicView/live'
 import { useTopicPanelState } from './topicView/panel'
+import { useReviewChat } from './topicView/reviewChat'
 import { useSkillProposals } from './useSkillProposals'
 
-import BaseButton from '@/components/base/BaseButton.vue'
+import HandInDialog from '@/components/accept/HandInDialog.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import ChannelOverview from '@/components/channel/ChannelOverview.vue'
 import NewThreadDialog from '@/components/channel/NewThreadDialog.vue'
+import { roomTabs } from '@/components/panels/panelTabList'
 import PanelThreads from '@/components/panels/PanelThreads.vue'
 import PushPermissionPrompt from '@/components/PushPermissionPrompt.vue'
+import DeliveryHead from '@/components/room/DeliveryHead.vue'
 import SkillProposalCard from '@/components/room/SkillProposalCard.vue'
 import TaskHeader from '@/components/task/TaskHeader.vue'
 import TaskOverview from '@/components/task/TaskOverview.vue'
@@ -32,16 +42,22 @@ import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
 import WorkPanel from '@/components/WorkPanel.vue'
 import { t } from '@/i18n'
+import { usePagePanels } from '@/layouts/pagePanels'
 import { PENDING_NOTES, usePendingNotes } from '@/lib/pendingNotes'
 import { warmRoutesWhenIdle } from '@/lib/routePrefetch'
 import { sourceRoute } from '@/lib/taskSource'
+import { taskState } from '@/lib/taskState'
 import { taskTitle, topicTitle } from '@/lib/topicState'
 import { VIEWING_CONTEXT } from '@/lib/viewingContext'
+import { myHandle } from '@/me'
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
+import { openRoomTasksQuery, roomTaskQuery } from '@/query/room'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { CONVERSATION, useRoomLayout } from '@/views/workspace/roomLayout'
 import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
 import { useChannelOverview } from '@/views/workspace/useChannelOverview'
 import { useTaskOverview } from '@/views/workspace/useTaskOverview'
-import { useTopicPanes } from '@/views/workspace/useTopicPanes'
 
 // 话题视图: ONE topic header, then the chat | 工作面板 split. A task in the room
 // is drawn by the same view with the task's header, its own conversation in the
@@ -61,9 +77,18 @@ defineOptions({ name: 'TopicView' })
 // 支线那一半只在打开一条支线时才要，用到时再取。
 const ThreadPane = defineAsyncComponent(() => import('@/views/workspace/ThreadPane.vue'))
 
-// `taskId`：地址指着这个房间里的一个任务时，画的是任务页。`threadId`：指着频道里的一条
-// 支线时，桌面上支线占右边那一半，手机上是一整页。
-const props = defineProps<{ projectId: string; topicId: string; taskId?: string; threadId?: string }>()
+// `taskId`：地址指着这个频道里的一个任务时，画的是任务页。`threadId`：指着频道里的一条
+// 支线时，桌面上它在右栏「支线」那一格里，手机上是一整页。`reviewTaskId`：在频道里审阅
+// 一件任务，桌面上是右栏里那一格交付页签，手机上是一整页。
+const props = defineProps<{
+  projectId: string
+  topicId: string
+  taskId?: string
+  threadId?: string
+  reviewTaskId?: string
+}>()
+// 地址此刻指着一条支线或一件交付：右栏一定开着，收起它就是离开那一处、回到频道。
+const beside = computed(() => !!props.threadId || !!props.reviewTaskId)
 const { mdAndUp } = useDisplay()
 const router = useRouter()
 const route = useRoute()
@@ -98,6 +123,8 @@ const {
 const panesRef = ref<HTMLElement | null>(null)
 const panelRef = ref<WorkPanelHandle | null>(null)
 const chatColumn = ref<ChatColumnHandle | null>(null)
+// 审阅那一栏的对话栏：按任务 id 各记一份，预览里指出的一处发进那一件任务自己的对话。
+const reviewChat = useReviewChat()
 const taskOverviewRef = ref<TaskOverviewHandle | null>(null)
 
 // ---- 右侧面板的收 / 开（三档见 useTopicPanel）----
@@ -105,7 +132,7 @@ const panelState = useTopicPanelState({
   panes: panesRef,
   tab: panelTab,
   desktop: mdAndUp,
-  thread: computed(() => !!props.threadId),
+  thread: beside,
   setTab: (tab) => void router.replace({ query: { ...route.query, tab } }),
   showing: () => panelRef.value?.activeTab(),
   backToRoom,
@@ -119,8 +146,6 @@ const {
   show: panelShow,
 } = panelState
 
-// ---- 左右两栏：分隔、专注模式、对话收起时的窄边（见 useTopicPanes）----
-const panes = useTopicPanes({ panelOpen, panelFloat, desktop: mdAndUp })
 // 右栏此刻开着哪一份文件：撰写框上「芝士会看到你在看什么」那一行读它
 // （lib/viewingContext.ts）。面板收起时什么也没在看。
 const viewingPath = ref<string | null>(null)
@@ -137,10 +162,7 @@ provide(
 const pendingNotes = usePendingNotes((content) => chatColumn.value?.say(content) ?? false)
 provide(PENDING_NOTES, pendingNotes)
 
-const { focusMode, focusIcon, focusLabel, docked, chatNews, noteChatNews, toggleFocus, chatStyle } = panes
-const { freezeChatWidth, startPaneDrag } = panes
-
-// 这个话题（任务）的采纳卡，整页一份：对话栏的那一条、「改动」页顶部、专注模式和手机
+// 这个话题（任务）的采纳卡，整页一份：对话栏的那一条、「改动」页顶部、对话看不见时的那一条和手机
 // 上面板底部那一条读的都是它（见 provideAcceptCard）。
 const accept = provideAcceptCard({
   get topicId() {
@@ -151,6 +173,9 @@ const accept = provideAcceptCard({
   },
   get taskId() {
     return props.taskId ?? null
+  },
+  get projectId() {
+    return props.projectId
   },
 })
 function reloadAccept() {
@@ -170,8 +195,10 @@ const {
   showThread,
   onOpenThread,
   openTaskPage,
-  onOpenCard,
+  openTask,
+  showAsTask,
   upgradeMessage,
+  upgradeInColumn,
   newThreadOpen,
   creatingThread,
   canOpenThread,
@@ -225,7 +252,7 @@ const live = useTopicLive({
   conversationId: () => conversationId.value,
   taskId: () => props.taskId,
   reloadTask: () => taskPage.load(true),
-  noteChatNews,
+  noteChatNews: () => room.noteChatNews(),
   reloadAccept,
   reloadSkills: () => {
     if (skillsRead.value) void skills.load()
@@ -236,7 +263,7 @@ const { working, activity, agentControl, siteTurns, activityTick, roomConnected 
 const { handleWorking, handleTurnDone, handleStateChanged } = live
 
 // ---- 页头和这一页的标题（见 topicView/header.ts）----
-const { taskHeaderBinding, topicHeaderBinding, setDynamicTitle } = useTopicHeader({
+const { taskHeaderBinding, topicHeaderBinding } = useTopicHeader({
   place: here,
   room: () => selectedTopic.value,
   task: taskPage.task,
@@ -249,9 +276,221 @@ const { taskHeaderBinding, topicHeaderBinding, setDynamicTitle } = useTopicHeade
   togglePanel,
   openTopic,
   me: AUTHOR,
+  handIn: accept.handIn,
+  // 布局区那一份在下面才建（它要读打开的交付）；页头渲染时早已有了。
+  resetLayout: () => (room.panels.rearranged.value ? room.panels.reset : null),
+  panelControls: () => room.panelControls.value,
 })
+// ---- 在频道里审阅的那件交付、右栏开着哪一格（见 topicView/delivery.ts）----
+const reviewReload = ref(0)
+const delivery = useDeliveryTab({
+  place: here,
+  desktop: mdAndUp,
+  urlTab: panelTab,
+  panelOpen,
+  activeTab: () => panelRef.value?.activeTab(),
+  me: () => myHandle(),
+  readOpenTasks: async () =>
+    (await queryClient.fetchQuery({ ...openRoomTasksQuery(props.topicId), staleTime: 0 })).data,
+  openDelivery: (taskId) => void openTask(taskId),
+  setTab: onPanelTab,
+  toChannelTab: (key) =>
+    void router.push({
+      name: 'workspace-topic',
+      params: { projectId: props.projectId, topicId: props.topicId },
+      query: { tab: key },
+    }),
+  refreshDelivery: (taskId) => {
+    reviewReload.value += 1
+    void queryClient.invalidateQueries({ queryKey: keys.roomTask(taskId) })
+  },
+})
+const {
+  tabs: deliveryTabs,
+  shownTab,
+  select: onWorkPanelTab,
+  close: closeDelivery,
+  arrived: onDeliveryArrived,
+} = delivery
+const deliveryTaskId = computed(() => props.reviewTaskId ?? null)
+const reviewRead = useQuery(
+  computed(() => ({ ...roomTaskQuery(deliveryTaskId.value ?? ''), enabled: !!deliveryTaskId.value })),
+  queryClient
+)
+const reviewTask = computed<RoomTask | null>(() => (deliveryTaskId.value ? reviewRead.data.value ?? null : null))
+const reviewHead = computed(() => ({ heading: reviewTask.value ? taskTitle(reviewTask.value) : '' }))
+// 页头上的状态词和在等谁：和主线标签、侧栏任务行同一份算法（`lib/taskState`）。
+function stateOf(task: RoomTask | null) {
+  return task
+    ? taskState(task, {
+        viewer: myHandle(),
+        nameOf: (handle: string) => memberNames.value[handle] || handle,
+        agentName: store.agentName,
+      })
+    : null
+}
+const reviewState = computed(() => stateOf(reviewTask.value))
+// 右栏里开着的每一格任务各读各的（页签上的名字、它那一栏的页头和只读与否）。
+// 只在页签打开时读一次（同一份缓存，`roomTaskQuery`）；正看着的那一格读的是上面那份活的。
+const tabTasks = ref<Record<string, RoomTask>>({})
+watch(
+  () => deliveryTabs.value.map((tab) => tab.taskId),
+  (ids) => {
+    for (const id of ids) {
+      if (tabTasks.value[id]) continue
+      void queryClient
+        .fetchQuery(roomTaskQuery(id))
+        .then((task) => (tabTasks.value = { ...tabTasks.value, [id]: task }))
+        .catch(() => undefined)
+    }
+  },
+  { immediate: true }
+)
+function tabTask(taskId: string): RoomTask | null {
+  return tabTasks.value[taskId] ?? null
+}
+/** 这件任务读回来的那一行：在它的地址上是 `reviewTask`，别的开着的页签各读各的。 */
+function taskFor(taskId: string): RoomTask | null {
+  return taskId === deliveryTaskId.value ? reviewTask.value : tabTask(taskId)
+}
+const deliveryTabsBinding = computed(() =>
+  mdAndUp.value
+    ? deliveryTabs.value.map((tab) => {
+        const task = taskFor(tab.taskId)
+        return { id: tab.taskId, title: task ? taskTitle(task) : '', dot: tab.dot }
+      })
+    : []
+)
+
+// ---- 桌面：对话和工作面板的每一格都是外壳布局区里的一块（见 roomLayout.ts）----
+// 这一页自己那一格只剩页头。频道页、任务页各记各的摆法。面板收着、或主区太窄成了浮层时，
+// 只装着工作面板的那几格藏起来；浮层那一档面板自己排页签。
+const docked = computed(() => !panelFloat.value && panelOpen.value)
+const roomReady = computed(() => !!selectedTopic.value && !(props.taskId && !currentTask.value))
+/** 工作面板此刻有哪几格：固定的几格（面板算好的名字和信号，没挂上时照表），打开的任务，打开的文件。 */
+function workTabs() {
+  const handle = panelRef.value as
+    | (WorkPanelHandle & { fixedMeta?: WorkTabMeta[]; fileMeta?: WorkTabMeta[]; terminalMeta?: WorkTabMeta[] })
+    | null
+  const fixed =
+    handle?.fixedMeta ??
+    roomTabs({ withChat: false, review: false, task: !!props.taskId }).map((tab) => ({
+      key: tab.key,
+      title: tab.label,
+      icon: tab.icon,
+    }))
+  return [
+    ...fixed.map((tab) => ({ ...tab, alwaysRender: tab.key === 'preview' })),
+    ...deliveryTabsBinding.value.map((tab) => ({
+      key: `delivery:${tab.id}`,
+      title: tab.title || t('work.room.delivery.title'),
+      icon: 'mdi-file-eye-outline',
+      signal: tab.dot ? ({ kind: 'dot' } as const) : undefined,
+      transient: true,
+      alwaysRender: true,
+    })),
+    ...(handle?.fileMeta ?? []).map((tab) => ({ ...tab, transient: true, alwaysRender: true })),
+    // 终端：「+」里那一项，和读者开着的每一格（一格一个 shell，挪动时不能重画）。
+    ...(handle?.terminalMeta ?? []).map((tab) => ({ ...tab, transient: !tab.spawns, alwaysRender: true })),
+  ]
+}
+const room = useRoomLayout(usePagePanels, {
+  kind: () => (mdAndUp.value ? (props.taskId ? 'task' : 'room') : null),
+  tabs: workTabs,
+  workHidden: () => !roomReady.value || !docked.value,
+  floating: () => panelFloat.value,
+  hide: { label: () => closeLabel.value, run: () => closePanel() },
+  onActivated: (key) => (panelRef.value as { activated?: (key: string) => void } | null)?.activated?.(key),
+  onClose: (key) => (panelRef.value as { closeTab?: (key: string) => void } | null)?.closeTab?.(key),
+  onKeep: (key) => (panelRef.value as { keepTab?: (key: string) => void } | null)?.keepTab?.(key),
+  onSpawn: (key) => void (panelRef.value as { spawnTab?: (key: string) => void } | null)?.spawnTab?.(key),
+})
+const conversationTarget = computed(() => room.panels.outlet(CONVERSATION))
+/** 对话那一格里的那一块：窄档的面板浮层就压在它上面。 */
+const conversationBox = ref<HTMLElement | null>(null)
+/** 对话看不见（被放大的那一格盖住、或收着）：采纳那一条贴到读者在看的那一格工作面板底下。 */
+const acceptElsewhere = computed(() => !room.conversationInSight.value)
+// 打开的这件任务看哪一种（对话 / 改动 / 预览）：主线上「查看改动」「预览」点名，人在
+// 那一栏里换了就跟着换。记着是哪件任务的：换一件任务从它的对话看起。
+const reviewView = ref<{ taskId: string; view: string } | null>(null)
+// 主线上按了「退回」：这件任务的页签开出写理由的那一块。每按一次一个新记号，只给那件任务。
+const returnAsk = ref<{ taskId: string; token: string } | null>(null)
+let returnAsks = 0
+function openTaskChat(taskId: string) {
+  reviewView.value = null
+  returnAsk.value = null
+  return openTask(taskId)
+}
+// 主线上交付那几颗按钮：去看改动、预览，就地采纳，或退回（topicView/adoptInPlace.ts）。
+const adoptInPlace = useAdoptInPlace({
+  me: () => myHandle(),
+  store,
+  topicId: () => props.topicId,
+  openTask: (taskId) => openTask(taskId),
+  showView: (taskId, view) => {
+    reviewView.value = { taskId, view }
+    returnAsk.value = null
+  },
+  askReturn: (taskId) => (returnAsk.value = { taskId, token: `${taskId}:${++returnAsks}` }),
+})
+const adoptingTask = adoptInPlace.adopting
+// 审阅那一栏（工作面板的审阅模式）要的几样：这件任务的对话、改动和预览。
+function reviewPanel(taskId: string) {
+  return {
+    review: true,
+    reviewReload: reviewReload.value,
+    topic: selectedTopic.value,
+    taskId,
+    taskReadOnly: !taskFor(taskId) || taskFor(taskId)?.status !== 'open',
+    taskHasBranch: taskFor(taskId)?.branch_name !== null,
+    activityTick: activityTick.value,
+    agentName: store.agentName,
+    agentHandle: taskFor(taskId)?.agent_handle ?? store.agentHandle,
+    members: store.members,
+    memberNames: memberNames.value,
+    topicList: store.topics,
+    tab: reviewView.value?.taskId === taskId ? reviewView.value.view : undefined,
+    askReturn: returnAsk.value?.taskId === taskId ? returnAsk.value.token : null,
+    // 预览里指一处、画完标注发出去：进这件任务自己的对话，不进频道主对话。指一处走
+    // `@locate`（下面模板里接），结构化提问走这几个 props；两样都落在同一份对话
+    // 句柄上（见 `topicView/reviewChat.ts`）——频道的发送口是另一个实例，两者不能混。
+    submitQuestion: reviewChat.submit(taskId),
+    // `v-bind` 摊开的对象不 unref，`askPersonal` 是 computed：这里取它此刻的值，
+    // 不然面板拿到的是一只 ref，按下去不是调用而是「ref 不可调用」。
+    askPersonal: askPersonal.value,
+  }
+}
+// 支线左上角的返回：回到「支线」那一格的列表。
+function backToThreads() {
+  void router.push({
+    name: 'workspace-topic',
+    params: { projectId: props.projectId, topicId: props.topicId },
+    query: { tab: 'threads' },
+  })
+}
+// 这一页的标题是在审阅的那件任务（频道主线还在旁边，审阅是这一页正在做的事）。
+const pageTitle = usePageTitle()
+watch(
+  reviewHead,
+  ({ heading }) => {
+    if (heading) pageTitle.setDynamicTitle(heading, 'workspace-review')
+    else pageTitle.clearDynamicTitle('workspace-review')
+  },
+  { immediate: true }
+)
+onUnmounted(() => pageTitle.clearDynamicTitle('workspace-review'))
+
 useScreenHeader(() => {
-  if (mdAndUp.value || props.threadId) return null
+  if (!mdAndUp.value && props.reviewTaskId) {
+    const reviewing = props.reviewTaskId
+    return {
+      content: {
+        component: DeliveryHead,
+        props: { ...reviewHead.value, state: reviewState.value, bar: true, onOpenTask: () => openTaskPage(reviewing) },
+      },
+    }
+  }
+  if (mdAndUp.value || beside.value) return null
   const [component, binding] = props.taskId
     ? [TaskHeader, taskHeaderBinding.value]
     : [TopicHeader, topicHeaderBinding.value]
@@ -300,12 +539,11 @@ function openSource(source: TaskSource) {
 const { chatEvents, onLocate, submitQuestion, askPersonal, handleMentionClick } = useTopicActions({
   place: here,
   panel: { show: panelShow },
-  focusMode,
-  onPanelTab,
+  onPanelTab: onWorkPanelTab,
   onReview,
   reloadAccept,
   loadSkills,
-  opening: { onOpenThread, onOpenCard, upgradeMessage },
+  opening: { onOpenThread, openTask: openTaskChat, upgradeInColumn },
   openTopic,
   panelRef,
   chatColumn,
@@ -316,6 +554,7 @@ const { chatEvents, onLocate, submitQuestion, askPersonal, handleMentionClick } 
   handleTurnDone,
   handleWorking,
   handleStateChanged,
+  onDelivery: (act) => void adoptInPlace.onDelivery(act),
 })
 
 // 话题画出来之后，趁浏览器空着把从这里最常去的几页的代码先下下来：总览、资料库、
@@ -337,13 +576,16 @@ void openPlace()
 
 <template>
   <div class="topic-view d-flex flex-column fill-height" style="min-width: 0">
-    <div v-if="!selectedTopic" class="flex-grow-1 d-flex align-center justify-center">
-      <v-progress-circular v-if="resolving || redirecting" indeterminate color="primary" />
-      <div v-else class="text-center">
-        <div class="t-body c-muted">{{ t('work.topic.notFound') }}</div>
-        <div class="t-meta mt-1">{{ t('work.topic.notFoundHint') }}</div>
+    <!-- 桌面上它在对话那一格里（页面这一格只放页头）。 -->
+    <Teleport v-if="!selectedTopic" :to="conversationTarget" :disabled="!conversationTarget">
+      <div class="room-state flex-grow-1 d-flex align-center justify-center">
+        <v-progress-circular v-if="resolving || redirecting" indeterminate color="primary" />
+        <div v-else class="text-center">
+          <div class="t-body c-muted">{{ t('work.topic.notFound') }}</div>
+          <div class="t-meta mt-1">{{ t('work.topic.notFoundHint') }}</div>
+        </div>
       </div>
-    </div>
+    </Teleport>
 
     <template v-else>
       <!-- Screen-reader heading for the room. Text from `topicTitle`, the same
@@ -363,16 +605,38 @@ void openPlace()
         </template>
         <TopicHeader v-else-if="topicHeaderBinding" v-bind="topicHeaderBinding" />
       </template>
+      <!-- The hand-in panel the task header's submit button opens, on both widths. -->
+      <HandInDialog
+        v-if="taskId"
+        :model-value="accept.handIn.open.value"
+        :again="accept.handIn.again.value"
+        :adopts="accept.handIn.adopts.value"
+        :files="accept.handIn.files.value"
+        :subject="accept.handIn.subject.value"
+        :body="accept.handIn.body.value"
+        :reviewer="accept.handIn.reviewer.value"
+        :reviewers="accept.handInReviewers.value"
+        :drafting="accept.handIn.drafting.value"
+        :submitting="accept.handIn.submitting.value"
+        :ready="accept.handIn.ready.value"
+        @update:model-value="(open: boolean) => !open && accept.handIn.closePanel()"
+        @update:subject="accept.handIn.touchSubject"
+        @update:body="accept.handIn.touchBody"
+        @update:reviewer="(value: string | null) => (accept.handIn.reviewer.value = value)"
+        @submit="accept.handIn.submit()"
+      />
 
       <!-- 「本轮运行时间可能较长，完成后通知你」——问推送权限的那一刻。它自己决定
          什么时候出现（这一轮跑过一分钟、而且这个浏览器还没问过），平常什么都不
          画。放在这里而不是首屏：见组件自己的说明。 -->
       <PushPermissionPrompt :working="working" />
 
-      <div v-if="taskId && !currentTask" class="task-state flex-grow-1">
-        <v-progress-circular v-if="taskLoading" indeterminate color="primary" size="24" />
-        <span v-else class="t-body c-muted">{{ taskLoadError ?? t('work.task.notFound') }}</span>
-      </div>
+      <Teleport v-if="taskId && !currentTask" :to="conversationTarget" :disabled="!conversationTarget">
+        <div class="task-state room-state flex-grow-1">
+          <v-progress-circular v-if="taskLoading" indeterminate color="primary" size="24" />
+          <span v-else class="t-body c-muted">{{ taskLoadError ?? t('work.task.notFound') }}</span>
+        </div>
+      </Teleport>
       <!-- 手机：支线是一整页，← 回到频道。 -->
       <ThreadPane
         v-else-if="threadId && !mdAndUp"
@@ -384,15 +648,48 @@ void openPlace()
         :members="store.members"
         :topic-list="store.topics"
         :member-names="memberNames"
-        @title="(title: string) => setDynamicTitle(title, 'workspace-thread')"
+        :to-task="upgradeMessage"
         @close="backToRoom"
-        @open-task="onOpenCard"
-        @open-page="openTaskPage"
-        @to-task="upgradeMessage"
+        @open-task="openTaskPage"
+        @as-task="showAsTask"
         @open-file="(path: string) => panelRef?.openFile?.(path)"
         @open-topic="openTopic"
         @mention-click="handleMentionClick"
       />
+      <!-- Phone: reviewing a task is a whole page, ← back to the channel; its head is the top bar's content. -->
+      <WorkPanel
+        v-else-if="reviewTaskId && !mdAndUp"
+        :key="reviewTaskId"
+        class="flex-grow-1"
+        v-bind="reviewPanel(reviewTaskId)"
+        @open-topic="openTopic"
+        @open-card="openTaskPage"
+        @mention-click="handleMentionClick"
+        @navigate="router.push($event)"
+        @update:tab="(key: string) => (reviewView = { taskId: reviewTaskId!, view: key })"
+        @locate="(payload: PreviewLocate) => reviewChat.say(reviewTaskId!, payload)"
+        @return-asked="returnAsk = null"
+      >
+        <template #chat>
+          <TopicChatColumn
+            :ref="(handle: unknown) => reviewChat.hold(reviewTaskId!, handle)"
+            class="col col-chat flex-grow-1"
+            beside
+            :topic="selectedTopic"
+            :task-id="reviewTaskId"
+            :task-agent-handle="reviewTask?.agent_handle ?? null"
+            :members="store.members"
+            :topic-list="store.topics"
+            :member-names="memberNames"
+            :composer-closed="composerClosed"
+            :ask-closed="askClosed || reviewTask?.status === 'closed'"
+            @open-file="(path: string) => panelRef?.openFile?.(path)"
+            @open-topic="openTopic"
+            @open-card="openTask"
+            @mention-click="handleMentionClick"
+          />
+        </template>
+      </WorkPanel>
       <div
         v-else
         ref="panesRef"
@@ -400,254 +697,291 @@ void openPlace()
         class="panes d-flex flex-grow-1"
         style="min-width: 0; min-height: 0; position: relative"
       >
-        <!-- 桌面：对话是左边那一栏。面板并排开着时两者之间有一条可拖的分隔，专注模式里
-             这一栏像抽屉一样收起；面板收着或浮在上面时这一栏占满整宽。 -->
-        <Transition name="focus-chat" @before-enter="freezeChatWidth" @before-leave="freezeChatWidth">
-          <TopicChatColumn
-            v-if="mdAndUp"
-            v-show="!focusMode"
-            ref="chatColumn"
-            class="col col-chat"
-            :style="chatStyle"
-            :topic="selectedTopic"
-            :members="store.members"
-            :topic-list="store.topics"
-            :unread-on-open="unreadOnOpen"
-            :focus-block="focusBlock"
-            :task-id="taskId ?? null"
-            :task-agent-handle="currentTask?.agent_handle ?? null"
-            :member-names="memberNames"
-            :composer-closed="composerClosed"
-            :ask-closed="askClosed"
-            :accept-elsewhere="focusMode"
-            :chapters="chapters.rows.value"
-            :chapterable="canChapter"
-            :chapter-ids="chapters.chapterIds.value"
-            v-on="chatEvents"
-            @chapter="chapters.add"
-            @unchapter="chapters.remove"
-            @rename="chapters.rename"
-            @open-room="backToRoom"
-          />
-        </Transition>
-        <!-- 专注模式里对话收成这一条窄边：点它回到并排，有新回复时带一个点。 -->
-        <div v-if="mdAndUp && focusMode" class="chat-rail">
-          <BaseButton
-            icon="mdi-message-outline"
-            size="sm"
-            :title="focusLabel"
-            :aria-label="focusLabel"
-            @click="toggleFocus"
-          />
-          <span v-if="chatNews" class="chat-rail__news" aria-hidden="true" />
-        </div>
-        <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- a drag handle for the pointer; without it the split stays where it is -->
-        <div
-          v-if="mdAndUp && !focusMode && docked"
-          class="pane-resizer"
-          :title="t('work.topic.resize')"
-          @mousedown.prevent="startPaneDrag"
-          @dblclick="store.resetChatPct()"
-        />
+        <!-- 桌面：对话是外壳布局区里的一格（传送进去；没有外壳时就在这一排里）。面板
+             并排时在它右边那一格，窄档里是压在这一块上的浮层。 -->
+        <Teleport v-if="mdAndUp" :to="conversationTarget" :disabled="!conversationTarget">
+          <div ref="conversationBox" class="col room-conversation">
+            <TopicChatColumn
+              ref="chatColumn"
+              class="col col-chat"
+              :topic="selectedTopic"
+              :members="store.members"
+              :topic-list="store.topics"
+              :unread-on-open="unreadOnOpen"
+              :focus-block="focusBlock"
+              :task-id="taskId ?? null"
+              :task-agent-handle="currentTask?.agent_handle ?? null"
+              :member-names="memberNames"
+              :composer-closed="composerClosed"
+              :ask-closed="askClosed"
+              :accept-elsewhere="acceptElsewhere"
+              :chapters="chapters.rows.value"
+              :chapterable="canChapter"
+              :chapter-ids="chapters.chapterIds.value"
+              :adopting-task="adoptingTask"
+              v-on="chatEvents"
+              @chapter="chapters.add"
+              @unchapter="chapters.remove"
+              @rename="chapters.rename"
+              @open-room="backToRoom"
+              @delivery-arrived="onDeliveryArrived"
+            />
+            <!-- 面板浮层背后的遮罩。点它收起面板——和 Esc 同一条路。 -->
+            <Transition name="panel-scrim">
+              <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- Esc closes the panel too -->
+              <div v-if="panelFloat && panelOpen" class="panel-scrim" @click="closePanel" />
+            </Transition>
+          </div>
+        </Teleport>
 
-        <!-- 面板浮层背后的遮罩。点它收起面板——和 Esc 同一条路。 -->
-        <Transition name="panel-scrim">
-          <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- Esc closes the panel too -->
-          <div v-if="panelFloat && panelOpen" class="panel-scrim" @click="closePanel" />
-        </Transition>
-
-        <!-- 工作面板：并排时是右边那一栏，窄档里是从右边拉进来的浮层（三档见
-             useTopicPanel）。浮层收起时 visibility 一并藏掉，不进 tab 序和读屏的树。 -->
-        <div
-          v-show="!mdAndUp || panelFloat || panelOpen"
-          id="topic-panel"
-          class="col col-doc panel-host"
-          :class="{ 'panel-host--sheet': panelFloat, 'panel-host--open': panelFloat && panelOpen }"
-          :style="panelFloat ? undefined : { flex: '1 1 0', minWidth: 0 }"
-        >
-          <!-- 桌面：支线占右边这一半。工作面板只是藏起来，关掉支线回来时还停在原来那一格。 -->
-          <ThreadPane
-            v-if="threadId && mdAndUp"
-            :room="selectedTopic"
-            :thread-id="threadId"
-            :focus-block="threadFocusBlock"
-            :members="store.members"
-            :topic-list="store.topics"
-            :member-names="memberNames"
-            @close="backToRoom"
-            @open-task="onOpenCard"
-            @open-page="openTaskPage"
-            @to-task="upgradeMessage"
-            @open-file="(path: string) => panelRef?.openFile?.(path)"
-            @open-topic="openTopic"
-            @mention-click="handleMentionClick"
-          />
-          <WorkPanel
-            v-show="!(threadId && mdAndUp)"
-            ref="panelRef"
-            :submit-question="submitQuestion"
-            :ask-personal="askPersonal"
-            :agent-name="store.agentName"
-            :agent-handle="store.agentHandle"
-            :members="store.members"
-            :activity="activity"
-            :topic="selectedTopic"
-            :task-id="taskId ?? null"
-            :task-read-only="!!taskId && (!taskOwner || !taskOpen)"
-            :task-has-branch="currentTask?.branch_name !== null"
-            :activity-tick="activityTick"
-            :working="working"
-            :agent-control="agentControl"
-            :site-turns="siteTurns"
-            :topic-list="store.topics"
-            :tab="panelTab"
-            :routine-id="panelRoutineId"
-            :card-phase="cardPhase"
-            :with-chat="!mdAndUp"
-            :compact="panelFloat || !panelOpen"
-            :member-names="memberNames"
-            :threads-new="channelThreads.hasNew.value"
-            @open-topic="openTopic"
-            @open-card="onOpenCard"
-            @mention-click="handleMentionClick"
-            @update:tab="onPanelTab"
-            @viewing="viewingPath = $event"
-            @locate="onLocate"
+        <!-- 工作面板：桌面上它的每一格各自传送进布局区里自己的那一块（WorkPanel 的 `layout`），
+             这一层留在原地、不占地方；窄档里它整个是从右边拉进对话那一块的浮层（三档见
+             useTopicPanel），浮层收起时 visibility 一并藏掉，不进 tab 序和读屏的树。手机上它就在
+             这一排里，对话是它的第一个页签。 -->
+        <Teleport :to="conversationBox ?? undefined" :disabled="!mdAndUp || !panelFloat || !conversationBox">
+          <div
+            v-show="!mdAndUp || panelFloat || panelOpen || !!room.workLayout.value"
+            id="topic-panel"
+            class="col col-doc panel-host"
+            :class="{
+              'panel-host--sheet': panelFloat,
+              'panel-host--open': panelFloat && panelOpen,
+              'panel-host--cells': !!room.workLayout.value,
+            }"
+            :style="panelFloat ? undefined : { flex: '1 1 0', minWidth: 0 }"
           >
-            <!-- 页签栏右端：铺满（专注模式）和收起面板。只在桌面上并排的时候有。 -->
-            <template v-if="mdAndUp && docked" #tab-actions>
-              <BaseButton
-                :icon="focusIcon"
-                size="sm"
-                :title="focusLabel"
-                :aria-label="focusLabel"
-                @click="toggleFocus"
-              />
-              <BaseButton icon="mdi-close" size="sm" :title="closeLabel" :aria-label="closeLabel" @click="closePanel" />
-            </template>
-            <template #skill="{ id }">
-              <SkillProposalCard
-                v-if="skills.proposals.value.some((s) => s.id === id) || skills.saved.value.some((s) => s.id === id)"
-                :proposals="skills.proposals.value.filter((s) => s.id === id)"
-                :saved="skills.saved.value.filter((s) => s.id === id)"
-                :busy="skills.busy.value"
-                :error="skills.error.value"
-                :member-names="memberNames"
-                @save="skills.save"
-                @decline="skills.decline"
-                @open="openSkillPage"
-              />
-              <BaseEmptyState
-                v-else
-                size="compact"
-                icon=""
-                :title="t('work.room.workCard.settled')"
-                :action="t('work.room.workCard.viewSkill')"
-                @action="openSkillPage({ id })"
-              />
-            </template>
-            <template #overview>
-              <TaskOverview
-                v-if="taskId && currentTask"
-                ref="taskOverviewRef"
-                :room="selectedTopic"
-                :task="currentTask"
-                :member-names="memberNames"
-                :activity-tick="activityTick"
-                :topic-list="store.topics"
-                :agent-name="store.agentName"
-                :agent-handle="store.agentHandle"
-                :members="store.members"
-                :checklist="taskOverview.checklist.value"
-                :related="taskOverview.related.value"
-                :can-retry="taskPage.takesPart.value"
-                :retrying="taskOverview.retrying.value"
-                :retry-error="taskOverview.retryError.value"
-                @open-topic="openTopic"
-                @mention-click="handleMentionClick"
-                @retry-opening="taskOverview.retryOpening"
-                @open-output="(path: string) => panelRef?.openFile?.(path)"
-                @open-file="(path: string) => panelRef?.openFile?.(path)"
-                @open-document="(id: string, title: string) => panelRef?.openDocument?.({ id, title })"
-                @open-source="openSource"
-              />
-              <ChannelOverview
-                v-else-if="!taskId"
-                :topic="selectedTopic"
-                :general="selectedTopic.kind === 'root'"
-                :overview="channelOverview.overview.value"
-                :overview-text="channelOverview.overviewText.value"
-                :pins="channelOverview.pins.value"
-                :tasks="channelOverview.tasks.value"
-                :can-pin="canPin"
-                :member-names="memberNames"
-                :agent-name="store.agentName"
-                :save-description="(text: string) => store.describe(topicId, text)"
-                @unpin="channelOverview.unpin"
-                @edit-overview="
-                  (id: string) => panelRef?.openDocument?.({ id, title: t('work.channel.overview.project') })
-                "
-                @jump="jumpTo"
-                @open-task="onOpenCard"
-                @open-all="router.push({ name: 'project-tasks', params: { projectId }, query: { channel: topicId } })"
-                @mention-click="handleMentionClick"
-              />
-            </template>
-            <template v-if="!taskId" #threads>
-              <PanelThreads
-                :rows="channelThreads.rows.value"
-                :recycled="channelThreads.recycled.value"
-                :can-restore="canRestoreThread"
-                :loading="channelThreads.loading.value"
-                :error="channelThreads.error.value"
-                :refs="{ mentionNames: memberNames, topicTitles: {} }"
-                :name-of="(handle: string) => memberNames[handle] || handle"
-                :fmt-time="threadTime"
-                :can-create="canOpenThread"
-                @open="showThread"
-                @open-task="onOpenCard"
-                @new="newThreadOpen = true"
-                @restore="restoreAThread"
-              />
-            </template>
-            <!-- 手机：一屏放不下两栏，对话是 tab 栏里的第一格。 -->
-            <template #chat>
-              <TopicChatColumn
-                ref="chatColumn"
-                class="col col-chat flex-grow-1"
-                :topic="selectedTopic"
-                :members="store.members"
-                :topic-list="store.topics"
-                :unread-on-open="unreadOnOpen"
-                :focus-block="focusBlock"
-                :task-id="taskId ?? null"
-                :task-agent-handle="currentTask?.agent_handle ?? null"
-                :member-names="memberNames"
-                :composer-closed="composerClosed"
-                :ask-closed="askClosed"
-                :chapters="chapters.rows.value"
-                :chapterable="canChapter"
-                :chapter-ids="chapters.chapterIds.value"
-                accept-review-button
-                v-on="chatEvents"
-                @chapter="chapters.add"
-                @unchapter="chapters.remove"
-                @rename="chapters.rename"
-                @open-room="backToRoom"
-              />
-            </template>
-          </WorkPanel>
-          <!-- 专注模式里对话让开了，采纳那一条跟着到面板底部：要做的决定不能跟着消失。
-               手机上对话和「改动」是两个页签，在「改动」页签里决定，这一条也在底部。 -->
-          <TopicAcceptCard
-            v-if="selectedTopic && ((mdAndUp && focusMode) || (!mdAndUp && panelTab === 'changes'))"
-            class="panel-accept"
-            :topic-id="selectedTopic.id"
-            :task-id="taskId ?? undefined"
-            :topic-status="selectedTopic.status"
-            @review="onReview"
-          />
-        </div>
+            <WorkPanel
+              ref="panelRef"
+              :submit-question="submitQuestion"
+              :ask-personal="askPersonal"
+              :agent-name="store.agentName"
+              :agent-handle="store.agentHandle"
+              :members="store.members"
+              :activity="activity"
+              :topic="selectedTopic"
+              :task-id="taskId ?? null"
+              :task-read-only="!!taskId && (!taskOwner || !taskOpen)"
+              :task-has-branch="currentTask?.branch_name !== null"
+              :activity-tick="activityTick"
+              :working="working"
+              :agent-control="agentControl"
+              :site-turns="siteTurns"
+              :topic-list="store.topics"
+              :tab="shownTab"
+              :deliveries="deliveryTabsBinding"
+              :routine-id="panelRoutineId"
+              :card-phase="cardPhase"
+              :with-chat="!mdAndUp"
+              :compact="panelFloat || !panelOpen"
+              :member-names="memberNames"
+              :threads-new="channelThreads.hasNew.value"
+              :layout="room.workLayout.value"
+              @open-topic="openTopic"
+              @open-card="openTaskPage"
+              @mention-click="handleMentionClick"
+              @update:tab="onWorkPanelTab"
+              @close-delivery="closeDelivery"
+              @viewing="viewingPath = $event"
+              @locate="onLocate"
+              @navigate="router.push($event)"
+            >
+              <!-- 对话看不见时，采纳那一条贴在读者在看的那一格底下：要做的决定不能跟着消失。 -->
+              <template v-if="mdAndUp && acceptElsewhere && selectedTopic" #dock>
+                <TopicAcceptCard
+                  class="panel-accept"
+                  :topic-id="selectedTopic.id"
+                  :task-id="taskId ?? undefined"
+                  :topic-status="selectedTopic.status"
+                  @review="onReview"
+                />
+              </template>
+              <template #skill="{ id }">
+                <SkillProposalCard
+                  v-if="skills.proposals.value.some((s) => s.id === id) || skills.saved.value.some((s) => s.id === id)"
+                  :proposals="skills.proposals.value.filter((s) => s.id === id)"
+                  :saved="skills.saved.value.filter((s) => s.id === id)"
+                  :busy="skills.busy.value"
+                  :error="skills.error.value"
+                  :member-names="memberNames"
+                  @save="skills.save"
+                  @decline="skills.decline"
+                  @open="openSkillPage"
+                />
+                <BaseEmptyState
+                  v-else
+                  size="compact"
+                  icon=""
+                  :title="t('work.room.workCard.settled')"
+                  :action="t('work.room.workCard.viewSkill')"
+                  @action="openSkillPage({ id })"
+                />
+              </template>
+              <template #overview>
+                <TaskOverview
+                  v-if="taskId && currentTask"
+                  ref="taskOverviewRef"
+                  :room="selectedTopic"
+                  :task="currentTask"
+                  :member-names="memberNames"
+                  :activity-tick="activityTick"
+                  :topic-list="store.topics"
+                  :agent-name="store.agentName"
+                  :agent-handle="store.agentHandle"
+                  :members="store.members"
+                  :checklist="taskOverview.checklist.value"
+                  :related="taskOverview.related.value"
+                  :can-retry="taskPage.takesPart.value"
+                  :retrying="taskOverview.retrying.value"
+                  :retry-error="taskOverview.retryError.value"
+                  @open-topic="openTopic"
+                  @mention-click="handleMentionClick"
+                  @retry-opening="taskOverview.retryOpening"
+                  @open-output="(path: string) => panelRef?.openFile?.(path)"
+                  @open-file="(path: string) => panelRef?.openFile?.(path)"
+                  @open-document="(id: string, title: string) => panelRef?.openDocument?.({ id, title })"
+                  @open-source="openSource"
+                />
+                <ChannelOverview
+                  v-else-if="!taskId"
+                  :topic="selectedTopic"
+                  :general="selectedTopic.kind === 'root'"
+                  :overview="channelOverview.overview.value"
+                  :overview-text="channelOverview.overviewText.value"
+                  :pins="channelOverview.pins.value"
+                  :tasks="channelOverview.tasks.value"
+                  :can-pin="canPin"
+                  :member-names="memberNames"
+                  :agent-name="store.agentName"
+                  :save-description="(text: string) => store.describe(topicId, text)"
+                  @unpin="channelOverview.unpin"
+                  @edit-overview="
+                    (id: string) => panelRef?.openDocument?.({ id, title: t('work.channel.overview.project') })
+                  "
+                  @jump="jumpTo"
+                  @open-task="openTaskPage"
+                  @open-delivery="openTask"
+                  @open-all="router.push({ name: 'project-tasks', params: { projectId }, query: { channel: topicId } })"
+                  @mention-click="handleMentionClick"
+                />
+              </template>
+              <!-- Desktop: the delivery under review, in its own closable tab. -->
+              <template v-if="mdAndUp" #delivery="{ id }">
+                <WorkPanel
+                  :key="id"
+                  class="tab-fill"
+                  v-bind="reviewPanel(id)"
+                  :review-head="{
+                    heading: taskFor(id) ? taskTitle(taskFor(id)!) : '',
+                    version: taskFor(id)?.card?.version ?? null,
+                    state: stateOf(taskFor(id)),
+                  }"
+                  @open-topic="openTopic"
+                  @open-card="openTaskPage"
+                  @mention-click="handleMentionClick"
+                  @navigate="router.push($event)"
+                  @update:tab="(key: string) => (reviewView = { taskId: id, view: key })"
+                  @locate="(payload: PreviewLocate) => reviewChat.say(id, payload)"
+                  @return-asked="returnAsk = null"
+                >
+                  <!-- The task is a thread: its own conversation, the request it came from on top. The
+                     decision is in the head above, so the conversation does not carry a second one. -->
+                  <template #chat>
+                    <TopicChatColumn
+                      :ref="(handle: unknown) => reviewChat.hold(id, handle)"
+                      class="col col-chat flex-grow-1"
+                      beside
+                      accept-elsewhere
+                      :topic="selectedTopic"
+                      :task-id="id"
+                      :task-agent-handle="taskFor(id)?.agent_handle ?? null"
+                      :members="store.members"
+                      :topic-list="store.topics"
+                      :member-names="memberNames"
+                      :composer-closed="composerClosed"
+                      :ask-closed="askClosed || taskFor(id)?.status === 'closed'"
+                      @open-file="(path: string) => panelRef?.openFile?.(path)"
+                      @open-topic="openTopic"
+                      @open-card="openTask"
+                      @mention-click="handleMentionClick"
+                    />
+                  </template>
+                </WorkPanel>
+              </template>
+              <template v-if="!taskId" #threads>
+                <!-- Desktop: an open thread stays in the 支线 tab, with a back to the list. -->
+                <ThreadPane
+                  v-if="threadId && mdAndUp"
+                  class="tab-fill"
+                  :room="selectedTopic"
+                  :thread-id="threadId"
+                  :focus-block="threadFocusBlock"
+                  :members="store.members"
+                  :topic-list="store.topics"
+                  :member-names="memberNames"
+                  :to-task="upgradeMessage"
+                  @close="backToThreads"
+                  @open-task="openTaskPage"
+                  @as-task="showAsTask"
+                  @open-file="(path: string) => panelRef?.openFile?.(path)"
+                  @open-topic="openTopic"
+                  @mention-click="handleMentionClick"
+                />
+                <PanelThreads
+                  v-else
+                  :rows="channelThreads.rows.value"
+                  :recycled="channelThreads.recycled.value"
+                  :can-restore="canRestoreThread"
+                  :loading="channelThreads.loading.value"
+                  :error="channelThreads.error.value"
+                  :refs="{ mentionNames: memberNames, topicTitles: {} }"
+                  :name-of="(handle: string) => memberNames[handle] || handle"
+                  :fmt-time="threadTime"
+                  :can-create="canOpenThread"
+                  @open="showThread"
+                  @open-task="openTaskPage"
+                  @new="newThreadOpen = true"
+                  @restore="restoreAThread"
+                />
+              </template>
+              <!-- 手机：一屏放不下两栏，对话是 tab 栏里的第一格。 -->
+              <template #chat>
+                <TopicChatColumn
+                  ref="chatColumn"
+                  class="col col-chat flex-grow-1"
+                  :topic="selectedTopic"
+                  :members="store.members"
+                  :topic-list="store.topics"
+                  :unread-on-open="unreadOnOpen"
+                  :focus-block="focusBlock"
+                  :task-id="taskId ?? null"
+                  :task-agent-handle="currentTask?.agent_handle ?? null"
+                  :member-names="memberNames"
+                  :composer-closed="composerClosed"
+                  :ask-closed="askClosed"
+                  :chapters="chapters.rows.value"
+                  :chapterable="canChapter"
+                  :chapter-ids="chapters.chapterIds.value"
+                  accept-review-button
+                  :adopting-task="adoptingTask"
+                  v-on="chatEvents"
+                  @chapter="chapters.add"
+                  @unchapter="chapters.remove"
+                  @rename="chapters.rename"
+                  @open-room="backToRoom"
+                />
+              </template>
+            </WorkPanel>
+            <!-- 手机上对话和「改动」是两个页签，在「改动」页签里决定，采纳那一条在这一格底部。 -->
+            <TopicAcceptCard
+              v-if="selectedTopic && !mdAndUp && panelTab === 'changes'"
+              class="panel-accept"
+              :topic-id="selectedTopic.id"
+              :task-id="taskId ?? undefined"
+              :topic-status="selectedTopic.status"
+              @review="onReview"
+            />
+          </div>
+        </Teleport>
       </div>
     </template>
     <NewThreadDialog
@@ -672,6 +1006,10 @@ void openPlace()
   background: var(--surface);
   /* Switching topics on a wide screen cross-fades this view only (lib/viewTransition.ts). */
   view-transition-name: topic-view;
+}
+.tab-fill {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 .task-state {
   display: flex;

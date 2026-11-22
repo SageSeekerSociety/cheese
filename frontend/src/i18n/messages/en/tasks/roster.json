@@ -6,10 +6,12 @@
   "claimPending": "Awaiting approval",
   "col": {
     "claimedAt": "Applied",
+    "credits": "Credits used",
     "deadline": "Deadline",
     "latest": "Latest submission",
     "ops": "Actions",
     "status": "Status",
+    "usageScore": "Credit score",
     "who": "Name"
   },
   "dateTimeFormat": "MMM D HH:mm",
@@ -54,9 +56,13 @@
   "setDeadline": "Set deadline",
   "tableLabel": "Participants",
   "teamSize": "Team of {n}",
+  "tentative": "Provisional",
   "today": "Today {time}",
   "unknownTeam": "Unknown team",
   "unknownUser": "Unknown user",
+  "usageNotYet": "Counts once submitted",
+  "usageNote": "Credits are what the claimant (all members, for a team) spent calling AI in the project this task opened; a mentor's calls in that project don't count.",
+  "usageOf": "{score} / {points}",
   "view": "View submissions",
   "yesterday": "Yesterday {time}"
 }

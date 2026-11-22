@@ -36,7 +36,9 @@ from app.domain.block.adapters import platform_line
 from app.domain.delivery.ledger import settle_card
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
+from app.domain.environment import services as environment_rows
 from app.domain.identity.services import IdentityService
+from app.domain.machine import occupants
 from app.domain.machine import session_work as work_lease
 from app.domain.machine.models import CloudHost, MachineStatus, SandboxHome
 from app.domain.machine.session_work import checkpoint_room
@@ -51,6 +53,7 @@ from tests.delivery import delivery_task
 from tests.executor_release import running
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.support.devices import enrollment_team, place_in_project_team
+from tests.support.environments import environment_of, give_environment, works_in
 
 pytestmark = pytest.mark.anyio
 
@@ -109,8 +112,7 @@ async def _room(client, *, on_cloud=False, in_task=False):
         await AgentSessionService(db).set_environment(
             conversation_id, agent.username, environment, chosen_by=None
         )
-        session.execution_request = {"generation": generation}
-        session.work_lease = {
+        lease = {
             "kind": "device",
             **({"platform": True} if on_cloud else {}),
             "session_id": str(session.id),
@@ -124,6 +126,7 @@ async def _room(client, *, on_cloud=False, in_task=False):
             "workspace": "/old/work",
             "mcp_servers": [],
         }
+        await give_environment(db, session, lease)
         session.runtime_location = {
             "device_id": "center",
             "resource_id": resource,
@@ -150,7 +153,7 @@ async def _room(client, *, on_cloud=False, in_task=False):
             session_id=session.id,
             old_device=old_device,
             new_device=new_device,
-            lease=dict(session.work_lease),
+            lease=lease,
             person=person,
             agent={"Authorization": f"Bearer {agent_token}"},
             lease_path=f"/topics/{topic_id}/sessions/{session.id}/work-lease",
@@ -182,9 +185,21 @@ def _to_new(room, **extra):
     }
 
 
-async def _session(client, room):
+async def _held(client, room):
+    """The environment the session's next call works in."""
     async with client.test_factory() as db:
-        return await AgentSessionService(db).by_id(room.session_id)
+        return await environment_of(db, room.session_id)
+
+
+async def _left_for_cleanup(client, room) -> list[tuple[str, str]]:
+    """The directories on the old machine the room's cleanup still removes."""
+    async with client.test_factory() as db:
+        return [
+            (held.device_id, held.resource_id)
+            for held in await environment_rows.environments_held(
+                db, room_id=room.topic_id, device_id=room.old_device
+            )
+        ]
 
 
 async def _owner_id(client) -> int:
@@ -212,11 +227,12 @@ async def test_a_switch_pushes_on_the_old_machine_before_it_happens(
     target, method, params = remote.await_args.args
     assert target["device_id"] == room.old_device
     assert method == "control" and params["subtype"] == "checkpoint"
-    session = await _session(client, room)
     assert (await _environment(client, room))["device_id"] == room.new_device
-    assert session.work_lease is None
+    assert await _held(client, room) is None
     # A self-hosted machine keeps the session's directory for the room's cleanup.
-    assert session.execution_request["retained_leases"] == [room.lease]
+    assert await _left_for_cleanup(client, room) == [
+        (room.old_device, room.lease["resource_id"])
+    ]
 
 
 async def test_an_old_machine_that_just_dropped_is_still_pushed_on(client, monkeypatch):
@@ -255,10 +271,11 @@ async def test_a_failed_checkpoint_does_not_hold_the_switch(client, monkeypatch,
 
     assert switched.status_code == 200, switched.text
     remote.assert_awaited()
-    session = await _session(client, room)
     assert (await _environment(client, room))["device_id"] == room.new_device
-    assert session.work_lease is None
-    assert session.execution_request["retained_leases"] == [room.lease]
+    assert await _held(client, room) is None
+    assert await _left_for_cleanup(client, room) == [
+        (room.old_device, room.lease["resource_id"])
+    ]
 
 
 async def test_an_agent_switches_away_from_an_unreachable_machine_by_itself(
@@ -299,17 +316,16 @@ async def test_a_cloud_sandbox_left_is_left_to_the_idle_sweep_either_way(
         )
         db.add(host)
         await db.flush()
-        db.add(
-            SandboxHome(
-                host_id=host.id,
-                spec="standard",
-                project_id=room.project_id,
-                topic_id=room.topic_id,
-                room_resource_id=room.lease["room_resource_id"],
-                resource_id=room.lease["resource_id"],
-                session_id=room.session_id,
-            )
+        home = SandboxHome(
+            host_id=host.id,
+            spec="standard",
+            project_id=room.project_id,
+            topic_id=room.topic_id,
+            room_resource_id=room.lease["room_resource_id"],
+            resource_id=room.lease["resource_id"],
         )
+        db.add(home)
+        await works_in(db, room.session_id, home)
         host_id = host.id
         await db.commit()
     _machines(monkeypatch, online=reachable)
@@ -322,12 +338,12 @@ async def test_a_cloud_sandbox_left_is_left_to_the_idle_sweep_either_way(
             await db.scalars(select(SandboxHome).where(SandboxHome.host_id == host_id))
         )
         host = await db.get(CloudHost, host_id)
-        session = await AgentSessionService(db).by_id(room.session_id)
+        working = [await occupants.sessions_of(db, home.id) for home in homes]
     # The host is the pool's: a switch never deletes it. The sandbox left there
-    # is no session's, and the idle sweep destroys it (``lifecycle``).
+    # is nobody's to work in, and the idle sweep destroys it (``lifecycle``).
     assert host.released_at is None
-    assert [home.session_id for home in homes] == [None]
-    assert session.execution_request["retained_leases"] == []
+    assert working == [[]]
+    assert await _left_for_cleanup(client, room) == []
 
 
 async def test_a_frozen_sandbox_is_not_checkpointed_on_its_way_out(client, monkeypatch):
@@ -351,19 +367,18 @@ async def test_a_frozen_sandbox_is_not_checkpointed_on_its_way_out(client, monke
         )
         db.add(host)
         await db.flush()
-        db.add(
-            SandboxHome(
-                host_id=host.id,
-                spec="standard",
-                project_id=room.project_id,
-                topic_id=room.topic_id,
-                room_resource_id=room.lease["room_resource_id"],
-                resource_id=room.lease["resource_id"],
-                session_id=room.session_id,
-                active_at=datetime.now(UTC),
-                frozen_at=datetime.now(UTC),
-            )
+        home = SandboxHome(
+            host_id=host.id,
+            spec="standard",
+            project_id=room.project_id,
+            topic_id=room.topic_id,
+            room_resource_id=room.lease["room_resource_id"],
+            resource_id=room.lease["resource_id"],
+            active_at=datetime.now(UTC),
+            frozen_at=datetime.now(UTC),
         )
+        db.add(home)
+        await works_in(db, room.session_id, home)
         await db.commit()
     remote = _machines(monkeypatch)
 
@@ -438,9 +453,9 @@ async def test_an_idle_sessions_executor_is_started_to_push_before_a_switch(
 async def test_a_tasks_executor_started_to_push_is_told_it_works_the_task(
     client, monkeypatch
 ):
-    """The session working a task is told the task as its conversation at its
-    install; started again only to push before a switch, it is the same
-    session and is told the same, so what it reports lands in the task."""
+    """The push before a switch is the session's own work: the machine is told
+    it is that session's, working the task, as a call the session made would
+    be, so what it reports lands in the task."""
     room = await _room(client, in_task=True)
     machine = _IdleMachine()
     monkeypatch.setattr(work_lease, "device_hub", machine)
@@ -448,9 +463,10 @@ async def test_a_tasks_executor_started_to_push_is_told_it_works_the_task(
     switched = client.put(room.path, headers=room.person, json=_to_new(room))
 
     assert switched.status_code == 200, switched.text
-    [(_, script)] = machine.installs
-    [told] = re.findall(r'"CHEESE_TOPIC": "([^"]+)"', script)
-    assert told == str(room.conversation_id)
+    _, method, params = machine.calls[-1]
+    assert method == "control" and params["subtype"] == "checkpoint"
+    assert params["caller"]["attachment"] == str(room.session_id)
+    assert params["caller"]["conversation"] == str(room.conversation_id)
 
 
 async def test_a_machine_that_cannot_start_the_executor_does_not_hold_the_switch(

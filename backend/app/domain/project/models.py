@@ -23,6 +23,7 @@ from sqlalchemy import (
     Integer,
     LargeBinary,
     Select,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -57,10 +58,50 @@ class AiMode(enum.StrEnum):
     collaborative = "collaborative"
 
 
+class ProjectAvatarKind(enum.StrEnum):
+    """What a project's tile shows instead of the letters taken from its name."""
+
+    icon = "icon"
+    emoji = "emoji"
+    text = "text"
+    image = "image"
+
+
 class Project(UuidPk, Timestamps, Base):
     __tablename__ = "projects"
+    __table_args__ = (
+        # A glyph belongs to an icon, an emoji or text; an image to an image;
+        # neither to the default tile.
+        CheckConstraint(
+            "(avatar_kind IS NULL AND avatar_glyph IS NULL"
+            " AND avatar_image_id IS NULL)"
+            " OR (avatar_kind IN ('icon', 'emoji', 'text')"
+            " AND avatar_glyph IS NOT NULL AND avatar_image_id IS NULL)"
+            " OR (avatar_kind = 'image' AND avatar_image_id IS NOT NULL"
+            " AND avatar_glyph IS NULL)",
+            name="ck_projects_avatar",
+        ),
+        CheckConstraint(
+            "avatar_hue IS NULL OR avatar_hue BETWEEN 0 AND 359",
+            name="ck_projects_avatar_hue",
+        ),
+    )
 
     name: Mapped[str] = mapped_column(String(200))
+    # The project's tile. NULL kind = the default: letters from the name
+    # (`frontend/src/utils/avatar.ts`). The glyph is the icon's name, the emoji
+    # or the text; the image is an uploaded picture in `avatar`. The hue picks
+    # the tile's colour from the avatar palette; NULL = derived from the id, so
+    # a renamed project keeps its colour.
+    # One of `ProjectAvatarKind`; `ck_projects_avatar` holds the set.
+    avatar_kind: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    avatar_glyph: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    avatar_hue: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    avatar_image_id: Mapped[int | None] = mapped_column(
+        ForeignKey("avatar.id", name="fk_projects_avatar_image_id_avatar"),
+        nullable=True,
+        index=True,
+    )
     # The project's name in addresses: `/projects/<slug>/tasks/318`. Unique
     # across every project; the names it had before are in `project_slugs`, so
     # a link made before a rename still finds it (`app/domain/project/address.py`).

@@ -96,12 +96,6 @@ export const PANEL_VIEW_ENTRIES: CatalogEntry[] = [
         expect: '这个项目放本课程的课件和作业',
       },
       {
-        name: '保存冲突',
-        note: '你编辑期间芝士又改了同一份文件：两个版本都留着，由人按一下决定谁赢 —— 静默替人选一个，就是改动消失的方式。',
-        props: changesPanelProps({ fileConflict: true, fileDirty: true }),
-        expect: '你编辑期间，这个文件已被修改',
-      },
-      {
         name: '没绑仓库',
         note: '这个项目没有代码仓库：一句话说清，不画一棵空树。',
         props: changesPanelProps(NO_REPO),

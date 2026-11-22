@@ -27,6 +27,8 @@
       :task-id="taskData.id"
       :participant-id="currentParticipantId"
       :stage="stages[stage]?.id ?? null"
+      :rubric="taskData.rubric ?? []"
+      :test-suite="taskData.testSuite ?? []"
       :reviewable="false"
       hide-title
       :highlight-latest="true"

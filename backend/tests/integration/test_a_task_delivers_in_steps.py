@@ -1,7 +1,10 @@
-"""A task delivers in steps: only the step its card calls the last closes it.
+"""A task delivers in steps, and no merge closes it: its AI teammate judges
+whether it is done, and closes it on grounds the platform checks.
 
 A plan of three steps used to end at the first: accepting step one closed the
-task, and the other two had nowhere to go (dev, 2026-10-07).
+task, and the other two had nowhere to go (dev, 2026-10-07). A card's own word
+that it was the last step did not fix that: it was set when the card went up,
+and wrong for #4829 and #5233, where more was asked after it.
 """
 
 import uuid
@@ -33,26 +36,27 @@ app_world = pytest.fixture(_app_world_fixture.__wrapped__)  # type: ignore[attr-
 sweeping = pytest.fixture(_sweeping_fixture.__wrapped__)  # type: ignore[attr-defined]
 
 
-def _file(client, topic_id: str, *, completes_task: bool) -> str:
+def _file(client, topic_id: str) -> str:
     r = client.post(
         f"/topics/{delivery_task_id(client, topic_id)}/accept-card",
         headers=delivery_headers(client, topic_id),
         json={
             "change_subject": "feat(form): trim the sign-up form",
             "reviewer_handle": "alice",
-            "completes_task": completes_task,
+            # An old session may still send it; it is ignored.
+            "completes_task": True,
         },
     )
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["completes_task"] is completes_task
+    assert r.json()["data"]["completes_task"] is False
     return r.json()["data"]["id"]
 
 
-def _accepted_step(client, app_world, *, completes_task: bool) -> tuple[str, dict]:
+def _accepted_step(client, app_world) -> tuple[str, dict]:
     fake = app_world["fake"]
     pid = _make_project(client)
     tid = _make_topic(client, pid)
-    cid = _file(client, tid, completes_task=completes_task)
+    cid = _file(client, tid)
     head = _give_card_a_pr(client, app_world, tid, cid, 7)
     fake.check_state_by_sha[head] = ("success", "全部通过")
     fake.merge_sha_by_number[7] = "merge-sha-1"
@@ -79,8 +83,29 @@ def _told(client, task_id: str) -> str:
     return client.portal.call(read)
 
 
-def test_accepting_a_step_that_is_not_the_last_keeps_the_task_going(client, app_world):
-    task_id, before = _accepted_step(client, app_world, completes_task=False)
+def _being_written_up(client, task_id: str) -> None:
+    """The task is in its write-up window: what a deploy going live puts a task
+    its teammate judged done in (`task_landing.deploy_landed`)."""
+    from datetime import UTC, datetime
+
+    from sqlalchemy import update
+
+    from app.domain.room_task.models import Task
+
+    async def mark():
+        async with client.test_factory() as db:
+            await db.execute(
+                update(Task)
+                .where(Task.id == uuid.UUID(str(task_id)))
+                .values(closing_since=datetime.now(UTC))
+            )
+            await db.commit()
+
+    client.portal.call(mark)
+
+
+def test_accepting_a_step_keeps_the_task_going(client, app_world):
+    task_id, before = _accepted_step(client, app_world)
 
     task = client.get(f"/topics/{task_id}/task").json()["data"]
     assert task["status"] == "open"
@@ -89,7 +114,9 @@ def test_accepting_a_step_that_is_not_the_last_keeps_the_task_going(client, app_
     # opens a PR of its own.
     assert task["branch_name"] != before["branch_name"]
     assert task["pr_number"] is None
-    assert "接着做下一步" in _told(client, task_id)
+    told = _told(client, task_id)
+    assert "由你判断任务做没做完" in told
+    assert "接着做下一步" in told and "cheese_task(action=close)" in told
 
 
 def test_the_next_step_counts_only_its_own_changes(client, app_world):
@@ -99,7 +126,7 @@ def test_the_next_step_counts_only_its_own_changes(client, app_world):
     The badge used to compare the landed step's head with the default branch, so
     a step that had changed nothing yet read 「改动 1」 over a body with nothing
     in it (dev, 2026-10-09)."""
-    task_id, before = _accepted_step(client, app_world, completes_task=False)
+    task_id, before = _accepted_step(client, app_world)
     task_uuid = uuid.UUID(str(task_id))
     task = client.get(f"/topics/{task_id}/task").json()["data"]
     project = uuid.UUID(task["project_id"])
@@ -146,7 +173,7 @@ def test_the_next_step_gets_a_draft_pr_of_its_own(client, sweeping):
     而第一步那张已经在合并时结算的卡一直留在库里，于是第二步的分支领先 main 也
     开不出 PR —— 整条线停在「独立 review 要先有 PR 号」这一步（#1521）。
     """
-    task_id, before = _accepted_step(client, sweeping, completes_task=False)
+    task_id, before = _accepted_step(client, sweeping)
     task = client.get(f"/topics/{task_id}/task").json()["data"]
     assert task["branch_name"] != before["branch_name"]
     assert task["pr_number"] is None
@@ -177,45 +204,29 @@ def test_the_next_step_gets_a_draft_pr_of_its_own(client, sweeping):
     )
 
 
-def test_accepting_the_last_step_reads_as_accepted_and_has_the_task_written_up(
-    client, app_world
-):
-    task_id, _ = _accepted_step(client, app_world, completes_task=True)
-
-    task = client.get(f"/topics/{task_id}/task").json()["data"]
-    assert task["presentation"]["phrase"] == "accepted"
-    # Its AI teammate gets one turn to bring the document up to date and say
-    # what came of the task.
-    told = _told(client, task_id)
-    assert "最后一次交付已经采纳并合并" in told
-    assert "实况文档" in told and "chat_send" in told
-
-
-def test_the_task_closes_when_its_teammate_closes_it_after_the_write_up(
-    client, app_world
-):
-    task_id, _ = _accepted_step(client, app_world, completes_task=True)
-
-    written_up(client, task_id)
-
-    task = client.get(f"/topics/{task_id}/task").json()["data"]
-    assert task["status"] == "closed"
-    assert task["presentation"]["phrase"] == "accepted"
-
-
-def test_the_task_closes_without_a_write_up_that_never_comes(client, app_world):
-    task_id, _ = _accepted_step(client, app_world, completes_task=True)
+def test_no_merge_closes_the_task_nor_has_it_written_up(client, app_world):
+    task_id, _ = _accepted_step(client, app_world)
 
     time_passes(client, task_id, minutes=50)
     watch(client)
 
     task = client.get(f"/topics/{task_id}/task").json()["data"]
+    assert task["status"] == "open"
+    assert task["presentation"]["phrase"] != "accepted"
+    assert "写完总结就关闭任务" not in _told(client, task_id)
+
+
+def test_the_task_closes_when_its_teammate_judges_it_done(client, app_world):
+    task_id, _ = _accepted_step(client, app_world)
+
+    written_up(client, task_id)
+
+    task = client.get(f"/topics/{task_id}/task").json()["data"]
     assert task["status"] == "closed"
-    assert task["presentation"]["phrase"] == "accepted"
 
 
 def test_the_owner_reopens_a_completed_task_onto_the_latest_code(client, app_world):
-    task_id, before = _accepted_step(client, app_world, completes_task=True)
+    task_id, before = _accepted_step(client, app_world)
     written_up(client, task_id)
     owner = client.get(f"/topics/{task_id}/task").json()["data"]["owner_handle"]
 
@@ -240,7 +251,8 @@ def test_a_task_closed_in_its_write_up_window_reopens_out_of_it(client, app_worl
     时候负责人点关闭，任务进 closed —— 留着的 `closing_since` 毫无意义，而它的
     害处要等到重开才显出来：`status` 是 open，界面上却还是「已采纳」，两个列表
     都不收它（2026-10-11，任务 #58）。"""
-    task_id, _ = _accepted_step(client, app_world, completes_task=True)
+    task_id, _ = _accepted_step(client, app_world)
+    _being_written_up(client, task_id)
     task = client.get(f"/topics/{task_id}/task").json()["data"]
     assert task["presentation"]["column"] == "done"  # 还在写总结的窗口里
 

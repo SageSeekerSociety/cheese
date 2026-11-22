@@ -352,11 +352,12 @@ export function useChannelActions(deps: ChannelDeps) {
     }
   }
 
-  /** 转为任务：主线上一条消息的支线原地转成任务，或支线里的一条回复另开一件。返回那件任务。 */
+  /** 转为任务：主线上一条消息的支线原地转成任务，或支线里的一条回复另开一件。返回那件任务；
+   *  侧栏的清单在后面重取，打开那件任务不等它。 */
   async function upgradeMessage(messageId: string): Promise<RoomTask | null> {
     try {
       const made = await upgradeBlock(messageId)
-      await refreshTopics()
+      void refreshTopics()
       return made
     } catch (e) {
       reportError(e, t('shell.workspaceErrors.convertMessage'))

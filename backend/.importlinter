@@ -263,6 +263,18 @@ unmatched_ignore_imports_alerting = warn
 # 进来。拆完 `--measure` 从 27 条降到 14 条。注意：基线是从 merge base 量的，主干树
 # 里这四条边还在，把它们加回来检查不会红，所以由
 # `tests/unit/test_agent_instance_does_not_read_the_agent_package.py` 钉住。
+#
+# **2026-11-16** `app.domain.task.review_service -> app.domain.space.rank_service`：
+# `TaskSubmissionReviewService` 从 `task/services.py` 原样搬进了 `task/review_service.py`
+# （那个文件超了 1500 行上限，只许缩），它读空间排名的这一条边跟着搬过来换了导入方。
+# 基线量的是 merge base 那棵树，那里这条边写在 `task.services` 下、认成
+# `task.services -> space.rank_service`；搬进新模块后，工具认得「同一份债换了个模块」
+# 只在被导入的一侧（`space.rank_service` 那条一直在基线里），换的是**导入方**
+# `task.services -> task.review_service` —— 那是个新模块名，于是报成新债。这是同一条
+# 旧债，不是新欠的：`task.services` 那条在基线树里就是它。等 task 域里排名这一处的
+# 方向真的倒过来（评审不直接读空间排名服务），这条豁免连同基线那条一起消失。
+ignore_imports =
+    app.domain.task.review_service -> app.domain.space.rank_service
 
 [importlinter:contract:turn-layers]
 # T1 — every turn module belongs to one of these four layers.
@@ -596,16 +608,27 @@ unmatched_ignore_imports_alerting = warn
 # `chapter` joined at layer 4 beside `pin` (2026-10-21): it reads a block by id
 # and the conversation's place, and is read by the room snapshot and the routes
 # only — nothing below reads it back.
+#
+# `judge` joined at layer 5 beside `machine` (2026-11-17): it sends the judging
+# of a student's code to a judge host over the device link (`agent.device_hub`)
+# and reads the task's suites and queue rows from `task` at layer 4, which may
+# not reach a device itself. The task side queues a run; this side takes it.
+#
+# `environment` joined at layer 1 (2026-11-21): an execution environment, the
+# conversation's pointer to it and who is attached to it are asked about by
+# `agent_session` and `repository` at layer 3, `room_task` and `memory` at 4
+# and `machine` at 5, and it reads nothing of the domain but `common`. It names
+# a session or a sandbox by id, so none of those packages has to sit below it.
 name = C5 domain packages form seven layers, dependencies point down
 type = layers
 layers =
     platform_stats : feature_stats : dashboard : project_progress : project_situation : onboarding : account
     routine : task_quiet : task_notices : admin : room_cleanup
-    agent : agent_instance : machine : device : local_fs : shell : site : preview : assistant : delivery
+    agent : agent_instance : machine : judge : device : local_fs : shell : site : preview : assistant : delivery
     block : thread : pin : chapter : mentions : room_task : task : review : living_doc : documents : library : deliverables : memory : feedback : space : groups : questions : answers : comments : discussion : materials : project_skill : search : docs_site : canvas : web_snippet : project_material : voice : machine_skill : skill_market
     repository : integration : webhook : fetch : remote_mcp : gateway_chat : usage : notification : agent_session : environment_diagnosis
     identity : user : team : project : topic : membership : topic_membership : authz : policy : invite : passkey : oauth : agent_type : agent_credential : ci_activity
-    common : day_windows : conversation : idempotency : addressing : delivery_events : happenings : run_record : session_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta : shell_catalog : presentation_meta : review_note_codes : project_material_rows : event_about : event_author : project_permissions : reads : repositories
+    common : prompts : day_windows : conversation : environment : idempotency : addressing : delivery_events : happenings : run_record : session_record : attachment : avatars : textfile : service_keys : backend_log : frontend_log : tag : legal : skill_library : notice_meta : shell_catalog : presentation_meta : review_note_codes : project_material_rows : event_about : event_author : project_permissions : reads : repositories
 containers =
     app.domain
 exhaustive = true

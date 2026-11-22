@@ -19,6 +19,17 @@
     "failed": "提交没成功，再试一次",
     "listSeparator": "、"
   },
+  "fold": {
+    "whoNamed": "{asker} 问 {people}",
+    "whoBare": "问 {people}",
+    "everyone": "所有人",
+    "anyone": "频道里的人",
+    "waiting": "还没有回答",
+    "closed": "已结束",
+    "questions": "{n} 个问题",
+    "multi": "多选",
+    "answered": "{name}：{text}"
+  },
   "replies": {
     "label": "快捷回复",
     "recommended": "推荐",

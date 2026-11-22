@@ -21,23 +21,25 @@ from app.domain.agent_session.services import AgentSessionService
 from tests.integration.test_switch_pushes_first import (
     PUSHED,
     _environment,
+    _held,
+    _left_for_cleanup,
     _machines,
     _room,
-    _session,
     _to_new,
 )
+from tests.support.environments import change_environment, environment_of
 
 pytestmark = pytest.mark.anyio
 
 
 async def _lease_is(client, room, **changes):
     async with client.test_factory() as db:
-        session = await AgentSessionService(db).by_id(room.session_id)
-        session.work_lease = {**session.work_lease, **changes}
+        lease = {**(await environment_of(db, room.session_id) or {}), **changes}
         for key in [key for key, value in changes.items() if value is None]:
-            session.work_lease.pop(key)
+            lease.pop(key)
+        await change_environment(db, room.session_id, lease)
         await db.commit()
-        return dict(session.work_lease)
+        return lease
 
 
 def _abandoned_install():
@@ -65,10 +67,11 @@ async def test_an_install_that_stopped_does_not_hold_the_room(client, monkeypatc
     agent = client.put(room.path, headers=room.agent, json={"environment": sandbox})
 
     assert agent.status_code == 200, agent.text
-    session = await _session(client, room)
     assert await _environment(client, room) == sandbox
-    assert session.work_lease is None
-    assert session.execution_request["retained_leases"] == [lease]
+    assert await _held(client, room) is None
+    assert await _left_for_cleanup(client, room) == [
+        (room.old_device, lease["resource_id"])
+    ]
     remote.assert_not_awaited()
 
 
@@ -121,10 +124,9 @@ async def test_anyone_may_leave_a_machine_its_owner_unbound(client, monkeypatch,
 
     assert switched.status_code == 200, switched.text
     remote.assert_not_awaited()
-    session = await _session(client, room)
     assert (await _environment(client, room))["device_id"] == room.new_device
     # Nothing can reach that machine again, so nothing waits on it for cleanup.
-    assert session.execution_request["retained_leases"] == []
+    assert await _left_for_cleanup(client, room) == []
 
 
 def _installing_hub(monkeypatch):

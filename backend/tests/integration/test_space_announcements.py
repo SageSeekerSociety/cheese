@@ -249,6 +249,88 @@ class TestCurrentAndExpired:
         assert _feed(api_client, member) == []
 
 
+class TestTheBylineIsTheReadersOwnRemark:
+    """署名按收件人自己的叫法：私人备注只进设了它的人的动态，别人仍是公开昵称。
+
+    公告的署名只有写下的那一份快照（推送和邮件拿不到实体解析），所以这条捷径
+    会不会通，全看发布时 payload 里有没有留得下身份 —— 光一个 ``authorName``
+    字符串，谁也叫不动它。
+    """
+
+    @staticmethod
+    def _published_by_the_owner(
+        user_client: UserCreator, api_client: TestClient, *, members: int
+    ) -> tuple[dict, str, list[str]]:
+        """一个空间、它的公告、所有者自己的账号、成员们的 token。
+
+        所有者就是发布人，所以他的身份在公告 payload 里要留得下来。昵称故意和账号
+        不同：「换成了备注」和「本来就一样」才分得开。
+        """
+        owner = user_client.create_user(nickname="公告作者")
+        owner_token = _login(user_client, api_client, owner)
+        resp = create_approved_space(
+            api_client,
+            json={
+                "name": f"Remark Space ({unique_int(10000000, 99999999)})",
+                "intro": "",
+                "description": "",
+                "avatarId": 1,
+                "enableRank": False,
+                "taskTemplates": [],
+            },
+            headers=_auth(owner_token),
+        )
+        assert resp.status_code == 201, resp.text
+        space_id = resp.json()["data"]["space"]["id"]
+        tokens = []
+        for _ in range(members):
+            member = user_client.create_user()
+            added = api_client.post(
+                f"/spaces/{space_id}/members",
+                json={"userId": member.user_id},
+                headers=_auth(owner_token),
+            )
+            assert added.status_code == 201, added.text
+            tokens.append(_login(user_client, api_client, member))
+        return _publish(api_client, owner_token, space_id), owner.username, tokens
+
+    def test_the_author_is_named_by_the_readers_own_remark(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        _, author, (member,) = self._published_by_the_owner(
+            user_client, api_client, members=1
+        )
+        saved = api_client.put(
+            f"/users/{author}/remark",
+            json={"remark": "我们叫他老王"},
+            headers=_auth(member),
+        )
+        assert saved.status_code == 200, saved.text
+
+        (notice,) = _feed(api_client, member)
+        assert notice["contextMetadata"]["authorName"] == "我们叫他老王", notice[
+            "contextMetadata"
+        ]
+
+    def test_another_member_keeps_the_public_name(
+        self, user_client: UserCreator, api_client: TestClient
+    ):
+        _, author, members = self._published_by_the_owner(
+            user_client, api_client, members=2
+        )
+        saved = api_client.put(
+            f"/users/{author}/remark",
+            json={"remark": "我们叫他老王"},
+            headers=_auth(members[0]),
+        )
+        assert saved.status_code == 200, saved.text
+
+        (theirs,) = _feed(api_client, members[1])
+        assert theirs["contextMetadata"]["authorName"] == "公告作者", theirs[
+            "contextMetadata"
+        ]
+
+
 class TestTwoManagersAtOnce:
     def test_editing_one_announcement_leaves_the_other_alone(
         self, user_client: UserCreator, api_client: TestClient

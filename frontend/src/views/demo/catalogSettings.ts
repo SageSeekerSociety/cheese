@@ -39,6 +39,7 @@ import {
 } from './catalogSettingsFixtures'
 
 import ArchiveProjectDialog from '@/components/ArchiveProjectDialog.vue'
+import ProjectAvatar from '@/components/common/ProjectAvatar.vue'
 import EnvironmentMenu from '@/components/EnvironmentMenu.vue'
 import EnvironmentPicker from '@/components/EnvironmentPicker.vue'
 import McpServerDialog from '@/components/McpServerDialog.vue'
@@ -47,6 +48,8 @@ import AttributionSettings from '@/components/settings/AttributionSettings.vue'
 import BranchProtectionSection from '@/components/settings/BranchProtectionSection.vue'
 import ForgeRepoStatus from '@/components/settings/ForgeRepoStatus.vue'
 import GithubRepoSettings from '@/components/settings/GithubRepoSettings.vue'
+import ProjectAvatarSection from '@/components/settings/ProjectAvatarSection.vue'
+import ProjectNameSection from '@/components/settings/ProjectNameSection.vue'
 import UpstreamRepoSettings from '@/components/settings/UpstreamRepoSettings.vue'
 
 /** 这几件都吃 vuetify；读当前 locale 的（`relTime` 之类）再多一样 i18n。 */
@@ -444,6 +447,96 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
         note: '服务端的原话留在框里，框不关。',
         props: { error: '地址必须是 https' },
         expect: '地址必须是 https',
+      },
+    ],
+  },
+  {
+    id: 'settings-project-avatar',
+    title: 'ProjectAvatarSection',
+    about:
+      '项目头像：项目设置「名称和头像」那一页，名称下面。左边是格子现在的样子，右边挑图标、表情、文字或图片和底色；保存和上传由页面做，这一件只把挑的报上去。',
+    file: 'src/components/settings/ProjectAvatarSection.vue',
+    component: ProjectAvatarSection,
+    needs: UI_I18N,
+    args: { projectId: 'p-avatar-demo', name: '数据结构课程设计', readonly: false, saving: false, error: '' },
+    states: [
+      {
+        name: '没挑过',
+        note: '默认格子：从项目名取的一个字，底色按项目 id 派生。图标那一格第一格就是这几个字。',
+        props: { avatar: null },
+      },
+      {
+        name: '挑了图标和颜色',
+        note: '选中的图标和色块描一圈深色边。',
+        props: { avatar: { kind: 'icon', glyph: 'flask-outline', hue: 205, image_id: null } },
+      },
+      {
+        name: '表情',
+        note: '一个表情；打两个时提示只能填一个，保存按钮不可点。',
+        props: { avatar: { kind: 'emoji', glyph: '🚀', hue: 12, image_id: null } },
+      },
+      {
+        name: '自定文字',
+        note: '最多两个汉字或四个字母、数字。',
+        props: { avatar: { kind: 'text', glyph: 'DS', hue: 265, image_id: null } },
+      },
+      {
+        name: '保存被拒',
+        note: '服务端的原话写在下面。',
+        props: { avatar: null, error: '文字最多 2 个汉字或 4 个字母、数字' },
+      },
+      {
+        name: '不能改设置的人',
+        note: '只看得到格子。',
+        props: { avatar: { kind: 'icon', glyph: 'flask-outline', hue: 205, image_id: null }, readonly: true },
+      },
+    ],
+  },
+  {
+    id: 'settings-project-name',
+    title: 'ProjectNameSection',
+    about: '项目名称：项目设置「名称和头像」那一页最上面。改名不动地址里的短名；保存由页面做，这一件只把新名字报上去。',
+    file: 'src/components/settings/ProjectNameSection.vue',
+    component: ProjectNameSection,
+    needs: UI_I18N,
+    args: { name: '数据结构课程设计', readonly: false, saving: false, error: '' },
+    states: [
+      { name: '能改', note: '名字没改时保存按钮不可点。', props: {} },
+      { name: '不能改设置的人', note: '只显示名字。', props: { readonly: true } },
+      { name: '保存被拒', note: '服务端的原话写在输入框下面。', props: { error: '保存失败' } },
+    ],
+  },
+  {
+    id: 'project-avatar',
+    title: 'ProjectAvatar',
+    about:
+      '项目格子：侧栏、切换项目的菜单、个人主页、设置页头都画这一个。没挑过就从项目名取字：跳过开头的标点括号，取第一个字母、数字或汉字。',
+    file: 'src/components/common/ProjectAvatar.vue',
+    component: ProjectAvatar,
+    needs: UI,
+    args: { size: 48 },
+    states: [
+      { name: '两个字', note: '只取第一个字。', props: { id: 'p-lab-1', name: '数据结构' } },
+      { name: '括号开头', note: '跳过开头的括号。', props: { id: 'p-os', name: '【期末】操作系统' } },
+      { name: '英文', note: '只取第一个字母。', props: { id: 'p-cheese', name: 'Cheese' } },
+      {
+        name: '图标',
+        note: '挑过的图标和颜色。',
+        props: {
+          id: 'p-x',
+          name: 'X',
+          avatar: { kind: 'icon', glyph: 'rocket-launch-outline', hue: 140, image_id: null },
+        },
+      },
+      {
+        name: '表情',
+        note: '一个表情。',
+        props: { id: 'p-y', name: 'Y', avatar: { kind: 'emoji', glyph: '🧪', hue: 300, image_id: null } },
+      },
+      {
+        name: '四个字母',
+        note: '自定文字，字号跟着字数变小。',
+        props: { id: 'p-z', name: 'Z', avatar: { kind: 'text', glyph: 'CS61', hue: 235, image_id: null } },
       },
     ],
   },

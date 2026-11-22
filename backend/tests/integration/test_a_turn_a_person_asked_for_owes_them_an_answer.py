@@ -1,5 +1,5 @@
-"""A turn a person asked for reaches its session owing them an answer; a turn
-the platform started for itself does not.
+"""A turn a person asked for reaches its session owing them an answer, and so
+does a turn the platform starts for a channel's main line.
 
 What owing means is the harness's side (`driven/runner.py`, held on every
 harness by `tests/unit/test_a_person_is_answered_before_anything_else.py`).
@@ -71,7 +71,12 @@ async def test_a_person_who_asks_is_owed_the_first_word(client, tmp_path):
     assert screen.owed_when_read == [True]
 
 
-async def test_a_turn_the_platform_starts_owes_nobody(client, tmp_path):
+async def test_a_turn_the_platform_starts_in_the_main_line_owes_a_visible_act(
+    client, tmp_path
+):
+    """The channel's main line is woken by the platform for its tasks' reports;
+    such a turn ending on words nobody sees is what it is held to once."""
+
     async def run():
         chat, screen, topic_id = await _room(client.test_request_factory, tmp_path)
         async for _ in chat.converse(
@@ -86,4 +91,4 @@ async def test_a_turn_the_platform_starts_owes_nobody(client, tmp_path):
         return screen
 
     screen = client.portal.call(run)
-    assert screen.owed_when_read == [False]
+    assert screen.owed_when_read == [True]

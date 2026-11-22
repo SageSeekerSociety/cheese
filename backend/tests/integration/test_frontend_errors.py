@@ -110,6 +110,34 @@ def test_unknown_project_404(client):
     assert r.status_code == 404
 
 
+def test_a_page_outside_every_project_is_kept_without_a_project(client):
+    """新建空间和创建团队都在首页那一下，而首页不属于任何项目。从前这类失败整条
+    丢掉（前端都不发），平台对最难查的两个入口一无所知。它没有归属可写，收下就是
+    了——不是把它挂到某个项目名下。"""
+    r = client.post(
+        "/frontend-errors",
+        json={"errors": [{"message": "举片失败", "page": "/home"}]},
+    )
+    assert r.status_code == 200
+    assert r.json()["data"] == {"accepted": 1, "dropped": 0}
+
+    async def read() -> list[dict]:
+        async with client.test_factory() as session:
+            rows = await session.scalars(
+                select(RunRecord).where(RunRecord.kind == "frontend_error")
+            )
+            return [
+                {"content": row.content, "project_id": row.project_id}
+                for row in rows
+                if (row.meta or {}).get("fingerprint")
+            ]
+
+    kept = client.portal.call(read)
+    assert len(kept) == 1
+    assert kept[0]["project_id"] is None
+    assert "举片失败" in kept[0]["content"]
+
+
 def test_a_new_error_reaches_a_person_and_a_repeat_does_not(client, monkeypatch):
     """The records have had these errors all along; what they have never had is a
     reader. An alert is that reader — but only for something not seen before,

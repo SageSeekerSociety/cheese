@@ -1,45 +1,25 @@
-"""文档还空着时，提示词也要说「建第一版」——不论坐进房间的是哪个模型。
+"""文档还空着时，会话也要读到「建第一版」那一篇——不论坐进房间的是哪个模型。
 
 只在有文档时说「维护它」，第一版就全靠模型自己悟：本项目近 30 天里 Kimi / MiMo
 一篇都没建过。`""` 表示房间有文档位但空着，None 表示这一轮没有文档这回事（私聊、
-巡检、总览房间自己那一轮），两者必须说不一样的话。
+巡检、总览房间自己那一轮），两者开场说的不一样。
 """
 
-from app.domain.agent.harness.prompt import (
-    DOC_FORM,
-    build_session_opening,
-    build_system_prompt,
-)
+from app.domain.prompts import Facts, Kind, render_opening, selected
 
 
-def _told(doc: str | None) -> str:
-    """一条新会话开场听到的全部：规矩加现状。"""
-    system = build_system_prompt("base", "", has_doc=doc is not None)
-    return system + "\n\n" + build_session_opening(doc=doc).text
+def test_a_room_with_a_document_place_reads_the_document_rules_empty_or_not():
+    assert "system/doc_section" in selected(Kind.task, Facts(has_doc=True))
 
 
-def test_an_empty_room_doc_asks_for_the_first_version():
-    told = _told("")
+def test_an_empty_document_is_said_to_be_empty():
+    empty = render_opening(Kind.task, doc="").sections["doc"]
+    written = render_opening(Kind.task, doc="## 目标\n\n做一件事。\n").sections["doc"]
 
-    assert "这里还没有实况文档" in told
-    assert "`cheese_doc(action=set)` 建第一版" in told
-    assert "不论你是哪个队友" in told
-    # 怎么写和有文档时是同一份。
-    assert DOC_FORM in told
+    assert "做一件事。" in written
+    assert empty != written
 
 
-def test_an_existing_doc_keeps_the_maintain_section_and_the_same_form():
-    told = _told("## 目标\n\n做一件事。\n")
-
-    # 改已有文档用 edit：set 整份覆盖，会盖掉别人的段落和正在打的字。
-    assert "`cheese_doc(action=edit)`" in told
-    assert "这里还没有实况文档" not in told
-    assert DOC_FORM in told
-    assert "做一件事。" in told
-
-
-def test_no_doc_at_all_says_nothing_about_the_room_doc():
-    told = _told(None)
-
-    assert "## 实况文档" not in told
-    assert "建第一版" not in told
+def test_no_document_at_all_says_nothing_about_one():
+    assert "system/doc_section" not in selected(Kind.task, Facts(has_doc=False))
+    assert "doc" not in render_opening(Kind.task, doc=None).sections

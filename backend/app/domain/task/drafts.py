@@ -34,6 +34,7 @@ from app.core.sentences import say
 from app.domain.agent_type.library import preset_types
 from app.domain.skill_library import native_skill_doc, shipped_skill_names
 from app.domain.task.models import Task, TaskDraft, new_stage_key
+from app.domain.task.rubric import AUTOMATIC_KINDS, automatic_rule
 from app.domain.task.stages import rows_after_stage_change, settled_stage
 from app.domain.task.task_service import TaskService
 from app.domain.user.models import User, UserProfile
@@ -63,6 +64,9 @@ FORM_FIELDS = frozenset(
         "teamLockingPolicy",
         "categoryId",
         "topics",
+        # 这道题涉及的知识点（§ learning analysis, step 1）：这块板知识点清单里的
+        # id，与 ``topics`` 同一形状。发布时随 ``POST /tasks`` 一起交上去。
+        "knowledgePointIds",
         "requireRealName",
         "accessControlEnabled",
         "accessDomainGroupIds",
@@ -71,6 +75,7 @@ FORM_FIELDS = frozenset(
         "rubric",
         "rubricPublic",
         "stages",
+        "testSuite",
         "attachmentIds",
         "attachmentFiles",
         "starterAttachmentId",
@@ -105,6 +110,9 @@ AGENT_FIELDS: dict[str, tuple[str, ...]] = {
     "submission": ("submissionSchema",),
     "rubric": ("rubric",),
     "rubric_public": ("rubricPublic",),
+    # 测试点（``testSuite``）不在芝士这一版能写的字段里：它的词表要和前端的
+    # ``taskDraftAgent.AGENT_FIELDS`` 一一对上，那是第 3 步（前端）的事。在这里只让
+    # 表单字段能存下来，供发布页原样带回 ``POST/PATCH /tasks``。
     "form": ("submitterType",),
     "team_min": ("minTeamSize",),
     "team_max": ("maxTeamSize",),
@@ -115,6 +123,8 @@ AGENT_FIELDS: dict[str, tuple[str, ...]] = {
     "days_to_submit": ("defaultDeadline",),
     "category": ("categoryId",),
     "tags": ("topics",),
+    # 芝士也能写这道题涉及的知识点（§ learning analysis, step 1），落在同一格。
+    "knowledge_points": ("knowledgePointIds",),
     "real_name": ("requireRealName",),
     "registration_start": ("registrationStartAt",),
     "team_locking": ("teamLockingPolicy",),
@@ -198,6 +208,9 @@ class Space:
     #: The space library's files the person may point the AI teammates at
     #: (``teaching.materialIds``), by name.
     materials: dict[str, int] = field(default_factory=dict)
+    #: The space's 知识点清单 (learning analysis), by name: what a 题目 may be
+    #: tagged with (``knowledgePointIds``). Empty when the space keeps none.
+    knowledge_points: dict[str, int] = field(default_factory=dict)
 
 
 @dataclass
@@ -238,6 +251,7 @@ async def terms(
     *,
     user_id: int,
     materials: dict[str, int] | None = None,
+    knowledge_points: dict[str, int] | None = None,
 ) -> Space:
     """The space's categories, tags, mentors and domain groups by name, and
     the person's clock. ``materials`` are the space library's files the person
@@ -267,6 +281,7 @@ async def terms(
             if isinstance(t, dict) and str(t.get("name") or "").strip()
         ),
         materials=dict(materials or {}),
+        knowledge_points=dict(knowledge_points or {}),
     )
 
 
@@ -571,6 +586,22 @@ def from_agent(
                 )
             )
         out["topics"] = [space.tags[n] for n in names]
+    if "knowledge_points" in args:
+        names = [
+            str(n).strip() for n in args["knowledge_points"] or [] if str(n).strip()
+        ]
+        unknown = [n for n in names if n not in space.knowledge_points]
+        if unknown:
+            raise BadRequestError(
+                say(
+                    "draftKnowledgePointChoice",
+                    unknown="、".join(unknown),
+                    names="、".join(space.knowledge_points) or "—",
+                )
+            )
+        out["knowledgePointIds"] = list(
+            dict.fromkeys(space.knowledge_points[n] for n in names)
+        )
     if "stages" in args:
         out["stages"] = _stages(args["stages"], space.zone, current.get("stages"))
     # Items and lines name their stage by its id; 芝士 may name it by its id or
@@ -919,14 +950,19 @@ def _rubric(lines, stages: list) -> list[dict]:
             points = int(line.get("points") or 0)
         except (TypeError, ValueError):
             points = -1
-        out.append(
-            {
-                "item": str(line.get("item") or "").strip(),
-                "points": points,
-                "criteria": str(line.get("criteria") or "").strip(),
-                "stage": _stage_ref(line, stages),
-            }
-        )
+        row = {
+            "item": str(line.get("item") or "").strip(),
+            "points": points,
+            "criteria": str(line.get("criteria") or "").strip(),
+            "stage": _stage_ref(line, stages),
+        }
+        # An automatic line (``rubric.LINE_KINDS``) keeps who scores it and
+        # how; a manual one is written the way it always was.
+        kind = str(line.get("kind") or "manual")
+        if kind != "manual":
+            row["kind"] = kind
+            row["config"] = dict(line.get("config") or {})
+        out.append(row)
     return out
 
 
@@ -1223,12 +1259,29 @@ def _view(
         *(
             f"  - {r.get('item')}｜{r.get('points')} 分｜{r.get('criteria')}"
             + in_stage(r)
+            + (
+                f"｜自动：{automatic_rule(r.get('kind'), r.get('config') or {})}"
+                if r.get("kind") in AUTOMATIC_KINDS
+                else ""
+            )
             for r in fields.get("rubric") or []
+        ),
+        # 测试点在芝士这一版只读：它的词表还没进 ``AGENT_FIELDS``（第 3 步前端）。
+        # 读得出来，是为了让芝士知道这道题挂了哪些测试点、各多少分。
+        "tests:" + ("" if fields.get("testSuite") else " （无测试点）"),
+        *(
+            f"  - {suite.get('kind')}｜{suite.get('runtime')}"
+            + f"｜运行命令 {suite.get('runCmd') or '（无）'}"
+            + f"｜{suite.get('caseCount') or len(suite.get('cases') or [])} 个用例"
+            + f"｜合计 {suite.get('totalPoints') or 0} 分"
+            + in_stage(suite)
+            for suite in fields.get("testSuite") or []
         ),
         "description:",
         markdown_of(fields) or "（空）",
         f"这个空间可选的分类：{_names(space.categories)}",
         f"这个空间可选的标签：{_names(space.tags)}",
+        f"这个空间的知识点清单：{_names(space.knowledge_points)}",
         f"这个空间的模板：{_templates(space)}",
         f"可以当导师的人：{_people_said(space)}",
         f"这个空间的邮箱域名组：{_names(space.domain_groups)}",
@@ -1320,6 +1373,7 @@ def blank(fields: dict) -> bool:
         or _doc_text(fields.get("description")).strip()
         or fields.get("rubric")
         or fields.get("stages")
+        or fields.get("testSuite")
     )
 
 
@@ -1373,6 +1427,11 @@ def task_form(task: dict) -> dict:
         "teamLockingPolicy": task.get("teamLockingPolicy"),
         "categoryId": (task.get("category") or {}).get("id"),
         "topics": [t.get("id") for t in task.get("topics") or [] if t.get("id")],
+        # 这道题涉及的知识点（§ learning analysis, step 1），与 topics 同一形状：
+        # 已经挂上的那几个的 id。
+        "knowledgePointIds": [
+            k.get("id") for k in task.get("knowledgePoints") or [] if k.get("id")
+        ],
         "accessControlEnabled": bool(task.get("accessControlEnabled")),
         "accessDomainGroupIds": task.get("accessDomainGroupIds") or [],
         "mentors": [m.get("handle") for m in task.get("mentors") or []],
@@ -1380,6 +1439,8 @@ def task_form(task: dict) -> dict:
         "rubric": task.get("rubric") or [],
         "rubricPublic": task.get("rubricPublic", True),
         "stages": task.get("stages") or [],
+        # 测试点：出题人自己编这道题时读到的样子（含隐藏用例），见 test_suite。
+        "testSuite": task.get("testSuite") or [],
         "teaching": task.get("teaching") or {},
         "teachingOwn": bool(task.get("teaching")),
         # The 题目's own default teammate; None when it has none, so leaving the

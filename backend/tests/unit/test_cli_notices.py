@@ -348,3 +348,82 @@ def test_the_platform_does_not_start_that_turn_again_by_itself():
     from app.domain.agent.resumable_failures import classify
 
     assert classify(REFUSED_BY_A_FULL_CONVERSATION) is None
+
+
+def test_a_conversation_refused_for_size_at_the_api_is_the_same_failure():
+    """The other half of the same state: the request is refused for size before
+    any compaction can help. It used to reach a room as 「可能有解不开的图片」,
+    which sent people hunting an image that was not the problem."""
+    from app.core.sentences import say
+    from app.domain.agent.turn.state.notices import (
+        CONTEXT_FULL_CODE,
+        _turn_failure_notice,
+    )
+
+    said = (
+        "API Error: 400 litellm.ContextWindowExceededError: "
+        "litellm.BadRequestError: ContextWindowExceededError: DeepseekException - "
+        '{"error":{"message":"This model\'s maximum context length is 1048576 '
+        'tokens. However, you requested 1129046 tokens",'
+        '"type":"invalid_request_error"}}'
+    )
+    line, meta = _turn_failure_notice(said, None)
+    assert line == say("turnFailedContextFull")
+    assert meta["code"] == CONTEXT_FULL_CODE
+
+
+@pytest.mark.parametrize(
+    "said",
+    [
+        # An ordinary invalid request — the image case this must NOT swallow.
+        'API Error: 400 {"type":"error","error":{"type":"invalid_request_error",'
+        '"message":"messages.3.content.0.image: unsupported image"}}',
+        # A 500 is not a size problem.
+        "API Error: 500 Internal Server Error",
+        # A rate limit is not a size problem.
+        "API Error: 429 rate limited",
+    ],
+)
+def test_other_400s_are_not_read_as_a_conversation_too_long(said):
+    from app.domain.agent.platform_failures import is_compaction_refused
+
+    assert not is_compaction_refused(said)
+
+
+def test_an_expired_login_is_its_own_failure_and_offers_no_retry():
+    from app.domain.agent.platform_failure_cli_notices import is_login_expired
+    from app.domain.agent.turn.state.notices import (
+        LOGIN_EXPIRED_CODE,
+        _turn_failure_notice,
+    )
+
+    said = (
+        "Failed to authenticate: OAuth session expired and could not be "
+        "refreshed (authentication_failed)"
+    )
+    assert is_login_expired(said)
+    line, meta = _turn_failure_notice(said, None)
+    assert meta["code"] == LOGIN_EXPIRED_CODE
+    assert "retryable" not in meta
+    assert meta["detail"] == said
+    assert line.key == "turnFailedLoginExpired"
+
+
+def test_a_failed_compaction_that_also_says_failed_to_authenticate_stays_a_compaction():
+    from app.domain.agent.turn.state.notices import (
+        CONTEXT_FULL_CODE,
+        _turn_failure_notice,
+    )
+
+    said = "Prompt is too long · automatic compaction failed: Failed to authenticate"
+    _, meta = _turn_failure_notice(said, None)
+    assert meta["code"] == CONTEXT_FULL_CODE
+
+
+def test_other_failures_that_mention_authenticating_are_not_an_expired_login():
+    from app.domain.agent.platform_failure_cli_notices import is_login_expired
+
+    assert not is_login_expired("")
+    assert not is_login_expired(None)
+    assert not is_login_expired("Could not Failed to authenticate the webhook")
+    assert not is_login_expired("API Error: 503 service unavailable")

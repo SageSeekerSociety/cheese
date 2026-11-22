@@ -31,7 +31,7 @@ class QuestionPolicy(Policy[Question, Permission]):
         found = await session.get(Question, id)
         return None if found is None or found.deleted_at is not None else found
 
-    async def may(
+    async def decide(
         self, session: AsyncSession, obj: Question, user_id: int, permission: Permission
     ) -> bool:
         return obj.created_by_id == user_id

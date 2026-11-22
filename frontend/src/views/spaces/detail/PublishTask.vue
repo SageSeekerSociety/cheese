@@ -10,7 +10,14 @@
 // 挂表单**：`fetchCategories()` 在 `currentSpaceId` 为空时直接返回，装晚了分类下拉是空的。
 // `?categoryId=`（从某个分类的列表过来）在这里读。
 import type { UploadProgress } from '@/api/partUpload'
-import type { SpaceTeaching, TaskDraft, TaskDraftFields, TaskDraftSummary, TaskFormSubmitData } from '@/types'
+import type {
+  SpaceKnowledgeSuggestion,
+  SpaceTeaching,
+  TaskDraft,
+  TaskDraftFields,
+  TaskDraftSummary,
+  TaskFormSubmitData,
+} from '@/types'
 import type { StripItem } from './TaskDraftStrip.vue'
 
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -24,6 +31,7 @@ import { useAttachmentUploads } from '@/composables/useAttachmentUploads'
 import { useDraftAgent } from '@/composables/useDraftAgent'
 import { useSkillCatalog } from '@/composables/useSkillCatalog'
 import { useSpaceData } from '@/composables/useSpaceData'
+import { useSpaceLearningAnalysis } from '@/composables/useSpaceLearningAnalysis'
 import { useSpaceMaterials } from '@/composables/useSpaceMaterials'
 import { useStarterUpload } from '@/composables/useStarterUpload'
 import { useTaskDraft } from '@/composables/useTaskDraft'
@@ -31,6 +39,7 @@ import { useTaskDraft } from '@/composables/useTaskDraft'
 import PublishTaskView from './PublishTaskView.vue'
 
 import { AttachmentsApi } from '@/api/attachments'
+import { axiosErrorMessage } from '@/api/axiosHttp'
 import { TaskDraftsApi } from '@/api/taskDrafts'
 import { fieldLabel } from '@/lib/draftChangeView'
 import { publishDoneRoute, spaceLibraryPath } from '@/lib/spaceRouteNames'
@@ -43,6 +52,7 @@ import errorHandler from '@/services/ErrorHandler'
 import { agentDocked, agentOpen, askAgent, attachToAgent, openAgent, useAgentContext } from '@/stores/agent'
 import { useSpaceStore } from '@/stores/space'
 import { draftFieldsOf } from '@/types'
+import { provideTestTrial } from '@/views/tasks/composables/useTaskJudge'
 
 const route = useRoute()
 const router = useRouter()
@@ -56,6 +66,8 @@ const { types: agentTypes, failed: agentTypesFailed } = useAgentTypes()
 const { skills: skillCatalog, failed: skillCatalogFailed } = useSkillCatalog()
 
 const spaceId = computed(() => Number(route.params.spaceId))
+// 表单里「用参考答案试跑」测试点：算力记在这个空间的所有者头上。
+provideTestTrial(() => spaceId.value)
 const listTo = computed(() => ({ name: 'SpacesDetailTasksList', params: { spaceId: spaceId.value } }))
 const draftParam = computed(() => {
   const id = Number(route.query.draft)
@@ -89,6 +101,52 @@ watch(spaceId, (id) => void loadSpace(id), { immediate: true })
 /** 参考资料那一格的候选。不并进 `loadSpace` 的成败里：取不到也照常发得了题。 */
 const { materials, state: materialsState } = useSpaceMaterials(spaceId)
 
+/** 学情分析：开关（摆不摆「涉及的知识点」那一栏）、知识点清单、能不能让 AI 读题面。 */
+const {
+  enabled: learningEnabled,
+  knowledgePoints,
+  canManage: learningCanManage,
+  state: learningState,
+  addKnowledgePoint,
+  suggest: suggestKnowledge,
+} = useSpaceLearningAnalysis(spaceId)
+
+/** AI 读题面回来的建议：还没处理的摆在那一栏下面，采用一条就少一条。 */
+const knowledgeSuggestions = ref<SpaceKnowledgeSuggestion[]>([])
+const knowledgeSuggesting = ref(false)
+const knowledgeSuggestFailed = ref(false)
+
+async function runKnowledgeSuggestion() {
+  if (knowledgeSuggesting.value) return
+  knowledgeSuggesting.value = true
+  knowledgeSuggestFailed.value = false
+  try {
+    const name = live.value.name ?? ''
+    const description = live.value.descriptionMarkdown ?? live.value.description ?? ''
+    knowledgeSuggestions.value = await suggestKnowledge(name, description)
+  } catch (error) {
+    knowledgeSuggestFailed.value = true
+    void errorHandler.handle(error as Error, { showToast: false })
+  } finally {
+    knowledgeSuggesting.value = false
+  }
+}
+
+/** 那一栏上改了挂的知识点：填回表单（表单那一格是唯一的一份），随之照常存进草稿。 */
+function applyKnowledgePoints(ids: number[]) {
+  void view.value?.form.apply({ knowledgePointIds: ids })
+}
+
+/** 采用一条清单里还没有的建议：先把它加进清单，拿到编号再挂到这道题上。 */
+async function adoptNewKnowledge(name: string) {
+  try {
+    const point = await addKnowledgePoint(name)
+    if (point) view.value?.form.apply({ knowledgePointIds: [...(live.value.knowledgePointIds ?? []), point.id] })
+  } catch (error) {
+    toast.error(axiosErrorMessage(error, t('spaces.learningAnalysis.field.suggestFailed')))
+  }
+}
+
 /** 活跃（未归档）的分类，按 `displayOrder` 排：下拉里只有能选的。 */
 const activeCategories = computed(() =>
   categories.value.filter((category) => !category.archivedAt).sort((a, b) => a.displayOrder - b.displayOrder)
@@ -108,6 +166,7 @@ const terms = () => ({
   mentors: mentorChoices.value.map((m) => ({ handle: m.value, name: m.title })),
   materials: materials.value.map(({ id, name }) => ({ id, name })),
   teammates: agentTypes.value.map(({ name, title }) => ({ name, title })),
+  knowledgePoints: knowledgePoints.value.map(({ id, name }) => ({ id, name })),
   teaching: teaching.value,
 })
 
@@ -591,6 +650,14 @@ const ready = computed(() => spaceReady.value && draftReady.value)
     :materials="materials"
     :materials-state="materialsState"
     :library-to="spaceLibraryPath(spaceId)"
+    :knowledge-enabled="learningEnabled === true"
+    :knowledge-point-ids="live.knowledgePointIds ?? []"
+    :knowledge-point-list="knowledgePoints"
+    :knowledge-point-state="learningState"
+    :knowledge-suggestions="knowledgeSuggestions"
+    :knowledge-suggesting="knowledgeSuggesting"
+    :knowledge-suggest-failed="knowledgeSuggestFailed"
+    :knowledge-can-suggest="learningCanManage"
     :publishing="publishing"
     :publish-error="publishError"
     :agent-types="agentTypes"
@@ -620,6 +687,9 @@ const ready = computed(() => spaceReady.value && draftReady.value)
     @form-ready="onFormReady"
     @open-draft="openOther"
     @new-draft="newDraft"
+    @update:knowledge-points="applyKnowledgePoints"
+    @suggest-knowledge="runKnowledgeSuggestion"
+    @adopt-new-knowledge="adoptNewKnowledge"
     @remove-draft="removeDraft"
     @publish-all="publishAll"
   >

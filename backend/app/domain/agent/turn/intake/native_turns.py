@@ -4,10 +4,8 @@ Scheduling stays with the runner via one explicit opening capability. The
 read/own interval and context creation preserve their original exception scope.
 """
 
-import asyncio
 import logging
 import uuid
-from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
@@ -41,7 +39,6 @@ class NativeTurns:
     sessions: async_sessionmaker
     live: LiveWork
     open_turn: OpenSessionTurn
-    known_commits: Callable[[uuid.UUID, uuid.UUID], Awaitable[set[str] | None]]
 
     async def begin(
         self,
@@ -57,8 +54,8 @@ class NativeTurns:
         any other: an interval a sweep can find, and everything its Stop needs.
 
         Without this, a self-started turn's Stop landed the message and then did
-        nothing at all — no usage row, no conclusion cards settled, no change
-        summary, and no interval to close, because none was ever opened. The
+        nothing at all — no usage row, no conclusion cards settled, and no
+        interval to close, because none was ever opened. The
         room could not even tell you the turn had happened.
 
         署名是这个房间的席位 handle。退场的是那个谁也没写过的作者值（字面量就是
@@ -163,9 +160,6 @@ class NativeTurns:
             user_text="",
             started_at=row.started_at if row is not None else datetime.now(UTC),
             agent_instance_handle=agent.handle,
-            known_commits=asyncio.ensure_future(
-                self.known_commits(project_id, place.room_id)
-            ),
             self_started=not opened,
         )
         self.live.hook_work[(topic_id, turn_id)] = state

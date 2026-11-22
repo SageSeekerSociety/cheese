@@ -13,11 +13,12 @@ from app.domain.agent import checkout_sweep
 from app.domain.agent.announce import announce
 from app.domain.block.queries import turn_starts
 from app.domain.delivery.agent import (
+    record_seat_instruction,
     record_task_instruction,
 )
 from app.domain.delivery.ledger import settle_card
 from app.periodic_jobs import periodic_jobs
-from tests.support.review_ports import task_teammate
+from tests.support.review_ports import task_teammate, uncommitted
 
 pytestmark = pytest.mark.anyio
 
@@ -31,9 +32,13 @@ pytestmark = pytest.mark.anyio
 _EXPECTED_PORTS = {
     "settle_card": settle_card,
     "record_instruction": record_task_instruction,
+    "record_seat": record_seat_instruction,
     "dispatch_pending": ANY,
     "task_teammate": task_teammate,
+    "uncommitted": uncommitted,
     "machines": checkout_sweep.sweep,
+    "chat": ANY,
+    "announce_to_origin": announce,
 }
 
 #: 接线时从设置里现读的口子：只有草稿扫描的窗口是这种。写成模块级常量会让它与
@@ -47,11 +52,26 @@ _KEYWORD_PORTS = {
     "pr poll": (
         "settle_card",
         "record_instruction",
+        "record_seat",
         "task_teammate",
+        "uncommitted",
     ),
     "task pr poll": ("record_instruction", "task_teammate"),
-    "task closing": ("record_instruction", "task_teammate", "machines"),
+    "task closing": (
+        "record_instruction",
+        "record_seat",
+        "dispatch_pending",
+        "task_teammate",
+        "machines",
+    ),
     "draft pr sweep": ("dispatch_pending", "record_instruction", "quiet_window_s"),
+    "neglected task close": (
+        "chat",
+        "settle_card",
+        "announce_to_origin",
+        "record_seat",
+        "machines",
+    ),
 }
 
 
@@ -115,6 +135,8 @@ def _world():
             "sessions",
         ),
         ("quiet task reminder", "task_quiet.sweep.remind_quiet_tasks", "sessions"),
+        ("neglected task warning", "task_quiet.neglect.warn_neglected", "sessions"),
+        ("neglected task close", "task_quiet.neglect.close_neglected", "sessions"),
         (
             "task deadline reminder",
             "task_notices.sweep.remind_deadlines",
@@ -157,6 +179,16 @@ def _world():
             "sessions",
         ),
         ("ci activity sweep", "ci_activity.ingest.sweep", "sessions"),
+        (
+            "learning analysis nightly",
+            "space.learning_insight_analysis.run_nightly",
+            "sessions",
+        ),
+        (
+            "learning practice queue",
+            "space.learning_practice_service.run_queued",
+            "sessions",
+        ),
     ],
 )
 async def test_a_registered_clock_calls_its_domain_with_the_right_binding(
@@ -272,7 +304,7 @@ async def test_reminder_clocks_ask_the_supplied_chats_sessions(name):
         (
             "timed deliveries",
             "delivery.timer.deliver_due",
-            {"machines": checkout_sweep.sweep},
+            {"announce": announce, "machines": checkout_sweep.sweep},
         ),
         ("routines", "routine.service.sweep", {}),
     ],
@@ -456,6 +488,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         "thread_recycle_interval_s",
         "credit_warning_interval_s",
         "deepseek_balance_check_interval_s",
+        "task_deploy_blocked_interval_s",
     )
     for value, field in enumerate(fields, start=101):
         monkeypatch.setattr(settings, field, value)
@@ -466,6 +499,8 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("forge credential cache cleanup", 3600),
         ("forge orphan account sweep", 3600),
         ("quiet task reminder", 3600),
+        ("neglected task warning", 3600),
+        ("neglected task close", 3600),
         ("task deadline reminder", 3600),
         ("pr poll", 101),
         ("task pr poll", 101),
@@ -478,10 +513,13 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("checklist reminder", 105),
         ("task state reminder", 105),
         ("gate sweep", 106),
+        ("deploy blocked marks", 127),
         ("cloud host pool sweep", 107),
         ("cloud sandbox lifecycle", 107),
         ("cloud compute metering", 107),
         ("cloud warm pool", 107),
+        ("cloud sandbox images", 60),
+        ("sandbox root backup cleanup", 3600),
         ("sandbox disk guard", 118),
         ("subscription usage ingest", 108),
         ("backend error flush", 109),
@@ -506,6 +544,7 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("feishu authorization renewal", 3600),
         ("task deadline sweep", 116),
         ("starter code pushes", 10),
+        ("judge runs", 5),
         ("memory dream", 117),
         ("memory history retention", 3600),
         ("platform model roles refresh", 121),
@@ -513,6 +552,8 @@ def test_every_platform_clock_keeps_its_order_interval_source_and_ownership(
         ("relay balance check", 126),
         ("credit warnings", 125),
         ("ci activity sweep", 300),
+        ("learning analysis nightly", 3600),
+        ("learning practice queue", 900),
     ]
     # Every process serves requests that read the platform model roles, so that
     # one refresh runs everywhere; every other clock only on the lock holder.

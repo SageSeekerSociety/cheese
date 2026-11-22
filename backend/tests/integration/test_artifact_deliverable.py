@@ -17,7 +17,6 @@ from app.core.sandbox_auth import mint_scoped_token
 from app.domain.agent import execution
 from app.domain.agent.harness import harness_for
 from app.domain.agent.harness.claude_code.remote_execution.runtime import Executor
-from app.domain.agent_session.services import AgentSessionService
 from app.domain.review import services as review_services
 from app.domain.topic.models import Topic
 from tests.conftest import seed_user
@@ -35,6 +34,7 @@ from tests.integration.test_accept_pr import (
 )
 from tests.integration.test_accept_pr import app_world as app_world
 from tests.integration.test_project_artifacts import remote_delivery as remote_delivery
+from tests.support.environments import remember_place
 
 
 @pytest.fixture(autouse=True)
@@ -73,10 +73,11 @@ def _place(client, task) -> None:
     async def place():
         async with client.test_factory() as session:
             room = await session.get(Topic, task.room_id)
-            await AgentSessionService(session).remember_place(
+            await remember_place(
+                session,
                 conversation_id=task.id,
                 agent_handle="cheese",
-                work_lease={"kind": "device"},
+                environment={"kind": "device"},
                 runtime_location={
                     "device_id": "test-device",
                     "channel": "central",
@@ -927,7 +928,7 @@ def test_an_accept_that_lands_during_a_redeliver_keeps_what_it_accepted(
 ):
     """读机器上那一份要几秒，人正好在这几秒里采纳了：采纳的那一版不能被换掉，
     它的字节也不能被删。换的那一方拿到 409。"""
-    from app.api.routes.accept import _accept_service
+    from app.api.accept_service import accept_service
     from app.domain.review.services import cards as cards_mod
 
     project_id = _project(client)
@@ -947,7 +948,7 @@ def test_an_accept_that_lands_during_a_redeliver_keeps_what_it_accepted(
     async def read_while_someone_accepts(*args, **kwargs):
         data = await read(*args, **kwargs)
         async with client.test_factory() as session:
-            await _accept_service(session).accept(
+            await accept_service(session).accept(
                 card_id=uuid.UUID(card_id),
                 decided_by="alice",
                 head_sha=head,
@@ -979,7 +980,7 @@ def test_a_redeliver_during_an_accept_does_not_slip_in_unseen_bytes(
     409 —— 不能是「卡采纳了，挂着的却是没人看过的那一份」。"""
     import time
 
-    from app.api.routes.accept import _accept_service
+    from app.api.accept_service import accept_service
     from app.domain.library import service as library_service
     from app.domain.review.services import cards as cards_mod
 
@@ -1008,7 +1009,7 @@ def test_a_redeliver_during_an_accept_does_not_slip_in_unseen_bytes(
     async def accept_from_the_old_screen():
         async with client.test_factory() as session:
             try:
-                card = await _accept_service(session).accept(
+                card = await accept_service(session).accept(
                     card_id=uuid.UUID(card_id),
                     decided_by="alice",
                     head_sha=head,

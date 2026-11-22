@@ -1,10 +1,13 @@
-"""A task whose last delivery landed closes once its AI teammate has written it up.
+"""A task being written up closes once its AI teammate has written it up.
 
-Accepting the last step does not close the task on the spot. The task stays
-open, with `closing_since` set, while its AI teammate is told to bring the task
-document up to date, say what came of the task, and close it with the close a
-task's own session has (`cheese_task(action=close)`); to everyone looking it already
-reads 已采纳 (`presentation`). It closes when that close is called — the one
+A merge never closes a task: its AI teammate judges it done and closes it
+(`review.task_landing`, `review.close_grounds`), or, for a task the channel's
+main line opened, the main line does — and that one is never written up. In a project that waits for
+its deploy, that close leaves the task open until the merge is live, and then
+the task stays open, with `closing_since` set, while its AI teammate is told to
+bring the task document up to date, say what came of the task, and close it
+with the close a task's own session has (`cheese_task(action=close)`); to
+everyone looking it already reads 已采纳 (`presentation`). It closes when that close is called — the one
 fact here that says the write-up was done — or, without it, when the instruction
 for it was given up on (`delivery.timer.give_up_stale`), or, whatever
 happened to it, `CLOSE_AT_THE_LATEST` after it landed.
@@ -346,8 +349,11 @@ async def close_task(
     down. Once ``session`` commits, whatever a teammate is still doing in it
     is stopped through ``work``: a closed task is work that is over, and a
     session left working in it goes on paying for the model while every write
-    it makes is refused. ``work`` is None only when the session that would be
-    stopped is the one closing the task.
+    it makes is refused. ``work`` is None when the session that would be
+    stopped is the one closing the task, or when the close is made where no
+    session is held (a deploy's report, `review.task_landing.deploy_landed`):
+    the session's holder stops it once the task has been closed a while
+    (`agent.turn_inputs.stop_work_in_closed_tasks`).
 
     ``machines`` goes to `after_close` unchanged: the call that reaches a
     machine to remove this room's closed checkouts (`ports.SweepCheckouts`).
@@ -362,6 +368,10 @@ async def close_task(
     # read there as 已采纳 while the task is open — the one state that is
     # listed in neither 「未完成」 nor 「已关闭」.
     task.closing_since = None
+    # Nor for its deploy: closed by hand while it waited, it is over.
+    task.deploying_since = None
+    task.deploy_blocked_url = None
+    task.held_conclusion = None
     if task.status is not TaskStatus.closed:
         task.status = TaskStatus.closed
         task.closed_at = datetime.now(UTC)

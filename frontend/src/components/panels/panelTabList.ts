@@ -9,7 +9,17 @@
 
 import { t } from '@/i18n'
 
-export type TabKey = 'chat' | 'overview' | 'threads' | 'files' | 'site' | 'changes' | 'preview' | 'routines'
+export type TabKey =
+  | 'chat'
+  | 'overview'
+  | 'threads'
+  | 'files'
+  | 'site'
+  | 'changes'
+  | 'preview'
+  | 'routines'
+  | 'code'
+  | 'terminal'
 
 export interface TabDef {
   key: TabKey
@@ -56,9 +66,40 @@ export const THREADS_TAB: TabDef = tab('threads', 'mdi-forum-outline')
 // 这段对话里的附件和文档（#3828）：默认只属于这段对话，存进资料库才进项目。
 export const FILES_TAB: TabDef = tab('files', 'mdi-paperclip')
 
-/** 话题页右侧有哪几格：共用的那几格，总览后面接「支线」「文件」，最后是「例行事务」。 */
+// 任务的工作副本（芝士在里面干活的那一份）：人在这里浏览、编辑文件。和频道的「文件」同名，
+// 两格不会同时出现（任务没有频道那一格）。
+export const CODE_TAB: TabDef = {
+  key: 'code',
+  icon: 'mdi-folder-outline',
+  get label() {
+    return t('work.room.tabs.files')
+  },
+}
+
+// 任务里人自己的终端：每一格是一个 shell，读者从「+」里加，加几格就有几个。只有桌面上的任务页有，
+// 所以它不在上面那几张表里，由工作面板按需摆出来（`WorkPanel` 的 `terminalMeta`）。
+export const TERMINAL_TAB: TabDef = tab('terminal', 'mdi-console')
+
+/** 话题页右侧有哪几格：共用的那几格，总览后面接「支线」「文件」，最后是「例行事务」和任务的文件。 */
 export function workPanelTabs(withChat: boolean): TabDef[] {
   const shared = panelTabs(withChat)
   const at = shared.findIndex((tabDef) => tabDef.key === 'overview') + 1
-  return [...shared.slice(0, at), THREADS_TAB, FILES_TAB, ...shared.slice(at), ROUTINES_TAB]
+  return [...shared.slice(0, at), THREADS_TAB, FILES_TAB, ...shared.slice(at), ROUTINES_TAB, CODE_TAB]
+}
+
+// 频道是人说话的地方，没有电脑在它名下干活：只有概览、支线、文件、例行事务。任务没有
+// 支线、频道的文件和例行事务，有它自己的文件（工作副本），其余几格都有。在频道里打开的
+// 一件任务：它的对话、改动、预览。
+const CHANNEL_TABS: ReadonlySet<string> = new Set(['chat', 'overview', 'threads', 'files', 'routines'])
+const TASK_HIDDEN_TABS: ReadonlySet<string> = new Set(['routines', 'threads', 'files'])
+const REVIEW_TABS: ReadonlySet<string> = new Set(['chat', 'changes', 'preview'])
+
+/**
+ * 一个房间的工作面板有哪几格：频道、任务页、在频道里打开的一件任务（`review`）各不同。
+ * `withChat`：对话是这一排里的一格（手机上，和打开的任务里）。
+ */
+export function roomTabs(opts: { withChat: boolean; review: boolean; task: boolean }): TabDef[] {
+  return workPanelTabs(opts.withChat || opts.review).filter((tab) =>
+    opts.review ? REVIEW_TABS.has(tab.key) : opts.task ? !TASK_HIDDEN_TABS.has(tab.key) : CHANNEL_TABS.has(tab.key)
+  )
 }

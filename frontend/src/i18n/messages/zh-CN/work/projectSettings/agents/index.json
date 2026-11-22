@@ -19,5 +19,12 @@
   "setDefaultFailed": "设为默认失败",
   "title": "AI 队友",
   "typeGeneral": "通用",
-  "unsupported": "暂不支持管理 AI 队友"
+  "unsupported": "暂不支持管理 AI 队友",
+  "more": "更多",
+  "accountLogin": "账号与登录",
+  "loginExpired": "登录已过期",
+  "loginWhy": "它用的 Claude 账号登录过期了，刷新不了。重新登录后它会自动接着做被打断的活，不用重发消息。",
+  "loginHow": "登录要在你自己的电脑上执行（平台没法替你点）。在那台电脑的终端里运行：",
+  "loginDoneButton": "我已重新登录",
+  "loginDone": "已重新登录。它会在下次被叫到时接着做；也可以在频道里叫它一声，让它马上接着做。"
 }

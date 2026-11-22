@@ -1,7 +1,8 @@
 """The forge CLIs' launcher on a machine with a platform socket.
 
 The rules, as a person would state them: the forge credentials are asked of
-the socket, with no token; a forge tunnel connection is opened on a credential
+the socket, with no token, naming the session the command was started for;
+a forge tunnel connection is opened on a credential
 the socket hands out for it.
 """
 
@@ -39,6 +40,7 @@ def platform_socket(monkeypatch):
                 (
                     self.path,
                     self.headers.get("authorization"),
+                    self.headers.get("x-cheese-attachment"),
                 )
             )
             payload = {
@@ -68,7 +70,15 @@ def test_the_forge_credentials_are_asked_of_the_socket_without_a_token(
     platform_socket,
 ):
     assert forge_cli.credentials() == {"kind": "github_app"}
-    assert platform_socket == [("/api/sandbox/forge-token", None)]
+    assert platform_socket == [("/api/sandbox/forge-token", None, None)]
+
+
+def test_the_forge_credentials_are_asked_for_the_session_that_wants_them(
+    platform_socket, monkeypatch
+):
+    monkeypatch.setenv("CHEESE_ATTACHMENT", "the-session")
+    forge_cli.credentials()
+    assert platform_socket == [("/api/sandbox/forge-token", None, "the-session")]
 
 
 def test_the_forge_proxy_refuses_pr_merges_and_injects_the_token():

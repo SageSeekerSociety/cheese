@@ -47,3 +47,30 @@ class ExecutorCall(Protocol):
     """
 
     async def __call__(self, target: dict, method: str, params: dict) -> dict: ...
+
+
+class WakeWorkingCopy(Protocol):
+    """把这条任务（或支线）冻住的环境叫醒，再去读写它的检出目录。
+
+    空闲的环境会被冻住（`machine.lifecycle`）：文件都在，进程和执行器都停着，这时
+    去问它只能等到超时。有人打开或保存任务里的文件，就是在用它——和打开预览一样
+    把它叫醒（`machine.preview_wake`）。没冻住的什么也不做。实现住在 `machine`，
+    本包够不着，由组装路由的地方递进来；不给就不叫醒。
+    """
+
+    async def __call__(self, conversation_id: uuid.UUID) -> None: ...
+
+
+class PrepareWorkingCopy(Protocol):
+    """Bring a task's copy onto a machine for a person's write, with no turn.
+
+    Its sandbox may be gone (destroyed or parked), its executor stopped for
+    sitting idle, or its machine without a checkout of the task: a person
+    saving the task's files brings it back, with the work it kept laid back,
+    in that person's name. Returns once the copy is there to write; raises,
+    as a retryable refusal, when it is still being prepared after the time a
+    save waits, and with a plain refusal when it cannot be. The implementation
+    is in `machine` (`task_machine.prepare_for_write`), handed in by whoever
+    builds the route; without it nothing is brought back."""
+
+    async def __call__(self, task_id: uuid.UUID) -> None: ...

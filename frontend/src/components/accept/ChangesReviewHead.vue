@@ -199,6 +199,16 @@ function reassign(handle: string) {
   emit('reassign', handle)
 }
 
+// 「提交并采纳」布下的不是自动合并：审阅人采纳了这一版，等托管方答复几秒内就合并，那时
+// 不写任何话；只有规则还没满足（检查在跑、分支落后）真要等的时候，才说检查通过后由谁采纳。
+const adopting = computed(() => !!props.autoMergeArmedBy && !!props.card.auto_merge.adopting)
+const armedLine = computed<string | null>(() => {
+  if (!props.autoMergeArmedBy) return null
+  if (!adopting.value) return 'work.room.review.autoMergeOn'
+  const state = props.card.merge_state.state
+  return state === 'blocked' || state === 'behind' ? 'work.room.review.adoptWhenChecksPass' : null
+})
+
 // 偶尔才用、或者有后果的那几样收在「更多操作」里：改派、自动合并、明知没过仍要采纳、作废。
 const moreActions = computed<MenuAction[]>(() => {
   const list: MenuAction[] = [
@@ -214,7 +224,11 @@ const moreActions = computed<MenuAction[]>(() => {
     const armed = !!props.autoMergeArmedBy
     list.push({
       key: 'auto-merge',
-      label: armed ? t('work.room.review.autoMergeOff') : t('work.room.accept.autoMerge'),
+      label: adopting.value
+        ? t('work.room.review.adoptCancel')
+        : armed
+          ? t('work.room.review.autoMergeOff')
+          : t('work.room.accept.autoMerge'),
       icon: armed ? 'mdi-timer-off-outline' : 'mdi-timer-check-outline',
       disabled: props.busy,
       onSelect: () => emit('toggle-auto-merge', !armed),
@@ -248,12 +262,12 @@ const moreActions = computed<MenuAction[]>(() => {
       <div class="review-head__tools">
         <BaseButton
           v-if="card.pr_url"
-          kind="ghost"
+          kind="secondary"
           size="sm"
           append-icon="mdi-open-in-new"
           :href="card.pr_url"
           target="_blank"
-          rel="noopener"
+          rel="noopener noreferrer"
         >
           PR #{{ card.pr_number }}
         </BaseButton>
@@ -322,13 +336,7 @@ const moreActions = computed<MenuAction[]>(() => {
     </p>
     <!-- 后端写在卡上的 note（比如「PR 有新提交，之前看到的版本已过时」）。 -->
     <AcceptNoteLine v-if="note" :text="note.text" :tone="note.tone" />
-    <i18n-t
-      v-if="autoMergeArmedBy"
-      scope="global"
-      keypath="work.room.review.autoMergeOn"
-      tag="p"
-      class="review-head__line"
-    >
+    <i18n-t v-if="autoMergeArmedBy && armedLine" scope="global" :keypath="armedLine" tag="p" class="review-head__line">
       <template #who><UserRef :handle="autoMergeArmedBy" /></template>
     </i18n-t>
 
@@ -509,11 +517,12 @@ const moreActions = computed<MenuAction[]>(() => {
 }
 .review-head__title-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: flex-start;
   gap: 8px;
 }
 .review-head__title {
-  flex: 1 1 auto;
+  flex: 1 1 240px;
   min-width: 0;
   margin: 2px 0 0;
 }

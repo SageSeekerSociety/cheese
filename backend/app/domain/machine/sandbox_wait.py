@@ -1,14 +1,13 @@
 """What a tool call waiting on its session's cloud sandbox, or its whole cloud
 VM, watches, and what it is told meanwhile (``session_work._attempt``)."""
 
-from sqlalchemy import select
-
+from app.domain.machine import occupants
 from app.domain.machine.models import (
     GONE,
     MAX_ENROLL_ATTEMPTS,
     CloudHost,
     MachineStatus,
-    SandboxHome,
+    sandbox_image_ready,
 )
 
 # What a tool waiting on its cloud sandbox is told.
@@ -29,13 +28,30 @@ VM_PREPARING = "虚拟机沙箱正在准备，要几分钟；对话和平台工�
 VM_ERROR = "虚拟机沙箱出错：供应方报告错误。对话和平台工具仍可用。"
 # What a session is told, once, with the first tool call that succeeds in a
 # new sandbox: its old one was destroyed when idle (``lifecycle``) or given up
-# with its host (``HostPool._fail``). Either records it under ``LOST_KEY`` in
-# the session's ``execution_request``.
+# with its host (``HostPool._fail``). Either owes it to the session
+# (`agent_session.attachment.lose`).
 SANDBOX_LOST = (
     "沙箱环境已换成新的。只有推上去的提交还在，在任务分支上，用 "
     'cd "$(cheese worktree <任务 id>)" 重新打开任务目录。没提交的改动、没推的'
     "提交、依赖和缓存、/tmp、正在运行的进程都不在了，需要的重新做、重新安装、"
     "重新启动。"
+)
+# The same, in a project with a repository: what a task
+# checkout had not committed was kept off the sandbox (`repository.kept_work`)
+# and comes back with the checkout.
+SANDBOX_LOST_KEPT = (
+    "沙箱环境已换成新的。推上去的提交在任务分支上；任务目录里没提交的改动由平台"
+    '保存着，用 cd "$(cheese worktree <任务 id>)" 重新打开任务目录时会原样放回，'
+    "仍是没提交的改动。没推的提交、任务目录以外的文件、装过的依赖和缓存、/tmp、"
+    "正在运行的进程都不在了，需要的重新做、重新安装、重新启动。"
+)
+# Said after it when the kept changes were cut from a head the task's branch
+# has moved past: a new checkout leaves them out rather than guess a merge.
+KEPT_NOT_LAID_BACK = (
+    "{at} 保存的没提交的改动不会放回：保存时所在的提交已不是任务分支的最新提交"
+    "（之后分支有了新提交，或那个提交没推上去），平台没有替你合并。它们在 {ref}"
+    "（提交 {commit}），打开任务目录后用 git diff HEAD {commit} 查看，需要的对照"
+    "着重做。"
 )
 # The same, for a sandbox in no project (``holder.Personal``): nothing of it
 # was checkpointed, so nothing comes back.
@@ -56,28 +72,16 @@ SANDBOX_RESUMED = (
 )
 
 
-async def _home_removed(db, session_id) -> bool:
+async def _home_removed(db, environment_id) -> bool:
     """The sandbox being destroyed is gone, so the next attempt places the
-    session in a new one."""
-    stopped = await db.scalar(
-        select(SandboxHome.stopped_at).where(SandboxHome.session_id == session_id)
-    )
-    return stopped is None
+    environment in a new one."""
+    home = await occupants.home_of_environment(db, environment_id)
+    return home is None or home.stopped_at is None
 
 
 async def _cloud_progress(db, hub, host_id) -> str | bool:
     """Where the host of the session's sandbox is on its way to being usable."""
-    host = (
-        await db.execute(
-            select(
-                CloudHost.status,
-                CloudHost.device_id,
-                CloudHost.enroll_attempts,
-                CloudHost.released_at,
-                CloudHost.whole_machine,
-            ).where(CloudHost.id == host_id)
-        )
-    ).one_or_none()
+    host = await db.get(CloudHost, host_id)
     if host is None or host.released_at:
         # The pool let go of it; the next attempt places the session again.
         return True
@@ -98,4 +102,4 @@ async def _cloud_progress(db, hub, host_id) -> str | bool:
     if host.status in GONE:
         # Gone upstream: the next attempt forgets it and places the session.
         return True
-    return hub.is_online(host.device_id)
+    return hub.is_online(host.device_id) and sandbox_image_ready(host)

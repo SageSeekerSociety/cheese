@@ -20,6 +20,7 @@ from app.domain.delivery.agent import (
     begin_send,
     dispatch_pending,
     receive_attempt,
+    record_seat_instruction,
     record_task_instruction,
     run_attempt,
 )
@@ -115,6 +116,15 @@ def watch(client) -> dict:
             chat,
             announce,
             record_instruction=record_task_instruction,
+            record_seat=record_seat_instruction,
+            dispatch_pending=lambda: dispatch_pending(
+                chat.session_factory, chat=chat, runner=SimpleNamespace(submit=_ignore)
+            ),
             task_teammate=task_teammate,
         )
     )
+
+
+def _ignore(*_args, **_kwargs) -> None:
+    """A runner that starts nothing: what a sweep hands on is left on the
+    ledger, where the test reads it."""

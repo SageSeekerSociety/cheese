@@ -22,6 +22,16 @@
         :title="t('spaces.materials.title')"
         data-testid="space-side-library"
       />
+      <!-- 我的学习洞察：只在这块板开着学情分析时摆（读不到开关时不摆，不替一块不认识的板
+           下结论）。只有本人看得到那一页，所以人人都有这一格，不分管理员。 -->
+      <v-list-item
+        v-if="learningEnabled === true"
+        rounded="lg"
+        prepend-icon="mdi-chart-timeline-variant-shimmer"
+        :to="{ name: 'SpacesMyLearningInsight', params: { spaceId } }"
+        :title="t('spaces.sidebar.myInsight')"
+        data-testid="space-side-insight"
+      />
 
       <v-list-subheader>{{ t('spaces.sidebar.tasks') }}</v-list-subheader>
       <v-list-item
@@ -109,6 +119,7 @@ import { storeToRefs } from 'pinia'
 import { getAvatarUrl } from '@/utils/materials'
 
 import { useNavigation } from '@/composables/useNavigation'
+import { useSpaceLearningEnabled } from '@/composables/useSpaceLearningAnalysis'
 
 import SecondaryNavigation from '@/components/common/Navigation/SecondaryNavigation.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
@@ -133,6 +144,8 @@ const activeCategories = computed(() =>
 )
 
 const spaceId = computed(() => Number(nav?.route?.params?.spaceId))
+/** 这块板开没开学情分析：开着才摆「我的学习洞察」。 */
+const { enabled: learningEnabled } = useSpaceLearningEnabled(spaceId)
 /** 设置那一格：五个分栏和模板的新建、编辑页都算在里面。 */
 const isSettingsActive = computed(
   () => nav?.route?.path?.startsWith(`/spaces/${spaceId.value}/manage/settings`) ?? false

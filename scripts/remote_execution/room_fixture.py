@@ -193,7 +193,9 @@ class RoomExecutor:
                     from owner_fixture import SECRET
 
                     assert self.headers.get(SECRET_HEADER) == SECRET
-                    assert self.headers.get(DEVICE_HEADER) == executor.target["device_id"]
+                    assert (
+                        self.headers.get(DEVICE_HEADER) == executor.target["device_id"]
+                    )
                     self.path = self.path.removeprefix("/machine")
                 return True
 
@@ -217,8 +219,33 @@ class RoomExecutor:
                                 }
                             }
                         )
+                    if self.path == (
+                        f"/api/projects/{executor.project}"
+                        f"/git/tasks/{executor.task}/kept"
+                    ):
+                        # A new checkout asks for the task's kept snapshot
+                        # (`cheese` `_fetch_kept_bundle`); nothing is kept.
+                        self.send_response(204)
+                        self.end_headers()
+                        return None
                     raise AssertionError(f"unexpected socket GET {self.path}")
                 return super().do_GET()
+
+            def _kept(self):
+                """The task's kept snapshot handed in or dropped
+                (`cheese` `_keep_working_copy`): taken and not held, since no
+                run here opens the task in a second sandbox."""
+                assert self.relayed and "Authorization" not in self.headers
+                path = self.path.partition("?")[0]
+                if path != (
+                    f"/api/projects/{executor.project}/git/tasks/{executor.task}/kept"
+                ):
+                    raise AssertionError(f"unexpected socket write {self.path}")
+                self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                return self.reply({"data": {}})
+
+            do_PUT = _kept
+            do_DELETE = _kept
 
             def do_POST(self):
                 if self.relayed:

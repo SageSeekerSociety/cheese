@@ -12,7 +12,7 @@
 // 动作），这一节只画和接线。
 import type { ProjectAgent } from '@/cx_types'
 
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 
 import { useAgentSkills } from '@/composables/useAgentSkills'
 import { useProjectAgents } from '@/composables/useProjectAgents'
@@ -31,7 +31,9 @@ import { toast } from '@/lib/toast'
 
 defineOptions({ name: 'AgentTeamSettings' })
 
-const props = defineProps<{ projectId: string }>()
+// `focus` / `why` 来自地址上的 `?focus=<队友>&why=login_expired`：频道顶部红行的
+// 「重新登录」带过来的。地址归视图读，组件只收结果（`src/components` 里不读路由）。
+const props = defineProps<{ projectId: string; focus?: string; why?: string }>()
 
 const {
   agents,
@@ -43,11 +45,52 @@ const {
   refresh,
   error,
   dismissError,
-  settingDefault,
   setDefault,
   deactivating,
   deactivate,
+  projectAutomatic,
 } = useProjectAgents(() => props.projectId)
+
+// 从频道顶部的红行点「重新登录」过来：`?focus=<队友>&why=login_expired`。对应那位队友的卡片
+// 滚到眼前、闪一下，展开登录过期的红条；用完不用离开这一页。
+const focusHandle = computed(() => props.focus ?? '')
+const focusWhy = computed(() => props.why ?? '')
+/** 展开了「账号与登录」那块的队友（agent.id）。 */
+const loginOpen = ref<Set<string>>(new Set())
+/** 点了「我已重新登录」的队友：红条换成已连接。 */
+const loginDone = ref<Set<string>>(new Set())
+const pulsing = ref<string | null>(null)
+function isFocused(agent: ProjectAgent): boolean {
+  return !!focusHandle.value && (agent.seat_handle === focusHandle.value || agent.handle === focusHandle.value)
+}
+function loginExpired(agent: ProjectAgent): boolean {
+  return isFocused(agent) && focusWhy.value === 'login_expired' && !loginDone.value.has(agent.id)
+}
+function toggleLogin(agent: ProjectAgent) {
+  const next = new Set(loginOpen.value)
+  if (next.has(agent.id)) next.delete(agent.id)
+  else next.add(agent.id)
+  loginOpen.value = next
+}
+function loginPanelOpen(agent: ProjectAgent): boolean {
+  return loginExpired(agent) || loginOpen.value.has(agent.id) || loginDone.value.has(agent.id)
+}
+function reloggedIn(agent: ProjectAgent) {
+  loginDone.value = new Set(loginDone.value).add(agent.id)
+  void refresh()
+}
+watch(
+  () => [agents.value.length, focusHandle.value] as const,
+  async () => {
+    const target = agents.value.find(isFocused)
+    if (!target || pulsing.value === target.id) return
+    pulsing.value = target.id
+    await nextTick()
+    const el = document.querySelector(`[data-agent-id="${target.id}"]`)
+    el?.scrollIntoView?.({ block: 'center' })
+  },
+  { immediate: true }
+)
 
 // 「跟随项目」时也把项目那个模型的名字写出来：否则这一行说不清它到底跑在哪。
 function modelOf(agent: ProjectAgent): string {
@@ -58,9 +101,11 @@ function modelOf(agent: ProjectAgent): string {
   }
   const main = models.value.find((m) => m.default)
   return t('work.projectSettings.agents.rowModel', {
-    model: main
-      ? t('work.projectSettings.agents.rowInherit', { model: main.label })
-      : t('work.projectSettings.agents.rowInheritPlain'),
+    model: projectAutomatic.value
+      ? t('work.projectSettings.agents.rowInherit', { model: t('work.models.automaticPlain') })
+      : main
+        ? t('work.projectSettings.agents.rowInherit', { model: main.label })
+        : t('work.projectSettings.agents.rowInheritPlain'),
   })
 }
 
@@ -180,7 +225,14 @@ async function confirmDeactivate() {
 
       <OwnAgentsSettings :project-id="projectId" @added="refresh" />
 
-      <v-card v-for="a in agents" :key="a.id" class="mb-3 pa-4" variant="outlined">
+      <v-card
+        v-for="a in agents"
+        :key="a.id"
+        class="mb-3 pa-4"
+        :class="{ 'agent-card--pulse': pulsing === a.id }"
+        variant="outlined"
+        :data-agent-id="a.id"
+      >
         <div class="agent-head">
           <div class="agent-head__id">
             <CheeseAvatar
@@ -205,27 +257,55 @@ async function confirmDeactivate() {
             </div>
           </div>
           <div class="agent-head__actions">
-            <BaseButton
-              v-if="!a.is_default && a.is_active !== false"
-              size="sm"
-              :loading="settingDefault === a.id"
-              @click="setDefault(a)"
-            >
-              {{ t('work.projectSettings.agents.setDefault') }}
-            </BaseButton>
-            <BaseButton v-if="a.is_active !== false" size="sm" @click="openSkills(a)">{{
-              t('work.room.skills.button')
-            }}</BaseButton>
             <BaseButton size="sm" @click="openEdit(a)">{{ t('work.projectSettings.agents.edit') }}</BaseButton>
-            <BaseButton v-if="a.is_active !== false" size="sm" @click="deactivateTarget = a">
-              {{ t('work.projectSettings.agents.deactivate') }}
-            </BaseButton>
+            <v-menu location="bottom end">
+              <template #activator="{ props: menuProps }">
+                <BaseButton size="sm" v-bind="menuProps" data-testid="agent-more">{{
+                  t('work.projectSettings.agents.more')
+                }}</BaseButton>
+              </template>
+              <v-list density="compact">
+                <v-list-item v-if="a.is_active !== false" @click="openSkills(a)">
+                  <v-list-item-title>{{ t('work.room.skills.button') }}</v-list-item-title>
+                </v-list-item>
+                <v-list-item v-if="!a.is_default && a.is_active !== false" @click="setDefault(a)">
+                  <v-list-item-title>{{ t('work.projectSettings.agents.setDefault') }}</v-list-item-title>
+                </v-list-item>
+                <v-list-item @click="toggleLogin(a)">
+                  <v-list-item-title>{{ t('work.projectSettings.agents.accountLogin') }}</v-list-item-title>
+                </v-list-item>
+                <v-list-item v-if="a.is_active !== false" @click="deactivateTarget = a">
+                  <v-list-item-title class="text-error">{{
+                    t('work.projectSettings.agents.deactivate')
+                  }}</v-list-item-title>
+                </v-list-item>
+              </v-list>
+            </v-menu>
           </div>
         </div>
 
         <div class="agent-facts t-meta c-muted mt-3">
           <span>{{ modelOf(a) }}</span>
           <span>{{ t('work.projectSettings.agents.rowEffort', { effort: effortLabel(a.configuration.effort) }) }}</span>
+        </div>
+
+        <div v-if="loginPanelOpen(a)" class="agent-login mt-3" data-testid="agent-login">
+          <div v-if="loginDone.has(a.id)" class="agent-login__ok t-body">
+            <v-icon size="16" color="success">mdi-check-circle-outline</v-icon>
+            {{ t('work.projectSettings.agents.loginDone') }}
+          </div>
+          <template v-else>
+            <div v-if="loginExpired(a)" class="agent-login__bad t-body">
+              <v-icon size="16" color="error">mdi-cloud-off-outline</v-icon>
+              <strong>{{ t('work.projectSettings.agents.loginExpired') }}</strong>
+            </div>
+            <p class="t-body c-muted mt-2 mb-1">{{ t('work.projectSettings.agents.loginWhy') }}</p>
+            <p class="t-body mb-1">{{ t('work.projectSettings.agents.loginHow') }}</p>
+            <pre class="agent-login__cmd">claude /login</pre>
+            <BaseButton size="sm" kind="primary" @click="reloggedIn(a)">{{
+              t('work.projectSettings.agents.loginDoneButton')
+            }}</BaseButton>
+          </template>
         </div>
       </v-card>
     </div>
@@ -269,6 +349,45 @@ async function confirmDeactivate() {
 </template>
 
 <style scoped>
+.agent-card--pulse {
+  animation: agent-card-pulse 1.6s ease-out 1;
+}
+@keyframes agent-card-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 14px transparent;
+  }
+}
+.agent-login {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.agent-login__bad {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: var(--radius-md, 8px);
+  background: var(--danger-wash);
+  color: var(--danger-ink);
+}
+.agent-login__ok {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.agent-login__cmd {
+  margin: 6px 0 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md, 8px);
+  background: var(--ink);
+  color: var(--surface);
+  font:
+    12px/1.5 ui-monospace,
+    monospace;
+}
 .min-w-0 {
   min-width: 0;
 }

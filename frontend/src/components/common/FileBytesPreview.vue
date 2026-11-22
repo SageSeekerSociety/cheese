@@ -30,7 +30,8 @@ import {
   suffixOf,
 } from '@/lib/fileKind'
 
-// 只读的一份：这里没有对话可交，PDF 和幻灯片上那颗「标一处」不摆（图上框选照旧，见 `PREVIEW_MARKABLE`）。
+// 只读的一份：这里没有对话可交，PDF 和幻灯片上那颗「标一处」不摆；图上那排画图工具
+// 画的每一样也没有去处，一并收掉（框选照旧，见 `PREVIEW_MARKABLE`）。
 provide(PREVIEW_MARKABLE, false)
 
 const props = withDefaults(

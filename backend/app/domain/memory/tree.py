@@ -53,6 +53,7 @@ from app.domain.memory.files import (
     digest,
     limit_breach,
     parse_index,
+    policy_breach,
     without_entries,
 )
 
@@ -136,8 +137,14 @@ def sync_tree(
     disk: dict[str, str],
     baseline: dict[str, str],
     bases: dict[str, str] | None = None,
+    views: frozenset[str] = frozenset(),
+    people: dict[str, str] | None = None,
 ) -> TreeSync:
     """三方合成一份。
+
+    ``views`` 是多人地方铺下的那几棵 private（`files.talk_view`）：已有的记录只读，
+    只收新记的 communication。``people`` 是项目里的人（handle → 名字）。会话写
+    的、平台按这两条不收的（`files.policy_breach`），和超长的一样进 `rejected`。
 
     只合 `scopes` 点了名的作用域：`disk`、`baseline` 里的其余路径一律忽略，返回
     的 `files` 和 `baseline` 里也没有它们（没点名的那几棵见 `withdrawn_prefixes`）。
@@ -179,8 +186,14 @@ def sync_tree(
             continue
         # 收下的是会话写的（它那一版，或者索引合并出来的那一版）：量它新写的行。
         previous = requested.get(path)
-        if content is not None and content != previous:
-            breach = limit_breach(_split(path)[1], content, previous)
+        if content != previous:
+            breach = policy_breach(
+                path, content, previous, view=prefix in views, people=people
+            ) or (
+                limit_breach(_split(path)[1], content, previous)
+                if content is not None
+                else None
+            )
             if breach:
                 rejected[path] = breach
                 content = previous

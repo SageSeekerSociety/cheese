@@ -90,6 +90,8 @@ const rows = computed<Row[]>(() => {
       userId: admin.user.id,
       handle: admin.user.username,
       name: admin.user.nickname || admin.user.username,
+      // 个人备注按当前查看者回，只给设置它的人看；没有就用昵称。
+      remark: admin.user.remark ?? null,
       avatarId: admin.user.avatarId,
       role: admin.role,
     })
@@ -101,6 +103,7 @@ const rows = computed<Row[]>(() => {
       userId: m.userId,
       handle,
       name: m.user?.nickname || handle,
+      remark: m.user?.remark ?? null,
       avatarId: m.user?.avatarId,
       role: 'MEMBER',
     })

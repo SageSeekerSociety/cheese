@@ -152,7 +152,7 @@ async def keep_prepared(
     session: AsyncSession,
     *,
     conversation_id: uuid.UUID,
-    session_id: uuid.UUID,
+    session_id: uuid.UUID | None,
     stages: dict[str, float | None],
     total_s: float,
     waited_s: float | None,
@@ -199,9 +199,11 @@ async def keep_checked_out(
     conversation_id: uuid.UUID,
     session_id: uuid.UUID | None,
     total_s: float,
+    steps: dict[str, float] | None = None,
 ) -> None:
     """Keep how long opening a task's checkout in a platform sandbox took,
-    its dependencies installed when they had to be (``task_checkout``).
+    its dependencies installed when they had to be (``task_checkout``), and
+    ``steps``: what the CLI timed of it (`task_checkout.CHECKOUT_STEPS`).
     Writes the caller's transaction."""
     await _keep_timed(
         session,
@@ -209,7 +211,7 @@ async def keep_checked_out(
         key="sandboxTimedCheckedOut",
         conversation_id=conversation_id,
         session_id=session_id,
-        stages={"checkout": total_s},
+        stages={"checkout": total_s, **(steps or {})},
         total_s=total_s,
     )
 

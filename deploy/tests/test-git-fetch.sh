@@ -3,7 +3,8 @@
 # git in front of the real one that plays GitHub's part: it resets the first
 # GIT_FAKE_RESETS fetches the way the dev box's link does, and, when
 # GIT_FAKE_REQUIRE_TOKEN is set, refuses a fetch whose credentials are not that
-# token, as GitHub does for a private repository.
+# token, as GitHub does for a private repository; with
+# GIT_FAKE_OFFLINE_AFTER_FETCH set, the server is gone once a fetch succeeds.
 #
 # Usage: test-git-fetch.sh [case|all]
 set -euo pipefail
@@ -65,6 +66,12 @@ if [ "${args[$i]:-}" = fetch ]; then
       exit 128
     fi
   fi
+fi
+if [ "${args[$i]:-}" = fetch ] && [ -n "${GIT_FAKE_OFFLINE_AFTER_FETCH:-}" ]; then
+  "$GIT_FAKE_REAL" "$@" || exit
+  # Every later download, git's own lazy fetches included, finds no server.
+  mv "$GIT_FAKE_DIR/srv" "$GIT_FAKE_DIR/srv.offline"
+  exit 0
 fi
 exec "$GIT_FAKE_REAL" "$@"
 EOF
@@ -173,18 +180,41 @@ test_used_workspace_ends_at_the_requested_commit() {
   echo "PASS: a used workspace ends at exactly the requested commit, with its parent"
 }
 
+test_partial_clone_workspace_checks_out_offline() {
+  local run_dir want
+  run_dir="$(new_run)"
+  want="$(served "$run_dir" main)"
+  # The workspace an actions/checkout with `sparse-checkout` left behind: a
+  # blob:none partial clone, so every later fetch is filtered too and the
+  # checkout fetches the blobs it needs on its own, outside the retried fetch.
+  "$REAL_GIT" -C "$run_dir/srv/owner/repo" config uploadpack.allowFilter true
+  rmdir "$run_dir/ws"
+  "$REAL_GIT" clone -q --no-checkout --depth 1 --filter=blob:none \
+    "file://$run_dir/srv/owner/repo" "$run_dir/ws"
+  # GitHub's link resets once the fetch is done: anything the checkout still
+  # has to download fails the way the dev box's link fails.
+  run_fetch "$run_dir" "$want" 1 GIT_FAKE_OFFLINE_AFTER_FETCH=1 \
+    || { cat "$run_dir/out" >&2; fail "the checkout went back to GitHub after the fetch had succeeded"; }
+  [ "$("$REAL_GIT" -C "$run_dir/ws" rev-parse HEAD)" = "$want" ] || fail "the workspace is not at the requested commit"
+  [ "$(cat "$run_dir/ws/release.txt")" = 3 ] || fail "the workspace's files are not the requested commit's"
+  rm -rf "$run_dir"
+  echo "PASS: a workspace left as a partial clone is checked out from the fetch alone"
+}
+
 case "$CASE" in
   burst) test_burst_of_resets_is_waited_out ;;
   rejected-token) test_rejected_token_is_not_retried ;;
   missing-commit) test_missing_commit_is_not_retried ;;
   token) test_token_is_used_but_never_shown ;;
   used-workspace) test_used_workspace_ends_at_the_requested_commit ;;
+  partial-clone) test_partial_clone_workspace_checks_out_offline ;;
   all)
     test_burst_of_resets_is_waited_out
     test_rejected_token_is_not_retried
     test_missing_commit_is_not_retried
     test_token_is_used_but_never_shown
     test_used_workspace_ends_at_the_requested_commit
+    test_partial_clone_workspace_checks_out_offline
     ;;
   *) fail "unknown case: $CASE" ;;
 esac

@@ -1,0 +1,18 @@
+{
+  "title": "测试点",
+  "subtitle": "每人在这一阶段最新那一版提交的评测结果",
+  "stageN": "阶段 {n}",
+  "average": "平均测试分",
+  "averageHint": "已评 {judged} 份 / 共 {total} 份最新提交",
+  "credits": "评测累计花的额度",
+  "creditsHint": "提交评测 {submissions} · 学生自测 {selfTests} · 机器 {minutes} 分钟；试跑不在内",
+  "outdated": "有 {n} 份是按旧版测试点评的，重新评测后才是现在这一版的结果",
+  "casesTitle": "各用例通过率（最差的在前）",
+  "hidden": "隐藏",
+  "passedOf": "{passed} / {judged} 人通过",
+  "topFailure": "{n} 人{status}",
+  "allPassed": "全部通过",
+  "noCases": "还没有评完的提交",
+  "spreadTitle": "测试分分布",
+  "spreadNote": "已评 {judged} 份；判分失败 {scoreFailed} 份、评测失败 {failed} 份、评测中 {inFlight} 份、没有评测 {notJudged} 份不在图里"
+}

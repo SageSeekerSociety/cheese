@@ -22,6 +22,7 @@ import {
   getForgeConnection,
   getUpstream,
   listOAuthConnections,
+  migrateToGithub as apiMigrateToGithub,
   setCommitCredit,
   setUpstream,
 } from '@/api'
@@ -162,6 +163,35 @@ export function useProjectSettings(projectId: () => string) {
     }
   }
 
+  // Move a hosted project to GitHub (平台托管 → GitHub). The copy runs inside
+  // the request and can take a while; the button spins until it answers.
+  const migrateUrl = ref('')
+  async function migrateToGithub(url = migrateUrl.value.trim()) {
+    if (!url) return
+    connectingGithubRepo.value = true
+    githubRepoNotice.value = null
+    try {
+      const res = await apiMigrateToGithub(projectId(), url)
+      if (res.connected) {
+        forgeConnection.value = await getForgeConnection(projectId())
+        githubRepoNotice.value = {
+          type: 'success',
+          text: t('work.projectSettings.githubMigrate.moved', { repo: res.repo ?? '' }),
+        }
+      } else if (res.install_url) {
+        if (!goAuthorize(res.install_url)) return
+      } else {
+        githubRepoNotice.value = { type: 'error', text: t('work.projectSettings.repoFlow.noInstallUrl') }
+      }
+    } catch (e) {
+      githubRepoNotice.value = {
+        type: 'error',
+        text: e instanceof Error ? e.message : t('work.projectSettings.githubMigrate.failed'),
+      }
+    }
+    connectingGithubRepo.value = false
+  }
+
   // The install callback redirects back to this exact page with a result in
   // the query string (no session/cookie hand-off — this page is the only
   // signal). Read it once, show it, then strip it so a refresh doesn't repeat it.
@@ -175,6 +205,13 @@ export function useProjectSettings(projectId: () => string) {
       githubRepoNotice.value = {
         type: 'success',
         text: t('work.projectSettings.repoFlow.repoConnected', { repo: repo ?? '' }).trim(),
+      }
+    } else if (install === 'migrate') {
+      // The App now reaches the repository; ask for the move itself.
+      const repo = route.query.repo as string | undefined
+      if (repo) {
+        migrateUrl.value = `https://github.com/${repo}`
+        void migrateToGithub(migrateUrl.value)
       }
     } else if (install === 'pending') {
       githubRepoNotice.value = { type: 'info', text: t('work.projectSettings.repoFlow.installPending') }
@@ -214,6 +251,8 @@ export function useProjectSettings(projectId: () => string) {
     load,
     saveUpstream,
     connectGithubRepo,
+    migrateUrl,
+    migrateToGithub,
     consumeGithubCallbackNotice,
   }
 }

@@ -1,12 +1,13 @@
 <script setup lang="ts">
-// 私聊页的画面：左边对话，右边面板（#3828），中间一条可拖的分隔；面板可以收起、浮在上
-// 面，或者铺满、把对话收成左边一条窄边。和频道页同一套（`topic-panes.css`）。
+// 私聊页的画面：左边对话，右边「文件」（#3828）；文件那一块可以收起，或者浮在对话上。
+// 和频道页同一套（`topic-panes.css`、views/workspace/roomLayout.ts）。
 //
-// 对话和面板是两个插槽，由页面（`DmView.vue`）放进来；这里只管怎么摆。宽度、开合、
-// 专注模式这些状态也在页面那一层，这里收 props、往上报动作。手机上没有左右两栏：对话
-// 是面板页签栏的第一格，页面把它放在面板里，这里只画面板。
-import type { StyleValue } from 'vue'
+// 对话和面板是两个插槽，由页面（`DmView.vue`）放进来；这里只管怎么摆。桌面上两块各是外壳
+// 布局区里的一块（`layout`，页面从 layouts/pagePanels.ts 拿到），页签、分隔线和宽度归布局区；
+// 没有外壳时就并排在这里。开合这些状态在页面那一层，这里收 props、往上报动作。手机上没有
+// 左右两栏：对话是面板页签栏的第一格，页面把它放在面板里，这里只画面板。
 import type { PanelTab } from '@/components/panels/PanelTabs.vue'
+import type { WorkLayout } from '@/components/work/workLayout'
 
 import { computed, ref } from 'vue'
 
@@ -26,25 +27,14 @@ const props = defineProps<{
   panelOpen: boolean
   /** 窄档：面板是从右边拉进来的浮层。 */
   panelFloat: boolean
-  /** 专注模式：面板铺满，对话收成一条窄边。 */
-  focusMode: boolean
-  /** 对话收着的时候有没有新回复。 */
-  chatNews: boolean
-  focusLabel: string
-  focusIcon: string
-  /** 对话那一栏的宽度。 */
-  chatStyle: StyleValue
+  /** 外壳布局区里对话那一块；没有外壳时不给，两块就并排在这里。 */
+  conversationTarget?: HTMLElement
+  /** 外壳布局区里「文件」那一块（`files`）；没有外壳、或浮层那一档时不给。 */
+  layout?: WorkLayout | null
 }>()
 
 const emit = defineEmits<{
-  'toggle-focus': []
   'close-panel': []
-  /** 按下分隔线开始拖。 */
-  'start-drag': [event: MouseEvent]
-  /** 双击分隔线：回到对半分。 */
-  'reset-split': []
-  /** 对话栏进出时把里面钉在落定的宽度上（`useTopicPanes.freezeChatWidth`）。 */
-  'freeze-chat': [el: Element]
 }>()
 
 defineSlots<{ chat?: () => unknown; panel?: () => unknown }>()
@@ -62,6 +52,12 @@ const closeLabel = t('work.room.panel.closeFiles')
 
 // 面板开合按这一块的宽度分档（`useTopicPanel`），页面从这里拿到它。
 const panes = ref<HTMLElement | null>(null)
+/** 对话那一块：窄档的面板浮层压在它上面。 */
+const conversationBox = ref<HTMLElement | null>(null)
+/** 「文件」那一块的落点：布局区给的那一块，浮层那一档是对话那一块，都没有就留在这里。 */
+const panelTarget = computed(
+  () => (props.panelFloat ? conversationBox.value : props.layout?.outlet('files')) ?? undefined
+)
 /** 页面在对话里点开一份文件时叫它：手机上切到「文件」那一格。 */
 function showFiles() {
   phoneTab.value = 'files'
@@ -80,67 +76,52 @@ defineExpose({ panes, showFiles })
       class="panes d-flex flex-grow-1"
       style="min-width: 0; min-height: 0; position: relative"
     >
-      <Transition
-        name="focus-chat"
-        @before-enter="emit('freeze-chat', $event)"
-        @before-leave="emit('freeze-chat', $event)"
-      >
-        <div v-if="desktop" v-show="!focusMode" class="col col-chat dm-view__chat" :style="chatStyle">
+      <Teleport v-if="desktop" :to="conversationTarget" :disabled="!conversationTarget">
+        <div ref="conversationBox" class="col room-conversation dm-view__chat dm-view--desktop">
           <slot name="chat" />
+          <Transition name="panel-scrim">
+            <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- Esc closes the sheet too (useEscapeLayer) -->
+            <div v-if="panelFloat && panelOpen" class="panel-scrim" @click="emit('close-panel')" />
+          </Transition>
         </div>
-      </Transition>
-      <div v-if="desktop && focusMode" class="chat-rail">
-        <BaseButton
-          icon="mdi-message-outline"
-          size="sm"
-          :title="focusLabel"
-          :aria-label="focusLabel"
-          @click="emit('toggle-focus')"
-        />
-        <span v-if="chatNews" class="chat-rail__news" aria-hidden="true" />
-      </div>
-      <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- a drag handle, as on the channel page; without it the split stays where it is -->
-      <div
-        v-if="desktop && !focusMode && docked"
-        class="pane-resizer"
-        :title="t('work.topic.resize')"
-        @mousedown.prevent="emit('start-drag', $event)"
-        @dblclick="emit('reset-split')"
-      />
-      <Transition name="panel-scrim">
-        <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- Esc closes the sheet too (useEscapeLayer) -->
-        <div v-if="panelFloat && panelOpen" class="panel-scrim" @click="emit('close-panel')" />
-      </Transition>
-      <div
-        v-show="!desktop || panelFloat || panelOpen"
-        id="topic-panel"
-        class="col col-doc panel-host"
-        :class="{ 'panel-host--sheet': panelFloat, 'panel-host--open': panelFloat && panelOpen }"
-        :style="panelFloat ? undefined : { flex: '1 1 0', minWidth: 0 }"
-      >
-        <PanelTabs :tabs="tabs" :active="active" :phone="!desktop" panel-id="dm-panel-body" @select="select">
-          <template v-if="desktop && docked" #actions>
-            <BaseButton
-              :icon="focusIcon"
-              size="sm"
-              :title="focusLabel"
-              :aria-label="focusLabel"
-              @click="emit('toggle-focus')"
-            />
-            <BaseButton
-              icon="mdi-close"
-              size="sm"
-              :title="closeLabel"
-              :aria-label="closeLabel"
-              @click="emit('close-panel')"
-            />
-          </template>
-        </PanelTabs>
-        <div id="dm-panel-body" class="dm-view__body" role="tabpanel">
-          <slot v-if="!desktop && active === 'chat'" name="chat" />
-          <slot v-else name="panel" />
+      </Teleport>
+      <Teleport :to="panelTarget" :disabled="!desktop || !panelTarget">
+        <div
+          v-show="!desktop || panelFloat || panelOpen || !!layout"
+          id="topic-panel"
+          class="col col-doc panel-host"
+          :class="{
+            'panel-host--sheet': panelFloat,
+            'panel-host--open': panelFloat && panelOpen,
+            'dm-view--desktop': desktop,
+          }"
+          :style="panelFloat ? undefined : { flex: '1 1 0', minWidth: 0 }"
+        >
+          <!-- 布局区里这一块的页签条是布局区画的（收起在它的页签栏上），这里不再画一条。 -->
+          <PanelTabs
+            v-if="!layout"
+            :tabs="tabs"
+            :active="active"
+            :phone="!desktop"
+            panel-id="dm-panel-body"
+            @select="select"
+          >
+            <template v-if="desktop && docked" #actions>
+              <BaseButton
+                icon="mdi-close"
+                size="sm"
+                :title="closeLabel"
+                :aria-label="closeLabel"
+                @click="emit('close-panel')"
+              />
+            </template>
+          </PanelTabs>
+          <div id="dm-panel-body" class="dm-view__body" role="tabpanel">
+            <slot v-if="!desktop && active === 'chat'" name="chat" />
+            <slot v-else name="panel" />
+          </div>
         </div>
-      </div>
+      </Teleport>
     </div>
   </div>
 </template>

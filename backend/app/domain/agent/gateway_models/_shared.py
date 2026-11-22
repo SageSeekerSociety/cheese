@@ -155,6 +155,7 @@ def _item(
         "priced": model.priced,
         "tier": model.tier,
         "overseas": model.overseas,
+        "cache_lifetime_s": model.cache_lifetime_s,
         "offered": offered,
         "roles": model_roles.pointing_at(model.name),
         "blocked_reasons": [] if offered else _offered_reasons(model),

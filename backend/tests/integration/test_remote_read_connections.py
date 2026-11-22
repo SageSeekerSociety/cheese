@@ -85,7 +85,7 @@ async def test_machine_wait_releases_the_request_connection(_pg_schema, monkeypa
     room_id, project_id = uuid.uuid4(), uuid.uuid4()
     async with sessions() as session:
         await session.execute(text("SELECT 1"))
-        task = SimpleNamespace(id=uuid.uuid4(), room_id=room_id)
+        task = SimpleNamespace(id=uuid.uuid4(), room_id=room_id, branch_name="task/x")
 
         async def remote(*args):
             assert not session.in_transaction()
@@ -103,7 +103,7 @@ async def test_machine_wait_releases_the_request_connection(_pg_schema, monkeypa
             AsyncMock(return_value=SimpleNamespace(id=room_id, resource_id=room_id)),
         )
         monkeypatch.setattr(
-            forge_files.AgentSessionService,
+            forge_files.environment_rows,
             "working_copy",
             AsyncMock(return_value=({"kind": "device"}, False)),
         )

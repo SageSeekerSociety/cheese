@@ -45,6 +45,16 @@ function unregister(name: string | null, el: HTMLElement) {
 }
 
 /**
+ * 把这个名字指向 ``el``（null 是撤下）：目标是一长串里的某一个、会随数据换人时用它，
+ * 不在每一行上挂指令 —— 挂在组件上的指令让那个组件每次父级重画都跟着重画。
+ * ``from`` 是之前指着的那个元素，只撤下自己登记的。
+ */
+export function pointGuideAnchor(name: string, el: HTMLElement | null, from: HTMLElement | null): void {
+  if (from && from !== el) unregister(name, from)
+  if (el && anchors.get(name) !== el) register(name, el)
+}
+
+/**
  * 把一个控件登记成导览能指的目标：`<button v-guide-anchor="'composer-summon'">`。
  * 写成指令而不是模板 ref：指令拿到的 `el` 永远是 DOM 元素，挂在组件上也行。
  */

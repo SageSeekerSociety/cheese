@@ -185,37 +185,17 @@ def _idle(work: uuid.UUID, *read: uuid.UUID, failure: str | None = None) -> Sess
     )
 
 
-class _Frames:
-    """The realtime frames the platform publishes, as the room's pages see them."""
-
-    def __init__(self) -> None:
-        self.sent: list[dict] = []
-
-    async def publish(self, channel: str, frame: dict) -> None:
-        self.sent.append(frame)
-
-
 @pytest.mark.anyio
-async def test_an_event_delivered_again_after_a_crash_changes_nothing(
-    db_factory, monkeypatch
-):
+async def test_an_event_delivered_again_after_a_crash_changes_nothing(db_factory):
     """The platform applied an input's read and the failed work it was read
     into, and crashed before the runner heard it had: the runner hands over
     everything since its last acknowledgement again, in order. Each effect
-    happened once. The room is told once that its message was read, the
-    failure is stamped once, and while the backlog comes again the seat does
+    happened once. The read is recorded once, the failure is stamped once, and while the backlog comes again the seat does
     not go back to running: a redelivered event does not put back what a later
     one changed."""
-    frames = _Frames()
-    monkeypatch.setattr(runner_reports, "get_broker", lambda: frames)
     seat = await _seat(db_factory)
     work = uuid.uuid4()
     identity, block = await seat.input(work=work)
-    async with db_factory() as session:
-        row = await seat_row(session, identity)
-        row.seen_block_ids = [str(block)]
-        row.seen_by = SEAT
-        await session.commit()
     backlog = [
         seat.report(InputWritten(identity)),
         seat.report(SessionRunning(work)),
@@ -233,58 +213,11 @@ async def test_an_event_delivered_again_after_a_crash_changes_nothing(
     for report in backlog[2:]:
         await seat.apply(report)
 
-    told = [frame for frame in frames.sent if frame["type"] == "reaction"]
-    assert len(told) == 1
     again = await seat.row(identity)
     assert (again.echoed_at, again.failed_at) == (first.echoed_at, first.failed_at)
     assert read_failed(await seat.block(block)) == "api_error"
     async with db_factory() as session:
         assert await session_state.running_conversations(session) == set()
-
-
-class _RefusesOnce(_Frames):
-    """A broker whose first publish fails, as a broker can after the commit."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.refused = False
-
-    async def publish(self, channel: str, frame: dict) -> None:
-        if not self.refused:
-            self.refused = True
-            raise ConnectionError("the broker went away")
-        await super().publish(channel, frame)
-
-
-@pytest.mark.anyio
-async def test_a_frame_the_broker_refused_after_the_commit_is_told_again(
-    db_factory, monkeypatch
-):
-    """The read committed, and telling the room its message was read failed.
-    The event is delivered again: the room is told then, once, and the read is
-    not recorded twice."""
-    frames = _RefusesOnce()
-    monkeypatch.setattr(runner_reports, "get_broker", lambda: frames)
-    seat = await _seat(db_factory)
-    work = uuid.uuid4()
-    identity, block = await seat.input(work=work)
-    async with db_factory() as session:
-        row = await seat_row(session, identity)
-        row.seen_block_ids = [str(block)]
-        row.seen_by = SEAT
-        await session.commit()
-    read = seat.report(InputRead(InputReceipt(identity, "native_echo", work)))
-    with pytest.raises(ConnectionError):
-        await seat.apply(read)
-    first = await seat.row(identity)
-    assert first.echoed_at is not None
-
-    await seat.apply(read)
-    await seat.apply(read)
-
-    told = [frame for frame in frames.sent if frame["type"] == "reaction"]
-    assert len(told) == 1
-    assert (await seat.row(identity)).echoed_at == first.echoed_at
 
 
 async def seat_row(session, identity: InputIdentity) -> NativeInput:

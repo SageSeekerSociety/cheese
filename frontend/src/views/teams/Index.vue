@@ -31,6 +31,9 @@ import { createAvatar } from '@/api/avatars'
 import { TeamsApi } from '@/api/teams'
 import { t } from '@/i18n'
 import { toast } from '@/lib/toast'
+import errorHandler from '@/services/ErrorHandler'
+
+const asError = (e: unknown) => (e instanceof Error ? e : new Error(String(e)))
 
 const createTeamDialog = ref(false)
 const teamName = ref('')
@@ -44,6 +47,13 @@ const creatingTeam = ref(false)
 
 const router = useRouter()
 
+/** 一次没建成的失败，只有一句：服务端有条有理回绝的（带着业务 code）就说它自己那句
+ *  ——「这个空间名称已被占用」这类，人照着能改；其余的（网络断了、未知错误）才说
+ *  `failed` 那一句「稍后重试」。两句一起说时后一句只是把前一句盖上一层。 */
+const explain = async (error: unknown, failed: string) => {
+  toast.error(await errorHandler.explain(asError(error), failed))
+}
+
 /** 简介那一句由画面从编辑器正文里取好递过来（编辑器住在画面那一半）。 */
 const createTeam = async (intro: string) => {
   if (!teamName.value) {
@@ -56,7 +66,16 @@ const createTeam = async (intro: string) => {
   try {
     creatingTeam.value = true
 
-    const { avatarId } = teamAvatar.value ? await createAvatar(teamAvatar.value) : { avatarId: null }
+    // 上传头像和建团队分开说：举不上去和存不下是两件事，人要做的事也不一样。
+    let avatarId: number | null = null
+    if (teamAvatar.value) {
+      try {
+        avatarId = (await createAvatar(teamAvatar.value)).avatarId
+      } catch (error) {
+        await explain(error, t('teams.index.avatarFailed'))
+        return
+      }
+    }
 
     const { team } = await TeamsApi.create({
       name: teamName.value,
@@ -80,7 +99,9 @@ const createTeam = async (intro: string) => {
       teamNameError.value = t('work.teamProfile.nameTaken')
       return
     }
-    toast.error(t('teams.index.createFailed'))
+    // 服务端有条有理回绝的（带着业务 code）就说它自己那句——「内容安全审核暂时不可用」
+    // 这类，人照着能改；其余的（网络断了、未知错误）才用通用文案。
+    await explain(error, t('teams.index.createFailed'))
     console.error(error)
   } finally {
     creatingTeam.value = false

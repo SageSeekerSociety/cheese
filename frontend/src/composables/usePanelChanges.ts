@@ -20,7 +20,7 @@ import type { LiveSourceFallback, PanelChangesProps } from './panelChanges/types
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { getForgeConnection, listRoomTasks } from '../api'
-import { phraseLabel } from '../lib/board'
+import { statusLabel, taskStatus } from '../lib/taskState'
 
 import { usePanelDocument } from './panelChanges/documentPane'
 import { usePanelFilePane } from './panelChanges/filePane'
@@ -42,10 +42,8 @@ export function usePanelChanges(props: PanelChangesProps) {
   const currentTask = computed(() => (taskRow.value?.id === selectedTask.value ? taskRow.value : undefined))
   // 任务结束了，它的文件就只读——跟在状态后面说。
   const sourceStatus = computed(() => {
-    const task = currentTask.value
-    const phrase = task?.presentation.phrase
-    const agent = (task?.agent_handle && props.memberNames?.[task.agent_handle]) || props.agentName
-    const status = phrase ? phraseLabel(phrase, agent) : ''
+    const phrase = currentTask.value?.presentation.phrase
+    const status = phrase ? statusLabel(taskStatus(phrase)) : ''
     return currentTask.value && currentTask.value.status !== 'open'
       ? t('work.room.changes.statusReadOnly', { status })
       : status
@@ -294,7 +292,7 @@ export function usePanelChanges(props: PanelChangesProps) {
   async function selectVersion(source: FileSource) {
     if (fileSource.value === source) return
     const path = pane.openPath.value
-    pane.keepDraft()
+    pane.keepOpenFile()
     clearSource()
     requestedSource.value = source
     pane.setPendingOpen(path ?? pane.lastFileForSource())
@@ -306,7 +304,7 @@ export function usePanelChanges(props: PanelChangesProps) {
     () => props.taskId,
     (next, was) => {
       if (next === was) return
-      pane.keepDraft()
+      pane.keepOpenFile()
       clearSource()
       taskRow.value = undefined
       requestedSource.value = null
@@ -314,23 +312,6 @@ export function usePanelChanges(props: PanelChangesProps) {
       if (props.active) void loadAll()
     }
   )
-
-  // A <&path> chip (chat or doc) opens that file here. WorkPanel switches to this
-  // tab first, then calls in. The file may be one this task never touched; it opens
-  // all the same (the tree keeps listing what this task changed).
-  //
-  // 这一支的工作副本里根本没有它时，这里开不出来：回一句「没开着」，让 WorkPanel 换
-  // 一格去开（项目当前版本）。一枚 chip 是读者指名要看的一份文件，不该因为没归到这件
-  // 任务就点不开。
-  async function openFile(path: string): Promise<boolean> {
-    if (!tasksLoaded.value) await loadTasks()
-    pane.keepDraft()
-    clearSource()
-    pane.setPendingOpen(path)
-    await Promise.all([gitChanges.loadGit(), pane.loadFiles()])
-    if (!errorMsg.value) loadedOnce.value = true
-    return pane.hasOpenFileFound()
-  }
 
   return {
     taskLoadError,
@@ -351,16 +332,12 @@ export function usePanelChanges(props: PanelChangesProps) {
     // 「打开其他文件」从这里挑：这个来源里的全部文件。
     allFiles: pane.files,
     openPath: pane.openPath,
-    fileDraft: pane.fileDraft,
-    fileSaved: pane.fileSaved,
-    fileSaving: pane.fileSaving,
-    fileDirty: pane.fileDirty,
+    fileText: pane.fileText,
     fileVersion: pane.fileVersion,
     fileBinary: pane.fileBinary,
     fileTooLarge: pane.fileTooLarge,
     fileBytes: pane.fileBytes,
     fileReadOnly: pane.fileReadOnly,
-    fileConflict: pane.fileConflict,
     openDiff: pane.openDiff,
     openDiffLines: pane.openDiffLines,
     effectiveView: pane.effectiveView,
@@ -373,7 +350,6 @@ export function usePanelChanges(props: PanelChangesProps) {
     openImageError: pane.openImageError,
     collapsedDirs: pane.collapsedDirs,
     revealTick: pane.revealTick,
-    draftCount: pane.draftCount,
     docBytes: doc.docBytes,
     docLoading: doc.docLoading,
     docError: doc.docError,
@@ -392,15 +368,8 @@ export function usePanelChanges(props: PanelChangesProps) {
     selectFile: pane.selectFile,
     closeFile: pane.closeFile,
     selectVersion,
-    openFile,
     toggleDir: pane.toggleDir,
     downloadOpenFile: pane.downloadOpenFile,
-    saveFile: pane.saveFile,
-    overwriteFile: pane.overwriteFile,
-    fileMerge: pane.fileMerge,
-    resolveMerge: pane.resolveMerge,
-    cancelMerge: pane.cancelMerge,
-    reloadOpenFile: pane.reloadOpenFile,
     onRevisionDecided: doc.onRevisionDecided,
   }
 }

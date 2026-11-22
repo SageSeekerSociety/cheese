@@ -3,6 +3,7 @@
 import asyncio
 import uuid
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from unittest.mock import Mock
 
 import pytest
@@ -14,19 +15,33 @@ from app.domain.agent.realtime.broker import InProcessBroker
 from app.domain.agent.runtime import AgentWorkRunner
 from app.domain.block.repositories import BlockRepository
 from app.domain.session_record import service as session_records
+from app.domain.team.models import TeamMemberRole, TeamUserRelation
 from app.domain.topic.services import TopicService
 from tests.conftest import StubChannel, finish_turn, stub_compute
-from tests.integration.conftest import project_service, registered
+from tests.integration.conftest import project_service, registered, shared_team_of
 from tests.support.hang import HANG_S
 from tests.support.session_records import assistant_texts
 from tests.support.threads import thread_in
 
 
 async def _room(factory, *, in_thread=False):
+    """A channel of alice's (or a 支线 in it). bob is in the project too: alone
+    in it, everything alice said there would be handed to the AI teammate."""
     async with factory() as session:
         await registered(session, "alice")
+        bob = await registered(session, "bob")
         project = await project_service(session).create(
             name="Intake", owner_handle="alice"
+        )
+        now = datetime.now(UTC)
+        session.add(
+            TeamUserRelation(
+                team_id=await shared_team_of(session, project.id, joiner_user_id=bob),
+                user_id=bob,
+                role=TeamMemberRole.MEMBER,
+                created_at=now,
+                updated_at=now,
+            )
         )
         topic = await TopicService(session).create(
             project_id=project.id, title="Work", created_by="alice"

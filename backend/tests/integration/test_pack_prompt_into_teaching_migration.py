@@ -11,8 +11,8 @@ import json
 import uuid
 from types import SimpleNamespace as NS
 
-from app.domain.agent.harness.opening import teaching_section
 from app.domain.agent.turn.intake.context import carried_skills
+from app.domain.prompts import teaching_section
 from app.domain.task.protocol import resolve
 from app.domain.task.teaching import TeachingContext
 from tests.integration.migration_replay import database_at, seed_room

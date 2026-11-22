@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import ForbiddenError, NotFoundError
 from app.core.sentences import say
+from app.domain.agent_instance.identical import refuse_identical
 from app.domain.agent_instance.models import (
     AgentInstance,
     NameSource,
@@ -43,18 +44,29 @@ async def add(
         raise ForbiddenError(say("teamConnectionModelRefused"))
     account_id = uuid.UUID(login.id) if login.on_account else None
     nickname = await _nickname_of(db, owner_user_id)
+    configuration = {
+        "model": model,
+        "execution_device_id": device_id,
+        "execution_spec": "standard" if device_id is None else None,
+    }
+    display_name = (
+        own_name(nickname, label(login))
+        if login.owner_user_id is not None
+        else label(login)
+    )
+    await refuse_identical(
+        db,
+        project_id=project.id,
+        display_name=None,
+        configuration=configuration,
+        source=(None if login.on_account else login.id, account_id),
+    )
     instance = AgentInstance(
         project_id=project.id,
         handle=own_handle(owner_user_id),
         type_name=None,
-        configuration={
-            "model": model,
-            "execution_device_id": device_id,
-            "execution_spec": "standard" if device_id is None else None,
-        },
-        display_name=own_name(nickname, label(login))
-        if login.owner_user_id is not None
-        else label(login),
+        configuration=configuration,
+        display_name=display_name,
         name_source=NameSource.human,
     )
     db.add(instance)

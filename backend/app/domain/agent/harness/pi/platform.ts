@@ -130,6 +130,12 @@ function ask(socket: string, method: string, params: unknown): Promise<any> {
   });
 }
 
+// A platform notice in the form the room's notices take: the template the
+// platform hands over (`SessionSpec.notice`) with `⟦slot:text⟧` for the text.
+function noticed(body: string, spec: Manifest): string {
+  return spec.notice ? spec.notice.replace("⟦slot:text⟧", body) : body;
+}
+
 function text(body: string) {
   return { content: [{ type: "text" as const, text: body }] };
 }
@@ -844,8 +850,11 @@ function announceExits(pi: any, spec: Manifest) {
         {
           customType: "cheese-background",
           content:
-            `${spec.notice}\n后台任务 ${describe(path.join(spec.jobs, id), id)}。` +
-            (body ? `\n最后的输出：\n${body}` : "") ,
+            noticed(
+              `后台任务 ${describe(path.join(spec.jobs, id), id)}。` +
+                (body ? `\n最后的输出：\n${body}` : ""),
+              spec,
+            ),
           display: true,
         },
         { deliverAs: "followUp" },
@@ -890,6 +899,8 @@ const REPLY_OWED_ENV = "CHEESE_REPLY_OWED";
 type Debt = {
   id: string;
   answers: string[];
+  // False: nothing is held back; the answer is still owed at the turn's end.
+  held?: boolean;
   reads: string[];
   reason: string;
   answered: string;
@@ -927,7 +938,7 @@ function holdToAnswering(pi: any) {
       // A read is one verb of an object, by its key (`cheese_chat.list`).
       const action = event.input?.action;
       const key = typeof action === "string" && action ? `${event.toolName}.${action}` : event.toolName;
-      if (debt.reads.includes(key)) return;
+      if (debt.held === false || debt.reads.includes(key)) return;
       return { block: true, reason: debt.reason };
     }
     answered = debt.id;

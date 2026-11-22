@@ -31,6 +31,7 @@ from app.domain.delivery_events import DeliveryEvent
 from app.domain.notification.models import NotificationType
 from app.domain.notification.preferences import DEFAULT_TIMEZONE, local_time
 from app.domain.space.models import Space
+from app.domain.task.judging_models import TaskJudgeRun
 from app.domain.task.models import Task, TaskMembership, TaskSubmission
 from app.domain.task.stages import StageNews
 from app.domain.team.models import TeamUserRelation
@@ -42,6 +43,7 @@ _CLAIM = uuid.UUID("2b7f6c1e-8d4a-4a53-9b1e-5d6f1c2a7e40")
 _REVIEW = uuid.UUID("5c1e9a7d-3b2f-4e6a-8d0c-7a9b2e4f6c51")
 _CHANGED = uuid.UUID("8e3d2c1b-6a5f-4d7e-9c8b-1a2f3e4d5c62")
 _PERSONAL_DEADLINE = uuid.UUID("a4c2e6b8-1d3f-4a5c-8e7b-9d1f2a3c4e73")
+_JUDGED = uuid.UUID("c6e4a2f0-3b5d-4c7e-9a1b-2d3f4e5a6b84")
 
 
 async def claimers(
@@ -323,4 +325,48 @@ async def personal_deadline_changed(
         user_ids=people,
         at=at,
         leave_out=by,
+    )
+
+
+async def judged(session: AsyncSession, *, run_id: int, at: datetime) -> None:
+    """The judging of a submission finished (or failed): its people hear how
+    many test points passed, before any teacher reviews it (方案 §提交：出结果
+    后通知学生). Once per run and outcome."""
+    run = await session.get(TaskJudgeRun, run_id)
+    if run is None or run.submission_id is None or run.task_id is None:
+        return
+    submission = await session.get(TaskSubmission, run.submission_id)
+    task = await session.get(Task, run.task_id)
+    if submission is None or task is None:
+        return
+    membership = await session.get(TaskMembership, submission.membership_id)
+    if membership is None:
+        return
+    space = await session.get(Space, task.space_id)
+    done = run.state == "done"
+    content = (
+        say(
+            "spaceTaskJudged",
+            task=task.name,
+            passed=int(run.passed_points or 0),
+            total=int(run.total_points or 0),
+        )
+        if done
+        else say("spaceTaskJudgeFailed", task=task.name)
+    )
+    people = (await claimers(session, [membership]))[membership.id]
+    await tell(
+        session,
+        event_id=uuid.uuid5(_JUDGED, f"{run_id}:{run.state}"),
+        type_=NotificationType.TASK_NOTICE,
+        body=payload(
+            task,
+            space,
+            content,
+            event="judged",
+            version=submission.version,
+            participantId=membership.id,
+        ),
+        user_ids=people,
+        at=at,
     )

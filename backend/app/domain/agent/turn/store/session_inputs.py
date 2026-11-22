@@ -1,12 +1,22 @@
 """Commit the session-opening facts after transport acceptance."""
 
+import logging
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.domain.agent.harness import harness_for
+from app.domain.agent.queries import agent_for_seat
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.block import message_reads
+from app.domain.project.services import ProjectService
+from app.domain.prompts import TALK_TOLD
+from app.domain.room_task.place import PlaceResolver
+
+logger = logging.getLogger(__name__)
 
 
 class DeliveryStamp(Protocol):
@@ -23,13 +33,28 @@ async def remember_opening(
     harness: str,
     digests: dict[str, str],
     was: dict[str, str] | None,
+    talk: dict[str, str] | None = None,
+    resumed: str | None = None,
 ) -> None:
+    """Record what the conversation now holds: the opening's sections
+    (``digests``) and the `communication` notes of the people this turn
+    answered (``talk``, ``talk/<handle>`` → digest), beside those of people
+    earlier turns answered. A conversation other than the one this turn
+    resumed (``resumed``) was started afresh and holds only what this turn
+    gave it (`room.sessions.speaking.send` gives a new one every note)."""
     async with sessions() as session:
-        await AgentSessionService(session).remember_told(
+        service = AgentSessionService(session)
+        now = await service.conversation(topic_id, agent_handle, harness=harness)
+        kept = (
+            {k: v for k, v in (was or {}).items() if k.startswith(TALK_TOLD)}
+            if resumed is not None and now is not None and now[0] == resumed
+            else {}
+        )
+        await service.remember_told(
             conversation_id=topic_id,
             agent_handle=agent_handle,
             harness=harness,
-            told=digests,
+            told={**kept, **digests, **(talk or {})},
             was=was,
         )
         await session.commit()
@@ -54,6 +79,51 @@ async def forget_opening(
         await session.commit()
 
 
+async def abandon_opening(
+    sessions: async_sessionmaker[AsyncSession],
+    *,
+    conversation_id: uuid.UUID,
+    seat: str,
+    harness: str | None,
+) -> str | None:
+    """The conversation cannot be compacted, so it cannot go on: the next turn
+    opens a new one (`forget_conversation`) and, with what it was told gone,
+    carries the whole project state again. The agent handle whose session was
+    given up, or None when there was none of its own here to give up.
+
+    ``seat`` is who ACTED — the handle the event names. The row is keyed by the
+    agent that seat belongs to, the key `_save_session_pointer` writes it under
+    and the next turn reads it back under; written under the seat it matches no
+    row and nothing happens. Resolved by the same function both writers use
+    (`agent_for_seat`), so the write and this clear cannot drift apart.
+
+    ``harness`` comes off the failure event, which may name none
+    (`AgentResult.harness` defaults to None) while the pointer it clears still
+    carries the project's own — `_save_session_pointer` resolves a missing one
+    the same way. Resolved here rather than required of the caller, so the two
+    sides of the row cannot disagree about which row it is: demanding a harness
+    at the call site leaves the row in place and the conversation resumed into
+    the same refusal forever, which is the state this exists to end.
+
+    这一条只在「确定走不通」时用一次——压缩本身就是那条把对话缩小的路，它
+    断了，再发同一条只是把同一段装不下的历史再送一遍。它不重试，也不换模型：
+    下一轮是一条新会话，任何还在文件、任务、实况文档里的东西都还在，对话里
+    没落下来的那部分就此结束（房间里的消息一条不少）。"""
+    async with sessions() as session:
+        place = await PlaceResolver(session).conversation(conversation_id)
+        if place is None:
+            return None
+        agent = await agent_for_seat(session, place, seat)
+        owner = await ProjectService(session).get(place.project_id)
+        given_up = await AgentSessionService(session).forget_conversation(
+            conversation_id=conversation_id,
+            agent_handle=agent.handle,
+            harness=harness or harness_for(owner.settings if owner else None),
+        )
+        await session.commit()
+        return agent.handle if given_up else None
+
+
 async def commit_delivery(
     sessions: async_sessionmaker[AsyncSession],
     *,
@@ -63,3 +133,22 @@ async def commit_delivery(
     async with sessions() as session:
         await stamp(session, turn_id=turn_id, at=datetime.now(UTC))
         await session.commit()
+
+
+async def record_read(
+    sessions: async_sessionmaker[AsyncSession],
+    *,
+    reader: str,
+    block_ids: Sequence[uuid.UUID],
+) -> None:
+    """``reader`` — an AI teammate's seat — has these blocks in its context now
+    (已读, `block.message_reads`). A receipt that could not be written is
+    logged and left: the input it describes was delivered either way."""
+    if not block_ids:
+        return
+    try:
+        async with sessions() as session:
+            await message_reads.record_blocks(session, reader, block_ids)
+            await session.commit()
+    except Exception:
+        logger.exception("could not record what %s read", reader)

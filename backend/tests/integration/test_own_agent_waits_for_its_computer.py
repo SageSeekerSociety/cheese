@@ -21,6 +21,7 @@ from app.domain.project.models import Project
 from app.domain.topic_membership.services import TopicMemberService
 from app.domain.user.models import User
 from tests.integration.conftest import (
+    join_project_team,
     post_message,
     post_project,
     session_auth_headers,
@@ -38,6 +39,9 @@ class _Hub:
 
 def _room(client):
     project = post_project(client, json={"name": "Away"}, owner="alice").json()["data"]
+    # Someone else in the project: "hello" calls nobody, so no turn of the
+    # channel's own teammate runs beside the ones this admits.
+    join_project_team(client, project["id"], "bob")
     room = client.post(
         "/topics",
         json={"project_id": project["id"], "title": "Room"},

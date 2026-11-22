@@ -899,6 +899,71 @@ describe('交给谁', () => {
   const TWO = [...POOL, { handle: OWN.handle, label: OWN.label, avatar: null, agent: true }]
   const summon = (container: Element) => container.querySelector<HTMLButtonElement>('.summon__btn')!
 
+  /** 「交给芝士」（仅你可见那一句的按钮）是从外面调 `addAgentMention(handle)` 的：叫的人说写谁，
+   *  这里就得写谁。这一份钉住的正是那一条——它以前自己挑「平时交给的那位」，于是屏幕上写着
+   *  一个人、正文里 @ 的是另一个人。 */
+  function mountWithHandle(
+    opts: {
+      seat?: { handle: string; label: string }
+      pool?: MentionPoolEntry[]
+      draft?: string
+      lastMate?: string | null
+    } = {}
+  ) {
+    const draft = ref(opts.draft ?? '正文')
+    const composer = ref<{ addAgentMention?: (handle?: string) => void } | null>(null)
+    const Wrapper = defineComponent({
+      setup: () => () =>
+        h(RoomComposer, {
+          ref: composer,
+          topic: topic(),
+          mentionPool: opts.pool ?? TWO,
+          topicList: [],
+          refs: { mentionNames: {}, topicTitles: {} },
+          agentSeat: opts.seat ?? CHEESE_SEAT,
+          agentName: (opts.seat ?? CHEESE_SEAT).label,
+          place: null,
+          alwaysSummon: false,
+          hint: '说点什么',
+          atts: [],
+          attsUploading: false,
+          lastMate: opts.lastMate ?? null,
+          modelValue: draft.value,
+          'onUpdate:modelValue': (v: string) => (draft.value = v),
+          onSend: () => {},
+        }),
+    })
+    render(Wrapper, { global: { plugins: [createVuetify({ components, directives })] } })
+    return { draft, composer }
+  }
+
+  it('叫的人指定谁就写谁，不是发送框平时画的那位', async () => {
+    // 头像平时画的是上次交给的 OWN；这一句说的是房间的座位。
+    const { draft, composer } = mountWithHandle({ draft: '正文', lastMate: OWN.handle })
+    await flush()
+    composer.value!.addAgentMention!(CHEESE_SEAT.handle)
+    await flush()
+    expect(draft.value).toBe(`<@${CHEESE_SEAT.handle}> 正文`)
+  })
+
+  it('指定的那位已经不在名册上了：什么都不写，不退回平时那位', async () => {
+    // 名册刚换过、这一句上那位已经不在这一栏里：写谁都会和屏幕上说的不一样，
+    // 所以宁可一个 @ 都不写，也不写成另一个人。
+    const { draft, composer } = mountWithHandle({ draft: '正文', lastMate: OWN.handle })
+    await flush()
+    composer.value!.addAgentMention!('cheese-gone')
+    await flush()
+    expect(draft.value).toBe('正文')
+  })
+
+  it('没指定是谁（老调用）时照旧写发送框平时那位', async () => {
+    const { draft, composer } = mountWithHandle({ draft: '正文', lastMate: OWN.handle })
+    await flush()
+    composer.value!.addAgentMention!()
+    await flush()
+    expect(draft.value).toBe(`<@${OWN.handle}> 正文`)
+  })
+
   it('任务负责人那里是规则不是开关：点头像不改正文', async () => {
     const { container, draft } = mount({ alwaysSummon: true, draft: '看看这个' })
     await fireEvent.click(summon(container))

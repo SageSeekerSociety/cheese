@@ -458,6 +458,52 @@ def resume(routine: AssistantRoutine) -> None:
     routine.next_run_at = _first_run(routine, now)
 
 
+async def run_now(session: AsyncSession, routine: AssistantRoutine) -> bool:
+    """One run, started by the person pressing «立即执行一次».
+
+    Queued exactly as a fired one is, so the sweep starts it on its next pass:
+    that pass is what makes a turn of it, and one rule is never going twice at
+    once (`_start` starts the oldest queued run of each person). ``False``
+    when a run is already queued or running for this rule — pressing twice is
+    not two runs.
+
+    A rule still short of a blank runs the fill instead: it is the same run a
+    form's blank gets (`_fill`), so the person asking for it early is asking
+    芝士 to decide it early, not to invent what it would do.
+    """
+    if await _open_run(session, routine.id):
+        return False
+    if filling(routine):
+        return await _run(
+            session,
+            user_id=routine.user_id,
+            routine_id=routine.id,
+            occurrence=f"fill:{routine.id}:{routine.updated_at.isoformat()}",
+            detail="这条例行事务有几项空着，等你补上：" + "、".join(missing(routine)),
+        )
+    return await _run(
+        session,
+        user_id=routine.user_id,
+        routine_id=routine.id,
+        occurrence=f"manual:{routine.id}:{uuid.uuid4()}",
+        conversation_id=routine.conversation_id if once(routine) else None,
+        detail="用户点了「立即执行一次」。",
+    )
+
+
+async def _open_run(session: AsyncSession, routine_id: uuid.UUID) -> bool:
+    """Whether a run of this rule is queued or going already."""
+    found = await session.scalar(
+        select(AssistantRun.id)
+        .where(
+            AssistantRun.routine_id == routine_id,
+            AssistantRun.status.in_(("queued", "running")),
+        )
+        .limit(1)
+    )
+    return found is not None
+
+
 def _not_done(routine: AssistantRoutine) -> None:
     if routine.state == "done":
         raise ValidationError(say("assistantRoutineAlreadyRan"))

@@ -15,11 +15,14 @@ import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from functools import partial
 
 import httpx
 from sqlalchemy import or_, select
 
+from app.core.background import spawn
 from app.core.sentences import say
+from app.domain.addressing import Event
 from app.domain.delivery_events import DeliveryEvent, NotificationType, SettleCard
 from app.domain.notice_meta import (
     EVENT_ACCEPT_DONE,
@@ -50,11 +53,17 @@ from app.domain.review.ports import (
     Chat,
     DispatchPending,
     RecordInstruction,
+    RecordSeatInstruction,
     SweepCheckouts,
     TaskTeammate,
+    Uncommitted,
 )
 from app.domain.review.room_notices import tell_room_undelivered
-from app.domain.review.task_landing import delivery_landed, go_on_while_working
+from app.domain.review.task_landing import (
+    delivery_landed,
+    go_on_while_working,
+    tell_origin_ended,
+)
 from app.domain.room_task.closing import close_overdue
 from app.domain.room_task.lock_order import lock_task_for_change
 from app.domain.room_task.models import Task, TaskStatus
@@ -142,7 +151,9 @@ async def poll_open_prs(
     *,
     settle_card: SettleCard,
     record_instruction: RecordInstruction,
+    record_seat: RecordSeatInstruction,
     task_teammate: TaskTeammate,
+    uncommitted: Uncommitted,
 ) -> dict:
     """Reconcile returned batches and advance pending PR cards (#718) one step —
     mirror its merge state, send the events the 「谁的活」 table names, and merge
@@ -154,10 +165,6 @@ async def poll_open_prs(
     from app.domain.review.services import AcceptService
 
     sessions = chat.session_factory
-    # The runner comes off the chat service — the one the composition root
-    # assembled — instead of being imported from `app.api.deps`, which is a
-    # domain importing up into the API layer (`.importlinter`, C1).
-    runner = chat.work_runner
     async with sessions() as session:
         # 孤儿卡修复的第二道锁，换到关掉的活上：一条活已经结束，它名下的卡
         # 不再有人跟。关任务的那条路当场收；这里兜住别的关法，和修复之前就停
@@ -174,33 +181,17 @@ async def poll_open_prs(
     slots = asyncio.Semaphore(PRS_AT_ONCE)
 
     async def advance(card_id: uuid.UUID) -> str | None:
-        """One card in its own session; returns the failure to report, if any."""
         async with slots:
-            async with sessions() as session:
-                try:
-                    await AcceptService(
-                        session,
-                        announce=announce,
-                        settle_card=settle_card,
-                        record_instruction=record_instruction,
-                        task_teammate=task_teammate,
-                    ).advance_pr_card(card_id, chat_service=chat, runner=runner)
-                    await session.commit()
-                    _transient_misses.pop(card_id, None)
-                    return None
-                except Exception as exc:  # one card must not stop the rest
-                    await session.rollback()
-                    _report_card_failure(card_id, exc)
-                    await _note_card_poll_crashed(
-                        chat,
-                        announce,
-                        card_id,
-                        exc,
-                        settle_card=settle_card,
-                        record_instruction=record_instruction,
-                        task_teammate=task_teammate,
-                    )
-                    return f"{card_id}: {exc}"
+            return await advance_card(
+                chat,
+                announce,
+                card_id,
+                settle_card=settle_card,
+                record_instruction=record_instruction,
+                record_seat=record_seat,
+                task_teammate=task_teammate,
+                uncommitted=uncommitted,
+            )
 
     # `gather` hands back one outcome per card in the order the cards were
     # picked up, so the errors read the way they did when this was a loop.
@@ -209,6 +200,147 @@ async def poll_open_prs(
         "cards_checked": sum(1 for failure in failures if failure is None),
         "errors": [failure for failure in failures if failure is not None],
     }
+
+
+async def advance_card(
+    chat: Chat,
+    announce: Announce,
+    card_id: uuid.UUID,
+    *,
+    settle_card: SettleCard,
+    record_instruction: RecordInstruction,
+    record_seat: RecordSeatInstruction,
+    task_teammate: TaskTeammate,
+    uncommitted: Uncommitted,
+) -> str | None:
+    """Advance one card a step in its own session, as a tick or a forge event
+    does (`AcceptService.advance_pr_card`); returns the failure to report, if
+    any.
+
+    Also the prompt read after the platform itself changed a card in a way
+    the next read acts on — a reviewer adopting the version they just handed
+    in (`routes/accept.py`).
+
+    A step that finds the forge still working out whether the card's head
+    merges asks again a moment later (`_settle`): both GitHub and Forgejo
+    compute it after a head moves and answer "unknown" until then, and the
+    tick is a minute away."""
+    again = partial(
+        _advance_once,
+        chat,
+        announce,
+        card_id,
+        settle_card=settle_card,
+        record_instruction=record_instruction,
+        record_seat=record_seat,
+        task_teammate=task_teammate,
+        uncommitted=uncommitted,
+    )
+    failure, computing = await again()
+    if computing is not None:
+        _settle(card_id, computing, again)
+    return failure
+
+
+#: How long after a read that found the forge still working out a card's
+#: merge state the card is read again, one wait per read; after the last,
+#: the tick takes over. About thirty seconds in all.
+SETTLE_AFTER_S: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0, 16.0)
+
+
+@dataclass
+class _Settling:
+    """The re-reads under way for one card, at most one chain per card."""
+
+    head: str
+    step: int = 0
+    #: Another step found the forge still computing while this chain read.
+    renewed: bool = False
+
+
+_settling: dict[uuid.UUID, _Settling] = {}
+
+
+def _settle(card_id: uuid.UUID, head: str, again) -> None:
+    """Read ``card_id`` again after a short wait, while the forge works out
+    whether ``head`` merges. A card already being re-read keeps its one
+    chain, which starts over when the head has moved."""
+    chain = _settling.get(card_id)
+    if chain is not None:
+        if chain.head != head:
+            chain.head, chain.step = head, 0
+        chain.renewed = True
+        return
+    _settling[card_id] = _Settling(head)
+    spawn(_settle_chain(card_id, again), name=f"settle merge state {card_id}")
+
+
+async def _settle_chain(card_id: uuid.UUID, again) -> None:
+    chain = _settling[card_id]
+    try:
+        while chain.step < len(SETTLE_AFTER_S):
+            await asyncio.sleep(SETTLE_AFTER_S[chain.step])
+            chain.step += 1
+            chain.renewed = False
+            _failure, computing = await again()
+            if computing is None and not chain.renewed:
+                # Answered, or nothing to read: an unreachable or rate-limited
+                # forge, or a card no longer waiting. The tick has it from here.
+                return
+            if computing is not None and computing != chain.head:
+                chain.head, chain.step = computing, 0
+    finally:
+        _settling.pop(card_id, None)
+
+
+async def _advance_once(
+    chat: Chat,
+    announce: Announce,
+    card_id: uuid.UUID,
+    *,
+    settle_card: SettleCard,
+    record_instruction: RecordInstruction,
+    record_seat: RecordSeatInstruction,
+    task_teammate: TaskTeammate,
+    uncommitted: Uncommitted,
+) -> tuple[str | None, str | None]:
+    """One step of ``card_id``: the failure to report, if any, and the head
+    whose merge state the forge was still working out, if it was."""
+    # deferred-import: tests replace this name on app.domain.review.services
+    from app.domain.review.services import AcceptService
+
+    # The runner comes off the chat service — the one the composition root
+    # assembled — instead of being imported from `app.api.deps`, which is a
+    # domain importing up into the API layer (`.importlinter`, C1).
+    runner = chat.work_runner
+    async with chat.session_factory() as session:
+        service = AcceptService(
+            session,
+            announce=announce,
+            settle_card=settle_card,
+            record_instruction=record_instruction,
+            record_seat=record_seat,
+            task_teammate=task_teammate,
+            uncommitted=uncommitted,
+        )
+        try:
+            await service.advance_pr_card(card_id, chat_service=chat, runner=runner)
+            await session.commit()
+            _transient_misses.pop(card_id, None)
+            return None, service.merge_state_computing_for
+        except Exception as exc:  # one card must not stop the rest
+            await session.rollback()
+            _report_card_failure(card_id, exc)
+            await _note_card_poll_crashed(
+                chat,
+                announce,
+                card_id,
+                exc,
+                settle_card=settle_card,
+                record_instruction=record_instruction,
+                task_teammate=task_teammate,
+            )
+            return f"{card_id}: {exc}", None
 
 
 async def _merged_by_name(session, status) -> str | None:
@@ -254,6 +386,7 @@ async def poll_uncarded_task_prs(
             # task's earlier steps landed on PRs it no longer holds.
             or_(Task.delivered_head.is_(None), Task.status == TaskStatus.open),
             Task.closing_since.is_(None),
+            Task.deploying_since.is_(None),
             Topic.status != TopicStatus.archived,
             # A card that is still waiting for its reviewer keeps the task in
             # this poll: its checks turning green is news to the line too.
@@ -385,6 +518,7 @@ async def poll_uncarded_task_prs(
                         or task.project_id != project
                         or (task.status != TaskStatus.open and task.delivered_head)
                         or task.closing_since is not None
+                        or task.deploying_since is not None
                     ):
                         return checked, merged, None
                     if await session.scalar(
@@ -399,30 +533,45 @@ async def poll_uncarded_task_prs(
                     topic = await session.get(Topic, task.room_id)
                     if topic is None or topic.status == TopicStatus.archived:
                         return checked, merged, None
-                    # Merged on the forge without a delivery: nothing said it was
-                    # a step, so the task is done.
+                    # Merged on the forge without a delivery: nobody said the
+                    # task is done, so it goes on, and its owner hears so in
+                    # the task — whether it is over is theirs to say
+                    # (`task_landing`).
                     await delivery_landed(
                         session,
                         task,
                         by=await _merged_by_name(session, status),
                         head=status.head_sha,
                         pr_number=number,
-                        completes=True,
                         handed_over=None,
                         record_instruction=record_instruction,
                         task_teammate=task_teammate,
+                        announce=announce,
                     )
+                    # A task closed by hand before its PR merged stays closed:
+                    # there is nothing for its owner to decide.
+                    goes_on = task.status == TaskStatus.open
+                    owner = task.owner_handle if goes_on else None
                     await announce(
                         session,
                         place_id=task.room_id,
                         task_id=task.id,
-                        content=say("prMergedDelivered", pr=number),
+                        content=(
+                            say("prMergedDelivered", pr=number)
+                            if not goes_on
+                            else say(
+                                "prMergedTaskGoesOn", pr=number, owner=f"<@{owner}>"
+                            )
+                            if owner
+                            else say("prMergedTaskGoesOnNoOwner", pr=number)
+                        ),
                         meta=notice(
                             EVENT_ACCEPT_DONE,
                             severity=SEVERITY_INFO,
                             who=WHO_PLATFORM,
                             detail=task.pr_url or "",
                         ),
+                        points_at=Event(mentioned=(owner,) if owner else ()),
                     )
                     await session.commit()
                     merged = True
@@ -584,7 +733,11 @@ async def _wake_when_checks_pass(
         task = await lock_task_for_change(session, task_id)
         if task is None or task.project_id != project_id or task.pr_number != number:
             return
-        if task.status is not TaskStatus.open or task.closing_since is not None:
+        if (
+            task.status is not TaskStatus.open
+            or task.closing_since is not None
+            or task.deploying_since is not None
+        ):
             if task is not None:
                 _set_checks(task, head, state)
                 await session.commit()
@@ -665,6 +818,8 @@ async def sweep_closings(
     announce: Announce,
     *,
     record_instruction: RecordInstruction,
+    record_seat: RecordSeatInstruction,
+    dispatch_pending: DispatchPending,
     task_teammate: TaskTeammate,
     machines: SweepCheckouts | None = None,
 ) -> dict:
@@ -672,18 +827,26 @@ async def sweep_closings(
     goes on to its next step (`task_landing.go_on_while_working`), and one
     past its write-up deadline is closed and its room told what was left
     undone (`room_task.closing.close_overdue`). ``machines`` removes a closed
-    task's checkouts on the machines holding it."""
+    task's checkouts on the machines holding it. What a close tells the AI
+    teammate that opened the task (`task_landing.tell_origin_ended`) is sent
+    once the closes are committed."""
     sessions = chat.session_factory
     gone_on = await go_on_while_working(
         sessions,
         record_instruction=record_instruction,
         task_teammate=task_teammate,
+        announce=announce,
     )
     async with sessions() as session:
         closed = await close_overdue(session, chat, machines=machines)
         for overdue in closed:
             await tell_room_undelivered(session, overdue, announce=announce)
+            await tell_origin_ended(
+                session, overdue.task, announce=announce, record_seat=record_seat
+            )
         await session.commit()
+    if closed:
+        await dispatch_pending()
     return {"gone_on": len(gone_on), "closed": len(closed)}
 
 
@@ -803,8 +966,10 @@ async def forge_repository_changed(
     announce: Announce,
     settle_card: SettleCard,
     record_instruction: RecordInstruction,
+    record_seat: RecordSeatInstruction,
     dispatch_pending: DispatchPending,
     task_teammate: TaskTeammate,
+    uncommitted: Uncommitted,
 ) -> None:
     """One repository moved — from a relayed forge event, or from a reconnect."""
 
@@ -823,7 +988,9 @@ async def forge_repository_changed(
             changed_project_id,
             settle_card=settle_card,
             record_instruction=record_instruction,
+            record_seat=record_seat,
             task_teammate=task_teammate,
+            uncommitted=uncommitted,
         )
         await pr_publish.sweep_draft_prs(
             sessions,

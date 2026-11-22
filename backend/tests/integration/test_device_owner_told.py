@@ -80,7 +80,6 @@ async def _room_on_a_device(client, owner_handle, *, attached_to="team"):
         session = await AgentSessionService(db).ensure(
             topic_id, agent.username, harness="claude-code"
         )
-        session.execution_request = {"generation": str(uuid.uuid4())}
         await AgentSessionService(db).set_environment(
             topic_id,
             agent.username,

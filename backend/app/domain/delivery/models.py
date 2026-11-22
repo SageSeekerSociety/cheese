@@ -126,8 +126,6 @@ class NativeInput(UuidPk, Base):
     held_block_ids: Mapped[list] = mapped_column(JSONB, default=list)
     released_block_ids: Mapped[list] = mapped_column(JSONB, default=list)
     block_ids: Mapped[list] = mapped_column(JSONB, default=list)
-    seen_block_ids: Mapped[list] = mapped_column(JSONB, default=list)
-    seen_by: Mapped[str | None] = mapped_column(String(64), nullable=True)
     registered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     accepted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True

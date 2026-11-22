@@ -662,9 +662,9 @@ async def test_what_the_room_is_told_to_publish_with_is_a_tool_the_room_has(
     """The prompt names the publishing tool on every turn. A session given no
     tool by that name is told to do the one thing it cannot, and says nothing
     to anybody."""
-    from app.domain.agent.harness import prompt
+    from app.domain.prompts import Kind, render_notice
 
-    published = prompt.publication_prompt("x")
+    published = render_notice(Kind.task, "x")
     named = {word.strip("`. ") for word in published.split() if "chat_send" in word}
     assert named, "the room's prompt no longer names a publishing tool"
     runner = await with_tools(tmp_path)

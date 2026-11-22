@@ -7,8 +7,11 @@
 // `HomeNav.vue` 那一份一一对应，含义见它。
 import type { SpaceLink, Team, TeamMember } from '@/types'
 
+import { computed } from 'vue'
+
 import HomeNav from './HomeNav.vue'
 
+import { addItemOf, projectItemsOf, useAppNav } from '@/components/common/Navigation/appNav'
 import SecondaryNavigation from '@/components/common/Navigation/SecondaryNavigation.vue'
 import { t } from '@/i18n'
 
@@ -32,6 +35,25 @@ defineProps<{
   createError?: string
 }>()
 
+// 桌面上有外壳：侧栏头和搜索由侧栏头画（SidebarFrameTop），这里不再画标题；「待办」那一行
+// 照画。别的侧栏头下面那一行「首页」在这里不画（`home-area`）：侧栏头已经写着「首页」，
+// 去待办走目录自己那一行。项目列在团队上面，各带等你处理的件数——和侧栏头切换列表里同一份
+// 格子（destinations.ts 算的件数）。
+const appNav = useAppNav()
+const framed = computed(() => !!appNav)
+const projects = computed(() =>
+  appNav
+    ? projectItemsOf(appNav.items.value).map((item) => ({
+        id: item.projectId ?? item.key,
+        name: item.title,
+        avatar: item.avatar,
+        to: item.to ?? '/',
+        awaiting: item.badge,
+      }))
+    : undefined
+)
+const addProject = computed(() => (appNav ? addItemOf(appNav.items.value) : null))
+
 const emit = defineEmits<{
   openDisband: [team: Team]
   'update:disbanding': [team: Team | null]
@@ -46,13 +68,19 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <SecondaryNavigation v-if="mdAndUp">
-    <div class="sidebar-header">
+  <SecondaryNavigation v-if="mdAndUp" home-area>
+    <!-- Desktop draws the head and the search in the sidebar frame (SidebarFrameTop);
+         without a shell (unit tests, the catalog) the title stays here. -->
+    <div v-if="!framed" class="sidebar-header">
       <span class="t-title">{{ t('navigation.home') }}</span>
       <v-spacer></v-spacer>
     </div>
+    <!-- 「待办」这一行始终画：这一格的侧栏头下面不画「首页」那一行，不画它，首页的桌面上
+         就没有一条去 /inbox 的路。 -->
     <HomeNav
       inbox
+      :projects="projects"
+      :new-project-label="addProject?.title"
       :teams="teams"
       :spaces="spaces"
       :awaiting="awaiting"
@@ -77,6 +105,7 @@ const emit = defineEmits<{
       @leave="(team) => emit('leave', team)"
       @update:create-open="(open) => emit('update:createOpen', open)"
       @create-space="(payload) => emit('createSpace', payload)"
+      @create-project="addProject?.action?.()"
     />
   </SecondaryNavigation>
 </template>

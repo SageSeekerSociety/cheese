@@ -22,13 +22,14 @@ from sqlalchemy import func, select, update
 
 from app.core.config import settings
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
-from app.domain.agent import execution
+from app.domain.agent import execution, sandbox_image
 from app.domain.agent.models import AgentTurn
+from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
-from app.domain.machine import cloud_vm
+from app.domain.machine import cloud_vm, occupants
 from app.domain.machine import session_work as work_lease
 from app.domain.machine.lifecycle import SandboxLifecycle
 from app.domain.machine.models import (
@@ -48,6 +49,7 @@ from tests.executor_release import running
 from tests.integration.conftest import open_task, post_project, session_auth_headers
 from tests.microcloud import OFFERING, FakeMicroCloud
 from tests.support.devices import enrollment_team
+from tests.support.environments import environment_of
 
 LXC = {**OFFERING, "id": 1, "machineTypeName": "standard-lxc"}
 VM = {
@@ -170,7 +172,7 @@ def _host(case, seat) -> CloudHost | None:
     async def read():
         async with case.client.test_request_factory() as db:
             repo = CloudHostRepository(db)
-            home = await repo.current_home(seat.session)
+            home = await occupants.home_of(db, seat.session)
             return None if home is None else await repo.get(home.host_id)
 
     return case.client.portal.call(read)
@@ -206,7 +208,7 @@ def _up(case, seat) -> str:
                 team_id=await enrollment_team(devices, owner.id),
             )
             repo = CloudHostRepository(db)
-            home = await repo.current_home(seat.session)
+            home = await occupants.home_of(db, seat.session)
             host = await repo.get(home.host_id)
             case.provider.machines[host.machine_id].update(
                 status="running", aiStatus="disabled"
@@ -218,8 +220,10 @@ def _up(case, seat) -> str:
                 host,
                 device_id=device.device_id,
                 when=datetime.now(UTC),
-                sandbox_disk_gb=None,
+                sandbox_disk_gb=None if host.whole_machine else 64,
             )
+            if not host.whole_machine:
+                host.sandbox_image = sandbox_image.default_image()["reference"]
             await db.commit()
             return device.device_id
 
@@ -296,7 +300,7 @@ def _idle_for(case, seat, delta: timedelta):
         async with case.client.test_request_factory() as db:
             await db.execute(
                 update(SandboxHome)
-                .where(SandboxHome.session_id == seat.session)
+                .where(SandboxHome.id == occupants.home_of_session_id(seat.session))
                 .values(active_at=datetime.now(UTC) - delta)
             )
             await db.commit()
@@ -307,7 +311,7 @@ def _idle_for(case, seat, delta: timedelta):
 def _session_lease(case, seat):
     async def go():
         async with case.client.test_request_factory() as db:
-            return (await AgentSessionService(db).by_id(seat.session)).work_lease
+            return await environment_of(db, seat.session)
 
     return case.client.portal.call(go)
 
@@ -741,11 +745,8 @@ def test_a_vm_whose_session_walked_away_goes(cloud):
 
     async def walked_away():
         async with case.client.test_request_factory() as db:
-            await db.execute(
-                update(SandboxHome)
-                .where(SandboxHome.session_id == seat.session)
-                .values(session_id=None)
-            )
+            # Its session works in no environment any more.
+            await attachments.unattach(db, seat.session)
             await db.commit()
 
     case.client.portal.call(walked_away)
@@ -942,7 +943,7 @@ def test_every_sandbox_is_marked_as_its_sessions_own(cloud):
 
     async def lease(seat):
         async with case.client.test_request_factory() as db:
-            return (await AgentSessionService(db).by_id(seat.session)).work_lease
+            return await environment_of(db, seat.session)
 
     assert case.client.portal.call(lease, boxed)["own"] is True
     assert case.client.portal.call(lease, on_vm)["own"] is True

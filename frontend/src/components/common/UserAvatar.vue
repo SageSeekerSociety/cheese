@@ -15,12 +15,14 @@
     <v-img v-if="hasAvatar" :src="avatar" @error="onAvatarError">
       <!-- Real avatar failed to load → colored initial, not a broken tile. -->
       <template #error>
-        <span class="user-avatar-char" :style="{ backgroundColor: fallbackColor }" data-user-content>{{
-          initial
-        }}</span>
+        <span class="user-avatar-char" :style="{ backgroundColor: fallbackColor }" data-user-content
+          ><slot>{{ initial }}</slot></span
+        >
       </template>
     </v-img>
-    <span v-else class="user-avatar-char" data-user-content>{{ initial }}</span>
+    <span v-else class="user-avatar-char" data-user-content
+      ><slot>{{ initial }}</slot></span
+    >
   </v-avatar>
 </template>
 
@@ -55,6 +57,8 @@ const {
   size = 48,
   kind = 'person',
   seed = '',
+  label = '',
+  color = '',
 } = defineProps<{
   /** URL of an uploaded avatar image. Empty → colored-initial fallback. */
   avatar?: string
@@ -76,12 +80,19 @@ const {
    * 不走这里，一律画 CheeseAvatar。
    */
   kind?: 'person' | 'org'
+  /**
+   * 没有图时画的字，替掉按 `name` 取的首字母。项目格子（ProjectAvatar）用它画从项目名
+   * 取的第一个字、自定的文字或表情；画图标时走默认插槽。
+   */
+  label?: string
+  /** 没有图时的底色，替掉按 `seed` 派生的那个。必须是 avatarColor 同一亮度的值（`backgroundForHue`）。 */
+  color?: string
 }>()
 
 // 已知取不到的 URL 直接当「没有图」，不再造 `v-img` 去问一次。
 const hasAvatar = computed(() => !!avatar && !isAvatarKnownFailed(avatar))
-const initial = computed(() => avatarInitial(name))
-const fallbackColor = computed(() => avatarColor(seed || name))
+const initial = computed(() => label || avatarInitial(name))
+const fallbackColor = computed(() => color || avatarColor(seed || name))
 const isDecorative = computed(() => !alt)
 // 圆角方块的圆角跟着边长走（约四分之一），小头像和大头像看着是同一个形状。
 const shapeStyle = computed(() => (kind === 'person' ? {} : { borderRadius: squareRadius(size) }))

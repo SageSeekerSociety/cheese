@@ -648,8 +648,8 @@ _NAMING = {"auto": "自动命名", "manual": "手动命名"}
 
 
 async def project_set(db, access, body: ActIn) -> Plan:
-    """A project's address, how its tasks are named, the teammate and model
-    new channels start with; or who manages one of its channels."""
+    """A project's address, how its tasks are named, the teammate new channels
+    start with, its main model; or who manages one of its channels."""
     ref = refs.parse(need(body.where, "where"))
     if ref is not None and ref.kind == "channel":
         if body.key != "manager":
@@ -696,7 +696,13 @@ async def project_set(db, access, body: ActIn) -> Plan:
             {"mode": value},
         )
     elif body.key == "default_model":
-        said, path, sent = f"默认模型改为 {value}", "default-model", {"model": value}
+        # `auto` clears it: AI 队友 then run on the platform's pick, scene by
+        # scene (「自动」).
+        if value == "auto":
+            said, sent = "项目主模型改为自动", {"model": None}
+        else:
+            said, sent = f"项目主模型改为 {value}", {"model": value}
+        path = "default-model"
     else:
         agents = await AgentInstanceService(db).list_for_project(project.id)
         agent = next((a for a in agents if a.handle == value.lstrip("@")), None)

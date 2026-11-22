@@ -5,9 +5,10 @@ The rules a person can state without the code:
 
 - A draft is for the AI teammate exactly when sending it would start the
   teammate's turn: it @-s the teammate, it replies to the teammate's message,
-  its task's owner says it in an open task, or a person says it in a 支线 a
-  teammate was called into and it @-s no one but people. Otherwise it is for
-  the people it @-s, or for nobody in particular.
+  its task's owner says it in an open task, a person says it in a 支线 a
+  teammate was called into, or the only person in the project says it in a
+  channel's main line — the last two unless it @-s no one but people.
+  Otherwise it is for the people it @-s, or for nobody in particular.
 - Asking who a draft is for writes nothing and wakes nobody.
 - A message sent as one for the teammate that no longer is (its task closed
   while it was typed) is not posted as discussion; the sender is told whom it
@@ -15,8 +16,9 @@ The rules a person can state without the code:
 - A message that asks nobody comes back offering to hand it to the teammate
   only where its sender looks to be waiting for the teammate: they are the
   only person in the channel (综合 holds everyone in the project whether or
-  not they ever opened it), or their message just before it there was for the
-  teammate. The offer is told to the sender alone and never stored.
+  not they ever opened it) while others are in the project, or their message
+  just before it there was for the teammate. The offer is told to the sender
+  alone and never stored.
 """
 
 import asyncio
@@ -28,8 +30,13 @@ from sqlalchemy import func, select, update
 from app.api.deps import get_work_runner
 from app.domain.agent.models import AgentTurn
 from app.domain.agent.turn.intake import human
+from app.domain.agent_instance.services import AgentInstanceService
+from app.domain.identity.handles import agent_instance_handle
+from app.domain.identity.models import AgentBinding
 from app.domain.room_task.closing import close_after_summary
 from app.domain.room_task.models import Task, TaskStatus
+from app.domain.topic_membership.services import TopicMemberService
+from app.domain.user.repositories import UserRepository
 from tests.integration.conftest import (
     in_thread,
     join_project_team,
@@ -82,6 +89,39 @@ def _task_with_a_turn(client, room: str) -> tuple[str, str]:
     return thread, seat
 
 
+def _room_with_two_teammates(client) -> tuple[str, str, str]:
+    """A channel holding the project's own agent and a second one. Returns the
+    room and both seats, the project's own first."""
+    data = post_project(client, {"name": "Two seats"}, owner="alice").json()["data"]
+    room = client.post(
+        "/topics",
+        json={"project_id": data["id"], "title": "开发"},
+        headers=session_auth_headers("alice"),
+    ).json()["data"]["id"]
+
+    async def seat() -> str:
+        async with client.test_factory() as session:
+            second = await AgentInstanceService(session).create(
+                project_id=uuid.UUID(data["id"]),
+                handle="second",
+                type_name=None,
+                display_name="Second",
+            )
+            await TopicMemberService(session).ensure_agent_seat(
+                uuid.UUID(room), agent_instance_handle(second.id)
+            )
+            await session.commit()
+            return agent_instance_handle(second.id)
+
+    second = client.portal.call(seat)
+    seats = [
+        member["member_handle"]
+        for member in client.get(f"/topics/{room}/members").json()["data"]["data"]
+        if member["agent"]
+    ]
+    return room, next(seat for seat in seats if seat != second), second
+
+
 def _written(client, conversation: str) -> tuple[int, int]:
     """How many lines the conversation holds, and how many turns it has had."""
     lines = client.get(
@@ -100,7 +140,8 @@ def _written(client, conversation: str) -> tuple[int, int]:
 
 
 def test_a_plain_message_in_a_channel_is_for_nobody(client, stub_hooks):
-    _, _, room = _channel(client)
+    project, _, room = _channel(client)
+    join_project_team(client, project, "bob")
 
     drafted = _for_whom(client, room, content="明天几点开会？")
 
@@ -108,8 +149,30 @@ def test_a_plain_message_in_a_channel_is_for_nobody(client, stub_hooks):
     assert drafted["place"] == "channel"
 
 
+def test_alone_in_the_project_every_channel_message_is_for_the_teammate(
+    client, stub_hooks
+):
+    project, general, room = _channel(client)
+    seat = room_agent_seat(client, room)
+
+    drafted = _for_whom(client, room, content="明天几点开会？")
+    sent = post_message(client, general, "alice", {"content": "帮我列个计划"})
+    to_a_person = _for_whom(client, room, content="<@bob> 你来看看")
+
+    assert drafted["agent"]["handle"] == seat
+    assert drafted["reason"] == "alone"
+    assert sent["meta"]["agent_recipient"]["mentioned"] is True
+    assert "unasked" not in sent
+    assert to_a_person["agent"] is None
+
+    # A second person in the project: the channel is people talking again.
+    join_project_team(client, project, "bob")
+    assert _for_whom(client, room, content="明天几点开会？")["agent"] is None
+
+
 def test_adding_and_removing_the_at_changes_who_it_is_for(client, stub_hooks):
-    _, _, room = _channel(client)
+    project, _, room = _channel(client)
+    join_project_team(client, project, "bob")
     seat = room_agent_seat(client, room)
 
     named = _for_whom(client, room, content=f"<@{seat}> 整理一下需求")
@@ -367,8 +430,79 @@ def test_a_send_still_for_the_teammate_goes_through(client, stub_hooks):
     assert sent["meta"]["agent_recipient"]["mentioned"] is True
 
 
+def test_a_draft_that_names_two_teammates_lists_both(client, stub_hooks):
+    """一条消息会给正文里点到的每一位队友各记一条投递，所以「这条会交给谁」说的是
+    全部的接收者，不是先收到的那一位。"""
+    room, first, second = _room_with_two_teammates(client)
+
+    drafted = _for_whom(client, room, content=f"<@{first}> 照 <@{second}> 说的改")
+
+    assert [mate["handle"] for mate in drafted["teammates"]] == [first, second]
+    assert {mate["name"] for mate in drafted["teammates"]} == {"芝士", "Second"}
+    # 为它开一轮的那位仍旧是正文里第一位——这一条没变。
+    assert drafted["agent"]["handle"] == first
+
+
+def test_the_same_teammate_named_twice_is_listed_once(client, stub_hooks):
+    room, first, _ = _room_with_two_teammates(client)
+
+    drafted = _for_whom(client, room, content=f"<@{first}> 照 <@{first}> 说的改")
+
+    assert [mate["handle"] for mate in drafted["teammates"]] == [first]
+
+
+def test_a_draft_that_names_nobody_still_lists_the_teammate_it_calls(
+    client, stub_hooks
+):
+    """谁也没 @，而规矩叫起了一位（这里：别人都退出了项目，只剩 alice 在
+    频道主线上说话）：那一位同样算这条会叫到的，名单不能是空的。"""
+    project, _, room = _channel(client)
+    seat = room_agent_seat(client, room)
+
+    drafted = _for_whom(client, room, content="明天几点开会？")
+
+    assert drafted["agent"]["handle"] == seat
+    assert [mate["handle"] for mate in drafted["teammates"]] == [seat]
+
+
+def test_a_seat_without_an_instance_is_not_listed(client, stub_hooks):
+    """名册上坐着、项目里却没有实例的席位叫不起来（`record_mentions` 跳过它），列进
+    名单就是说这条会交给一个不会醒的队友：老房间还挂着共用 `cheese` 席位时就是这样。"""
+    project, _, room = _channel(client)
+    seat = room_agent_seat(client, room)
+
+    async def seat_a_stranger() -> None:
+        async with client.test_factory() as session:
+            user = await UserRepository(session).create_user(
+                username="cheese-legacy", email="legacy@example.com"
+            )
+            session.add(AgentBinding(user_id=user.id))
+            await session.flush()
+            await TopicMemberService(session).ensure_agent_seat(
+                uuid.UUID(room), "cheese-legacy"
+            )
+            await session.commit()
+
+    client.portal.call(seat_a_stranger)
+
+    drafted = _for_whom(client, room, content=f"<@{seat}> 照 <@cheese-legacy> 说的改")
+
+    assert [mate["handle"] for mate in drafted["teammates"]] == [seat]
+
+
+def test_a_draft_naming_only_people_names_no_teammate(client, stub_hooks):
+    project, _, room = _channel(client)
+    join_project_team(client, project, "bob")
+
+    drafted = _for_whom(client, room, content="<@bob> 你来看看")
+
+    assert drafted["teammates"] == []
+
+
 def test_asking_nobody_where_you_are_alone_offers_the_teammate(client, stub_hooks):
-    _, general, room = _channel(client)
+    project, general, room = _channel(client)
+    # bob is in the project and so in 综合, though not in 开发.
+    join_project_team(client, project, "bob")
     seat = room_agent_seat(client, room)
 
     in_general = post_message(client, general, "alice", {"content": "帮我列个计划"})
@@ -376,7 +510,7 @@ def test_asking_nobody_where_you_are_alone_offers_the_teammate(client, stub_hook
     asked = post_message(client, room, "alice", {"content": f"<@{seat}> 帮我列个计划"})
     to_a_person = post_message(client, room, "alice", {"content": "<@bob> 你来看看"})
 
-    assert in_general.get("unasked") == "alone"
+    assert "unasked" not in in_general
     assert in_room.get("unasked") == "alone"
     assert "unasked" not in asked
     assert "unasked" not in to_a_person
@@ -409,7 +543,8 @@ def test_asking_nobody_right_after_asking_the_teammate_offers_it(client, stub_ho
 
 
 def test_the_offer_is_told_to_the_sender_once_and_never_stored(client, stub_hooks):
-    _, _, room = _channel(client)
+    project, _, room = _channel(client)
+    join_project_team(client, project, "bob")
 
     sent = post_message(client, room, "alice", {"content": "帮我列个计划"})
     lines = client.get(

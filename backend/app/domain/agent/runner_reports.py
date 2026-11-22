@@ -22,6 +22,7 @@ This sits beside the room, not in it: it settles deliveries and resumes
 
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from app.domain.agent import session_state
 from app.domain.agent.harness.driven.lifecycle import IDLE, RUNNING
@@ -36,10 +37,8 @@ from app.domain.agent.reads import (
     SessionIdle,
     SessionRunning,
 )
-from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent.run_records import publish
 from app.domain.agent.turn_resume import started_on_receipt, started_record
-from app.domain.block.queries import reaction_summaries_for_blocks
 from app.domain.delivery.input_identity import InputReceipt
 from app.domain.delivery.receipts import (
     drop_input,
@@ -77,7 +76,6 @@ async def apply(chat, report: Report) -> Applied | bool:
     key = _key(report)
     fact = report.fact
     started = None
-    reactions: dict = {}
     freed = False
     async with chat.session_factory() as db:
         claim = await session_state.take(
@@ -110,9 +108,6 @@ async def apply(chat, report: Report) -> Applied | bool:
             # idempotent) and hands back the row it settled, to tell from.
             row = await record_receipt(db, fact.receipt)
             if row is not None and row.settled_at is not None:
-                reactions = await reaction_summaries_for_blocks(
-                    db, [uuid.UUID(block) for block in row.seen_block_ids]
-                )
                 # #4389: a resume instruction the session read is a resume
                 # that started.
                 started = await (started_on_receipt if new else started_record)(
@@ -164,26 +159,7 @@ async def apply(chat, report: Report) -> Applied | bool:
                     failure=fact.failure,
                 )
         elif isinstance(fact, SessionExited):
-            # Whatever process it was, what was last handed to it and is still
-            # unread will never be read.
-            await receiver_exited(
-                db,
-                conversation_id=report.conversation_id,
-                recipient_handle=report.agent_handle,
-                harness=report.harness,
-                epoch=report.epoch,
-            )
-            # Only the exit of a process registered under the seat's current
-            # epoch ends its session. An earlier process's exit, stamped with
-            # the epoch it was registered under, leaves the session that
-            # replaced it as it is.
-            if await session_state.exited(db, key, report.at, epoch=report.epoch):
-                await sessions_moved(db, [report.conversation_id])
-                # A task's session ending is noted beside that teammate's last
-                # report — only when the report is the one that ended.
-                await note_agent_left(
-                    db, report.conversation_id, by=report.agent_handle, at=report.at
-                )
+            await _exited(db, key, epoch=report.epoch, at=report.at)
         await db.commit()
     if started is not None:
         payload, room = started
@@ -195,16 +171,47 @@ async def apply(chat, report: Report) -> Applied | bool:
         pending = chat.live.unread_inputs.get(identity.conversation_id)
         if pending is not None:
             pending.pop(identity.input_id, None)
-    for block_id, value in reactions.items():
-        await get_broker().publish(
-            str(report.conversation_id),
-            {"type": "reaction", "block_id": str(block_id), "reactions": value},
-        )
     if freed or isinstance(fact, SessionIdle | SessionExited):
         # The seat may take what was waiting for it.
         nudge_messages(chat, report.conversation_id)
         wake_held_deliveries(chat, report.conversation_id, report.agent_handle)
     return Applied(result_landed=already_landed)
+
+
+async def _exited(db, key: session_state.SeatKey, *, epoch: int, at: datetime) -> None:
+    """The process ``key``'s seat registered under ``epoch`` exited, as of
+    ``at``."""
+    # Whatever process it was, what was last handed to it and is still
+    # unread will never be read.
+    await receiver_exited(
+        db,
+        conversation_id=key.conversation_id,
+        recipient_handle=key.agent_handle,
+        harness=key.harness,
+        epoch=epoch,
+    )
+    # Only the exit of a process registered under the seat's current epoch
+    # ends its session. An earlier process's exit, stamped with the epoch it
+    # was registered under, leaves the session that replaced it as it is.
+    if await session_state.exited(db, key, at, epoch=epoch):
+        await sessions_moved(db, [key.conversation_id])
+        # A task's session ending is noted beside that teammate's last
+        # report — only when the report is the one that ended.
+        await note_agent_left(db, key.conversation_id, by=key.agent_handle, at=at)
+
+
+async def gone(chat, key: session_state.SeatKey, epoch: int) -> None:
+    """The machine says the process ``key``'s seat registered under ``epoch``
+    is gone, and its runner with it, which therefore reported nothing: its
+    exit, learned from the machine. Applied again it changes nothing, and the
+    exit event the dead runner did journal, reported by the next runner
+    there, finds it done."""
+    async with chat.session_factory() as db:
+        await _exited(db, key, epoch=epoch, at=datetime.now(UTC))
+        await db.commit()
+    # The seat may take what was waiting for it.
+    nudge_messages(chat, key.conversation_id)
+    wake_held_deliveries(chat, key.conversation_id, key.agent_handle)
 
 
 async def landed(chat, report: Report) -> None:

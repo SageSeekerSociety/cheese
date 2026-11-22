@@ -116,9 +116,9 @@ describe('the topic sidebar in English', () => {
     expect(chineseIn(baseElement)).toEqual([])
   })
 
-  it('in a project with no topics yet', () => {
+  it('in a project with only its own channel', () => {
     const { baseElement, getByText } = mount({})
-    getByText('All channels')
+    getByText('Conversation')
     expect(chineseIn(baseElement)).toEqual([])
   })
 

@@ -18,6 +18,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import uuid
 from pathlib import Path
 
@@ -103,11 +104,17 @@ def context(self, known_files=None):
 
 
 def task_fs(self, params):
-    """Read or edit one task's live worktree, never the room's host filesystem."""
+    """Read or edit one task's live worktree, never the room's host filesystem.
+
+    A task without a checkout (``in_workspace``: its project has no
+    repository) is worked in the room's workspace, and is read there."""
     task_id = str(uuid.UUID(params["task_id"]))
     home = Path(self.env["HOME"]).resolve()
-    root = (home / ".cheese" / "tasks" / task_id).resolve()
-    root.relative_to(home)
+    if params.get("in_workspace"):
+        root = self.root
+    else:
+        root = (home / ".cheese" / "tasks" / task_id).resolve()
+        root.relative_to(home)
     if not root.is_dir():
         return {"error": "not_found", "missing": "worktree"}
     operation = params["operation"]
@@ -173,15 +180,37 @@ def task_fs(self, params):
                     files.append({"path": name, "bytes": path.stat().st_size})
             except (ValueError, OSError):
                 continue
-        return {"files": files}
-    name = params.get("path", "")
-    relative = Path(name)
-    if (
-        not name
-        or relative.is_absolute()
-        or any(p in ("..", ".git") for p in relative.parts)
-    ):
-        raise ValueError("Invalid task file path")
+        # A folder a person made and has put nothing in yet: Git lists no
+        # file for it, so it is named on its own.
+        untracked = subprocess.run(
+            [
+                "git",
+                "-C",
+                str(root),
+                "ls-files",
+                "-o",
+                "--directory",
+                "--exclude-standard",
+                "-z",
+            ],
+            capture_output=True,
+            check=True,
+        ).stdout.decode()
+        dirs = [
+            name.rstrip("/")
+            for name in sorted(set(untracked.split("\0")) - {""})
+            if name.endswith("/")
+            and (root / name).is_dir()
+            and not (root / name).is_symlink()
+            and not any((root / name).iterdir())
+        ]
+        return {"files": files, "dirs": dirs}
+    relative = _relative(params.get("path", ""))
+    if operation in ("create", "mkdir", "move", "delete"):
+        answer = _arrange(root, relative, operation, params)
+        if "error" not in answer and not params.get("in_workspace"):
+            keep_soon(self, task_id)
+        return answer
     path = (root / relative).resolve()
     path.relative_to(root)
     if not path.is_file():
@@ -240,8 +269,109 @@ def task_fs(self, params):
             os.replace(temporary, path)
         finally:
             temporary.unlink(missing_ok=True)
+        if not params.get("in_workspace"):
+            keep_soon(self, task_id)
         return {"version": hashlib.sha256(data).hexdigest()[:16]}
     raise ValueError("Unknown task filesystem operation")
+
+
+def _relative(name):
+    """``name`` as a path inside a task's copy: relative, not climbing out of
+    it, and not into its ``.git``."""
+    relative = Path(name)
+    if (
+        not name
+        or relative.is_absolute()
+        or any(p in ("..", ".git") for p in relative.parts)
+    ):
+        raise ValueError("Invalid task file path")
+    return relative
+
+
+def _entry(root, name):
+    """The entry ``name`` names in the copy, itself (a link is not followed),
+    under a directory that is inside the copy."""
+    entry = root / _relative(name)
+    entry.parent.resolve().relative_to(root)
+    return entry
+
+
+def _arrange(root, relative, operation, params):
+    """A person creating, renaming or deleting an entry of the task's copy.
+
+    Nothing is replaced: creating or renaming onto an entry that is there
+    answers ``exists``, and one that is not there answers ``not_found``."""
+    path = _entry(root, relative.as_posix())
+    there = path.exists() or path.is_symlink()
+    if operation in ("create", "mkdir"):
+        if there:
+            return {"error": "exists"}
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if operation == "mkdir":
+            path.mkdir()
+            return {"path": relative.as_posix()}
+        with path.open("xb"):
+            pass
+        return {
+            "path": relative.as_posix(),
+            "version": hashlib.sha256(b"").hexdigest()[:16],
+        }
+    if not there:
+        return {"error": "not_found", "missing": "file"}
+    if operation == "delete":
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
+        return {"path": relative.as_posix()}
+    # A folder moved into itself is refused by the rename itself (EINVAL).
+    target = _entry(root, params.get("to", ""))
+    if target.exists() or target.is_symlink():
+        return {"error": "exists"}
+    target.parent.mkdir(parents=True, exist_ok=True)
+    os.rename(path, target)
+    return {"path": target.relative_to(root).as_posix()}
+
+
+#: How long after a person's save the task's checkout is kept off the machine
+#: (`cheese keep`). An editor saving every few seconds is kept once for the
+#: burst, this long after its first save, with every save of the burst in it.
+KEEP_AFTER_SAVE_S = 10.0
+_keeping: set[str] = set()
+_keeping_lock = threading.Lock()
+
+
+def keep_soon(self, task_id, delay=KEEP_AFTER_SAVE_S):
+    """Keep the task checkout's uncommitted work shortly after a person saved
+    into it, so the save outlives the sandbox even if no turn ends here
+    before it goes. Off the save's path: the save has answered by then, and a
+    snapshot that fails is logged, never the save's failure."""
+    with _keeping_lock:
+        if task_id in _keeping:
+            return
+        _keeping.add(task_id)
+
+    def keep():
+        with _keeping_lock:
+            _keeping.discard(task_id)
+        try:
+            self.invoke(
+                {
+                    "id": f"keep-{uuid.uuid4().hex}",
+                    "tool": "Bash",
+                    "args": {"command": f"cheese keep --task {task_id}"},
+                    # The platform's own command, as a turn's checkpoint is:
+                    # the project's tool hooks never see it.
+                    "platform": True,
+                }
+            )
+        except Exception as exc:  # logged; the save went through
+            with contextlib.suppress(Exception):
+                self.log("keep", "failed", task=task_id, error=str(exc))
+
+    timer = threading.Timer(delay, keep)
+    timer.daemon = True
+    timer.start()
 
 
 def repo_search(self, params):

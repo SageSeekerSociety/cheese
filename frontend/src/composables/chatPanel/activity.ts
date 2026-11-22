@@ -16,6 +16,8 @@ import { computed, watch } from 'vue'
 import { useActivityLines } from '../../components/room/composables/useActivityLines'
 import { useLiveSteps } from '../../components/room/composables/useLiveSteps'
 import { useRoomActivity } from '../../components/room/composables/useRoomActivity'
+import { agentFailures } from '../../lib/agentFailures'
+import { memberName } from '../../lib/agentNames'
 import { isAgentHandle } from '../../lib/authorship'
 
 /** 房间里此刻的动静。 */
@@ -38,14 +40,15 @@ export function usePanelActivity(deps: {
   // 拼成输入框下面那一行的数据见 useActivityLines（阶段、当前一步）。
   const activity = useRoomActivity({ me: deps.author, send: deps.socket.sendOnSocket })
   const liveSteps = useLiveSteps()
+  const nameOf = (handle: string) =>
+    deps.roster.agentNameOf(handle) ??
+    (isAgentHandle(handle)
+      ? deps.roster.agentDisplayName(handle)
+      : memberName(deps.roster.memberByHandle.value.get(handle)) || handle)
   const activityLines = useActivityLines(
     activity.others,
     liveSteps,
-    (handle) =>
-      deps.roster.agentNameOf(handle) ??
-      (isAgentHandle(handle)
-        ? deps.roster.agentDisplayName(handle)
-        : deps.roster.memberByHandle.value.get(handle)?.name || handle),
+    nameOf,
     (handle) => deps.turns.faces.value[handle]?.status
   )
   // 在干活的、在排队的、等自动重试的：面板自己画的和递给页面的是这同一份。
@@ -58,6 +61,9 @@ export function usePanelActivity(deps: {
     return [...activityLines.value, ...queued.filter((l) => !busy.has(l.handle))]
   })
   watch(lines, (v) => deps.emit('activity', v))
+  // 停在失败上没人接的队友：对话里的失败记录加上「这位后来没再开口、也不在干活」。
+  const failures = computed(() => agentFailures(deps.messages.value, new Set(lines.value.map((l) => l.handle)), nameOf))
+  watch(failures, (v) => deps.emit('failures', v), { immediate: true })
 
   return { activity, liveSteps, activityLines: lines }
 }
