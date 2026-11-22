@@ -135,8 +135,10 @@ def test_another_persons_answer_cannot_be_overwritten():
 
 
 def test_the_answerer_can_change_their_own_answer():
-    """答过的人改得动自己那条：新的一条写在后面、算数的就是它；先前那条留着，卡上
-    降一档显示（2026-11-22：说过的话不静默消失）。"""
+    """答过的人改得动自己那条：撤掉旧的、写上新的一条。
+
+    整组这条路是「改答案」按钮点出来的一次重交，卡上不画历史，所以旧的换掉而不是
+    追加（和单答那条路不同——那边每句都是房间里的一条消息）。"""
     answered = question()
     answered.meta = {**answered.meta, "answer_log": [_entry("alice", "按自然周")]}
 
@@ -148,8 +150,8 @@ def test_the_answerer_can_change_their_own_answer():
     )
 
     log = answered.meta["answer_log"]
-    assert [e["by"] for e in log] == ["alice", "alice"]
-    assert [e["option"] for e in log] == ["按自然周", "按滚动 7 天"]
+    assert [e["by"] for e in log] == ["alice"]
+    assert log[0]["option"] == "按滚动 7 天"
 
 
 def test_editing_leaves_another_persons_skip_alone():
@@ -178,10 +180,9 @@ def test_editing_leaves_another_persons_skip_alone():
     )
 
     log = answered.meta["answer_log"]
-    kinds = [e["kind"] for e in log]
-    assert kinds == ["skipped", "option", "option"]
+    assert [e["kind"] for e in log] == ["skipped", "option"]
     assert log[0]["by"] == "bob"
-    assert [e["option"] for e in log[1:]] == ["按自然周", "按滚动 7 天"]
+    assert log[1]["option"] == "按滚动 7 天"
 
 
 def _entry(by: str, option: str) -> dict:
