@@ -17,7 +17,8 @@
     "edit": "改答案",
     "editNote": "重新打开整组，改完再提交",
     "failed": "提交没成功，再试一次",
-    "listSeparator": "、"
+    "listSeparator": "、",
+    "takenByOther": "这道题已有人回答，改不了"
   },
   "fold": {
     "whoNamed": "{asker} 问 {people}",
@@ -63,6 +64,7 @@
       "people": "问 {people}",
       "all": "问所有人",
       "anyone": "提问"
-    }
+    },
+    "earlier": "此前{name}说过：{text}"
   }
 }

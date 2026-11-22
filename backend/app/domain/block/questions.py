@@ -344,21 +344,23 @@ async def withdraw_question(session, *, question: Block, by: str) -> Block:
 async def confirm_pending(session, *, question: Block, by: str) -> Block:
     """提问的那位确认：人打字回的那几句就是答案，题就此结掉。
 
-    打字回复先以 ``kind=pending`` 记在题上（`announce.answer_questions`），题仍在
-    等回答、黄灯不灭；那句话是答案还是追问、岔话，只有提问的那位读得懂。它判定是
-    答案，就走这一步，把待确认的条目改成 ``kind=note``，题因此 `answered`。判定不是
-    答案时什么都不用做，题保持打开。
+    **2026-11-22 起打字回复当场就算作答**（`agent.announce.answer_questions` 记成
+    ``kind=note``），``pending`` 条目本身也就按回答读（`block.asked._said`）。所以
+    今天进来的每一次调用都落在「已经答过」上——这里不报冲突，而是把旧条目就地归成
+    ``note`` 再回 200：提示词换了，别处照旧调它的调用方不该收到一个没有意义的错误。
 
-    只有题块作者可以确认，没有待确认的回复就拒掉，已经了结的题也不再收。flush，不
-    commit；通知由调用方结。
+    只有题块作者可以确认，没有待确认的回复就拒掉，撤回过、被所有人跳过的题仍拒。
+    flush，不 commit；通知由调用方结。
     """
     meta = dict(question.meta or {})
     if question.author != by:
         raise ForbiddenError(say("askWithdrawNotYours"))
-    if answered(meta) or withdrawn_by_the_asker(meta):
-        raise ConflictError(say("askAlreadyAnswered"))
     if not pending_replies(meta):
+        if answered(meta):
+            return question
         raise UnprocessableEntityError(say("askNothingPending"))
+    if withdrawn_by_the_asker(meta) or skipped_by_all(meta):
+        raise ConflictError(say("askAlreadyClosed"))
     question.meta = {
         **meta,
         "answer_log": [

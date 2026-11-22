@@ -121,6 +121,10 @@ async def ask(session, *, place, seat, body) -> list:
         return open_rows
     for old in open_rows:
         # A new question takes over from the old one, so the light follows one.
+        # ``open_rows`` already leaves out any question somebody answered
+        # (`_open_questions_of` asks `block.asked.settled`): taking an answered
+        # card back would pull it — and the words on it — out of the channel,
+        # which is the second way a typed reply used to disappear (2026-11-22).
         await withdraw_question_by_asker(
             session, block=old, room_id=place.room_id, handle=seat
         )

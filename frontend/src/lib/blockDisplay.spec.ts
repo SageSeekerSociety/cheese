@@ -2,7 +2,16 @@ import type { Block, ChecklistMeta, TodoItem } from '@/cx_types'
 
 import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
 
-import { askAnswers, askClosedByAsker, askOptions, isVideoBlock, replyBlock, replySnippet } from './blockDisplay'
+import {
+  askAnswers,
+  askClosedByAsker,
+  askEarlierAnswers,
+  askFinalAnswer,
+  askOptions,
+  isVideoBlock,
+  replyBlock,
+  replySnippet,
+} from './blockDisplay'
 import { loadDocRead } from './docReadLoad'
 
 import { setLocale } from '@/i18n'
@@ -237,12 +246,12 @@ describe('答过这道题的每一句', () => {
       })
     )
     expect(answers).toEqual([
-      { by: 'alice', text: 'a', skipped: false },
-      { by: 'bob', text: '都不要', skipped: false },
+      { by: 'alice', text: 'a', skipped: false, at: '2026-10-05T00:00:00Z' },
+      { by: 'bob', text: '都不要', skipped: false, at: '2026-10-05T00:01:00Z' },
     ])
   })
 
-  it('打字回复还没被提问方确认时不算回答', () => {
+  it('老版本写下的 pending 就是那个人说的话，照样算回答', () => {
     expect(
       askAnswers(
         asked({
@@ -259,7 +268,26 @@ describe('答过这道题的每一句', () => {
           ],
         })
       )
-    ).toEqual([])
+    ).toEqual([{ by: 'bob', text: '这是什么意思？', skipped: false, at: '2026-10-05T00:01:00Z' }])
+  })
+
+  it('先打字后点选：最后那条算数，先前那句降一档留在卡上', () => {
+    const block = asked({
+      options: [{ text: 'a' }, { text: 'b' }],
+      answer_log: [
+        {
+          kind: 'note',
+          option: null,
+          note: '你先帮老师发个十几题',
+          by: 'alice',
+          at: '2026-11-22T02:07:00Z',
+          reply_id: 'r1',
+        },
+        { kind: 'option', option: 'b', note: null, by: 'alice', at: '2026-11-22T02:08:00Z', reply_id: 'r2' },
+      ],
+    })
+    expect(askFinalAnswer(block)).toMatchObject({ by: 'alice', text: 'b' })
+    expect(askEarlierAnswers(block)).toMatchObject([{ by: 'alice', text: '你先帮老师发个十几题' }])
   })
 
   it('早先答的「以上都不是」照样读得出来', () => {
@@ -269,7 +297,7 @@ describe('答过这道题的每一句', () => {
           answer_log: [{ v: 1, kind: 'reject', option: null, note: null, by: 'u', at: null, client_op_id: 'x' }],
         })
       )
-    ).toEqual([{ by: 'u', text: '以上都不是', skipped: false }])
+    ).toEqual([{ by: 'u', text: '以上都不是', skipped: false, at: null }])
   })
 
   it('提问方收起的题不算有人答，也读得出是撤回还是过期', () => {

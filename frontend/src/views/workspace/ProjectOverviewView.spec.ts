@@ -343,3 +343,14 @@ it('现状：写成过就在最上面，还没有可写的就不占地方', asyn
   const empty = mount({ agentName: '芝士', situation: { content: '', written_at: null, writing: false } })
   expect(empty.queryByTestId('overview-situation')).toBeNull()
 })
+
+it('draws the submission card only for a project that came from a task', () => {
+  const plain = mount({ overviewText: '## 赛题要求', submission: null })
+  expect(plain.queryByTestId('overview-submission')).toBeNull()
+  plain.unmount()
+  const claimed = mount({
+    overviewText: '## 赛题要求',
+    submission: { entries: [{ prompt: 'SQL', type: 'TEXT' }], hasTests: false, submittable: true, latest: null },
+  })
+  expect(claimed.queryByTestId('overview-submission')).not.toBeNull()
+})

@@ -5,7 +5,12 @@ import type { ArtifactApi } from '@/components/ArtifactManifest.vue'
 import type { ProjectMemberRow, RoomTask, Topic } from '@/cx_types'
 import type { TaskStageStatus } from '@/types'
 import type { ProgressItem } from '@/types/projectProgress'
-import type { ChallengeDeadline, ChallengeStages, ProjectStarter } from '@/views/workspace/ProjectOverviewView.vue'
+import type {
+  ChallengeDeadline,
+  ChallengeStages,
+  ProjectStarter,
+  ProjectSubmission,
+} from '@/views/workspace/ProjectOverviewView.vue'
 
 import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
@@ -23,6 +28,8 @@ import {
   publishProjectSite,
   renameProjectArtifact,
 } from '@/api'
+import { TaskBoardApi } from '@/api/taskBoard'
+import { newTask } from '@/commands/topicActions'
 import { agentNames, memberName } from '@/lib/agentNames'
 import { uploadLibraryFile } from '@/lib/libraryApi'
 import { renderNoticeMessage } from '@/lib/noticeText'
@@ -35,6 +42,7 @@ import { queryClient } from '@/query/client'
 import { overviewQuery, progressQuery, projectQuery, situationQuery } from '@/query/project'
 import { openProjectTasksQuery } from '@/query/tasks'
 import { useWorkspaceStore } from '@/stores/workspace'
+import { readJudgeSummaries } from '@/views/tasks/composables/useTaskJudge'
 import ProjectOverviewView from '@/views/workspace/ProjectOverviewView.vue'
 
 const props = defineProps<{ projectId: string }>()
@@ -165,6 +173,64 @@ function openArtifact(artifactId: string) {
 }
 // 项目来自的那道题（`GET /projects/{id}` 的 `task`）：看的人看得到它的 `题目/` 才有。
 const fromTask = computed(() => project.data.value?.task ?? null)
+// 提交要求卡：只给从题目领出来的项目。提交项、测试点、能不能交都在题目详情里；最近
+// 交的一版和它的测试结果，按我自己的提交身份去读。读不到就少显示，不挡总览。
+const submission = ref<ProjectSubmission | null>(null)
+watch(
+  () => fromTask.value?.id,
+  async (taskId) => {
+    submission.value = null
+    if (!taskId) return
+    try {
+      const { task, participation } = await TaskBoardApi.detail(taskId)
+      const identity = participation?.identities?.find((i) => i.approved === 'APPROVED' && i.canSubmit)
+      const hasTests = !!task.testSuite?.length
+      let latest: ProjectSubmission['latest'] = null
+      if (identity) {
+        try {
+          const page = await TaskBoardApi.listSubmissions(taskId, identity.id, {
+            pageSize: 1,
+            sort_by: 'createdAt',
+            sort_order: 'desc',
+          })
+          const last = page.submissions[0]
+          if (last) {
+            const sum = hasTests ? (await readJudgeSummaries(taskId, [last.id])).get(last.id) : undefined
+            latest = {
+              version: last.version,
+              createdAt: last.createdAt,
+              tests: sum ? { state: sum.state, passed: sum.passedCases, total: sum.caseCount } : null,
+            }
+          }
+        } catch {
+          latest = null
+        }
+      }
+      if (fromTask.value?.id !== taskId) return
+      submission.value = {
+        entries: (task.submissionSchema ?? []).map((e) => ({ prompt: e.prompt, type: e.type })),
+        hasTests,
+        submittable: !!task.submittable && !!identity,
+        latest,
+      }
+    } catch {
+      submission.value = null
+    }
+  },
+  { immediate: true }
+)
+function goSubmit() {
+  const task = fromTask.value
+  if (!task) return
+  void router.push({
+    name: TASK_ROUTE_NAMES.submit,
+    params: { spaceId: String(task.space_id), taskId: String(task.id) },
+  })
+}
+function newCodeTask() {
+  const root = store.rootTopic
+  if (root) void newTask(root, router)
+}
 /** 起始代码没放成时那句下一步里的「题目」文件夹：项目资料库里的那一层。 */
 function openTaskFolder() {
   void router.push({ name: 'project-library', params: { projectId: props.projectId }, query: { dir: TASK_FOLDER } })
@@ -218,6 +284,9 @@ function allTasks() {
     :challenge-stages="challengeStages"
     :starter="starter"
     :task-linked="fromTask !== null"
+    :submission="submission"
+    @go-submit="goSubmit"
+    @new-task="newCodeTask"
     :progress="progress"
     :progress-failed="progressFailed"
     :tasks="tasks"
