@@ -78,8 +78,7 @@
         </template>
       </LayoutArea>
       <!-- 内容区是一整块 surface，外框（一级导航、侧栏、顶栏）是 canvas：设计规范 §1.4。
-           左边那条线就是侧栏和内容的分界；没有侧栏的页面，这块面挨着一级导航，左上角
-           拐成和侧栏一样的圆角。桌面上它是布局区里页面那一格的内容（传送进去），手机上
+           左边那条线就是侧栏和内容的分界。桌面上它是布局区里页面那一格的内容（传送进去），手机上
            就在这里；同一个实例，跨过断点也不重挂页面。 -->
       <Teleport :to="outlets.page" :disabled="!outlets.page || !$vuetify.display.mdAndUp">
         <div
@@ -784,8 +783,7 @@ onBeforeUnmount(
   height: 100%;
   min-width: 0;
 }
-/* 侧栏和页面那一格的底是外框的 canvas：侧栏左上角、没有侧栏时页面左上角那个圆角外面
-   露出来的是它（§1.4），不是格子的 surface。 */
+/* 侧栏和页面那一格的底是外框的 canvas（§1.4），不是格子的 surface。 */
 .app-outlet[data-page-panel='sidebar'],
 .app-outlet[data-page-panel='page'] {
   background: var(--canvas);
@@ -796,7 +794,7 @@ onBeforeUnmount(
 }
 /* 桌面上内容区左边那条线不再由页面那一格画：它要从页头一直贯到对话和面板底下。侧栏在
    布局区里时，那条线就是布局区的分隔线（也是拖它的地方）；侧栏收着（960–1180）或这一页
-   没有侧栏时，布局区自己画，没有侧栏时连同上沿和左上角那个圆角。 */
+   没有侧栏时，布局区自己画，没有侧栏时连同上沿。 */
 .app-pane.app-pane--in-area {
   border-left: 0;
 }
@@ -806,11 +804,9 @@ onBeforeUnmount(
 .app-area--alone {
   overflow: hidden;
   border-top: 1px solid var(--line);
-  border-top-left-radius: 12px;
 }
 .app-area--alone .app-pane--in-area {
   border-top: 0;
-  border-top-left-radius: 0;
 }
 /* 格子里的侧栏宽度跟着格子，拖分隔线时每一帧都在变：不走抽屉自带的 0.2 秒宽度过渡，
    不然这一栏永远缓在半路上、追不上指针。 */

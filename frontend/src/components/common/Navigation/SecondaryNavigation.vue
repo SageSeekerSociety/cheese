@@ -231,7 +231,6 @@ watch(
 
 .page-sidebar--framed .v-navigation-drawer__content .sidebar-header {
   border-block-end: 0;
-  border-top-left-radius: 0;
 }
 </style>
 

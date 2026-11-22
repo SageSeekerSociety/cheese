@@ -92,6 +92,7 @@
             @drop="onDrop($event, row.item.projectId!)"
             @dragend="clearDrag"
           >
+            <v-icon v-if="!query" class="switcher__grip" size="14" icon="mdi-drag-vertical" />
             <router-link
               :to="row.item.to ?? '/'"
               class="switcher__row"
@@ -99,7 +100,6 @@
               data-testid="project-switcher-row"
               @click="open = false"
             >
-              <v-icon v-if="!query" class="switcher__grip" size="14" icon="mdi-drag-vertical" />
               <ProjectAvatar
                 :id="row.item.projectId ?? ''"
                 :name="row.item.title"
@@ -130,11 +130,11 @@
         </div>
         <div class="switcher__rule" />
         <button v-if="addItem" type="button" class="switcher__row" @click="createProject">
-          <v-icon size="16" icon="mdi-plus" class="switcher__icon" />
+          <span class="switcher__icon"><v-icon size="16" icon="mdi-plus" /></span>
           <span class="switcher__label">{{ addItem.title }}</span>
         </button>
         <router-link :to="{ name: 'my-archived-projects' }" class="switcher__row" @click="open = false">
-          <v-icon size="16" icon="mdi-archive-outline" class="switcher__icon" />
+          <span class="switcher__icon"><v-icon size="16" icon="mdi-archive-outline" /></span>
           <span class="switcher__label">{{ t('navigation.userMenu.archivedProjects') }}</span>
         </router-link>
       </div>
@@ -408,6 +408,10 @@ function clearDrag() {
   background: var(--fill);
 }
 
+.switcher__row-wrap:has(> .switcher__row[aria-current]) {
+  background: var(--line-2);
+}
+
 .switcher__row-wrap--dragging {
   opacity: 0.4;
 }
@@ -420,14 +424,18 @@ function clearDrag() {
   box-shadow: inset 0 -2px 0 var(--muted);
 }
 
+/* Every row starts with the same gutter: a project row shows its drag grip there on
+   hover, so the icons and names of all rows stand in one column. */
 .switcher__row {
   display: flex;
-  flex: 1;
+  flex: none;
   gap: 8px;
   align-items: center;
+  box-sizing: border-box;
+  width: 100%;
   min-width: 0;
   height: 32px;
-  padding: 0 8px;
+  padding: 0 8px 0 20px;
   font: inherit;
   font-size: 13.5px;
   color: var(--text);
@@ -439,6 +447,11 @@ function clearDrag() {
   border-radius: var(--radius-md);
 }
 
+.switcher__row-wrap > .switcher__row {
+  flex: 1;
+  width: auto;
+}
+
 button.switcher__row:hover,
 a.switcher__row:not(.switcher__row-wrap a):hover {
   background: var(--fill);
@@ -447,14 +460,22 @@ a.switcher__row:not(.switcher__row-wrap a):hover {
 .switcher__row[aria-current] {
   font-weight: 600;
   color: var(--ink);
+}
+
+a.switcher__row[aria-current]:not(.switcher__row-wrap a) {
   background: var(--line-2);
 }
 
 .switcher__grip {
-  flex: none;
-  margin-left: -4px;
+  position: absolute;
+  left: 3px;
   color: var(--faint);
-  cursor: grab;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.switcher__row-wrap:hover .switcher__grip {
+  visibility: visible;
 }
 
 .switcher__home {
@@ -472,7 +493,12 @@ a.switcher__row:not(.switcher__row-wrap a):hover {
 }
 
 .switcher__icon {
-  color: var(--faint);
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  color: var(--muted);
 }
 
 .switcher__label {
@@ -506,13 +532,13 @@ a.switcher__row:not(.switcher__row-wrap a):hover {
 }
 
 .switcher__more {
+  position: absolute;
+  right: 4px;
   display: grid;
-  flex: none;
   place-items: center;
   width: 24px;
   height: 24px;
-  margin-right: 4px;
-  color: var(--faint);
+  color: var(--muted);
   cursor: pointer;
   visibility: hidden;
   background: none;
@@ -526,6 +552,12 @@ a.switcher__row:not(.switcher__row-wrap a):hover {
   visibility: visible;
 }
 
+.switcher__row-wrap:hover:has(.switcher__more) .switcher__kbd,
+.switcher__row-wrap:has(.switcher__more:focus-visible) .switcher__kbd,
+.switcher__row-wrap:has(.switcher__more[aria-expanded='true']) .switcher__kbd {
+  visibility: hidden;
+}
+
 .switcher__more:hover {
   color: var(--text);
   background: var(--line-2);
@@ -534,7 +566,7 @@ a.switcher__row:not(.switcher__row-wrap a):hover {
 .switcher__rule {
   flex: none;
   height: 1px;
-  margin: 4px;
+  margin: 4px 0;
   background: var(--line);
 }
 
