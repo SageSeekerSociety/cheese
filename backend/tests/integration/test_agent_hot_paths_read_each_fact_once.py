@@ -28,13 +28,13 @@ from sqlalchemy.engine import Engine
 
 from app.api.deps import get_chat_service
 from app.core.sandbox_auth import SANDBOX_TOKEN
-from app.domain.agent_session.services import AgentSessionService
 from app.domain.machine import session_work as work_lease
 from app.domain.topic.models import Topic
 from app.domain.usage.ledger import Ledger
 from tests.integration import test_switch_pushes_first as switch
 from tests.integration.test_gateway_usage import FakeGateway
 from tests.integration.test_switch_pushes_first import _machines, _room
+from tests.support.environments import change_environment, environment_of
 
 
 @contextmanager
@@ -55,13 +55,17 @@ async def _checked_moments_ago(client, room):
     """The session's hands, as a check a moment ago left them: the next ask is
     answered without the whole check (`session_work._verified`)."""
     async with client.test_factory() as db:
-        row = await AgentSessionService(db).by_id(room.session_id)
-        assert row is not None and row.work_lease is not None
-        row.work_lease = {
-            **row.work_lease,
-            "verified_at": datetime.now(UTC).isoformat(),
-            "setup_digest": work_lease._setup_digest({}),
-        }
+        held = await environment_of(db, room.session_id)
+        assert held is not None
+        await change_environment(
+            db,
+            room.session_id,
+            {
+                **held,
+                "verified_at": datetime.now(UTC).isoformat(),
+                "setup_digest": work_lease._setup_digest({}),
+            },
+        )
         await db.commit()
 
 

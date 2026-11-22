@@ -20,7 +20,8 @@ import PreviewPages from './panels/preview/PreviewPages.vue'
 import PreviewSheet from './panels/preview/PreviewSheet.vue'
 import PreviewSlides from './panels/preview/PreviewSlides.vue'
 
-// 交付的某一版只读：PDF 和幻灯片上那颗「标一处」在这里接不住，不摆。
+// 交付的某一版只读：PDF 和幻灯片上那颗「标一处」在这里接不住，不摆；图上那排画图工具
+// 画的每一样也没有去处，一并收掉。
 provide(PREVIEW_MARKABLE, false)
 
 const props = withDefaults(

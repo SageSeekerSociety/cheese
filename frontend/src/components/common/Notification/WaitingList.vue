@@ -53,7 +53,8 @@
               </template>
               <span v-if="item.detail || reviewedOf(item)" class="waiting__detail t-body"
                 ><span v-if="item.detail" data-user-content>{{ item.detail }}</span
-                ><template v-if="item.detail && reviewedOf(item)"> · </template>{{ reviewedOf(item) }}</span
+                ><template v-if="item.detail && reviewedOf(item)">{{ t('work.taskState.separator') }}</template
+                >{{ reviewedOf(item) }}</span
               >
               <span
                 v-else-if="item.phrase === 'blocked'"
@@ -288,7 +289,7 @@ function reviewedOf(item: WaitingWork): string {
     item.cardSince ? t('work.taskState.submitted', { time: relTime(item.cardSince) }) : '',
   ]
     .filter(Boolean)
-    .join(' · ')
+    .join(t('work.taskState.separator'))
 }
 
 /** 停在一件任务的某一格上的那几条（审阅、回答、负责人要动手的），行首画那一格的状态

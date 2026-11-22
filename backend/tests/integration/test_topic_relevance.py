@@ -82,10 +82,17 @@ def _card(client, tid: str, reviewer: str) -> str:
     return r.json()["data"]["id"]
 
 
-def _say(client, tid: str, speaker: str, text: str) -> None:
+def _say(
+    client, tid: str, speaker: str, text: str, reply_to: str | None = None
+) -> None:
     """Post a human message, no agent turn — mentions fire on the block persist."""
     with room_socket(client, tid, speaker) as ws:
-        post_message(client, tid, speaker, {"content": text})
+        post_message(
+            client,
+            tid,
+            speaker,
+            {"content": text, **({"reply_to": reply_to} if reply_to else {})},
+        )
         while True:
             if ws.receive_json()["type"] in ("done", "error"):
                 break
@@ -263,14 +270,14 @@ def test_a_question_asked_on_a_card_awaits_on_its_channel(client):
     card = open_task(
         client, tid, "报名表单字段精简", owner="alice", contributors=["bob"]
     )
-    question_row(client, card["id"], asked=["bob"])
+    card_question = question_row(client, card["id"], asked=["bob"])
 
     assert _seen_by(client, pid, "bob")["T"]["awaits_me"] is True
     # 题问的是 bob：这个点不为频道里其他任何人亮。
     assert _seen_by(client, pid, "alice")["T"]["awaits_me"] is False
 
-    # 答了就灭：频道等的是那道题，题了结，这一格跟着走。
-    _say(client, card["id"], "bob", "按部门")
+    # 点选项就灭：频道等的是那道题，题了结，这一格跟着走。
+    _say(client, card["id"], "bob", "cursor", reply_to=card_question["id"])
     assert _seen_by(client, pid, "bob")["T"]["awaits_me"] is False
 
 
@@ -357,11 +364,8 @@ def test_a_question_waits_on_whoever_summoned_the_agent(
     assert _seen_by(client, pid, "carol")["问答"]["awaits_me"] is False
 
 
-def test_replying_in_words_instead_of_a_button_ends_the_wait(client):
-    """没点选项、直接回了一句话，也是回应过了；别人说话不算他回应。
-
-    题上记着等谁（`meta.asked`），所以只有他那句话算数。
-    """
+def test_replying_in_words_instead_of_a_button_keeps_the_wait(client):
+    """没点选项、直接回了一句话，题仍等着，由提问的那位确认才结；别人说话更不算。"""
     pid = _project(client)
     tid = _topic(client, pid, "问答", created_by="alice")
     # A person asks it, in the channel's main line: an answer wakes no agent.
@@ -373,8 +377,9 @@ def test_replying_in_words_instead_of_a_button_ends_the_wait(client):
     _say(client, tid, "carol", "我路过")
     assert _seen_by(client, pid, "bob")["问答"]["awaits_me"] is True
 
+    # Words alone do not settle it: they may be a question about it.
     _say(client, tid, "bob", "都行，你先按部门")
-    assert _seen_by(client, pid, "bob")["问答"]["awaits_me"] is False
+    assert _seen_by(client, pid, "bob")["问答"]["awaits_me"] is True
 
 
 def test_a_question_awaits_only_whoever_started_the_turn(

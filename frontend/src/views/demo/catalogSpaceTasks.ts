@@ -17,8 +17,12 @@ import type { CatalogEntry, CatalogNeed } from './catalog'
 import { AGENT_TYPES } from './catalogSharedFixtures'
 import {
   DOMAIN_GROUP,
+  MY_LEARNING_INSIGHT,
+  MY_LEARNING_PRACTICE,
   PUBLISH_DRAFTS,
   SPACE_CATEGORY,
+  SPACE_KNOWLEDGE_POINTS,
+  SPACE_KNOWLEDGE_SUGGESTIONS,
   SPACE_MATERIAL_TEXT,
   SPACE_MATERIALS,
   SPACE_SETTINGS_GROUPS,
@@ -33,15 +37,18 @@ import {
   TASK_VERSIONS,
 } from './catalogSpaceTasksFixtures'
 
+import KnowledgePointField from '@/components/common/KnowledgePointField.vue'
 import TeachingFields from '@/components/common/TeachingFields.vue'
 import { t } from '@/i18n'
 import { spaceLibraryPath } from '@/lib/spaceRouteNames'
 import SpaceLibraryView from '@/views/spaces/detail/library/SpaceLibraryView.vue'
 import ManageDeniedView from '@/views/spaces/detail/ManageDeniedView.vue'
 import MyDraftsView from '@/views/spaces/detail/MyDraftsView.vue'
+import MyLearningInsightView from '@/views/spaces/detail/MyLearningInsightView.vue'
 import PublishTaskView from '@/views/spaces/detail/PublishTaskView.vue'
 import BasicInfoView from '@/views/spaces/detail/settings/BasicInfoView.vue'
 import IndexView from '@/views/spaces/detail/settings/IndexView.vue'
+import LearningAnalysisView from '@/views/spaces/detail/settings/LearningAnalysisView.vue'
 import SpaceGuidanceView from '@/views/spaces/detail/settings/SpaceGuidanceView.vue'
 import BriefView from '@/views/tasks/detail/BriefView.vue'
 import InsightsView from '@/views/tasks/detail/InsightsView.vue'
@@ -364,6 +371,200 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
         },
         props: { teaching: undefined, materials: undefined, materialsState: 'error' },
         expectSelector: '[data-testid="teaching-materials-error"]',
+      },
+    ],
+  },
+  {
+    id: 'learning-analysis-view',
+    title: 'LearningAnalysisView',
+    get about() {
+      return t('catalog.learningAnalysisView.about')
+    },
+    file: 'src/views/spaces/detail/settings/LearningAnalysisView.vue',
+    component: LearningAnalysisView,
+    needs: UI_T,
+    args: {
+      enabled: true,
+      knowledgePoints: SPACE_KNOWLEDGE_POINTS,
+      canManage: true,
+      loading: false,
+      failed: false,
+      saving: false,
+      saved: false,
+      saveError: null,
+    },
+    states: [
+      {
+        get name() {
+          return t('catalog.learningAnalysisView.s1.name')
+        },
+        get note() {
+          return t('catalog.learningAnalysisView.s1.note')
+        },
+        props: {},
+        // 开关开着、清单里有两条：清理点那一节列着它们。
+        expectSelector: '[data-testid="learning-point"]',
+      },
+      {
+        get name() {
+          return t('catalog.learningAnalysisView.s2.name')
+        },
+        get note() {
+          return t('catalog.learningAnalysisView.s2.note')
+        },
+        props: { enabled: false, knowledgePoints: [], canManage: false },
+        // 普通成员没有管理权、清单也空：只摆一句「清单里还没有知识点」，不给「新建」那颗。
+        get expect() {
+          return t('spaces.learningAnalysis.knowledgePoint.empty')
+        },
+      },
+      {
+        get name() {
+          return t('catalog.learningAnalysisView.s3.name')
+        },
+        get note() {
+          return t('catalog.learningAnalysisView.s3.note')
+        },
+        props: { failed: true },
+        // 读不出来不读成「没开」：整块换成错误加一条重试（§3.10）。
+        expectSelector: '[role="alert"]',
+      },
+    ],
+  },
+  {
+    id: 'my-learning-insight-view',
+    title: 'MyLearningInsightView',
+    get about() {
+      return t('catalog.myLearningInsightView.about')
+    },
+    file: 'src/views/spaces/detail/MyLearningInsightView.vue',
+    component: MyLearningInsightView,
+    needs: UI_T,
+    args: { insight: MY_LEARNING_INSIGHT, loading: false, failed: false, disputing: null },
+    states: [
+      {
+        get name() {
+          return t('catalog.myLearningInsightView.s1.name')
+        },
+        get note() {
+          return t('catalog.myLearningInsightView.s1.note')
+        },
+        props: {},
+        // 最该补的那一块摆着「相关子查询 · 薄弱」，带依据和「标记不准」。
+        expectSelector: '[data-testid="insight-dispute-focus"]',
+      },
+      {
+        get name() {
+          return t('catalog.myLearningInsightView.s2.name')
+        },
+        get note() {
+          return t('catalog.myLearningInsightView.s2.note')
+        },
+        props: {
+          insight: {
+            ...MY_LEARNING_INSIGHT,
+            updatedAt: null,
+            focusKnowledgePointId: null,
+            knowledgePoints: MY_LEARNING_INSIGHT.knowledgePoints.map((p) => ({ ...p, judgment: null })),
+            frequentQuestions: [],
+            sources: { messagesRead: 0, tasks: [] },
+          },
+        },
+        // 开着但还没有分析结果：空状态，右栏照样说清读什么。
+        expectSelector: '[data-testid="insight-empty"]',
+      },
+      {
+        get name() {
+          return t('catalog.myLearningInsightView.s3.name')
+        },
+        get note() {
+          return t('catalog.myLearningInsightView.s3.note')
+        },
+        props: {
+          insight: {
+            ...MY_LEARNING_INSIGHT,
+            enabled: false,
+            updatedAt: null,
+            knowledgePoints: [],
+            focusKnowledgePointId: null,
+          },
+        },
+        expectSelector: '[data-testid="insight-off"]',
+      },
+      {
+        get name() {
+          return t('catalog.myLearningInsightView.s4.name')
+        },
+        get note() {
+          return t('catalog.myLearningInsightView.s4.note')
+        },
+        props: { insight: null, failed: true },
+        // 读不出来不画成「还没有结果」：整块换成错误加一条重试（§3.10）。
+        expectSelector: '[role="alert"]',
+      },
+      {
+        get name() {
+          return t('catalog.myLearningInsightView.s5.name')
+        },
+        get note() {
+          return t('catalog.myLearningInsightView.s5.note')
+        },
+        props: { practice: MY_LEARNING_PRACTICE },
+        // 第 4 步：生成巩固题 / 先看讲解、待做的巩固题、复习提醒。
+        expectSelector: '[data-testid="insight-review-due"]',
+      },
+    ],
+  },
+  {
+    id: 'knowledge-point-field',
+    title: 'KnowledgePointField',
+    get about() {
+      return t('catalog.knowledgePointField.about')
+    },
+    file: 'src/components/common/KnowledgePointField.vue',
+    component: KnowledgePointField,
+    needs: UI_T,
+    args: { knowledgePoints: SPACE_KNOWLEDGE_POINTS, canSuggest: true },
+    states: [
+      {
+        get name() {
+          return t('catalog.knowledgePointField.s1.name')
+        },
+        get note() {
+          return t('catalog.knowledgePointField.s1.note')
+        },
+        props: {
+          modelValue: [91],
+          suggestions: SPACE_KNOWLEDGE_SUGGESTIONS,
+        },
+        // 挂着的那条做成 chip；下面两条建议，一条清单里有、一条标记「清单里没有」。
+        expectSelector: '[data-testid="knowledge-point-suggestion"]',
+      },
+      {
+        get name() {
+          return t('catalog.knowledgePointField.s2.name')
+        },
+        get note() {
+          return t('catalog.knowledgePointField.s2.note')
+        },
+        props: { modelValue: [], canSuggest: false },
+        // 没挂任何一条：那一行写一句「还没有采用任何知识点」；不能读题面时不摆那颗 AI 按钮。
+        get expect() {
+          return t('spaces.learningAnalysis.field.empty')
+        },
+      },
+      {
+        get name() {
+          return t('catalog.knowledgePointField.s3.name')
+        },
+        get note() {
+          return t('catalog.knowledgePointField.s3.note')
+        },
+        props: { modelValue: [], state: 'error' },
+        // 清单读不出来时不判失效：写一句读不到，也不摆候选。
+        get expect() {
+          return t('spaces.learningAnalysis.field.loadFailed')
+        },
       },
     ],
   },

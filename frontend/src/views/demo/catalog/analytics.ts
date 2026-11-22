@@ -31,7 +31,7 @@ export const ANALYTICS_ENTRIES: CatalogEntry[] = [
         note: '不装路由也照样画六格（每一格只是一颗 v-tab）——组件不因为缺路由就消失。',
         props: {},
         needs: ['vuetify', 'i18n'],
-        expect: '学习',
+        expect: '学情分析',
       },
     ],
   },

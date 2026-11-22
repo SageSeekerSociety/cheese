@@ -1,7 +1,7 @@
 from collections.abc import Sequence
 from datetime import UTC, date, datetime
 
-from sqlalchemy import Select, and_, exists, func, inspect, or_, select
+from sqlalchemy import Select, and_, case, exists, func, inspect, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.request_facts import recall, remember
@@ -92,20 +92,37 @@ class UserRepository:
         当不了管理员（`FeedbackService.add_admin` 会拒），把它画在选择器里等于给人
         一个点下去必然失败的选项。判据是同一张 `agent_bindings` 表，只是从一次一个
         的 `IdentityService.is_agent` 变成了一次一条 SQL。
+
+        关键词里的 `%` 和 `_` 是**字**不是通配符（`autoescape`）：handle 里允许
+        下划线，搜 `wang_` 不该把 `wangxwu` 也带出来。
+
+        排序先按**像不像**再按字母：handle 或昵称整串相等的排最前，以它开头的
+        其次，只是含着它的最后。只按字母排的话，`limit` 截掉的恰好可能是要找的
+        那个人 —— 搜 `ziyi` 时前面有二十个 `a…ziyi`，`ziyi` 本人就永远出不来，
+        而选择器没有翻页，也没有比整串 handle 更准的词可换。
         """
-        pattern = f"%{q.strip()}%"
+        wanted = q.strip()
+        exact = or_(
+            func.lower(User.username) == wanted.lower(),
+            func.lower(UserProfile.nickname) == wanted.lower(),
+        )
+        prefix = or_(
+            User.username.istartswith(wanted, autoescape=True),
+            UserProfile.nickname.istartswith(wanted, autoescape=True),
+        )
+        closeness = case((exact, 0), (prefix, 1), else_=2)
         stmt = (
             select(User.username, UserProfile.nickname)
             .outerjoin(UserProfile, UserProfile.user_id == User.id)
             .where(
                 User.deleted_at.is_(None),
                 or_(
-                    User.username.ilike(pattern),
-                    UserProfile.nickname.ilike(pattern),
+                    User.username.icontains(wanted, autoescape=True),
+                    UserProfile.nickname.icontains(wanted, autoescape=True),
                 ),
                 ~exists().where(AgentBinding.user_id == User.id),
             )
-            .order_by(User.username)
+            .order_by(closeness, User.username)
             .limit(limit)
         )
         result = await self._session.execute(stmt)

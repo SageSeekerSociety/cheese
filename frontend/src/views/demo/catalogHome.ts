@@ -98,6 +98,19 @@ export const HOME_ENTRIES: CatalogEntry[] = [
         expect: '99+',
       },
       {
+        name: '桌面首页列出我的项目',
+        note: '桌面首页侧栏把我的项目列在团队上面，各带等我处理的件数（和侧栏头切换列表里同一份数）；「待办」那一行照旧在第一行。手机上不给 `projects`，这一段不画。',
+        props: {
+          inbox: true,
+          projects: [
+            { id: 'p-open-day', name: '开放日官网', to: '/projects/open-day', awaiting: 2 },
+            { id: 'p-cachelab', name: 'CacheLab 2026', to: '/projects/cachelab' },
+          ],
+          newProjectLabel: '新建项目',
+        },
+        expect: '开放日官网',
+      },
+      {
         name: '自己名下那几个项目',
         note: '自己名下那一个（`personal`）不当团队说：以自己的昵称单独一行，摆在「团队」小标题之上，展开后没有「成员」也没有「额度」，更没有那一行的 ⋯。',
         props: { teams: [OWN, CREW], currentHandle: 'linxia' },
@@ -122,7 +135,7 @@ export const HOME_ENTRIES: CatalogEntry[] = [
   {
     id: 'home-sidebar-view',
     title: 'HomeSidebarView',
-    about: '桌面首页那一格的侧栏：外面那只抽屉、「首页」那一行页头，和目录本体。',
+    about: '桌面首页那一格的侧栏：外面那只抽屉、待办那一行，和目录本体。',
     file: 'src/views/home/HomeSidebarView.vue',
     component: HomeSidebarView,
     needs: SIDEBAR_T,
@@ -132,7 +145,7 @@ export const HOME_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '桌面上常驻',
-        note: '和手机整页是同一份目录、同一套值，只是这里坐在抽屉里，顶上多一行「首页」。手机上这一份整个不画（`mdAndUp` 为假），那一格的整页是 `HomeHubView`。',
+        note: '和手机整页是同一份目录、同一套值，只是这里坐在抽屉里；侧栏头下面不画「首页」那一行（别的侧栏才有），去待办走目录自己那一行。手机上这一份整个不画（`mdAndUp` 为假），那一格的整页是 `HomeHubView`。',
         props: {},
         expect: '芝士核心组',
       },
@@ -180,8 +193,14 @@ export const HOME_ENTRIES: CatalogEntry[] = [
         expectSelector: '.v-btn--loading',
       },
       {
-        name: '没建成',
-        note: '上一回没成的那一句由外面给回来，画在表单底下；填好的字还在。',
+        name: '没建成，服务端说了为什么',
+        note: '这句话由外面给回来，画在表单底下；填好的字还在。服务端回绝时说它自己那一句，人照着能改。',
+        props: { error: '这个空间名称已被占用，换一个' },
+        expect: '这个空间名称已被占用，换一个',
+      },
+      {
+        name: '没建成，服务端没说为什么',
+        note: '断了网这种：服务端没回话，退回「稍后重试」那一句——不这么写这里就是一片空白。',
         props: { error: '创建失败，稍后重试' },
         expect: '创建失败，稍后重试',
       },

@@ -34,6 +34,7 @@ def _seed_session(client, topic_id: str, session_id: str) -> None:
                 agent_handle=CHEESE_HANDLE,
                 resume_token=session_id,
                 harness="claude-code",
+                generation=0,
             )
             await s.commit()
 
@@ -43,9 +44,10 @@ def _seed_session(client, topic_id: str, session_id: str) -> None:
 def _read_session(client, topic_id: str) -> str | None:
     async def _run() -> str | None:
         async with client.test_factory() as s:
-            return await AgentSessionRepository(s).resume_token(
+            found = await AgentSessionRepository(s).conversation(
                 uuid.UUID(topic_id), CHEESE_HANDLE, "claude-code"
             )
+            return found[0] if found else None
 
     return asyncio.run(_run())
 

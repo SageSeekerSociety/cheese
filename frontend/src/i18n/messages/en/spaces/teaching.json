@@ -46,5 +46,11 @@
     "inheritNone": "The space sets no approach",
     "spec": "Goal first, then build",
     "specHint": "Ask for the goal and how to check it before writing"
+  },
+  "guards": {
+    "title": "Two safeguards for guiding",
+    "hintLadder": "Hint ladder: ask for their idea → point a direction → give pseudocode → only then a code snippet; every step up is recorded",
+    "outputCheck": "Output check: a long block of code in an AI reply is turned into a hint",
+    "note": "Only in effect with Guide with questions. Existing settings are not switched on by themselves."
   }
 }

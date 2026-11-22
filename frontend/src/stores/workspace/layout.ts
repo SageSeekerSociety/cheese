@@ -5,7 +5,7 @@ import { ref } from 'vue'
 
 import { storageGetJson, storageSetJson } from '@/lib/browserStorage'
 
-// 当前打开的是哪个项目，和围着它的界面状态（栏宽、上次待的房间、为什么打不开）。
+// 当前打开的是哪个项目，和围着它的界面状态（右侧面板开不开、上次待的房间、为什么打不开）。
 const LAYOUT_KEY = 'cheesex.layout'
 
 function loadLayout(): StoredLayout {
@@ -29,14 +29,6 @@ function validPlaceMap(value: unknown): Record<string, RememberedPlace> {
   return places
 }
 
-const clampNum = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
-
-const WIDE_SCREEN = 1440
-
-function defaultChatPct(): number {
-  return typeof window !== 'undefined' && window.innerWidth >= WIDE_SCREEN ? 45 : 50
-}
-
 // 手机底栏「工作区」那一格要在冷启动时就知道该落到哪个项目，那时 store 里还没有
 // 打开过任何项目——所以这个值从存储里直接读，不经过 store 实例。
 export function lastOpenedProjectId(): string | null {
@@ -56,17 +48,13 @@ export function lastPlaceOf(projectKey: string | null): RememberedPlace | null {
 }
 
 /**
- * 这个人自己选过、要记住的界面偏好：栏宽、右侧面板的开合，和每个项目上次待的地方。
+ * 这个人自己选过、要记住的界面偏好：右侧面板的开合，和每个项目上次待的地方。
  *
  * 它要的只有「当前是哪个项目」——写回存储时 `lastProjectId` 记的是它，所以传进来的是
  * 那个 ref 本身，不是某一刻的值。
  */
 export function useLayout(projectId: Ref<string | null>) {
   const stored = loadLayout()
-  // 没拖过的人：窄桌面对半分，宽屏（≥ 1440px）把多出来的那块给预览，对话栏占 45%。
-  // index.html 首屏骨架里抄了同一条规则，两处一起改。
-  // 拖过一次就记住他选的（`setChatPct`）。
-  const chatPct = ref(typeof stored.chatPct === 'number' ? stored.chatPct : defaultChatPct())
   const panelPref = ref<boolean | null>(typeof stored.panelOpen === 'boolean' ? stored.panelOpen : null)
   // 每个项目上次待的地方。rail 的项目格子用它落回那里，而不是每次都落在项目首页
   //（每天都走的主路径不该多加一跳）。
@@ -74,21 +62,10 @@ export function useLayout(projectId: Ref<string | null>) {
 
   function persistLayout() {
     storageSetJson(LAYOUT_KEY, {
-      chatPct: chatPct.value,
       panelOpen: panelPref.value ?? undefined,
       lastProjectId: projectId.value ?? undefined,
       lastPlaceByProject: lastPlaceByProject.value,
     })
-  }
-
-  function setChatPct(pct: number) {
-    chatPct.value = clampNum(pct, 25, 80)
-    persistLayout()
-  }
-
-  /** 双击分隔条：回到没拖过时的那一份（宽屏 45%，否则对半）。 */
-  function resetChatPct() {
-    setChatPct(defaultChatPct())
   }
 
   function setPanelPref(open: boolean) {
@@ -129,12 +106,9 @@ export function useLayout(projectId: Ref<string | null>) {
   }
 
   return {
-    chatPct,
     panelPref,
     lastPlaceByProject,
     persistLayout,
-    setChatPct,
-    resetChatPct,
     setPanelPref,
     rememberPlace,
     placeFor,

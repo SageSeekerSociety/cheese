@@ -37,6 +37,7 @@ from app.domain.agent.harness.driven.runner import (
     reply_owed_path,
     socket_path,
 )
+from app.domain.session_record.privacy import for_reader
 from tests.pinned_claude import claude_binary
 
 SCRIPTS = Path(__file__).resolve().parents[3] / "scripts/remote_execution"
@@ -307,6 +308,32 @@ def test_a_send_is_written_read_and_its_work_goes_idle_in_order(screen, contract
     # The journal still carries what the session wrote, stamped with its work.
     echo = next(e for e in screen.records() if _echo_of(sent)(e["record"]))
     assert echo["record"]["cheese"]["work_id"] == work
+
+
+def test_words_only_one_member_may_read_reach_nobody_else_in_any_record(screen):
+    """A member's notes go into an input beside the turn's own words. The model
+    reads both; in every record the build writes of that input — its echo, the
+    transcript's copy, whatever else carries it — anyone but the member reads
+    the turn's words and not the notes."""
+    notes = "alice-wants-short-replies-5291"
+    work = str(uuid.uuid4())
+    screen.call(
+        "send",
+        {
+            "input_id": str(uuid.uuid4()),
+            "work_id": work,
+            "text": "hello",
+            "private": [{"owner": "alice", "text": f"alice 的记录：{notes}"}],
+        },
+    )
+    screen.wait_event(_status("idle", work))
+    records = [entry["record"] for entry in screen.records()]
+
+    as_bob = json.dumps([for_reader(r, "bob") for r in records], ensure_ascii=False)
+    as_alice = json.dumps([for_reader(r, "alice") for r in records], ensure_ascii=False)
+    assert notes not in as_bob
+    assert "hello" in as_bob
+    assert notes in as_alice
 
 
 def test_a_platform_call_is_told_the_run_by_the_event_that_began_it(screen):
@@ -859,6 +886,35 @@ async def test_the_message_after_an_idle_exit_continues_the_same_conversation(
     asked = json.dumps(machine.server.state["requests"][-1]["messages"])
     assert "PINEAPPLE" in asked
     assert "What was the password?" in asked
+
+
+def test_a_conversation_the_platform_retired_is_not_taken_up_again(machine, contract):
+    """The platform no longer continues a conversation (given up on, or started
+    under rules its kind has replaced) and says so in the launch: the screen
+    started next begins a new one, though this state directory's own record
+    and the transcript still hold the old."""
+    first = Screen(machine)
+    try:
+        work = str(uuid.uuid4())
+        first.send("The password is PINEAPPLE.", work_id=work)
+        first.wait_event(_status("idle", work))
+        retired = first.call("ping")["session_id"]
+    finally:
+        first.stop()
+
+    # Named in the launch's environment, as the platform's launch names it.
+    again = Screen(machine, env={"CHEESE_RETIRED_SESSION": retired})
+    try:
+        work = str(uuid.uuid4())
+        again.send("What was the password?", work_id=work)
+        again.wait_event(_status("idle", work))
+        started = again.call("ping")["session_id"]
+    finally:
+        again.stop()
+    assert started != retired
+    asked = json.dumps(machine.server.state["requests"][-1]["messages"])
+    assert "What was the password?" in asked
+    assert "PINEAPPLE" not in asked
 
 
 @pytest.mark.anyio
@@ -1444,6 +1500,122 @@ def test_a_request_made_mid_turn_is_written_when_that_turn_ends(screen, contract
         lambda r: r.get("compact_result") is not None, after=started["sequence"]
     )
     assert ended["record"]["compact_result"] == "success"
+
+
+def _cold_send(screen, text, cold_text, *, idle_s, work_id) -> str:
+    identifier = str(uuid.uuid4())
+    screen.call(
+        "send",
+        {
+            "input_id": identifier,
+            "work_id": work_id,
+            "text": text,
+            "compact_if_cold": {"idle_s": idle_s, "above_tokens": 1, "text": cold_text},
+        },
+        timeout=300,
+    )
+    return identifier
+
+
+def _said(screen, text):
+    """The echo of the user message the build read, by its text."""
+    return lambda r: (
+        r.get("type") == "user"
+        and r.get("isReplay")
+        and (
+            r["message"]["content"] == text
+            if isinstance(r["message"]["content"], str)
+            else any(block.get("text") == text for block in _blocks(r))
+        )
+    )
+
+
+def test_a_turn_on_a_cold_conversation_is_compacted_before_it_reads(screen, contract):
+    """A conversation idle past its model's cache lifetime re-reads its whole
+    context at full price on its next turn, so it is compacted first, and the
+    turn's input is read after the compaction: the one a compacted session is
+    handed, not the one for a conversation that remembers."""
+    first = str(uuid.uuid4())
+    screen.send("hello", work_id=first)
+    screen.wait_event(_status("idle", first))
+
+    work = str(uuid.uuid4())
+    _cold_send(screen, "only what changed", "the whole state", idle_s=0, work_id=work)
+    screen.wait_event(_status("idle", work))
+
+    compacted = screen.wait(lambda r: r.get("compact_result") is not None)
+    assert compacted["record"]["compact_result"] == "success"
+    read = screen.wait(_said(screen, "the whole state"))
+    assert read["sequence"] > compacted["sequence"], "读到输入时已经压缩完了"
+    assert not any(
+        _said(screen, "only what changed")(e["record"]) for e in screen.records()
+    )
+
+
+def test_a_turn_inside_the_cache_lifetime_is_not_compacted(screen, contract):
+    """Still warm, the context is cheap to read again: nothing is compacted
+    and the turn reads its input as it was."""
+    first = str(uuid.uuid4())
+    screen.send("hello", work_id=first)
+    screen.wait_event(_status("idle", first))
+
+    work = str(uuid.uuid4())
+    _cold_send(
+        screen, "only what changed", "the whole state", idle_s=3600, work_id=work
+    )
+    screen.wait_event(_status("idle", work))
+
+    screen.wait(_said(screen, "only what changed"))
+    assert not any(
+        e["record"].get("compact_result") is not None for e in screen.records()
+    )
+
+
+@pytest.mark.anyio
+async def test_a_conversation_gone_cold_while_its_runner_was_away_is_compacted(
+    machine, monkeypatch
+):
+    """Idle past its cache lifetime, a session has usually been let go too: the
+    runner started again on the same conversation still knows when it last
+    called the model and how large it was, compacts it, and then reads the
+    input meant for a compacted conversation."""
+    runner = await _started(machine, monkeypatch, idle_exit_s=0.5)
+    try:
+        await runner.send(
+            str(uuid.uuid4()), "The password is PINEAPPLE.", work_id=str(uuid.uuid4())
+        )
+        await _results(runner, 1)
+        assert runner.process is not None
+        await asyncio.wait_for(runner.process.wait(), 60)
+    finally:
+        await runner.close()
+
+    again = await _started(machine, monkeypatch)
+    try:
+        await again.send(
+            str(uuid.uuid4()),
+            "only what changed",
+            work_id=str(uuid.uuid4()),
+            compact_if_cold={"idle_s": 0, "above_tokens": 1, "text": "the whole state"},
+        )
+        # The compaction's own result, then the turn's.
+        await _results(again, 3)
+        records = [e["record"] for e in again.journal.read(0)]
+    finally:
+        await again.close()
+    boundary = next(
+        i for i, r in enumerate(records) if r.get("subtype") == "compact_boundary"
+    )
+    read = next(
+        i
+        for i, r in enumerate(records)
+        if r.get("type") == "user"
+        and r.get("isReplay")
+        and "the whole state" in json.dumps(r.get("message"))
+    )
+    assert boundary < read
+    asked = json.dumps(machine.server.state["requests"][-1]["messages"])
+    assert "only what changed" not in asked
 
 
 @pytest.mark.anyio

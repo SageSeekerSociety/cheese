@@ -3,15 +3,18 @@
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
+from fastapi.responses import Response
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.auth import PresentedCredential, require_seated_agent
-from app.api.response import ok
-from app.api.write_access import ROUTE_DECIDES
+from app.api.response import Deleted, ok, typed_response
+from app.api.write_access import ROUTE_DECIDES, Can
 from app.core.db import get_db
 from app.core.errors import (
     AuthenticationRequiredError,
+    BadRequestError,
     ForbiddenError,
     NotFoundError,
     ValidationError,
@@ -28,6 +31,8 @@ from app.domain.delivery.agent import (
     record_task_instruction,
 )
 from app.domain.delivery.ledger import settle_card
+from app.domain.project_permissions import Permission
+from app.domain.repository import kept_work
 from app.domain.review import credit
 from app.domain.review.services import AcceptService
 from app.domain.topic.services import TopicService
@@ -74,21 +79,27 @@ async def open_task_workspace(
     from app.domain.room_task.services import TaskService
 
     task = await _task_for(db, project_id, task_id, credential, opening=True)
-    acting = token_agent_handle(credential)
-    if not acting:
-        raise AuthenticationRequiredError("Opening a task needs an agent identity")
     if task.status == "closed":
         raise ValidationError(say("taskEndedCreateNew"))
-    await TaskService(db).record_author(task, acting)
-    if task.branch_name is None:
+    # An agent opening its task is recorded as its author. A command a
+    # person or the environment itself started names no agent, and records
+    # nobody: a person working the files is not the task's author.
+    acting = token_agent_handle(credential)
+    if acting:
+        await TaskService(db).record_author(task, acting)
+    if task.branch_name is None and not await TaskService(db).give_branch(task):
         # deferred-import: tests patch this name on app.domain.project.forge
         from app.domain.project.forge import binding_for_project
 
-        # A room turned into a task carries no branch; its own session opening
-        # it is the moment it needs one. Without it the opening was a 404 that
-        # said the task was not in the project (dev, 2026-10-06).
-        if await binding_for_project(project_id, db) is not None:
-            await TaskService(db).give_branch(task)
+        # A task made while the project had no default branch is worked
+        # without a checkout until it has one; its session's launch reads this
+        # answer as that (`task_checkout`), not as a failure to retry.
+        await db.commit()
+        raise NotFoundError(
+            say("taskWithoutRepository")
+            if await binding_for_project(project_id, db) is None
+            else say("forgeNoDefaultBranch")
+        )
     result = await task_workspace(project_id, task_id, db, credential)
     await db.commit()
     return result
@@ -105,11 +116,12 @@ async def task_workspace(
     from app.domain.project.forge import binding_for_project
 
     task = await _task_for(db, project_id, task_id, credential)
-    if task.branch_name is None:
-        raise NotFoundError(say("workTaskNotInProject"))
     binding = await binding_for_project(project_id, db)
     if binding is None:
-        raise NotFoundError(say("projectHasNoRepo"))
+        raise NotFoundError(say("taskWithoutRepository"))
+    if task.branch_name is None:
+        # Opening the task (POST) gives it its branch.
+        raise NotFoundError(say("taskNoOwnFileVersion"))
 
     room = await TopicService(db).get_or_404(task.room_id)
     # Who the task's commits are by, and who they credit: the same rule the
@@ -152,3 +164,89 @@ async def task_workspace(
             "coauthors": [str(person) for person in who.commit_coauthors],
         }
     )
+
+
+class KeptSnapshot(BaseModel):
+    """The snapshot the platform now keeps for a task: its commit, the commit
+    it was cut from, and the bundle's size in bytes."""
+
+    commit: str
+    cut_from: str
+    size: int
+
+
+# A task's uncommitted work, kept by the platform for a repository that is not
+# its own (`repository.kept_work`): the machine hands its snapshot in as a git
+# bundle and a new checkout fetches it back. Reading it takes what reading the
+# task's metadata takes (`_task_for`). Writing it changes the task's files: it
+# is asked in the task itself and needs what changing the project's files
+# needs, so only the task's own environment writes it — its session, or a
+# person's command run there, on the environment's authority.
+
+
+@router.get(
+    "/{project_id}/git/tasks/{task_id}/kept",
+    response_class=Response,
+    responses={
+        200: {"content": {"application/octet-stream": {}}},
+        204: {"description": "Nothing uncommitted is kept"},
+    },
+)
+async def task_kept_bundle(
+    project_id: uuid.UUID,
+    task_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    credential: PresentedCredential,
+) -> Response:
+    """The task's snapshot as a bundle; 204 when nothing uncommitted is kept."""
+    task = await _task_for(db, project_id, task_id, credential)
+    bundle = await kept_work.bundle_of(db, task.id)
+    if bundle is None:
+        return Response(status_code=204)
+    return Response(content=bundle, media_type="application/octet-stream")
+
+
+@router.put(
+    "/{project_id}/git/tasks/{task_id}/kept",
+    dependencies=[Can(Permission.edit_content, at="task_id")],
+    **typed_response(KeptSnapshot),
+)
+async def keep_task_bundle(
+    project_id: uuid.UUID,
+    task_id: uuid.UUID,
+    cut_from: str,
+    request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    credential: PresentedCredential,
+) -> dict:
+    """Keep the bundle sent as the task's snapshot, cut from the commit
+    ``cut_from``, in place of the last one."""
+    task = await _task_for(db, project_id, task_id, credential)
+    bundle = bytearray()
+    async for chunk in request.stream():
+        bundle.extend(chunk)
+        if len(bundle) > kept_work.BUNDLE_MAX_BYTES:
+            # i18n-exempt: only the platform's own CLI sends this; no person reads it
+            raise BadRequestError("kept bundle too large")
+    try:
+        row = await kept_work.keep_bundle(db, task.id, bytes(bundle), cut_from)
+    except kept_work.NotABundle as exc:
+        raise BadRequestError(str(exc)) from exc
+    return ok({"commit": row.commit, "cut_from": row.cut_from, "size": row.size})
+
+
+@router.delete(
+    "/{project_id}/git/tasks/{task_id}/kept",
+    dependencies=[Can(Permission.edit_content, at="task_id")],
+    **typed_response(Deleted),
+)
+async def drop_task_bundle(
+    project_id: uuid.UUID,
+    task_id: uuid.UUID,
+    db: Annotated[AsyncSession, Depends(get_db)],
+    credential: PresentedCredential,
+) -> dict:
+    """The task's checkout has nothing uncommitted: its snapshot goes."""
+    task = await _task_for(db, project_id, task_id, credential)
+    await kept_work.drop_bundle(db, task.id)
+    return ok({"deleted": True})

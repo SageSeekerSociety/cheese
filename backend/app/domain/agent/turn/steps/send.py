@@ -1,10 +1,9 @@
 """Send one prepared turn, with explicit transport and lifecycle effects."""
 
-import asyncio
 import logging
 import time
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Protocol
@@ -13,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.sentences import exception_text, say
 from app.domain.agent.harness import SessionRef
-from app.domain.agent.harness.prompt import SessionOpening, opening_changes
 from app.domain.agent.nonce import new_nonce
 from app.domain.agent.platform_notices import (
     delivery_checking_notice,
@@ -25,6 +23,7 @@ from app.domain.agent.turn.store.intervals import note_turn_context
 from app.domain.agent.turn.store.session_inputs import (
     DeliveryStamp,
     commit_delivery,
+    record_read,
     remember_opening,
 )
 from app.domain.delivery.input_identity import (
@@ -40,6 +39,7 @@ from app.domain.notice_meta import (
     WHO_PLATFORM,
     notice,
 )
+from app.domain.prompts import SessionOpening, opening_changes
 
 logger = logging.getLogger(__name__)
 _SESSION_ROUTES_KEPT = 512
@@ -113,7 +113,6 @@ class FailedRetirement(Protocol):
 class SendEffects:
     post_system_event: SystemEvent
     consume_hook_event: HookEventConsumer
-    known_commits: Callable[[uuid.UUID, uuid.UUID], Awaitable[set[str] | None]]
     register_input: InputRegistration
     open_interval: IntervalOpening
     retire_failed: FailedRetirement
@@ -184,19 +183,6 @@ async def send_prepared(
             ),
         )
 
-    # Baseline for 「这一轮改了哪些文件」, started BEFORE 芝士 can write anything
-    # but deliberately NOT awaited here: git_log ensures the repo exists, and
-    # on a cold project that is a git init plus a base commit. Awaited in
-    # front of the provider, that delay is charged to the start of every
-    # turn, and a turn cancelled inside the window dies before it can store
-    # its session id. What it measures only becomes commits at the
-    # checkpoint, so finishing the read any time before turn end is soon
-    # enough. Both backends need it, and the hooks backend returns from this
-    # function long before its turn ends — so it is started once here and
-    # carried on the work state rather than read twice in two places.
-    known_commits = asyncio.ensure_future(
-        effects.known_commits(project_id, prepared.room_id)
-    )
     marked_work_ids: list[uuid.UUID] = []
 
     def _register_work(marked_work_id: uuid.UUID) -> None:
@@ -226,7 +212,6 @@ async def send_prepared(
                 user_text=prompt_text,
                 started_at=datetime.now(UTC),
                 agent_instance_handle=prepared.agent_handle,
-                known_commits=known_commits,
             )
             return
         state.pending_ids.update(consumed_ids)
@@ -247,6 +232,8 @@ async def send_prepared(
     # (a failure there leaves no interval); the nonce binds the entry back.
     nonce = new_nonce()
     prompt_text = f"{prompt_text}\n{nonce}"
+    # Set once the session's runner took this turn's notes (`on_private`).
+    given: list[bool] = []
     await effects.open_interval(
         sessions,
         topic_id=topic_id,
@@ -289,13 +276,9 @@ async def send_prepared(
     _delivery_step("note_context")
     summoned = user_block_id is not None and not is_resume and not platform_turn
     input_effects = InputEffects(
-        held_block_ids=tuple(consumed_ids),
         # Initial prompt consumption remains tied to the clean turn ending;
-        # native echo settles the delivery and its summoning read marker.
-        seen_block_ids=(user_block_id,)
-        if user_block_id is not None and summoned
-        else (),
-        seen_by=acting_agent if summoned else None,
+        # native echo settles the delivery.
+        held_block_ids=tuple(consumed_ids),
         delivery_id=delivery_id,
         attempt_id=turn_id if delivery_id is not None else None,
     )
@@ -317,8 +300,12 @@ async def send_prepared(
             prompt_text,
             system_prompt=system_prompt,
             resume_token=resume_session_id,
+            retired_token=prepared.retired_session_id,
             session_opening=opening.text,
             opening_changes=opening_changes(opening, told),
+            cold=prepared.cold,
+            private=prepared.private,
+            on_private=lambda: given.append(True),
             model=model_kwargs.get("model"),
             env=model_kwargs.get("env"),
             acting=acting_agent,
@@ -331,7 +318,8 @@ async def send_prepared(
                 input_effects,
                 fence_delivery=delivery_id is not None,
             ),
-            owes_reply=summoned,
+            owes_reply=summoned
+            or (platform_turn and not is_resume and prepared.answers_the_platform),
         )
         _delivery_step("send")
         # 这一轮把现状说到了：下一轮只补在这之后变了的。
@@ -341,6 +329,10 @@ async def send_prepared(
             agent_handle=prepared.agent_handle,
             harness=prepared.harness,
             digests=opening.digests(),
+            # Recorded only where the runner took them: one that could not
+            # stamp them was handed none, and the next turn gives them again.
+            talk=dict(prepared.talk_told) if given else {},
+            resumed=resume_session_id,
             # A compaction that ended since `told` was read cleared it; this
             # turn told only the changes, so the clear stands.
             was=told,
@@ -412,6 +404,10 @@ async def send_prepared(
     # own stamp on the frame below is a no-op second write.
     await commit_delivery(sessions, stamp=effects.stamp_delivery, turn_id=turn_id)
     _delivery_step("stamp_delivered")
+    # Delivered is in the seat's context: everything the prompt carried is
+    # what it has read (已读), and nothing the window left out.
+    await record_read(sessions, reader=acting_agent, block_ids=prepared.read_ids)
+    _delivery_step("record_read")
     logger.info(
         "chat_delivery_timing topic=%s turn=%s elapsed_ms=%.1f phases_ms=%s",
         topic_id,

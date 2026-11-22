@@ -1,35 +1,17 @@
-"""房间看得见分身查了什么、这一轮改了什么 — end to end through a real turn.
+"""房间看得见分身查了什么 — end to end through a real turn.
 
-Two facts used to be invisible in the room and are asserted here:
-
-- a subagent's CONCLUSION (the call was already visible; the answer was not);
-- the turn's own change summary («这一轮改了 N 个文件»), which no event covered —
-  the timeline had every individual 改文件 line and no net result.
+A subagent's conclusion is the agent's working, not a line in the room.
 """
 
-import asyncio
-import threading
 import uuid
-from unittest.mock import AsyncMock
 
 import pytest
 
-from app.domain.repository.forge_files import ProjectFiles
 from tests.conftest import StubChannel, settle_turn
 from tests.delivery import delivery_task
 from tests.integration.conftest import (
     post_project,
 )
-
-DIFF = """diff --git a/backend/app/x.py b/backend/app/x.py
---- a/backend/app/x.py
-+++ b/backend/app/x.py
-@@ -1,2 +1,3 @@
- keep
--gone
-+added one
-+added two
-"""
 
 
 class SubagentScreen(StubChannel):
@@ -106,154 +88,3 @@ def test_subagent_output_is_not_copied_into_a_room_event(client):
     assert not [
         b for b in _blocks(client, topic_id) if (b.get("meta") or {}).get("subagent")
     ]
-
-
-def test_the_turn_ends_with_a_change_summary(client, monkeypatch):
-    """The commits that were NOT on the branch at turn start are this turn's."""
-    log_calls: list[int] = []
-
-    async def fake_git_log(_files):
-        log_calls.append(50)
-        # First read is the turn-start baseline (nothing yet); the second is
-        # after the checkpoint turned this turn's edits into a commit.
-        if len(log_calls) == 1:
-            return []
-        return [
-            {
-                "hash": "abc1234",
-                "sha": "abc1234",
-                "author": "芝士",
-                "message": "chore: snapshot",
-            }
-        ]
-
-    async def fake_git_diff(_files, ref):
-        assert ref == "abc1234"
-        return DIFF
-
-    monkeypatch.setattr(ProjectFiles, "history", fake_git_log)
-    monkeypatch.setattr(ProjectFiles, "commit_diff", fake_git_diff)
-
-    topic_id = _topic(client)
-    _chat(client, topic_id)
-    blocks = _blocks(client, topic_id)
-
-    summaries = [b for b in blocks if (b.get("meta") or {}).get("changeset")]
-    assert len(summaries) == 1
-    summary = summaries[0]
-    assert summary["kind"] == "event"
-    assert summary["content"] == "这次改了 1 个文件（+2 -1）\nbackend/app/x.py"
-    assert summary["meta"]["changeset"]["commit"] == "abc1234"
-    assert summary["meta"]["changeset"]["files"] == [
-        {"path": "backend/app/x.py", "added": 2, "removed": 1}
-    ]
-
-
-def test_what_shows_in_the_room_is_its_own_field(client, monkeypatch):
-    """露不露面写在 `meta.in_room` 里，不再靠 `author_type` 兼职。
-
-    同一轮里两种事件都产生了：工具调用和分身结论是芝士干活的过程（只进现场），
-    改动摘要是平台数出来的结果（进房间）。两件事以前挤在 `author_type` 一格里，
-    于是「芝士写的、又该让人看见」根本表达不出来，而选错了没有任何报错——事件安
-    静地永远不出现。
-    """
-
-    log_calls: list[int] = []
-
-    async def fake_git_log(_files):
-        log_calls.append(50)
-        if len(log_calls) == 1:
-            return []  # turn-start baseline: nothing on the branch yet
-        return [
-            {
-                "hash": "abc1234",
-                "sha": "abc1234",
-                "author": "芝士",
-                "message": "chore: snapshot",
-            }
-        ]
-
-    monkeypatch.setattr(ProjectFiles, "history", fake_git_log)
-    monkeypatch.setattr(ProjectFiles, "commit_diff", AsyncMock(return_value=DIFF))
-
-    topic_id = _topic(client)
-    _chat(client, topic_id)
-    events = _blocks(client, topic_id)
-
-    def in_room(block: dict) -> bool:
-        return (block.get("meta") or {}).get("in_room") is not False
-
-    summary = next(b for b in events if (b.get("meta") or {}).get("changeset"))
-    assert in_room(summary)
-
-    assert not [b for b in events if (b.get("meta") or {}).get("in_room") is False]
-
-
-def test_a_turn_that_changed_nothing_says_nothing(client, monkeypatch):
-    """No new commit → no summary. 不刷屏 also means not posting an empty one."""
-    monkeypatch.setattr(
-        ProjectFiles,
-        "history",
-        AsyncMock(
-            return_value=[
-                {
-                    "hash": "old0000",
-                    "sha": "old0000",
-                    "author": "芝士",
-                    "message": "chore: snapshot",
-                }
-            ]
-        ),
-    )
-
-    async def never(_files, ref):
-        raise AssertionError("no new commit — nothing to diff")
-
-    monkeypatch.setattr(ProjectFiles, "commit_diff", never)
-
-    topic_id = _topic(client)
-    _chat(client, topic_id)
-    blocks = _blocks(client, topic_id)
-    assert not [b for b in blocks if (b.get("meta") or {}).get("changeset")]
-
-
-def test_the_baseline_read_never_delays_the_turns_start(
-    client, monkeypatch, stub_hooks
-):
-    """A slow forge history read must not delay starting the agent's turn."""
-    agent_started = threading.Event()
-    saw_the_agent_first: list[bool] = []
-
-    async def slow_git_log(*_args, **_kwargs):
-        # Waiting for history before starting the provider would deadlock here.
-        saw_the_agent_first.append(await asyncio.to_thread(agent_started.wait, 5))
-        return []
-
-    stub_hooks.on_start = agent_started.set
-    monkeypatch.setattr(ProjectFiles, "history", slow_git_log)
-
-    topic_id = _topic(client)
-    _chat(client, topic_id)
-
-    assert saw_the_agent_first and all(saw_the_agent_first), "基线读取挡住了轮次启动"
-
-
-def test_a_broken_workspace_never_fails_the_turn(client, monkeypatch):
-    """The numbers are a courtesy. A git failure must cost the summary, not the
-    turn — and must not leave a summary measured against no baseline."""
-
-    def boom(*_args, **_kwargs):
-        raise OSError("no workspace here")
-
-    monkeypatch.setattr(ProjectFiles, "history", boom)
-
-    topic_id = _topic(client)
-    _chat(client, topic_id)
-    assert not [
-        b
-        for b in _transcript(client, topic_id)
-        if (b.get("meta") or {}).get("changeset")
-    ]
-    # The turn still records terminal output even when the workspace is broken.
-    records = client.get(f"/topics/{topic_id}/session-records").json()["data"]["items"]
-    assert any(item["record"].get("type") == "result" for item in records)

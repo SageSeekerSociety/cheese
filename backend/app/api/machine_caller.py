@@ -2,8 +2,9 @@
 
 Only the process that owns the device links reaches the ``/machine`` routes
 with the device connection secret (``app.api.machine_relay``); it names the
-device and the state directory the request came in on, and the caller is
-whichever session holds that state now (``domain.machine.caller``). Shared by
+device and the state directory the request came in on, and the caller is the
+session attached there that the request names, or the environment's own when
+it names none (``domain.machine.caller``). Shared by
 every route a sandbox may ask, in whichever route module serves it.
 """
 
@@ -13,7 +14,12 @@ from typing import Annotated
 from fastapi import Depends, Header
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.machine_relay import DEVICE_HEADER, SECRET_HEADER, STATE_HEADER
+from app.api.machine_relay import (
+    ATTACHMENT_HEADER,
+    DEVICE_HEADER,
+    SECRET_HEADER,
+    STATE_HEADER,
+)
 from app.core.config import settings
 from app.core.db import get_db
 from app.core.errors import AuthenticationRequiredError, ForbiddenError
@@ -25,6 +31,7 @@ async def machine_caller(
     secret: Annotated[str | None, Header(alias=SECRET_HEADER)] = None,
     device: Annotated[str | None, Header(alias=DEVICE_HEADER)] = None,
     state: Annotated[str | None, Header(alias=STATE_HEADER)] = None,
+    attachment: Annotated[str | None, Header(alias=ATTACHMENT_HEADER)] = None,
 ) -> MachineCaller:
     expected = settings.device_connection_auth_secret
     # Bytes: a header Starlette decoded as Latin-1 may hold any character, and
@@ -38,7 +45,7 @@ async def machine_caller(
         raise AuthenticationRequiredError()
     if not device or not state:
         raise AuthenticationRequiredError()
-    caller = await caller_of(db, device, state)
+    caller = await caller_of(db, device, state, attachment)
     if caller is None:
         raise ForbiddenError()
     return caller

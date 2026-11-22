@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_instance.models import AgentInstance
+from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.models import AgentSession
 from app.domain.conversation.models import Conversation
 from app.domain.device.owner_reads import token_holders
@@ -35,7 +36,7 @@ def _running_select(device: ColumnElement[str], *, topic: bool) -> Select:
     """The sessions running on `device`, oldest open turn first; with each
     one's room row when `topic` (the viewer route filters by it)."""
     center = AgentSession.runtime_location["device_id"].as_string()
-    executor = AgentSession.work_lease["device_id"].as_string()
+    executor = attachments.environment_device()
     return (
         select(
             AgentSession.id.label("session_id"),

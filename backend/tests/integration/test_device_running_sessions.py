@@ -15,6 +15,7 @@ from app.domain.device.wiring import sql_device_service
 from app.domain.team.models import TeamMemberRole, TeamUserRelation
 from app.domain.user.models import User
 from tests.integration.conftest import a_team, registered, session_auth_headers
+from tests.support.environments import attach_anew
 
 
 @pytest.mark.anyio
@@ -106,7 +107,8 @@ async def test_running_sessions_roles_visibility_and_completion(
                 conversation_id, handle, harness="claude-code"
             )
             session.runtime_location = {"device_id": center}
-            session.work_lease = {"device_id": executor}
+            if executor is not None:
+                await attach_anew(db, session, {"device_id": executor})
             turn_id = uuid.uuid4()
             db.add(
                 AgentTurn(

@@ -6,6 +6,7 @@
 // list of events is neither.
 import type { PostedMessage } from '../api/messages'
 import type { AgentControlState, Block, ProjectMemberRow, Topic } from '../cx_types'
+import type { AgentFailureLine } from '../lib/agentFailures'
 import type { DocReviewRequest } from '../lib/docReview'
 import type { OpenedDocument } from '../lib/docReview'
 import type { MemberActivityLine } from '../lib/memberActivity'
@@ -36,6 +37,9 @@ export interface ChatPanelEmit {
   // 的卡，当前预览跟着它换。对话栏是这条 socket 的家，面板自己听不到，所以往上报一
   // 声，面板据此立刻去问一次指针——而不是等下一次轮询（那要十几秒）。
   (e: 'preview-shown'): void
+  // 页面开着时，这段对话里实时来了一行任务交付（`lib/deliveryLine`），`taskId` 是那件任务。
+  // 打开时从历史读回来的、重连后重放的都不报：页面据此决定要不要当场打开它。
+  (e: 'delivery-arrived', taskId: string): void
   (e: 'turn-done'): void
   // 芝士 是不是正在这个话题里干活。跟着轮次生命周期走（summon / turn_started /
   // turn_active 开，turn_finished / done / error 关），不是跟着它第一次动手
@@ -45,6 +49,9 @@ export interface ChatPanelEmit {
   // 此刻谁在这个房间里忙（打字的人、干活的队友），已经配好名字和此刻那一步。
   // 现场那一格画同一份（`MemberActivity`）。
   (e: 'activity', lines: MemberActivityLine[]): void
+  // 停在一次失败上、还没人回来接的队友（登录过期、模型出错…）：顶部「AI 现在在干什么」
+  // 把它们画成红底的断开行。
+  (e: 'failures', lines: AgentFailureLine[]): void
   // 会话状态（任务、模型）动了：socket 上的这一帧转给现场那格的会话详情。
   (e: 'agent-control', state: AgentControlState): void
   // 现场那格的时间线上多了一行，或者已有的一行变了（挂了、重试次数涨了）。socket
@@ -71,6 +78,8 @@ export interface ChatPanelEmit {
   (e: 'open-topic', topicId: string): void
   // A task in this room (dispatched marker, upgraded message, <#task> chip): opens its card here.
   (e: 'open-card', taskId: string): void
+  /** 主线上交付那几颗按钮：去看这件任务的改动或预览，或者就地采纳这一版。 */
+  (e: 'delivery', act: { taskId: string; view: 'changes' | 'preview' | 'adopt' | 'return' }): void
   // A clicked @mention chip (resolved by the parent: person → member page,
   // topic/doc → open that topic).
   (e: 'mention-click', name: string): void
@@ -93,9 +102,6 @@ export interface ChatPanelOptions {
    *  它算。 */
   agentHandle?: () => string | null
   alwaysSummon: () => boolean
-  /** 这里是频道主线：叫芝士的消息在它底下的支线里回答，那一轮的开工、收工发给支线，
-   *  这里听不到。没有就是在原处回答（任务、支线、私聊、已归档的频道）。 */
-  answersInThread?: () => boolean
   showComposer: () => boolean
   members: () => ProjectMemberRow[]
   topicList: () => Topic[]

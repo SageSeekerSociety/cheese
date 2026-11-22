@@ -10,6 +10,7 @@ from sqlalchemy import select
 
 from app.domain.agent.environment import SelfHosted, spec_of, stored
 from app.domain.agent.models import AgentTurn
+from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.models import AgentEnvironment, AgentSession
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room, of_rooms, room_column
@@ -25,18 +26,18 @@ async def conversation_sessions(db, project, place) -> list[dict]:
     task's), with the seat it acts under, its environment (None until it first
     needs one) and the machine it holds. One entry per agent, its most recent
     session: a change of harness opens another session for the same agent."""
-    rows = await db.scalars(
-        select(AgentSession)
+    rows = await db.execute(
+        select(AgentSession, attachments.environment_column())
         .where(AgentSession.conversation_id == place.conversation_id)
         .order_by(AgentSession.agent_handle, AgentSession.updated_at.desc())
     )
     chosen = await AgentSessionService(db).environments_in(place.conversation_id)
     out, seen = [], set()
-    for row in rows:
+    for row, held in rows.all():
         if row.agent_handle in seen:
             continue
         seen.add(row.agent_handle)
-        shown = presentation(row)
+        shown = presentation(row, held)
         lease = shown["lease"] or {}
         environment = chosen.get(row.agent_handle)
         out.append(
@@ -124,10 +125,12 @@ async def device_sessions(db, project_id, device_id: str) -> list[tuple]:
     working: a bulk switch skips it rather than take its machine away mid-turn.
     """
 
+    candidates = await _placed_sessions(db, project_id)
+    held = await attachments.environments_of(db, [row.id for row, _t, _e in candidates])
     placed = [
         (row, topic, environment)
-        for row, topic, environment in await _placed_sessions(db, project_id)
-        if (row.work_lease or {}).get("device_id") == device_id
+        for row, topic, environment in candidates
+        if (held.get(row.id) or {}).get("device_id") == device_id
         or (isinstance(environment, SelfHosted) and environment.device_id == device_id)
     ]
     if not placed:
@@ -195,9 +198,9 @@ async def device_sessions(db, project_id, device_id: str) -> list[tuple]:
 async def devices_held_by(db, conversation_id) -> set[str]:
     """The devices this conversation's sessions hold a lease on now."""
     leases = await db.scalars(
-        select(AgentSession.work_lease).where(
+        select(attachments.environment_column()).where(
             AgentSession.conversation_id == conversation_id,
-            AgentSession.work_lease.is_not(None),
+            attachments.is_attached(),
         )
     )
     return {lease["device_id"] for lease in leases if (lease or {}).get("device_id")}
@@ -208,10 +211,10 @@ async def leases_on_peoples_devices(db, room_id) -> list[dict]:
     own computers, most recently placed first. A sandbox on the platform's
     machines is the platform's to report (``CloudHostRepository.room_homes``)."""
     leases = await db.scalars(
-        select(AgentSession.work_lease)
+        select(attachments.environment_column())
         .where(
             of_room(AgentSession.conversation_id, room_id),
-            AgentSession.work_lease.is_not(None),
+            attachments.is_attached(),
         )
         .order_by(AgentSession.placed_at.desc().nulls_last())
     )

@@ -26,9 +26,10 @@ from app.domain.block.models import Block, BlockKind
 from app.domain.device.models import DeviceRow
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
+from app.domain.environment.models import Environment
 from app.domain.identity.actor import Actor
 from app.domain.identity.services import IdentityService
-from app.domain.machine import owner_reads, reaper, services
+from app.domain.machine import enrollment, owner_reads, reaper, sandbox_images, services
 from app.domain.machine.models import (
     HOST_OWNER,
     AiStatus,
@@ -38,6 +39,7 @@ from app.domain.machine.models import (
     SandboxHome,
     WarmMachine,
 )
+from app.domain.machine.sandbox_images import image_for_session
 from app.domain.machine.services import (
     CUSTOMER_REF,
     CloudKeepsFailing,
@@ -50,6 +52,7 @@ from app.domain.user.tokens import digest_token
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.microcloud import FakeMicroCloud
 from tests.support.devices import enrollment_team
+from tests.support.environments import change_environment, unplaced_environment
 
 
 class Case:
@@ -58,6 +61,8 @@ class Case:
         self.cloud = cloud
         self.online = online
         self.projects: dict[str, dict] = {}
+        #: The environment each seeded session works in: what the pool places.
+        self.environments: dict[uuid.UUID, uuid.UUID] = {}
 
     def run(self, coroutine_fn):
         return self.client.portal.call(coroutine_fn)
@@ -96,6 +101,9 @@ class Case:
                     for n in range(sessions)
                 ]
                 db.add_all(rows)
+                await db.flush()
+                for row in rows:
+                    self.environments[row.id] = await unplaced_environment(db, row)
                 await db.commit()
                 self.projects[owner] = {
                     "id": uuid.UUID(project["id"]),
@@ -111,7 +119,7 @@ class Case:
         async def go():
             async with self.client.test_request_factory() as db:
                 host = await HostPool(db, self.cloud).place(
-                    session_id,
+                    self.environments[session_id],
                     actor=self.projects[owner]["actor"],
                     resource_id=str(uuid.uuid4()),
                 )
@@ -135,6 +143,9 @@ class Case:
                 host.ai_status = AiStatus.disabled
                 host.device_id = device_id
                 host.enrolled_at = datetime.now(UTC)
+                host.sandbox_image = enrollment.sandbox_image.default_image()[
+                    "reference"
+                ]
                 host.last_seen_at = datetime.now(UTC)
                 await db.commit()
 
@@ -147,13 +158,19 @@ class Case:
 
         async def go():
             async with self.client.test_request_factory() as db:
-                row = await db.get(AgentSession, session_id)
-                row.work_lease = {
-                    "kind": "device",
-                    "session_id": str(session_id),
-                    "device_id": device_id,
-                    "status": "ready",
-                }
+                placed = await db.get(Environment, self.environments[session_id])
+                await change_environment(
+                    db,
+                    session_id,
+                    {
+                        "kind": "device",
+                        "session_id": str(session_id),
+                        "device_id": device_id,
+                        "resource_id": placed.resource_id,
+                        "room_resource_id": placed.room_resource_id,
+                        "status": "ready",
+                    },
+                )
                 await db.commit()
 
         self.run(go)
@@ -261,7 +278,7 @@ def _two_hosts_at_work(pool) -> tuple[uuid.UUID, uuid.UUID, uuid.UUID, str, str]
     return alice[0], hers, his, her_device, his_device
 
 
-LOST_LINE = str(say("sandboxLost"))
+LOST_LINE = str(say("sandboxLostKept"))
 
 
 def _warm_machine_ready(case: Case) -> str:
@@ -291,6 +308,7 @@ def _warm_machine_ready(case: Case) -> str:
                     enrolled_at=datetime.now(UTC),
                     ip="192.0.2.50",
                     sandbox_disk_gb=64,
+                    sandbox_image=enrollment.sandbox_image.default_image()["reference"],
                     create_request={
                         "hostname": "warm-1",
                         "offeringId": 1,
@@ -519,7 +537,7 @@ def test_sessions_placed_at_once_share_the_one_host_being_created(pool):
         async def one(owner, session_id):
             async with pool.client.test_request_factory() as db:
                 host = await HostPool(db, pool.cloud).place(
-                    session_id,
+                    pool.environments[session_id],
                     actor=pool.projects[owner]["actor"],
                     resource_id=str(uuid.uuid4()),
                 )
@@ -534,13 +552,26 @@ def test_sessions_placed_at_once_share_the_one_host_being_created(pool):
     assert len(pool.cloud.created) == 1
 
 
-def test_a_full_host_takes_a_warm_machine_before_creating_one(pool):
+@pytest.mark.parametrize("previous_image", [False, True])
+def test_a_full_host_takes_a_warm_machine_before_creating_one(pool, previous_image):
     first_two = pool.room("alice", 2)
     [bob] = pool.room("bob", 1)
     full = pool.place("alice", first_two[0])
     pool.up(full)
     assert pool.place("alice", first_two[1]) == full
     warm = _warm_machine_ready(pool)
+    if previous_image:
+
+        async def use_previous():
+            async with pool.client.test_request_factory() as db:
+                row = await db.scalar(
+                    select(WarmMachine).where(WarmMachine.device_id == warm)
+                )
+                assert row is not None
+                row.sandbox_image = "ghcr.io/example/sandbox@sha256:" + "a" * 64
+                await db.commit()
+
+        pool.run(use_previous)
 
     claimed = pool.place("bob", bob)
 
@@ -712,7 +743,7 @@ def test_a_full_pool_tells_the_session_to_try_later(pool, monkeypatch):
 def test_a_host_the_provider_failed_is_let_go_and_its_session_placed_again(pool):
     [alice] = pool.room("alice", 1)
     failed = pool.place("alice", alice)
-    pool.pool("tell_waiting", alice)
+    pool.pool("tell_waiting", pool.environments[alice])
     pool.cloud.machines[pool.host(failed).machine_id]["status"] = "error"
     pool.pool("refresh_due")
 
@@ -801,8 +832,8 @@ def test_the_failure_that_stops_the_pool_is_reported_as_an_error(
 def test_the_room_hears_about_the_sandbox_not_the_host(pool):
     [alice] = pool.room("alice", 1)
     host_id = pool.place("alice", alice)
-    pool.pool("tell_waiting", alice)
-    pool.pool("tell_waiting", alice)  # said once
+    pool.pool("tell_waiting", pool.environments[alice])
+    pool.pool("tell_waiting", pool.environments[alice])  # said once
     pool.up(host_id)
 
     pool.pool("maintain")
@@ -818,7 +849,7 @@ def test_a_tasks_sandbox_is_reported_in_the_task_not_its_channel(pool):
     # for the session working the task is that conversation's running.
     [alice] = pool.room("alice", 1, in_task=True)
     host_id = pool.place("alice", alice)
-    pool.pool("tell_waiting", alice)
+    pool.pool("tell_waiting", pool.environments[alice])
     pool.up(host_id)
 
     pool.pool("maintain")
@@ -900,7 +931,7 @@ def test_asking_again_while_the_claim_is_out_waits_for_it(pool):
     async def place():
         async with pool.client.test_request_factory() as db:
             host = await HostPool(db, pool.cloud).place(
-                alice,
+                pool.environments[alice],
                 actor=pool.projects["alice"]["actor"],
                 resource_id=str(uuid.uuid4()),
             )
@@ -1085,7 +1116,7 @@ def test_a_host_given_up_loses_its_homes_in_one_statement(pool, monkeypatch):
     sessions = pool.room("alice", 4)
     [host_id] = {pool.place("alice", session) for session in sessions}
     for waiting in sessions[1:]:
-        pool.pool("tell_waiting", waiting)
+        pool.pool("tell_waiting", pool.environments[waiting])
     pool.works_on(sessions[0], pool.up(host_id))
     pool.cloud.machines[pool.host(host_id).machine_id]["status"] = "error"
 
@@ -1158,7 +1189,7 @@ def test_rooms_whose_host_came_up_are_settled_in_one_transaction(pool):
     up, coming = hosts[0], hosts[2]
     assert hosts[1] == up and coming != up
     for session in sessions:
-        pool.pool("tell_waiting", session)
+        pool.pool("tell_waiting", pool.environments[session])
     pool.up(up)
 
     async def settle():
@@ -1202,15 +1233,16 @@ def test_a_home_another_transaction_holds_is_left_for_the_next_sweep(pool):
     sessions = pool.room("alice", 2)
     [host_id] = {pool.place("alice", session) for session in sessions}
     for session in sessions:
-        pool.pool("tell_waiting", session)
+        pool.pool("tell_waiting", pool.environments[session])
     pool.up(host_id)
 
     async def settle_while_one_is_held():
         async with pool.client.test_request_factory() as held:
             home_id = await held.scalar(
                 select(SandboxHome.id)
-                .where(SandboxHome.session_id == sessions[0])
-                .with_for_update()
+                .join(Environment, Environment.sandbox_home_id == SandboxHome.id)
+                .where(Environment.id == pool.environments[sessions[0]])
+                .with_for_update(of=SandboxHome)
             )
             async with pool.client.test_request_factory() as db:
                 await asyncio.wait_for(
@@ -1236,3 +1268,50 @@ def test_a_home_another_transaction_holds_is_left_for_the_next_sweep(pool):
 
     assert pool.run(waiting) == []
     assert pool.room_lines("alice").count("环境已就绪") == 2
+
+
+def test_an_existing_sandbox_keeps_its_image_when_its_host_switches(pool):
+    first, second = pool.room("alice", 2)
+    host_id = pool.place("alice", first)
+    device = pool.up(host_id)
+    old = enrollment.sandbox_image.default_image()["reference"]
+    new = "ghcr.io/example/sandbox@sha256:" + "f" * 64
+
+    async def pin_then_switch():
+        async with pool.client.test_request_factory() as db:
+            assert await image_for_session(db, device, first) == old
+            host = await db.get(CloudHost, host_id)
+            host.sandbox_image = new
+            await db.commit()
+
+    pool.run(pin_then_switch)
+    assert pool.place("alice", second) == host_id
+
+    async def images():
+        async with pool.client.test_request_factory() as db:
+            return (
+                await image_for_session(db, device, first),
+                await image_for_session(db, device, second),
+            )
+
+    assert pool.run(images) == (old, new)
+
+
+def test_a_prepared_host_finishes_maintenance_without_waiting_for_prewarm(
+    pool, monkeypatch
+):
+    (first,) = pool.room("alice", 1)
+    host_id = pool.place("alice", first)
+    pool.up(host_id)
+
+    async def unavailable(*args, **kwargs):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(sandbox_images.device_hub, "exec", unavailable)
+
+    async def sweep():
+        await asyncio.wait_for(
+            sandbox_images.sweep(pool.client.test_request_factory), timeout=1
+        )
+
+    pool.run(sweep)

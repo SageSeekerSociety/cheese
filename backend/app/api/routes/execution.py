@@ -32,6 +32,8 @@ from app.domain.agent.device_hub import (
     DeviceOffline,
     DeviceUnreachable,
 )
+from app.domain.agent.task_checkout import checkout_steps
+from app.domain.agent_session.attachment import attachment
 from app.domain.device import owner_reads
 from app.domain.machine import owner_reads as machine_owner_reads
 from app.domain.machine import session_work
@@ -101,6 +103,22 @@ def _checkpoints(method: str, params: dict) -> bool:
     return method == "control" and params.get("subtype") == "checkpoint"
 
 
+#: The calls that may start a command on the machine: a tool call, a project
+#: server's, and the session's own commands, checkpoints and hooks (``control``).
+_STARTS_WORK = frozenset({"invoke", "mcp", "control"})
+
+
+def _with_caller(method: str, params: dict, caller: dict | None) -> dict:
+    """``params`` as the machine is sent them: a call that may start work
+    names whose it is (``caller``), as the credential it came with says. Set
+    here, over whatever the request said, so the name a command runs under is
+    always the one this route verified."""
+    if method not in _STARTS_WORK:
+        return params
+    named = {key: value for key, value in params.items() if key != "caller"}
+    return named if caller is None else {**named, "caller": caller}
+
+
 class ExecutionRequest(BaseModel):
     method: str
     params: dict = {}
@@ -168,7 +186,10 @@ async def execute(
         if seat and not await owner_reads.topic_member(db, room_id, seat):
             raise ForbiddenError(say("topicMemberOnly"))
         place_resource, project_id = room.resource_id or room.id, room.project_id
-    lease_generation = None
+    # A credential that names a conversation and no session acts for nobody
+    # in it: nothing says which session's work it may touch, so it is
+    # refused as one whose session is gone.
+    owned = session_id = lease_generation = None
     if "session" in claims:
         try:
             session_id = uuid.UUID(claims["session"])
@@ -181,24 +202,29 @@ async def execute(
         # A credential reaches only a session of its own conversation.
         if owned is not None and owned.conversation_id != topic_id:
             raise ForbiddenError("This credential works another conversation")
-    else:
-        owned = await owner_reads.legacy_execution(db, topic_id)
-        session_id = owned.id if owned is not None else None
-    lease = owned.work_lease if owned is not None else None
-    if (
+    held = attachment(owned) if owned is not None else None
+    lease = held.environment if held is not None else None
+    # Its sandbox was destroyed or parked since: the environment is still
+    # this session's, and nothing on it answers.
+    released = held is not None and held.released
+    current = not (
         owned is None
         or not lease
         or lease.get("kind") != "device"
-        or lease.get("status", "ready") != "ready"
-        or (
-            lease_generation is not None
-            and lease.get("generation") != str(lease_generation)
-        )
+        or (lease.get("status", "ready") != "ready" and not released)
+        or lease_generation is None
+        or lease.get("generation") != str(lease_generation)
         or not owned.runtime_location
         or owned.runtime_location.get("resource_id") != str(resource_id)
         or claims.get("r") != str(resource_id)
         or place_resource != resource_id
-    ):
+    )
+    if current and released and _checkpoints(payload.method, payload.params):
+        # The turn ended after its sandbox went while idle: there is nothing on
+        # a machine to push, and what it held was pushed by the checkpoint of
+        # the turn that last used it, or kept.
+        return {}
+    if owned is None or lease is None or not current or released:
         raise ConflictError("Execution generation is no longer current")
     if payload.method not in {
         "ping",
@@ -240,6 +266,18 @@ async def execute(
     ):
         raise ForbiddenError("This credential only reads the machine's files")
     target = lease
+    # Who the call is from: the session attached to the machine (its
+    # attachment), the conversation it works and the seat it acts under. A
+    # credential no session holds names nobody: the call is the machine's own.
+    caller = (
+        {
+            "attachment": str(session_id),
+            "conversation": str(topic_id),
+            **({"author": claims["a"]} if claims.get("a") else {}),
+        }
+        if session_id is not None
+        else None
+    )
     if _checkpoints(payload.method, payload.params) and (
         await machine_owner_reads.sandbox_destroyed(
             db, target["device_id"], target.get("resource_id")
@@ -317,7 +355,7 @@ async def execute(
         answer = await execution.call(
             target,
             payload.method,
-            payload.params,
+            _with_caller(payload.method, payload.params, caller),
             trace_id=trace_id,
             timeout=max(0.001, deadline - time.monotonic()),
         )
@@ -370,6 +408,7 @@ async def execute(
             db,
             payload,
             target,
+            answer,
             topic_id=topic_id,
             session_id=session_id,
             took_s=time.monotonic() - (deadline - payload.timeout),
@@ -388,6 +427,7 @@ async def _time_checkout(
     db: AsyncSession,
     payload: "ExecutionRequest",
     lease: dict,
+    answer,
     *,
     topic_id: uuid.UUID,
     session_id: uuid.UUID | None,
@@ -404,8 +444,13 @@ async def _time_checkout(
     ):
         return
     try:
+        value = (answer.get("value") if isinstance(answer, dict) else None) or {}
         await keep_checked_out(
-            db, conversation_id=topic_id, session_id=session_id, total_s=took_s
+            db,
+            conversation_id=topic_id,
+            session_id=session_id,
+            total_s=took_s,
+            steps=checkout_steps(str(value.get("stdout") or "")),
         )
         await db.commit()
     except Exception:

@@ -144,3 +144,18 @@ describe('题目列表的一行', () => {
     })
   })
 })
+
+describe('发布人按查看者的叫法', () => {
+  it('查看者给他设过备注时，这一行画的是备注', () => {
+    const view = show({ creator: { id: 1, username: 'alice', nickname: 'Alice', remark: '我们叫她小艾' } as never })
+
+    view.getByText(t('spaces.detail.tasks.row.by', { name: '我们叫她小艾' }))
+    expect(view.queryByText(t('spaces.detail.tasks.row.by', { name: 'Alice' }))).toBeNull()
+  })
+
+  it('没有备注时仍是公开昵称', () => {
+    const view = show({})
+
+    view.getByText(t('spaces.detail.tasks.row.by', { name: 'Alice' }))
+  })
+})

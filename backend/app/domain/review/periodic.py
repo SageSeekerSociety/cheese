@@ -7,14 +7,16 @@ from app.core.background import PeriodicJobs
 from app.core.config import settings
 from app.core.db import SessionFactory
 from app.domain.delivery_events import SettleCard
-from app.domain.review import gate_sweep, pr_poll
+from app.domain.review import deploy_wait, gate_sweep, pr_poll
 from app.domain.review.ports import (
     Announce,
     Chat,
     DispatchPending,
     RecordInstruction,
+    RecordSeatInstruction,
     SweepCheckouts,
     TaskTeammate,
+    Uncommitted,
 )
 
 GateNudge = Callable[[uuid.UUID, str, str, dict], Awaitable[None]]
@@ -42,8 +44,10 @@ def register_periodic_jobs(
     gate_nudge_factory: GateNudgeFactory,
     settle_card: SettleCard,
     record_instruction: RecordInstruction,
+    record_seat: RecordSeatInstruction,
     dispatch_pending: DispatchPending,
     task_teammate: TaskTeammate,
+    uncommitted: Uncommitted,
     machines: SweepCheckouts | None = None,
 ) -> None:
     jobs.register(
@@ -54,7 +58,9 @@ def register_periodic_jobs(
             announce,
             settle_card=settle_card,
             record_instruction=record_instruction,
+            record_seat=record_seat,
             task_teammate=task_teammate,
+            uncommitted=uncommitted,
         ),
         forge_bound=True,
     )
@@ -77,6 +83,8 @@ def register_periodic_jobs(
             chat,
             announce,
             record_instruction=record_instruction,
+            record_seat=record_seat,
+            dispatch_pending=dispatch_pending,
             task_teammate=task_teammate,
             machines=machines,
         ),
@@ -104,4 +112,9 @@ def register_periodic_jobs(
         "gate sweep",
         settings.gate_sweep_interval_s,
         lambda: sweep_abandoned_gates(gate_sessions, nudge_factory=gate_nudge_factory),
+    )
+    jobs.register(
+        "deploy blocked marks",
+        settings.task_deploy_blocked_interval_s,
+        lambda: deploy_wait.mark_blocked(gate_sessions),
     )

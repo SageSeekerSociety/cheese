@@ -1,8 +1,11 @@
 {
   "taskClosed": "任务「{title}」已关闭",
-  "taskCompleted": "任务「{title}」已关闭：{conclusion}",
+  "taskCompleted": "任务「{title}」已完成：{conclusion}",
+  "taskNeglectClosed": "任务「{title}」已经 {days} 天没人理会，已自动关闭；需要时可以重新打开",
+  "taskNeglectNudge": "任务「{title}」已经 {days} 天没人理会，再过 {left} 天会自动关闭",
   "taskQuiet": "任务「{title}」已经 {days} 天没有进展",
   "taskReopened": "{actor} 重新打开了任务「{title}」",
   "taskUntitled": "新任务",
-  "threadBecameTask": "已转为任务，{owner} 负责"
+  "threadBecameTask": "已转为任务，{owner} 负责",
+  "teammateHandedIn": "{who} 向「{task}」提交了第 {version} 版"
 }

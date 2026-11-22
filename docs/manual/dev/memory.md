@@ -7,10 +7,10 @@ covers:
   - backend/app/domain/memory/files_store.py
   - backend/app/domain/memory/tree.py
   - backend/app/domain/memory/session.py
-  - backend/app/domain/memory/instructions.py
   - backend/app/domain/memory/models.py
   - backend/app/domain/memory/dream.py
   - backend/app/domain/memory/dream_prompt.py
+  - backend/app/domain/prompts/pieces/memory/
   - backend/app/domain/memory/migration.py
   - backend/app/domain/memory/migration_service.py
   - backend/app/domain/memory/reads.py
@@ -18,7 +18,7 @@ covers:
   - backend/app/api/routes/admin_memory.py
   - backend/scripts/memory_migration.py
   - backend/app/domain/agent/chat.py
-  - backend/app/domain/agent/harness/prompt.py
+  - backend/app/domain/prompts/
   - backend/app/domain/agent/harness/claude_code/runner.py
   - backend/sandbox/cheese
 ---
@@ -29,7 +29,7 @@ covers:
 
 这棵树在**会话机**上，在会话自己的家里（`~/.cheese/memory/`），不在执行机上：runner 在那里对账，而 agent 的文件工具（Read / Write / Edit）平时跑在执行机上，只有碰到这棵树的路径时留在会话机（`remote_execution/proxy.js` 的 `memoryPath`，守卫是 `client.py` 的 `own_memory`）。agent 按 `~/.cheese/memory/...` 写，或者按它 shell 里的 `$HOME`（那是执行机的家）拼出一个绝对路径，落到的都是这一棵。shell 看不到它，所以 `rm` 删不掉一条记忆：删一条就用 Write 把它写成空内容。runner 收树时把写空了的那条（索引除外，空索引就是一份空索引）当成会话删了，照样过批量删除那道闸，并把那个空文件从会话机上清掉（`runner.read_memory`）。
 
-> 讲：分层、两个作用域、写入与对账的时机、上限与权限、整理（dream）、旧表迁移、正文读数。不讲：每个 `type` 该怎么写（那是 `instructions.py` 里那段散文）。
+> 讲：分层、两个作用域、写入与对账的时机、上限与权限、整理（dream）、旧表迁移、正文读数。不讲：每个 `type` 该怎么写（那是 `prompts/pieces/memory/` 里那段散文）。
 
 ```demo-steps
 title: 一轮里记忆怎么流转
@@ -37,13 +37,13 @@ note: 右下角「幕后」是会话目录里的记忆文件树；上面那格�
 embed: memory
 steps:
   - label: 输入之前：铺好、注入索引
-    desc: 平台把库里这一份铺进会话目录，新会话的开场快照里带上 team/MEMORY.md；私聊里再告诉它那个人的 private 索引在哪，由它自己读。正文不注入，芝士要用时自己读。
+    desc: 平台把库里这一份铺进会话目录，新会话的开场快照里带上 team/MEMORY.md；私聊里再告诉它那个人的 private 索引在哪；频道、任务、支线里告诉它这一轮答复的人里谁有 communication 记录。都由它自己读。正文不注入，芝士要用时自己读。
     link: /dev/memory#scopes
   - label: 被纠正
     desc: 纠正的是做法倾向才值得记；纠正的是某一次的结果，改完就结束。
     link: /dev/memory#write
   - label: 写之前先查重
-    desc: 表达习惯只在私聊里记，进那个人的 private；项目规矩才进 team。同一件事已有文件就改它，不新建副本。
+    desc: 一个人要怎么跟他说话记进他的 private（communication）；公开定下的事和分工才进 team。同一件事已有文件就改它，不新建副本。
     link: /dev/memory#write
   - label: 写一条：一个文件加索引一行
     desc: 新建一条记忆是新建一个文件、索引里加一行。索引一行不超过 150 字符，正文不超过 1000 字，超了存成 .rejected.md。
@@ -55,7 +55,7 @@ steps:
     desc: 有改动就留一条折叠的灰字事件，不点任何人的名。team 的改动说进「综合」，private 的改动说进那个人的私聊。
     link: /dev/memory#events
   - label: 下一次开场
-    desc: 别人刚改的也在铺进来的那一份里。多人的房间里没有任何人的 private。
+    desc: 别人刚改的也在铺进来的那一份里。多人的地方只铺这一轮答复的人的 communication 记录。
     link: /dev/memory#scopes
 ```
 
@@ -65,15 +65,15 @@ steps:
 
 | 层 | 是什么 | 怎么进到模型眼前 |
 |---|---|---|
-| L1 索引 | 每个作用域一份 `MEMORY.md`，一行一条记忆：`- [标题](文件.md) — 一句钩子` | **每轮注入**（`memory_index()` → `build_system_prompt`） |
+| L1 索引 | 每个作用域一份 `MEMORY.md`，一行一条记忆：`- [标题](文件.md) — 一句钩子` | **每轮注入**（`memory_index()` → `prompts.render_opening`） |
 | L2 记忆文件 | `<短名>.md`，带 `name` / `description` / `type` 三个 frontmatter 字段 | 注入了索引，正文让 agent **自己去读**（它有 Read） |
 | L3 原料 | 这个会话里说过的话、跑过的命令、工具结果 | 不进记忆。它们是记忆的**来源**，不是记忆 |
 
 `MEMORY.md` 本身没有 frontmatter，永远不写正文——它是目录，不是文件（`parse_index` / `fit_index`，`files.py`）。
 
-**这一段只对会对账的骨架注入。** 说明书（`MEMORY_INSTRUCTIONS`）进系统提示词、L1 进开场快照，条件都是 `keeps_memory=True`（`build_system_prompt` 和 `build_session_opening` 各收一份），由调用方按当前骨架的事实传入（注册表的 `Harness.keeps_memory`，经 `session_host.host.keeps_memory` 读：Claude Code 是 `True`，codex、pi 是 `False`）。说明书写的是「写进 `~/.cheese/memory/`，下一轮平台那一份里有它」，而 codex、pi 没有这条回路——照它写下的文件永远同步不回来，agent 却以为自己在写项目记忆。
+**这一段只对会对账的骨架注入。** 规矩（`prompts/pieces/memory/`）进系统提示词、L1 进开场快照，条件都是骨架会对账（清单里的 `keeps_memory`，开场的 `keeps_memory` 参数），由调用方按当前骨架的事实传入（注册表的 `Harness.keeps_memory`，经 `session_host.host.keeps_memory` 读：Claude Code 是 `True`，codex、pi 是 `False`）。说明书写的是「写进 `~/.cheese/memory/`，下一轮平台那一份里有它」，而 codex、pi 没有这条回路——照它写下的文件永远同步不回来，agent 却以为自己在写项目记忆。
 
-四类记忆（`type`）：`user`（这个人是谁、懂什么）、`feedback`（活该怎么干，含被认可的判断）、`project`（项目里正在进行的事，代码里读不出来的）、`reference`（外部系统的入口）。各自的 `scope` 规矩、正文怎么组织（feedback / project 要写 `**Why:**` 和 `**How to apply:**`）、什么**不**该写——整段在 `instructions.py` 的 `MEMORY_INSTRUCTIONS` 里，照搬 Claude Code 2.1.283 的 memory 段翻成中文，**原样进系统提示词**。
+五类记忆（`type`）：`user`（这个人是谁、懂什么）、`feedback`（活该怎么干，含被认可的判断）、`project`（项目里正在进行的事，代码里读不出来的）、`reference`（外部系统的入口）、`communication`（一个人要你怎么跟他说话：回复长短、先说什么、要不要 @ 他；只在本人的 private 里）。各自的 `scope` 规矩、正文怎么组织（feedback / project 要写 `**Why:**` 和 `**How to apply:**`）、什么**不**该写——整段在 `prompts/pieces/memory/` 里，照搬 Claude Code 2.1.283 的 memory 段翻成中文，**原样进系统提示词**。
 
 ## 两个作用域 {#scopes}
 
@@ -85,11 +85,17 @@ steps:
 
 `personal` 只有个人芝士在本人的面板里读写（见[个人芝士的记忆](/dev/assistant#memory)）。它的整理不走下面那套（个人芝士的会话没有文件树），是一次模型调用，见同一节。项目里的芝士读不到它：每一次项目里的读都带着项目，注入只铺 team 和 private，`/memory/files` 不认这个作用域（答 422），对账只认自己点过名的作用域。同类产品在多人场合也都不用个人记忆（ChatGPT 群聊、Copilot Studio 在群聊和频道里）。
 
-注入的规矩：**`team/MEMORY.md` 的索引；在一个人和芝士的私聊里，再加上他的 `private/<handle>/MEMORY.md` 在哪**（`files_store.memory_index`，`turn_speakers.private_memory_for`）。多人的房间里没有任何人的 private，在任何一台机器上都是：一个座位的会话从一轮接着用到下一轮，替谁回答就跟着谁换，它为一个人读过的 private 会留在它自己的对话里，也留在平台交给这间房执行机的那份会话记录里（`runner.transcript_chunk`），下一轮替别人干活时一条命令就能把它拿出来，而命令的输出不知道自己出自谁的文件、标不上主人。所以多人房间里的芝士不用任何一个人的个人偏好。要让多人房间也用上，根上的做法是每个（座位，说话的人）一条会话，或者换一个人回答时开一条新会话；在那之前，私聊是唯一带 private 的地方。正文不注入：注入是会话的输入，原样记进会话记录，由 agent 自己 Read，那一次调用就能按结构认出是谁的（见下一段）。代价是每一轮多一次 Read，agent 也可能不读。
+注入的规矩：**`team/MEMORY.md` 的索引；在一个人和芝士的私聊里，再加上他的 `private/<handle>/MEMORY.md` 在哪**（`files_store.memory_index`，`turn_speakers.private_memory_for`）。正文不注入：注入是会话的输入，原样记进会话记录，由 agent 自己 Read，那一次调用就能按结构认出是谁的（见下一段）。代价是每一轮多一次 Read，agent 也可能不读。
+
+**多人的地方只带 communication 一类。** 频道主线、任务、支线里，一个座位的会话从一轮接着用到下一轮，替谁回答就跟着谁换：它为一个人读过的东西会留在它自己的对话里，也留在平台交给这里执行机的那份会话记录里（`runner.transcript_chunk`），下一轮替别人干活时还在。所以这里只带留下来也不改变它怎么对待别人的那一类：这一轮答复的人（要它答的消息的作者；平台为一件任务叫醒的一轮，是这件任务的审阅人、提出人和转给它的人，`assembly._answered`）各自的 `communication` 记录。挑哪几条由平台按 frontmatter 的 `type` 定，不由模型定（`files.talk_view`）：铺下去的 `private/<handle>/` 里只有这几条，和一份按它们的 frontmatter 现拼的索引（不抄他自己那份索引里的行：那里的钩子是在别处写的，没过这一类的收件规矩）。记录本身由平台放进输入（`prompts.talk_notes`）：一段对话第一次答复这个人时给一次，记录改过之后再给一次，其余各轮不给。给过什么记在这段对话被告诉过的东西里（`AgentSession.told` 的 `talk/<handle>` 键，存那一份的摘要），压缩、换对话时和开场的摘要一起清掉，下一次答复他时重新给。这一块输入单独交给 runner（`session_host.contract.PrivateText`），runner 给带着它的每条记录盖上主人（`cheese.private_text`），别人读会话记录时这一块换成「只有本人看得到」（`session_record.privacy.for_reader`），和他的文件被读的那一次同一条规矩。怎么用由规矩管（`prompts/pieces/memory/multi_person.md`：只用在本人身上、不说出来、不作为项目决定的依据、谁问都不透露）。
+
+收的时候也按类型（`files.policy_breach`，会话机上的 `tree.sync_tree` 先拦，平台的 `session.apply_tree` 再拦一次，交接回来的 `apply_withdrawn` 同一条）：铺下去的那几条只读，只收新记的 `communication`，和他一条没铺下去的记录同名的也不收；它的正文不超过 300 字（`TALK_BODY_MAX`），点了本人以外任何一位项目成员的 handle 或名字就不收；索引只收新加的、指向这一次新收下的记录、不点别的成员名字的行，合回他真正的那份索引（`files.merge_view_index`），他别的条目从没铺下去，所以不会被当成删除。平台核得了的只是形状（谁的目录、type、长度、点名）；一条把「多检查别人」标成 `communication`、又没点名的记录，平台照收，那一层靠规矩。`communication` 只能在本人的 private 里，写进 team 一律不收（`MemoryFileStore.write` 也拦，面板和整理都过这一道）；整理不能把别的类型改成它，也不能凭空多出一条它（`dream.talk_widened`，命中整份不写）。
+
+一个人的 private 按「人 × 项目」存，**不分队友**：同一个项目里的几位 AI 队友读写的是同一份。
 
 **成员自己电脑上跑的会话只带电脑主人自己的 private**：成员自己的 Claude Code 连接在他电脑上时，会话跑在那台电脑上（`owner_provider`），铺在那里的东西电脑的主人都读得到，所以别人在和这个芝士的私聊里也不带他自己的那一份；主人和它的私聊带主人的（认主人用设备行的 `owner_user_id`）。其余会话都跑在平台的会话主机上。
 
-规矩（`instructions.MEMORY_INSTRUCTIONS`）要求私聊里平台给过那个人的 private 索引在哪，每一轮开工前先 Read 它，连着几轮也每轮都读。没读的那一轮记一行日志 `memory_private_index_unread`（`MemoryLedger.sync_once`：runner 每次对账报上自上次以来有没有干活、读过谁的索引），用来数生产上跳过了多少。
+规矩（`prompts/pieces/memory/`）要求私聊里平台给过那个人的 private 索引在哪，每一轮开工前先 Read 它，连着几轮也每轮都读。没读的那一轮记一行日志 `memory_private_index_unread`（`MemoryLedger.sync_once`：runner 每次对账报上自上次以来有没有干活、读过谁的索引），用来数生产上跳过了多少。
 
 会话记录房间里的人都读得到（现场、原始记录、它们的逐行投影、单独取一条），而 private 只给本人看。哪一段是谁的，只按平台自己记下的结构认，从不按记录里的文字认：文字谁都写得进去（team 的索引、消息、项目里的文件），一段说自己属于某人的文字什么都证明不了。会话碰到某人的 private 只有一条路：它的文件工具读写 `private/<handle>/` 下的文件；runner 看到这一次调用时就给调用和答它的结果记上主人（`cheese.private`，调用编号 → 主人，`files.private_owner`）。所有读会话记录的路都经过 `session_record.service.read`，它必须被告知谁在读，把记着别人名字的调用和结果换成一句占位（`privacy.for_reader`），搜索也只搜换过之后的。现场还实时显示 agent 正在写的那个工具调用，参数一边流进来一边显示，这一帧发给房间里所有人：runner 用同一个判据认出落在某人 private 上的调用，参数换成存下的记录里那同一个占位（`privacy.hidden_input`），文件工具的路径还没写出来之前参数一个字都不显示（`runner.live_arguments`）；这一帧是广播，所以本人实时看到的也是占位，写完之后在会话记录里看原文。
 
@@ -97,7 +103,7 @@ steps:
 
 ## 写入、更新、删除 {#write}
 
-**agent 自己写。** 它用手里那套文件工具（Write / Edit）改 `.cheese/memory/` 下的文件——新建一条记忆是新建一个文件加索引里一行，改一条是改那个文件（**先查重**：同一件事别新建副本），不成立的那条直接改掉或删掉，不写「更正：」。写入的规矩在系统提示词里（`MEMORY_INSTRUCTIONS`），不在工具的参数里：一条记忆的形状（文件名、frontmatter、索引行、≤150 字符）用一段散文说得清，用一个 `cheese_remember(fact, core)` 说不清——这正是换这套机制的原因（那个工具
+**agent 自己写。** 它用手里那套文件工具（Write / Edit）改 `.cheese/memory/` 下的文件——新建一条记忆是新建一个文件加索引里一行，改一条是改那个文件（**先查重**：同一件事别新建副本），不成立的那条直接改掉或删掉，不写「更正：」。写入的规矩在系统提示词里（`prompts/pieces/memory/`），不在工具的参数里：一条记忆的形状（文件名、frontmatter、索引行、≤150 字符）用一段散文说得清，用一个 `cheese_remember(fact, core)` 说不清——这正是换这套机制的原因（那个工具
 已经撤掉了）。
 
 **平台侧的对账两个时刻，一次一件事**（`ChatService._sync_memory`，挂在 harness 的两个钩子上）：
@@ -105,7 +111,7 @@ steps:
 1. **输入之前**：把数据库这一份铺进会话目录。agent 一睁眼读到的就是平台现在这一份，别人刚改的也在里面。
 2. **这一轮结束之后**：会话改过的收回来，写进 `memory_files`，并在房间里留一条折叠事件（带 diff）。
 
-两个时刻都属于某一个座位的某一轮，问的就是那个座位的会话（`RoomSessions.memory`）：一间房坐着几位队友、或者房间里的任务各有会话时，每一位的一轮照样对账。点名的是 team，私聊里再加那个人的 private（`MemoryLedger._scopes`）。**每个座位一棵自己的树**，在座位自己的目录里、执行配置旁边（`runner.memory_root`；`remote_execution/client.prepare` 的 `central_memory` 从同一个文件算出来，agent 写 `~/.cheese/memory/` 落到的就是它），不在房间的家里：一间房的座位共用那个家，一个座位的树只该是它自己这一轮点了名的那几棵。一个座位不再点一棵先前铺下的 private 时（私聊里那个人一时认不出来、成员电脑换了主人这类情形），那一棵 private（runner 记着铺过哪几棵，空的也算，`runner.MEMORY_LAID`），会话不在自己那一侧合，而是连同它那一段基线和树上的旁路文件整棵挪进交接区（树旁边的 `memory-handoff/`，agent 的文件工具够不着），从树上拿走。每一次对账的回答都带着交接区里还在的那几份，平台读出那个人现在的那一份，按同一条三方规矩合一次，合出来的写回他的 private（`memory.session.apply_withdrawn`），提交之后才回一句收到（`acked`），会话那一侧这时才删那份交接：回答在路上丢了，下一次对账还会再交。被平台那一版盖回去的、超了上限的、还没处理完的旁路副本，原文只交给本人：记进他私聊的那条记录里，也说给他私聊里的 agent（`queries._say_handed_back`）。会话替别人干活时写进一个从没铺过的 private 目录的东西不是谁的记忆，对账时直接拿走，不收进那个人的 private。同一间房的对账排队跑。
+两个时刻都属于某一个座位的某一轮，问的就是那个座位的会话（`RoomSessions.memory`）：一间房坐着几位队友、或者房间里的任务各有会话时，每一位的一轮照样对账。点名的是 team，私聊里再加那个人的整份 private，多人的地方再加这一轮答复的那几位的 communication 那一份（`MemoryLedger._scopes`）。**每个座位一棵自己的树**，在座位自己的目录里、执行配置旁边（`runner.memory_root`；`remote_execution/client.prepare` 的 `central_memory` 从同一个文件算出来，agent 写 `~/.cheese/memory/` 落到的就是它），不在房间的家里：一间房的座位共用那个家，一个座位的树只该是它自己这一轮点了名的那几棵。一个座位不再点一棵先前铺下的 private 时（多人的地方换了答复的人，私聊里那个人一时认不出来、成员电脑换了主人这类情形），那一棵 private（runner 记着铺过哪几棵，空的也算，`runner.MEMORY_LAID`），会话不在自己那一侧合，而是连同它那一段基线和树上的旁路文件整棵挪进交接区（树旁边的 `memory-handoff/`，agent 的文件工具够不着），从树上拿走。每一次对账的回答都带着交接区里还在的那几份，平台读出那个人现在的那一份，按同一条三方规矩合一次，合出来的写回他的 private（`memory.session.apply_withdrawn`），提交之后才回一句收到（`acked`），会话那一侧这时才删那份交接：回答在路上丢了，下一次对账还会再交。被平台那一版盖回去的、超了上限的、还没处理完的旁路副本，原文只交给本人：记进他私聊的那条记录里，也说给他私聊里的 agent（`queries._say_handed_back`）。会话替别人干活时写进一个从没铺过的 private 目录的东西不是谁的记忆，对账时直接拿走，不收进那个人的 private。平台没有收、也没有留副本的写入（写在根目录或子目录、没铺过的人的目录、私聊和私密频道里的 team、多人的地方不收的那一类），都按路径和原因说给写它的 agent（`runner.stray_memory`、`MemoryChange.dropped`、`platform_notices.memory_dropped_notice`），不带正文。同一间房的对账排队跑。
 
 两次做的是同一件事，因为对账**幂等**：谁比谁新不靠调用点记，靠会话机上那份基线（`runner.MEMORY_BASELINE`，座位目录下 `remote-session/memory/.baseline.json`）。**基线和这棵树同生同死**：它俩在一个目录里，座位目录在会话的家里，家被重建（`resource_cleanup` 会删掉它）时一起没了，于是「磁盘空、基线满」这个状态不会出现——真出现的话，读起来就是「这个会话把整棵树删光了」，而平台上那份团队记忆会被整批删掉、没有历史可以恢复。就算基线还在，也还有一道保险：一次对账里某个作用域要删的条数超过一半、而且超过 3 条时，取消这次删除、原样铺回平台的版本，并把拦下的路径写进 runner 日志（`tree.BULK_DELETE_RATIO` / `BULK_DELETE_MIN`，`TreeSync.held`）。批量删除是个信号，不是一步操作。
 

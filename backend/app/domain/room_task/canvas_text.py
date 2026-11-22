@@ -1,11 +1,11 @@
 """The tasks a canvas's cards point at, and a document's canvases as the text an
 AI teammate reads.
 
-A card that points at a task says which task and whether it has started or
-ended, read off the task itself. That is all the text says about it: the finer
-column a person's board shows (检查中, 待处理) needs the task's review, which an
-AI teammate reaches by opening the task, and a word the text cannot vouch for is
-not written.
+A card that points at a task says which task and whether it has ended, read
+off the task itself. That is all the text says about it: the status word a
+person's board shows (进行中, 待审阅, ...) needs the task's review, which an AI
+teammate reaches by opening the task, and a word the text cannot vouch for is
+not written — so an open task reads 未结束, never one of the seven words.
 
 Who may see which task is the caller's to decide: a card in a document someone
 may read can point at a task in a channel they may not, and then its title and
@@ -42,7 +42,7 @@ class LinkedTask:
     title: str
     room_id: uuid.UUID
 
-    #: 进行中 or 已结束: what the task row itself says.
+    #: 未结束 or 已结束: what the task row itself says.
     state: str
 
     def line(self) -> TaskLine:
@@ -50,7 +50,7 @@ class LinkedTask:
 
 
 def task_state(task: Task) -> str:
-    return "进行中" if task.status == TaskStatus.open else "已结束"
+    return "未结束" if task.status == TaskStatus.open else "已结束"
 
 
 async def linked_tasks(

@@ -31,6 +31,8 @@ interface AgentsPayload {
   agents: ProjectAgent[]
   types: AgentType[]
   models: AgentFieldChoice[]
+  /** 项目没设主模型（「自动」）。 */
+  projectAutomatic: boolean
   // 后端那一半是单独上线的。没上线时这一节不能是白屏，也不能是一句看起来像
   // bug 的报错 —— 它得说清楚「功能还没到这个环境」。
   backendMissing: boolean
@@ -51,6 +53,7 @@ export function useProjectAgents(projectId: MaybeRefOrGetter<string>) {
           agents: [],
           types: [],
           models: [],
+          projectAutomatic: false,
           backendMissing: false,
           loadError: null,
         }
@@ -66,8 +69,8 @@ export function useProjectAgents(projectId: MaybeRefOrGetter<string>) {
             staleTime: 0,
           })
           .then(
-            (r) => r.choices,
-            () => [] as AgentFieldChoice[]
+            (r) => ({ choices: r.choices, automatic: r.model === null }),
+            () => ({ choices: [] as AgentFieldChoice[], automatic: false })
           )
         try {
           payload.agents = await queryClient.fetchQuery({ ...agentsQuery(id), staleTime: 0 })
@@ -78,7 +81,8 @@ export function useProjectAgents(projectId: MaybeRefOrGetter<string>) {
         }
         const [typeList, modelList] = await Promise.all([typesRead, modelsRead])
         payload.types = typeList
-        payload.models = modelList
+        payload.models = modelList.choices
+        payload.projectAutomatic = modelList.automatic
         return payload
       },
     })),
@@ -95,6 +99,7 @@ export function useProjectAgents(projectId: MaybeRefOrGetter<string>) {
   const agents = computed<ProjectAgent[]>(() => data.value?.agents ?? [])
   const types = computed<AgentType[]>(() => data.value?.types ?? [])
   const models = computed<AgentFieldChoice[]>(() => data.value?.models ?? [])
+  const projectAutomatic = computed(() => data.value?.projectAutomatic ?? false)
   const backendMissing = computed<boolean>(() => data.value?.backendMissing ?? false)
 
   // 名册取不回来，和「设为默认 / 停用」那一下失败，都显示在同一条 alert 上。
@@ -154,6 +159,7 @@ export function useProjectAgents(projectId: MaybeRefOrGetter<string>) {
     agents,
     types,
     models,
+    projectAutomatic,
     backendMissing,
     loading,
     refreshing,

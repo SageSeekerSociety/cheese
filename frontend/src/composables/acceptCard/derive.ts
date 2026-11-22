@@ -92,13 +92,16 @@ export function useAcceptCardDerive(host: AcceptCardDeriveHost) {
   })
 
   // 绿了自动合 (#718)：项目允许、且卡正停在 blocked/behind（规则还没满足）时才有
-  // 这个开关；已布防的开关一直可见，好让人解除。
+  // 这个开关；已布防的开关一直可见，好让人解除——「提交并采纳」布下的也一样，项目
+  // 没开自动合并时也能解除。
   const autoMergeArmedBy = computed(() => pendingCard.value?.auto_merge.armed_by ?? null)
   const autoMergeVisible = computed(() => {
     const card = pendingCard.value
-    if (!card || !card.auto_merge.allowed) return false
+    if (!card) return false
+    if (card.auto_merge.armed_by) return true
+    if (!card.auto_merge.allowed) return false
     const state = card.merge_state.state
-    return state === 'blocked' || state === 'behind' || !!card.auto_merge.armed_by
+    return state === 'blocked' || state === 'behind'
   })
 
   // The bar line is a plain string and cannot hold a UserRef, so the person is named
@@ -124,8 +127,8 @@ export function useAcceptCardDerive(host: AcceptCardDeriveHost) {
     const card = pendingCard.value
     if (needsPr.value) return t('work.room.accept.createPr')
     if (card?.status === 'conflict') return t('work.room.accept.retryAccept')
-    if (card?.completes_task === false) return t('work.room.accept.acceptAction')
-    return t('work.room.accept.acceptAndComplete')
+    // 卡上不说是不是最后一步：合并后由任务的芝士判断做没做完（后端 task_landing）。
+    return t('work.room.accept.acceptAction')
   })
   // 「仍要采纳」：明知合并态不是 clean 仍合并。只在按钮灰着、而挡住它的不是另一个
   // 还没合的任务时有。

@@ -66,6 +66,7 @@ type Host struct {
 	localFSSet *localfs.GrantSet
 
 	machine machineRelay // streams a session's sandbox opened (machine.go)
+	streams streamRelay  // streams the server opened to an executor (stream.go)
 
 	updating    atomic.Bool // guards against concurrent / re-entrant self-updates
 	sleepMu     sync.Mutex
@@ -328,6 +329,8 @@ func (h *Host) onMsg(m link.Msg) {
 		go h.runExecutor(m)
 	case "machine.data", "machine.close":
 		h.machineFrame(m)
+	case "stream.open", "stream.data", "stream.ack", "stream.close":
+		h.streamFrame(m)
 	case "exec.cancel": // stop an in-flight exec (e.g. the caller's timeout fired)
 		h.cancelExec(m.ID)
 	case "localfs.grants": // the platform's copy of what this machine may touch

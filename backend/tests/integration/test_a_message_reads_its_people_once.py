@@ -10,6 +10,12 @@ read read the people involved in as few statements as the answers need.
 - Marking a room read read the room, then the reader's seat in it; the seat
   is read with the room now (`place_or_404(member=...)`).
 
+A message said in a channel's main line also asks who the project's people
+are, once, where nothing in the request read the roster already: the only
+person in a project hands every such message to the AI teammate
+(`turn.intake.rooms.only_person_in_project`). That read is counted below as
+the one more statement it is.
+
 The caller signs in with a token that carries their user id, as a signed-in
 person's does, so nothing reads their own account to find it.
 """
@@ -35,6 +41,12 @@ def _signed_in(client, handle: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
+def _not_alone(client, project: str) -> None:
+    """bob in the project: what alice says that names nobody starts no turn,
+    whose reads would land among the ones counted here."""
+    join_project_team(client, project, "bob")
+
+
 def _statements(call) -> list[str]:
     seen: list[str] = []
 
@@ -51,7 +63,8 @@ def _statements(call) -> list[str]:
 
 
 def test_whom_a_draft_is_for_reads_the_agents_with_the_roster(client):
-    _, _root, room = _channel(client)
+    project, _root, room = _channel(client)
+    _not_alone(client, project)
     post_message(client, room, "alice", {"content": "hi"})
     headers = _signed_in(client, "alice")
     ask = lambda: client.post(  # noqa: E731
@@ -74,7 +87,8 @@ def test_whom_a_draft_is_for_reads_the_agents_with_the_roster(client):
 
 
 def test_sending_reads_the_owners_team_row_with_their_account(client):
-    _, _root, room = _channel(client)
+    project, _root, room = _channel(client)
+    _not_alone(client, project)
     headers = _signed_in(client, "alice")
     send = lambda: client.post(  # noqa: E731
         f"/topics/{room}/messages",
@@ -91,11 +105,14 @@ def test_sending_reads_the_owners_team_row_with_their_account(client):
         if s.startswith('SELECT "user".id') and "team_user_relation" not in s
     ] == [], seen
     teams = [s for s in seen if "team_user_relation" in s]
-    assert len(teams) == 1 and 'JOIN "user"' in teams[0], teams
+    # The owner's standing, with their account; and the project's people.
+    assert len(teams) == 2, teams
+    assert len([s for s in teams if 'JOIN "user"' in s]) == 1, teams
 
 
 def test_marking_read_reads_the_room_with_the_readers_seat(client):
-    _, _root, room = _channel(client)
+    project, _root, room = _channel(client)
+    _not_alone(client, project)
     message = post_message(client, room, "alice", {"content": "hi"})
     headers = _signed_in(client, "alice")
     mark = lambda: client.post(  # noqa: E731
@@ -112,7 +129,8 @@ def test_marking_read_reads_the_room_with_the_readers_seat(client):
 def test_whom_a_draft_is_for_reads_the_projects_agents_with_the_room(client):
     """Whom a draft would start a turn for asks which of the project's agents
     sits here; the agents come in the statement that reads the room."""
-    _, _root, room = _channel(client)
+    project, _root, room = _channel(client)
+    _not_alone(client, project)
     post_message(client, room, "alice", {"content": "hi"})
     headers = _signed_in(client, "alice")
     ask = lambda: client.post(  # noqa: E731
@@ -168,5 +186,10 @@ def test_a_members_standing_is_read_in_one_statement(client):
 
     for table in ("project_member_exclusions", "project_members", "project_roles"):
         reads = [s for s in seen if table + " " in s or table + "." in s]
-        assert len(reads) == 1, (table, reads)
-        assert "team_user_relation" in reads[0], (table, reads)
+        standing = [s for s in reads if "team_user_relation" in s]
+        assert len(standing) == 1, (table, reads)
+        # The project's people read its members and exclusions once more.
+        assert len(reads) == (1 if table == "project_roles" else 2), (
+            table,
+            reads,
+        )

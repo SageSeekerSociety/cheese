@@ -15,11 +15,11 @@ from datetime import UTC, datetime
 
 from app.core import raster_images
 from app.core.config import settings
-from app.domain.agent.harness.notices import strip_platform_notice
 from app.domain.block.authorship import speaker
 from app.domain.block.models import BlockKind
 from app.domain.block.quoted_context import quoted_context_prompt
 from app.domain.identity.handles import recipient_seat
+from app.domain.prompts import strip_platform_notice
 
 _BARE_PATH_RE = re.compile(
     r"(?<![\w/.&<-])((?:[\w.-]+/)+[\w-]+\.\w{1,8}(?::\d+(?:-\d+)?)?)(?![\w/])"
@@ -112,15 +112,19 @@ def message_prompt_line(
     quoted_context: dict | None = None,
     *,
     addressed_to: str | None = None,
+    message_id=None,
 ) -> str:
-    """One line, speaker-labelled; ``→ @handle`` when it names somebody else.
+    """One line, speaker-labelled; ``→ @handle`` when it names somebody else;
+    led by the message's id when it has one, the id `chat_react` and
+    `chat_send`'s ``reply_to`` take.
 
     A seat now reads what was said to the whole room, so most of what it reads
     was not said to it. The arrow is what keeps 「read everything」 from turning
     into 「answer everything」: the line itself says whose it was.
     """
     who = f"{author} → @{addressed_to}" if addressed_to else author
-    return f"[{who}]: {strip_platform_notice(content)}" + quoted_context_prompt(
+    lead = f"[id={message_id}] " if message_id is not None else ""
+    return f"{lead}[{who}]: {strip_platform_notice(content)}" + quoted_context_prompt(
         quoted_context
     )
 
@@ -222,6 +226,7 @@ def prompt_line(
             addressed_to=addressee(
                 b, recipient=recipient, recipient_instance_id=recipient_instance_id
             ),
+            message_id=getattr(b, "id", None),
         )
     waited = waited_note(getattr(b, "created_at", None))
     if waited is not None:

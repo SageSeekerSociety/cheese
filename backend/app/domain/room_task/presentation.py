@@ -159,6 +159,12 @@ class TaskSignals(Protocol):
     @property
     def closing_since(self) -> datetime | None: ...
 
+    @property
+    def deploying_since(self) -> datetime | None: ...
+
+    @property
+    def deploy_blocked_url(self) -> str | None: ...
+
 
 class TaskRow(Protocol):
     """`Task` 那一行的形状 —— **ORM 行**那一份契约，按模型的原样声明 `Mapped`。
@@ -177,6 +183,8 @@ class TaskRow(Protocol):
     accepted_at: Mapped[datetime | None]
     conclusion: Mapped[str | None]
     closing_since: Mapped[datetime | None]
+    deploying_since: Mapped[datetime | None]
+    deploy_blocked_url: Mapped[str | None]
 
 
 class TopicSignals(Protocol):
@@ -280,6 +288,11 @@ class Delivering(enum.StrEnum):
     resolving_conflict = "resolving_conflict"
     #: 合并态 BEHIND（strict）：平台自己在 update-branch，人不用动。
     updating_branch = "updating_branch"
+    #: 最后一步已合并，在等主干 CI 跑完、部署上线（`Task.deploying_since`）。
+    deploying = "deploying"
+    #: 同上，但合并之后主干的 Required CI 红了，部署被挡住（`Task.deploy_blocked_url`）。
+    #: 修主干的不一定是这件任务的人，所以仍在「检查中」，不点负责人。
+    deploy_blocked = "deploy_blocked"
 
 
 class NeedsYou(enum.StrEnum):
@@ -404,6 +417,10 @@ class TaskFacts:
     awaiting_answer: bool = False
     #: 最后一次交付已经合并，AI 队友正在写总结，写完就关闭（`Task.closing_since`）。
     closing: bool = False
+    #: 最后一次交付已经合并，在等部署上线（`Task.deploying_since`）。
+    deploying: bool = False
+    #: 等部署时挡住它的那次主干 CI 红（`Task.deploy_blocked_url`）。
+    deploy_blocked: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -484,6 +501,8 @@ def facts_for_task(
         has_conclusion=bool(task.conclusion),
         awaiting_answer=awaiting_answer,
         closing=task.closing_since is not None,
+        deploying=task.deploying_since is not None,
+        deploy_blocked=task.deploy_blocked_url is not None,
     )
 
 
@@ -511,12 +530,20 @@ def facts_for_room(
     )
 
 
-def card_model(task: Task, *, spent: str | None, choices: dict[str, dict]) -> str:
+def card_model(
+    task: Task,
+    *,
+    spent: str | None,
+    choices: dict[str, dict],
+    planned: str | None = None,
+) -> str:
     """卡上写哪个模型。
 
     **花过就写它真花的那个** —— `spent` 是 `usage` 里这条活最后一行的 `model`，
     也就是钱实际花在谁身上。一分钱还没花过的卡没有这个事实，才退回它绑的那个
-    （`binding.resolve`），那是它下一轮会用的。
+    （`binding.resolve`），那是它下一轮会用的。没绑的活下一轮用的是调用方按
+    任务场合算好的那个（`planned`，`agent.model_catalog.pick`：这件任务的队友
+    在任务里用什么）；本层够不着队友和平台角色，所以由调用方递进来。
 
     这两个都不是存下来的状态：`tasks` 上没有一列记「显示什么」，也不会有。一列
     这样的状态要靠每一次真实用量去刷新它，而它对不上的那一天，卡上写着 A、账单
@@ -543,9 +570,9 @@ def card_model(task: Task, *, spent: str | None, choices: dict[str, dict]) -> st
     if spent:
         return catalog_id(spent, choices) or spent
     try:
-        return resolve(task, choices).model
+        return resolve(task, choices, default_model=planned).model
     except ValidationError:
-        return (task.model or "").strip()
+        return (task.model or "").strip() or planned or ""
 
 
 # —— 卡 ————————————————————————————————————————————————————————
@@ -710,13 +737,15 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
 
     1. **关了就是结束**：最后一次交付被采纳的写「已采纳」，其余写「已关闭」——留了
        结论的（`completed`）和什么都没留的（`closed`）码不同，字一样：关掉不等于做成。还开着的任务就算采纳过前几步，也还在做；只有最后一步
-       合并后 AI 队友写总结的那一会儿例外，它已经是「已采纳」。
+       合并后 AI 队友写总结的那一会儿例外，它已经是「已采纳」。等部署的那段（项目的
+       部署会回报平台时，最后一步合并后先等上线，`review.deploy_wait`）是「检查中」：
+       下一步在 CI 和部署手上；主干 CI 红了挡住部署就换成「部署被挡住」。
     2. **待回答压过队友说的**：它说过在做，可这一刻它不会自己往下走了，而看板
        显示「在做」正是让人不来看的那一句。
     3. **一条活只有一个状态，核得了的事实定它**：开启、在做、在等、卡住、等审、
        关闭。卡在等审阅（卡说在哪一步：跑检查、等人审、检查没过……）就是等审，
        验收人被点到；递卡时队友之前报的状态作废，卡在的时候它也报不了
-       （`room_task.progress`）。卡被退回、作废，平台把它放回「在做」。
+       （`room_task.progress`）。卡被退回后等队友实际接手；作废后回到施工。
     4. **队友的会话在跑，而它在这一次跑里没报过，就是在做**：它从没报过（卡退回
        后也没说自己在改），或者它报的那句是上一次跑里说的——它被叫醒了：构建跑完
        了、有人回了它——那句话说的是这一次之前的事。它在这一次跑里报的照它说的：
@@ -732,6 +761,10 @@ def task_presentation(facts: TaskFacts, *, now: datetime) -> Presentation:
     del now
     if facts.closing:
         return _show(Done.accepted)
+    if facts.deploying and facts.status != TaskStatus.closed:
+        return _show(
+            Delivering.deploy_blocked if facts.deploy_blocked else Delivering.deploying
+        )
     if facts.status == TaskStatus.closed:
         if facts.accepted_at is not None:
             return _show(Done.accepted)
@@ -810,6 +843,19 @@ _WAITING_ON_SOMEONE = frozenset(
 )
 
 
+#: 交付链路上平台自己在动的几格：跑闸门、等检查、修检查、解冲突、换基、等部署。
+_PLATFORM_IS_MOVING = frozenset(
+    {
+        Delivering.gate_running.value,
+        Delivering.awaiting_checks.value,
+        Delivering.fixing_checks.value,
+        Delivering.resolving_conflict.value,
+        Delivering.updating_branch.value,
+        Delivering.deploying.value,
+    }
+)
+
+
 def quiet_since(shown: Presentation, *, last_activity: datetime) -> datetime | None:
     """这件事从什么时候起没有动静。None = 不算：已经结束、在等别人。
 
@@ -827,6 +873,61 @@ def is_stalled(shown: Presentation, *, last_activity: datetime, now: datetime) -
     """已停滞：`STALLED_AFTER` 这么久没有动静。"""
     since = quiet_since(shown, last_activity=last_activity)
     return since is not None and now - since >= STALLED_AFTER
+
+
+# —— 无人理会 ——————————————————————————————————————————————————
+#
+# 「好几天没人动」之后的第二层：在等别人审阅、等人回答的活，和别的活走不同的钟。
+# 球在别人手上的活 3 天催一次，满 7 天没人动就自动关闭；别的活 7 天转「搁置」，满
+# 14 天自动关闭（和上面 `STALLED_AFTER` 同一个数）。关的是任务，不是它的 PR，关了
+# 随时可以重开。蔡松洋 2026-11-17 定的前一档；后一档沿用已停滞的 14 天。
+
+#: 在等别人：多久没动静催一次。
+WAITING_NUDGE_AFTER = timedelta(days=3)
+#: 在等别人：多久没动静自动关闭。
+WAITING_CLOSE_AFTER = timedelta(days=7)
+#: 别的活：多久没动静转「搁置」。
+DORMANT_AFTER = timedelta(days=7)
+#: 别的活：多久没动静自动关闭。
+NEGLECT_CLOSE_AFTER = STALLED_AFTER
+
+
+@dataclass(frozen=True)
+class Neglect:
+    """一件没人理的活走到了哪一步。``since`` 是最后一次有动静的时刻，``dormant_at``
+    是转「搁置」（在等别人的活是第一次催）的时刻，``close_at`` 是自动关闭的时刻。"""
+
+    since: datetime
+    dormant_at: datetime
+    close_at: datetime
+    waiting_on_someone: bool
+
+    def dormant(self, now: datetime) -> bool:
+        return now >= self.dormant_at
+
+    def due(self, now: datetime) -> bool:
+        return now >= self.close_at
+
+
+def neglect(shown: Presentation, *, last_activity: datetime) -> Neglect | None:
+    """这件活的无人理会时间表。None = 不适用：已经结束，或者在等一张已经交出去、
+    正由平台跑的检查（交付链路上平台自己在动，不算没人理）。
+
+    `last_activity` 和 `quiet_since` 一样，是最后一次有人或芝士在任务里说话的时刻；
+    队友说它在做不算动静。"""
+    if shown.column in (Column.done, Column.archived):
+        return None
+    if shown.phrase in _PLATFORM_IS_MOVING:
+        return None
+    waiting = shown.phrase in _WAITING_ON_SOMEONE
+    dormant = WAITING_NUDGE_AFTER if waiting else DORMANT_AFTER
+    close = WAITING_CLOSE_AFTER if waiting else NEGLECT_CLOSE_AFTER
+    return Neglect(
+        since=last_activity,
+        dormant_at=last_activity + dormant,
+        close_at=last_activity + close,
+        waiting_on_someone=waiting,
+    )
 
 
 # —— 一个房间 ——————————————————————————————————————————————————

@@ -53,6 +53,7 @@ async function mountAt(name: string, width = 1280, params: Record<string, string
           { path: 'templates', name: 'SpacesDetailSettingsTemplates', component: Blank },
           { path: 'domain-groups', name: 'SpacesDetailSettingsDomainGroups', component: Blank },
           { path: 'guidance', name: 'SpacesDetailSettingsGuidance', component: Blank },
+          { path: 'learning-analysis', name: 'SpacesDetailSettingsLearningAnalysis', component: Blank },
           { path: 'materials', name: 'SpacesDetailSettingsMaterials', component: Blank },
           { path: 'templates/:templateIndex/edit', name: 'SpacesDetailEditTemplate', component: Blank },
         ],

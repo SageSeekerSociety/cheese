@@ -35,6 +35,7 @@ from app.domain.delivery.ledger import dedup_key
 from app.domain.delivery.models import Delivery, NativeInput, TimedDelivery
 from app.domain.delivery_events import REPLACES, DeliveryEvent
 from app.domain.identity.handles import agent_instance_handle
+from app.domain.notification.models import NotificationType
 from app.domain.project.models import Project
 from app.domain.room_task.closing import CLOSES_TASK
 from app.domain.room_task.models import Task, TaskStatus
@@ -198,6 +199,84 @@ async def record_agent(
     )
 
 
+#: What passes between a channel's main line and a task, and no conversation
+#: shows (`exchange_of`): the main line telling the task, the task reporting.
+TASK_TOLD = "task_told"
+TASK_REPORT = "task_report"
+
+
+async def exchange_of(session, task_id: uuid.UUID) -> list[Delivery]:
+    """What a channel's main line told ``task_id`` and what it reported back,
+    oldest first: the deliveries that carried it, one per message."""
+    rows = await session.scalars(
+        select(Delivery)
+        .where(
+            Delivery.payload["taskId"].as_string() == str(task_id),
+            Delivery.payload["eventType"].as_string().in_((TASK_TOLD, TASK_REPORT)),
+        )
+        .order_by(Delivery.recorded_at)
+    )
+    return list(rows)
+
+
+async def record_task_report(
+    session, task, *, seat: str, kind: str, content: str, sender: str, said: str
+) -> None:
+    """A task's own session reports to the AI teammate seated as ``seat`` in
+    its channel's main line (`TASK_REPORT`): a question, or that it cannot go
+    on. ``sender`` is the task's AI teammate and ``said`` its words as it said
+    them, which the task's 现场 shows; ``content`` is how the main line reads
+    them."""
+    await record_seat_instruction(
+        session,
+        DeliveryEvent(
+            id=uuid.uuid4(),
+            type=NotificationType.ROOM_NOTICE,
+            payload={
+                "projectId": str(task.project_id),
+                "topicId": str(task.room_id),
+                "taskId": str(task.id),
+                "eventType": TASK_REPORT,
+                "kind": kind,
+                "from": sender,
+                "said": said,
+            },
+            occurred_at=datetime.now(UTC),
+        ),
+        project_id=task.project_id,
+        conversation_id=task.room_id,
+        seat=seat,
+        content=content,
+    )
+
+
+async def record_seat_instruction(
+    session,
+    event: DeliveryEvent,
+    *,
+    project_id: uuid.UUID,
+    conversation_id: uuid.UUID,
+    seat: str,
+    content: str,
+) -> bool:
+    """Keep an instruction for the AI teammate seated as ``seat`` in the
+    conversation ``conversation_id``, like `record_agent`, naming it by its
+    seat. A seat this project has no active teammate for gets nothing: there
+    is nobody to tell, and no other seat is guessed in its place. Says whether
+    the teammate is told (one already told the same event counts)."""
+    agent = await instance_for_seat(session, project_id, seat)
+    if agent is None or not agent.is_active:
+        return False
+    await record_agent(
+        session,
+        event,
+        conversation_id=conversation_id,
+        instance_id=agent.id,
+        content=content,
+    )
+    return True
+
+
 async def record_task_instruction(
     session, event: DeliveryEvent, *, task_id: uuid.UUID, content: str
 ):
@@ -298,6 +377,10 @@ async def dispatch_pending(
             )
         )
         for row in rows:
+            if (row.payload or {}).get("held"):
+                # Waits its turn behind the teammate named before it
+                # (`delivery.mention.HELD`), released when that one is done.
+                continue
             if row.state == "sending":
                 row.state = "uncertain"
                 row.last_error = "Sender stopped before recording the receiver result"

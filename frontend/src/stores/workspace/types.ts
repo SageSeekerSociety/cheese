@@ -18,7 +18,6 @@ export interface RememberedPlace {
 
 /** 存在浏览器里的那一份布局偏好：可能是老版本写的，也可能被人手改过。 */
 export interface StoredLayout {
-  chatPct?: number
   /** 右侧面板开着还是收着，这个人自己选过一次之后就照它来；没选过按宽度定。 */
   panelOpen?: boolean
   lastProjectId?: string

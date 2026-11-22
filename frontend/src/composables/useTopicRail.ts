@@ -17,7 +17,7 @@ import type { TopicUnread } from '../types/channels'
 
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 
-import { agentIdentities, agentNames } from '../lib/agentNames'
+import { agentIdentities, agentNames, memberName } from '../lib/agentNames'
 import { isAgentHandle } from '../lib/authorship'
 import { waitStalled } from '../lib/replyWait'
 import { lightOf as lightFor } from '../lib/roomLight'
@@ -228,7 +228,7 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
   }
 
   /** 挂在频道下面的一条活的状态记号和它下面那一行（`lib/taskState.ts`），和全部任务、
-   *  任务页头同一个样子。这份行没有 `session_running`，「在做」转不转看 `moving`。 */
+   *  任务页头同一个样子。会话是不是真的在跑，都读 `session_running`。 */
   function taskStateOf(task: RailTask): TaskState {
     const agent = task.agent_handle ? agentNameMap.value.get(task.agent_handle) : undefined
     return taskState(task, {
@@ -273,7 +273,8 @@ export function useTopicRail(source: TopicRailSource, scrollTarget?: RailScrollT
     const person = store.members.find((m) => m.user_handle === handle)
     return {
       handle,
-      name: person?.name || handle,
+      // 真人和队友同一条规矩：有个人备注用备注，否则原名 —— 只给设了它的人看。
+      name: memberName(person) || handle,
       // 项目名册上就带着这个人挑过的头像 id，侧栏这一格原来没用它，于是真人永远只有
       // 首字母。没挑过（avatar_id 为 null）就不取图，交给首字母。
       avatar: person?.avatar_id != null ? getAvatarUrl(person.avatar_id) : null,

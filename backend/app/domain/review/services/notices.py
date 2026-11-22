@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from app.core.sentences import say
 from app.domain.review import (
+    forge_words,
     notes,
     pr_signals,
 )
@@ -71,6 +72,7 @@ from app.domain.review import services as pkg
 from app.domain.review.services._shared import (
     EVENT_MERGE_REFUSED,
     SEVERITY_ERROR,
+    SEVERITY_INFO,
     WHO_CHEESE,
     _GitHubCredentials,
     logger,
@@ -99,9 +101,10 @@ async def _announce_filed(
     topic: Topic,
     card: AcceptCard,
     task: Task,
+    by: str | None = None,
 ) -> None:
     return await _announce_filed_from_room(
-        self._session, topic, card, task, announce=_announce_of(self)
+        self._session, topic, card, task, announce=_announce_of(self), by=by
     )
 
 
@@ -248,35 +251,42 @@ async def _note_merge_blocked(
     `_note_left_merge_queue`: a refusal is not the only way an accepted PR
     stops.
     """
-    # GitHub 的原话是外部字符串，而它要被贴进芝士的终端（见
+    # 代码托管服务的原话是外部字符串，而它要被贴进芝士的终端（见
     # `pr_signals.sanitize_external`）。
     reason = pr_signals.sanitize_external(reason)
+    kind = (await self._resolve_forge(topic.project_id, card=card)).kind
+    host = forge_words.forge_name(kind)
     await _note_merge_stop_and_wake(
         self,
         card=card,
         topic=topic,
-        note=f"PR #{card.pr_number} GitHub 拒绝合并：{reason}",
+        note=(
+            f"PR #{card.pr_number} {host} 拒绝合并：{reason}"
+            if host
+            else f"PR #{card.pr_number} 的合并被拒绝：{reason}"
+        ),
         log=f"PR merge refused for card {card.id}: {reason}",
         lead=(
             f"任务 {card.task_id} 的 PR #{card.pr_number}（{card.pr_url}）"
-            "被 GitHub 拒绝合并：\n"
-            f"```\n{reason[:1500]}\n```\n"
+            + (f"被 {host} 拒绝合并：\n" if host else "的合并被拒绝：\n")
+            + f"```\n{reason[:1500]}\n```\n"
         ),
         action=(
             f'先执行 cd "$(cheese worktree {card.task_id})" 进入任务目录。'
-            "检查 GitHub 返回的具体原因；若是冲突，确认 PR 当前目标分支后再合入，"
+            + (f"检查 {host} 返回的具体原因；" if host else "看上面拒绝的具体原因；")
+            + "若是冲突，确认 PR 当前目标分支后再合入，"
             "解决并验证后提交，用 cheese push-fix 更新原 PR。"
             "采纳由人决定；只有人已启用自动合并且项目条件满足时才会自动合并。\n"
             "如果原因不是冲突（比如仓库禁用了这种合并方式），工作区里改不动，"
             "请在频道里说清楚卡在哪、需要谁做什么。"
         ),
-        headline=say("mergeRefused", pr=card.pr_number),
+        headline=forge_words.said(kind, "mergeRefusedPlatform", pr=card.pr_number),
         meta=notice(
             EVENT_MERGE_REFUSED,
             severity=SEVERITY_ERROR,
             who=WHO_CHEESE,
             detail=reason[:1500],
-            detail_label=say("labelGithubReason"),
+            detail_label=forge_words.said(kind, "labelRefusalReason"),
         ),
     )
 
@@ -433,6 +443,47 @@ async def _dispatch_nudges(
     )
     ledger = pr_signals.NudgeLedger.load(saved_state)
     fresh = [p for p in pending if not ledger.already_sent(p.kind, p.signature)]
+    # Reconcile a previously dispatched comment's classification only when a
+    # fresh provider read confirms that exact event and this head is ready.
+    # The shared error code alone is never provenance: unrelated stops, capped
+    # feedback, mixed change requests and unknown/failed heads stay untouched.
+    merge = card.merge_state or {}
+    if (
+        card.note_code is notes.NoteCode.accept_pr_stalled
+        and card.status == "pending"
+        and card.pr_head_sha
+        and merge.get("head_sha") == card.pr_head_sha
+        and merge.get("state") == "clean"
+        and merge.get("who") == "human"
+    ):
+        for nudge in pending:
+            if (
+                nudge.kind is pr_signals.NudgeKind.review
+                and not nudge.capped
+                and nudge.note_code is None
+                and nudge.note == card.note
+                and ledger.already_sent(nudge.kind, nudge.signature)
+            ):
+                notes.record(card, None, nudge.note)
+                break
+            # 同一件事的另一半：卡上那句是「要求改动」，可那批意见里那条要求
+            # 改动已经被同一位评审人后来的批准／撤销收回了。生成它的时候还看不
+            # 出来，写下的全文正是这一批的旧措辞 —— 认出它才纠正，只改分类。
+            #
+            # 必须先要求这一批**已经没有**还挡着的要求改动（`note_code is None`）：
+            # 同一批里既有被收回的、又有仍然有效的时，这句话照旧是「要求改动」，
+            # 清掉它的码就等于把剩下那条真的要求也放了。
+            if (
+                nudge.kind is pr_signals.NudgeKind.review
+                and not nudge.capped
+                and nudge.note_code is None
+                and nudge.supersedes_return
+                and nudge.note_before_supersession
+                and nudge.note_before_supersession == card.note
+                and ledger.already_sent(nudge.kind, nudge.signature)
+            ):
+                notes.record(card, None, nudge.note)
+                break
     # 卡面那一行说的是「这张卡此刻停在哪」（`notes` 的码），不是「这一轮又新发现
     # 了什么」。所以**卡面空着**时它取全部待发里最重的那条，不取 `fresh`：一条已经
     # 叫过人的理由（签名进了账本，`fresh` 里再也不会出现）在卡面被别的分支清掉之后
@@ -448,6 +499,10 @@ async def _dispatch_nudges(
     # 不担心盖掉队列/合并态那几句：进队列的卡在 `_poll_pr_card` 更早处就返回了，
     # 走不到这里（`waiting_merge_queue` 那条分支）。
     source = fresh if (card.note or "").strip() else pending
+    if notes.note_level(card.note_code, card.note) is notes.NoteLevel.error:
+        # A new informational comment is still delivered below, but cannot
+        # replace a live stop owned by CI, a change request or a human decision.
+        source = [n for n in source if n.note_code is not None]
     loudest = (
         max(source, key=lambda n: pr_signals.NOTE_PRIORITY[n.kind]) if source else None
     )
@@ -472,7 +527,12 @@ async def _dispatch_nudges(
             headline=nudge.event,
             meta=notice(
                 nudge.event_type,
-                severity=SEVERITY_ERROR,
+                severity=(
+                    SEVERITY_INFO
+                    if nudge.kind is pr_signals.NudgeKind.review
+                    and nudge.note_code is None
+                    else SEVERITY_ERROR
+                ),
                 who=WHO_CHEESE,
                 detail=nudge.detail or None,
                 detail_label=nudge.detail_label or None,

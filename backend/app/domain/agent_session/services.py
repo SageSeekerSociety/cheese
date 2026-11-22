@@ -13,15 +13,21 @@ from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domain.agent_session.models import LOST_KEY, AgentSession, SessionPlace
+from app.domain.agent_session.attachment import place, place_of
+from app.domain.agent_session.models import (
+    AgentSession,
+    SessionPlace,
+)
 from app.domain.agent_session.repositories import (
     AgentReadRepository,
     AgentSessionRepository,
+    Continuation,
 )
 
 
 class AgentSessionService:
     def __init__(self, session: AsyncSession):
+        self._session = session
         self._repo = AgentSessionRepository(session)
         self._reads = AgentReadRepository(session)
 
@@ -36,11 +42,43 @@ class AgentSessionService:
     ) -> AgentSession | None:
         return await self._repo.by_id(session_id, lock=lock)
 
-    async def resume_token(
+    async def continuation(
+        self,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        *,
+        harness: str,
+        generation: int,
+    ) -> Continuation:
+        """What this agent's next start in this conversation continues, and the
+        conversation it must not take up again, for a session of a kind whose
+        rules are at ``generation``."""
+        return await self._repo.continuation(
+            conversation_id, agent_handle, harness, generation=generation
+        )
+
+    async def retire_older(
+        self,
+        conversation_id: uuid.UUID,
+        agent_handle: str,
+        *,
+        harness: str,
+        generation: int,
+    ) -> bool:
+        """Give up on this agent's conversation here when it was started under
+        rules its kind has replaced, and on what it was told. True when it
+        did."""
+        return await self._repo.retire_older(
+            conversation_id, agent_handle, harness, generation=generation
+        )
+
+    async def conversation(
         self, conversation_id: uuid.UUID, agent_handle: str, *, harness: str
-    ) -> str | None:
-        """What this agent resumes its session in this conversation by."""
-        return await self._repo.resume_token(conversation_id, agent_handle, harness)
+    ) -> tuple[str, int] | None:
+        """This agent's conversation here and the generation it was started
+        under, whatever generation its kind is at now; None when there is none
+        to go on with."""
+        return await self._repo.conversation(conversation_id, agent_handle, harness)
 
     async def remember(
         self,
@@ -49,13 +87,16 @@ class AgentSessionService:
         agent_handle: str,
         resume_token: str,
         harness: str,
+        generation: int,
     ) -> None:
-        """Record where this agent's conversation got to."""
+        """Record where this agent's conversation got to; a conversation not
+        recorded before is recorded as started under ``generation``."""
         await self._repo.save(
             conversation_id=conversation_id,
             agent_handle=agent_handle,
             resume_token=resume_token,
             harness=harness,
+            generation=generation,
         )
 
     async def told(
@@ -118,12 +159,24 @@ class AgentSessionService:
             harness=harness,
         )
 
+    async def forget_conversation(
+        self, *, conversation_id: uuid.UUID, agent_handle: str, harness: str
+    ) -> bool:
+        """This agent's conversation cannot go on (a compaction that could not
+        be made): the next turn opens a new one, and tells it the whole state.
+        False when there was nothing of its own to give up here."""
+        return await self._repo.forget_conversation(
+            conversation_id=conversation_id,
+            agent_handle=agent_handle,
+            harness=harness,
+        )
+
     async def place(
         self, conversation_id: uuid.UUID, agent_handle: str, *, harness: str
     ) -> SessionPlace | None:
         """Where this agent's conversation here is — its machines, resolved."""
         row = await self._repo.get(conversation_id, agent_handle, harness)
-        return row.place() if row is not None else None
+        return await place_of(self._session, row) if row is not None else None
 
     async def last_used_on(
         self, channel: str, machines: list[str]
@@ -135,8 +188,8 @@ class AgentSessionService:
         """The people's machines the room's sessions (its tasks' included) hold
         a lease on now: a sandbox on one of the platform's machines is not one."""
         held: list[str] = []
-        for row in await self._repo.placed_in_room(room_id):
-            lease = row.work_lease or {}
+        for _row, environment in await self._repo.placed_in_room(room_id):
+            lease = environment or {}
             device_id = lease.get("device_id")
             if device_id and not lease.get("platform") and device_id not in held:
                 held.append(device_id)
@@ -179,58 +232,24 @@ class AgentSessionService:
         conversation_id: uuid.UUID,
         agent_handle: str,
         harness: str,
-        work_lease: dict | None,
         runtime_location: dict,
     ) -> None:
-        """Record the machines this session took."""
+        """Record the machine this session's process took."""
         await self._repo.save_place(
             conversation_id=conversation_id,
             agent_handle=agent_handle,
             harness=harness,
-            work_lease=work_lease,
             runtime_location=runtime_location,
         )
 
     async def places_in_room(self, room_id: uuid.UUID) -> list[SessionPlace]:
         """Every place a session in this room is sitting on."""
         rows = await self._repo.placed_in_room(room_id)
-        return [place for row in rows if (place := row.place()) is not None]
-
-    async def working_copy(
-        self, conversation_id: uuid.UUID, generation: str
-    ) -> tuple[dict, bool] | None:
-        """The machine lease holding this task's (or 支线's) working copy on the
-        room's current ``generation``, and whether its cloud sandbox has been
-        destroyed since (``LOST_KEY``).
-
-        Each session works in a home of its own (``SandboxHome``), so a
-        task's files are in its own session's home and in no other session's
-        of the same room. None while no session of it has taken a machine:
-        nothing holds a working copy of it yet.
-
-        A lease that is not ready and names no executor has not taken its
-        machine either: it is a reservation whose executor is still being
-        installed there, or whose installation failed and waits for the next
-        tool call to retry, and there is nothing on the machine to ask. One
-        that is not ready but already records where its executor is (an
-        installation that got that far) does hold the machine's copy, and that
-        copy may carry work nobody has pushed, so it is still read."""
-        for row in await self._repo.placed_in_conversation(conversation_id):
-            place = row.place()
-            if place is None or place.resource_id != generation:
-                continue
-            lease = place.lease
-            if (
-                lease is not None
-                and lease.get("kind") == "device"
-                and (
-                    lease.get("status", "ready") == "ready"
-                    or lease.get("state")
-                    or lease.get("home")
-                )
-            ):
-                return lease, bool((row.execution_request or {}).get(LOST_KEY))
-        return None
+        return [
+            found
+            for row, environment in rows
+            if (found := place(row.runtime_location, environment)) is not None
+        ]
 
     async def harness_in_room(self, room_id: uuid.UUID) -> str | None:
         """Which harness the room's one pane belongs to, if anything is on it.
@@ -242,7 +261,7 @@ class AgentSessionService:
         front of a person and take the 施工记录 timeline away to do it.
         """
         placed = await self._repo.placed_in_room(room_id)
-        return placed[0].harness if placed else None
+        return placed[0][0].harness if placed else None
 
     async def placed_sessions(
         self, *, harness: str | None = None, device_id: str | None = None

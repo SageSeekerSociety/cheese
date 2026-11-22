@@ -219,6 +219,23 @@ def test_a_space_manager_approves_a_problem_someone_else_wrote(
     assert task.json()["data"]["task"]["approved"] == "APPROVED"
 
 
+def test_a_space_manager_approves_a_problem_they_wrote_themselves(
+    api_client: TestClient, space: Space
+):
+    """Writing a problem does not keep a manager of its space from approving it:
+    the manager who published it passes it onto the board."""
+    own = _publish(api_client, space, space.admin)
+
+    approved = api_client.patch(
+        f"/tasks/{own}",
+        json={"approved": "APPROVED"},
+        headers=space.admin.headers,
+    )
+    assert approved.status_code == 200, approved.text
+    task = api_client.get(f"/tasks/{own}", headers=space.member.headers)
+    assert task.json()["data"]["task"]["approved"] == "APPROVED"
+
+
 def test_a_space_manager_deletes_a_problem_someone_else_wrote_and_a_member_cannot(
     api_client: TestClient, space: Space
 ):

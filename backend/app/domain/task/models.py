@@ -317,6 +317,17 @@ class TaskRubricItem(Base):
     stage: Mapped[int] = mapped_column(
         "stage", Integer, nullable=False, default=0, server_default="0"
     )
+    # Who scores the line (``app.domain.task.rubric.LINE_KINDS``): the grader by
+    # hand (``manual``, every line written before kinds existed), the platform
+    # from the credits the claim spent (``usage``), or the stage's test points
+    # (``tests``: ``app.domain.task.grading``). ``config`` holds an automatic
+    # line's own settings and is empty on a manual one.
+    kind: Mapped[str] = mapped_column(
+        "kind", String(16), nullable=False, default="manual", server_default="manual"
+    )
+    config: Mapped[dict] = mapped_column(
+        "config", JSONB, nullable=False, default=dict, server_default="{}"
+    )
 
 
 class TaskMentor(Base):
@@ -358,6 +369,110 @@ class TaskTagRelation(Base):
     )
 
 
+class TaskKnowledgePoint(Base):
+    """Which 知识点 a 题目 is filed under (§ learning analysis, step 1).
+
+    The 知识点 itself belongs to the board (``app.domain.space.models.
+    SpaceKnowledgePoint``) — the same list is what makes two 题目 comparable —
+    so what a 题目 owns is the link, and the link lives here beside
+    ``TaskTagRelation`` for the same reason that one does: a 题目's own
+    relations are read and replaced with the 题目, and with its row.
+
+    One row per (题目, 知识点); the unique index holds that even when two
+    writes race. No ``deleted_at``: "a 题目 files under these and no longer
+    under those" is one list, so replacing it deletes rows the way
+    ``TaskTagRelation`` rows are replaced, and the partial index would only
+    make the same fact readable two ways.
+    """
+
+    __tablename__ = "task_knowledge_point"
+    __table_args__ = (
+        Index(
+            "uq_task_knowledge_point_task_point",
+            "task_id",
+            "knowledge_point_id",
+            unique=True,
+        ),
+        # 删掉一个知识点时按它找到并带走这些行（也是这一列的外键索引）。
+        Index("ix_task_knowledge_point_knowledge_point_id", "knowledge_point_id"),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    task_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "task.id",
+            ondelete="CASCADE",
+            name="fk_task_knowledge_point_task_id_task",
+        ),
+        nullable=False,
+    )
+    knowledge_point_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "space_knowledge_point.id",
+            ondelete="CASCADE",
+            # 目标表名省掉：``fk_<table>_<column>_<target>`` 会到 64 字，超过
+            # Postgres 的 63 字标识符上限（``fk_agent_environments_conversation_id``
+            # 同一处境的先例）。
+            name="fk_task_knowledge_point_knowledge_point_id",
+        ),
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
+class TaskGuideEvent(Base):
+    """一个题目项目里，引导模式的一项保护对 AI 队友的一条回复做了什么。
+
+    只在题目选了「引导为主」并打开了对应开关时写（``app.domain.task.guide``）：
+    ``hint`` 是这条回复处在提示阶梯的第几级（1 问思路、2 给方向、3 给伪代码、4 给片
+    段），``output_check`` 是这条回复里一段长代码被换成了提示（``level`` 为那段代码的
+    行数）。``user_id`` 是这条回复回答的那个人（开这一轮的人），说不出时为空；学情分析
+    拿它看「直接要答案 / 依赖程度」，老师那一侧只读整体。``block_id`` 是那条回复，
+    同 ``SpaceLearningJudgment`` 一样不设外键（``blocks`` 太热）。
+    """
+
+    __tablename__ = "task_guide_event"
+    __table_args__ = (
+        Index("ix_task_guide_event_task_id", "task_id"),
+        Index("ix_task_guide_event_project_id", "project_id"),
+        CheckConstraint(
+            "kind IN ('hint', 'output_check')", name="ck_task_guide_event_kind"
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    task_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "task.id", ondelete="CASCADE", name="fk_task_guide_event_task_id_task"
+        ),
+        nullable=False,
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "projects.id",
+            ondelete="CASCADE",
+            name="fk_task_guide_event_project_id_projects",
+        ),
+        nullable=False,
+    )
+    user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    block_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    level: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+
+
 class TaskSubmission(Base):
     """Minimal mapping for task_submission table."""
 
@@ -385,6 +500,12 @@ class TaskSubmission(Base):
     #: Which version of the 题目 this was handed in under
     #: (``TaskPackageRevision.number``); None for the ones from before versions.
     package_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: 交这一版时学生项目默认分支的代码版本（commit）。空 = 没记下（连着 GitHub 的
+    #: 项目要等另一件任务给只读凭据，历史提交也都没有）。§提交：记下来之后学生再推
+    #: 也不影响这一版评测的是哪一份代码。
+    code_sha: Mapped[str] = mapped_column(
+        "code_sha", String(64), nullable=False, default="", server_default=""
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
@@ -475,6 +596,14 @@ class TaskSubmissionReview(Base):
     accepted: Mapped[bool] = mapped_column(Boolean, nullable=False)
     score: Mapped[int] = mapped_column(Integer, nullable=False)
     comment: Mapped[str] = mapped_column(String, nullable=False, default="")
+    # On a task whose rubric has an automatic line, how ``score`` was made: the
+    # points the grader gave the manual lines and what each automatic line
+    # scored when the review was written (``app.domain.task.usage_score`` and
+    # ``app.domain.task.grading``). NULL on every other review, whose ``score``
+    # the grader typed whole.
+    auto_scores: Mapped[dict | None] = mapped_column(
+        "auto_scores", JSONB, nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False
@@ -591,4 +720,82 @@ class TaskDraft(Base):
         nullable=False,
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
+    )
+
+
+class PreparedHandIn(Base):
+    """What a project's AI teammate prepared to hand in to the 题目 the project
+    came from, for one member, before that member said yes.
+
+    The 题目 and its submissions do not know about it: a hand-in the member
+    agrees to goes through the same submission the 题目 page makes, as that
+    member. This row holds the part only the teammate's path has — for whom,
+    by which seat, what each item was read from and at which version — so the
+    member agrees to exactly what was shown. A newer preparation for the same
+    claim and stage replaces one not yet handed in; one handed in stays, with
+    the submission it became."""
+
+    __tablename__ = "prepared_hand_ins"
+    __table_args__ = (
+        # One open preparation per claim and stage: preparing again replaces it.
+        Index(
+            "uq_prepared_hand_ins_open",
+            "membership_id",
+            "stage",
+            unique=True,
+            postgresql_where=text("submission_id IS NULL"),
+        ),
+        Index("ix_prepared_hand_ins_project_id", "project_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey(
+            "projects.id",
+            ondelete="CASCADE",
+            name="fk_prepared_hand_ins_project_id_projects",
+        ),
+        nullable=False,
+    )
+    membership_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "task_membership.id",
+            ondelete="CASCADE",
+            name="fk_prepared_hand_ins_membership_id_task_membership",
+        ),
+        nullable=False,
+    )
+    # The stage (``TaskStage.index``) it hands in; 0 on a 题目 without stages.
+    stage: Mapped[int] = mapped_column(Integer, nullable=False)
+    # The member it is for: who asked, and who has to agree.
+    for_user_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    for_handle: Mapped[str] = mapped_column(String(64), nullable=False)
+    # The AI teammate's seat that prepared it, and the conversation it was
+    # prepared in: the member agrees there. Not foreign keys, as a block's.
+    prepared_by: Mapped[str] = mapped_column(String(128), nullable=False)
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), nullable=False
+    )
+    # The repository's default-branch head it was read at; "" when the
+    # project has no repository version to record.
+    revision: Mapped[str] = mapped_column(
+        String(64), nullable=False, default="", server_default=""
+    )
+    # One entry per submission item of the stage, in the form's order: its
+    # name and kind, and either the text or where the file was read from
+    # (the repository or the library), its path, size and version.
+    items: Mapped[list] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=text("'[]'::jsonb")
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
+    )
+    # Set once the member agreed and it was handed in.
+    submission_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    handed_in_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )

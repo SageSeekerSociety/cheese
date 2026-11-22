@@ -622,7 +622,9 @@ jobs:
           gh api "repos/$GITHUB_REPOSITORY/compare/$PREVIOUS...$(git rev-parse HEAD)" \
             --jq '[.commits[] | {sha, message: .commit.message, merged_at: .commit.committer.date}]' \
             > "$commits"
+          # The list with merge times is kept for the tasks step below.
           COMMITS="$commits" python3 - <<'PY' \
+            | tee "$RUNNER_TEMP/shipped-commits-merged.json" \
             | docker exec -i "$backend" python -m scripts.ship_feedback \
                 --repository-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
           import json
@@ -645,6 +647,35 @@ jobs:
                   commit["pr_created_at"] = pulls[0]["created_at"]
           json.dump(commits, sys.stdout)
           PY
+
+      # A task whose last delivery merged waits, open, until the deploy that
+      # contains it is live (backend/app/domain/review/deploy_wait.py). This
+      # tells the backend which commits went live, from the list the feedback
+      # step kept (its plain compare list when that step did not get as far as
+      # the merge times; nothing when there was no release before this one).
+      # Every run also counts as the latest deploy report, which is what keeps
+      # later merges waiting at all, so it runs even with no commits.
+      - name: Release the tasks this release put live
+        if: steps.release.outputs.skip != 'true'
+        timeout-minutes: 3
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          if [ -f "$HOME/ops/deploy.env" ]; then
+            . "$HOME/ops/deploy.env"
+          fi
+          backend="$(bash deploy/app-container.sh backend)"
+          list="$RUNNER_TEMP/shipped-commits-merged.json"
+          if [ ! -s "$list" ]; then
+            list="$RUNNER_TEMP/shipped-commits.json"
+          fi
+          if [ ! -s "$list" ]; then
+            echo '[]' > "$RUNNER_TEMP/shipped-commits-none.json"
+            list="$RUNNER_TEMP/shipped-commits-none.json"
+          fi
+          docker exec -i "$backend" python -m scripts.ship_tasks \
+            --repository-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --sha "$(git rev-parse HEAD)" < "$list"
 
       # A release that finds the same or a newer one already running skips and
       # succeeds, so the job's status alone does not say what dev runs. Every

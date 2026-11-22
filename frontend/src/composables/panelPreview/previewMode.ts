@@ -99,14 +99,19 @@ export function usePreviewMode(canEdit: () => boolean, currentPath: () => string
 
 /** 这一处有没有地方接「标一处」。只读的预览（`FileBytesPreview`：资料库、题目材料、私聊
  *  文件；`ArtifactVersionPreview`：交付的某一版）没有对话可交，PDF 的「标一处」、幻灯片的整页那颗在那里永远是灰的，它提供 false。
- *  图上的框选不看它：框出来的原图像素在只读预览里照样有用（读得出、复制得走）。 */
+ *  图上那排画图工具也看它：只读预览里画了没处交，「加入对话」永远是灰的，不如不摆。
+ *  框选本身不看它——框出来的原图像素在只读预览里照样有用（读得出、复制得走），只是框完
+ *  没有地方写要改什么，按 Esc 收回。 */
 export const PREVIEW_MARKABLE: InjectionKey<boolean> = Symbol('preview-markable')
 
 /** 「标一处」那颗键此刻摆不摆：只在「批注」那一段里摆（符露夀 2026-10-31 定的：圈选这类
  *  指法只属于批注模式）。「看」是在读，「改」是在打字，这两段里按下去指一处都不对。
- *  没有模式的地方（资料库、产物页）照旧摆——那里没有三段可切，藏起来就再也按不到。 */
-export function usePreviewMarking(options: { readOnlyToo?: boolean } = {}): ComputedRef<boolean> {
+ *  没有三段可切的地方，只看 `PREVIEW_MARKABLE`：那里没有模式可切，藏起来就再也按不到。
+ *
+ *  图上的画图工具条也认这一条：只读预览里画了没处交（`FileBytesPreview` 和
+ *  `ArtifactVersionPreview` 都不接 `annotate`），摆一排按不动的键不如不摆。 */
+export function usePreviewMarking(): ComputedRef<boolean> {
   const modes = inject(PREVIEW_MODE, null)
-  const markable = options.readOnlyToo || inject(PREVIEW_MARKABLE, true)
+  const markable = inject(PREVIEW_MARKABLE, true)
   return computed(() => markable && (!modes || modes.mode.value === 'note'))
 }

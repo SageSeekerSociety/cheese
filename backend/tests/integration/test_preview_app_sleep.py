@@ -22,6 +22,7 @@ from tests.integration.test_app_preview_proxy import (
     _room_agent,
 )
 from tests.integration.test_app_preview_proxy import preview_config as preview_config
+from tests.support.environments import works_in
 
 ALICE = session_auth_headers("alice")
 
@@ -252,12 +253,12 @@ def _seed_sandbox(client, topic_id, seat) -> uuid.UUID:
                 topic_id=topic_id,
                 room_resource_id=str(topic_id),
                 resource_id=str(uuid.uuid4()),
-                session_id=row.id,
                 device_id=None,
                 spec="standard",
                 active_at=datetime.now(UTC) - timedelta(minutes=15),
             )
             db.add(home)
+            await works_in(db, row.id, home, pointed=True)
             await db.commit()
             return row.id
 
@@ -270,11 +271,14 @@ def _freeze(client, session_id) -> str:
     async def _do() -> str:
         from datetime import UTC, datetime, timedelta
 
+        from app.domain.machine import occupants
         from app.domain.machine.models import SandboxHome
 
         async with client.test_request_factory() as db:
             home = await db.scalar(
-                select(SandboxHome).where(SandboxHome.session_id == session_id)
+                select(SandboxHome).where(
+                    SandboxHome.id == occupants.home_of_session_id(session_id)
+                )
             )
             home.frozen_at = datetime.now(UTC) - timedelta(minutes=5)
             home.active_at = datetime.now(UTC) - timedelta(minutes=15)
@@ -443,7 +447,6 @@ def test_browsing_an_app_preview_refreshes_sandbox_idle_clock(client, preview_co
                 topic_id=topic_id,
                 room_resource_id=str(topic_id),
                 resource_id=str(uuid.uuid4()),
-                session_id=row.id,
                 device_id=None,
                 spec="standard",
                 active_at=stale,
@@ -453,12 +456,16 @@ def test_browsing_an_app_preview_refreshes_sandbox_idle_clock(client, preview_co
                 topic_id=topic_id,
                 room_resource_id=str(topic_id),
                 resource_id=str(uuid.uuid4()),
-                session_id=other_row.id,
                 device_id=None,
                 spec="standard",
                 active_at=stale,
             )
             db.add_all([home, other_home])
+            # The seat's app is in the environment the conversation points
+            # to; the other seat works in one of its own the conversation
+            # does not point to.
+            await works_in(db, row.id, home, pointed=True)
+            await works_in(db, other_row.id, other_home)
             await db.commit()
             return home.id, other_home.id
 
@@ -491,7 +498,6 @@ def test_opening_a_frozen_sandboxes_preview_thaws_it(
     the background, so the app somebody opened goes on running."""
     from datetime import UTC, datetime, timedelta
 
-    from app.domain.agent_session.models import THAW_KEY
     from app.domain.agent_session.services import AgentSessionService
     from app.domain.machine import lifecycle
     from app.domain.machine.models import (
@@ -536,13 +542,13 @@ def test_opening_a_frozen_sandboxes_preview_thaws_it(
                 topic_id=topic_id,
                 room_resource_id=str(topic_id),
                 resource_id=str(uuid.uuid4()),
-                session_id=row.id,
                 device_id=None,
                 spec="standard",
                 active_at=stale,
                 frozen_at=stale,
             )
             db.add(home)
+            await works_in(db, row.id, home, pointed=True)
             await db.commit()
             return home.id, home.resource_id, row.id
 
@@ -561,12 +567,7 @@ def test_opening_a_frozen_sandboxes_preview_thaws_it(
         started = await tasks[0]
         async with client.test_request_factory() as db:
             home = await db.get(SandboxHome, home_id)
-            row = await AgentSessionService(db).by_id(session_id)
-            return (
-                started,
-                home.frozen_at,
-                bool((row.execution_request or {}).get(THAW_KEY)),
-            )
+            return (started, home.frozen_at, home.thaw_wanted_at is not None)
 
     started, frozen_at, still_thawing = client.portal.call(_touch)
     assert started is True

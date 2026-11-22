@@ -24,6 +24,7 @@ from app.domain.delivery.agent import (
     instance_for_seat,
     instances_for_seats,
     record_agent,
+    record_seat_instruction,
 )
 from app.domain.delivery.ledger import Ledger
 from app.domain.delivery.models import Delivery, TimedDelivery
@@ -40,6 +41,8 @@ from app.domain.notice_meta import (
 )
 from app.domain.notification.models import NotificationType
 from app.domain.notification.publisher import build_notification_event_handler
+from app.domain.review.ports import Announce
+from app.domain.review.task_landing import tell_origin_ended
 from app.domain.room_task.closing import CLOSES_TASK, close_after_summary
 from app.domain.room_task.lock_order import lock_tasks_for_change
 from app.domain.run_record.service import keep as keep_record
@@ -172,10 +175,17 @@ def _event(
 
 
 async def deliver_due(
-    sessions: SessionFactory, *, chat, runner, limit: int = 100, machines=None
+    sessions: SessionFactory,
+    *,
+    chat,
+    runner,
+    announce: Announce | None = None,
+    limit: int = 100,
+    machines=None,
 ) -> dict[str, int]:
-    """``machines`` goes to `give_up_stale`: the call that reaches a machine to
-    remove a closed room's checkouts, handed in by the composition root."""
+    """``machines`` and ``announce`` go to `give_up_stale`: the call that
+    reaches a machine to remove a closed room's checkouts, and the one that
+    writes a line in a room, handed in by the composition root."""
     stamp = _utcnow()
     materialized = 0
     async with sessions() as session:
@@ -226,18 +236,29 @@ async def deliver_due(
                 await _hand_to_person(session, row)
             materialized += 1
         await session.commit()
-    await give_up_stale(sessions, chat=chat, machines=machines)
+    await give_up_stale(sessions, chat=chat, announce=announce, machines=machines)
     # Post-commit dispatch is optional for recovery: every scan also claims older
     # committed intent, including events created by a process that then stopped.
     dispatched = await dispatch_pending(sessions, chat=chat, runner=runner, limit=limit)
     return {"materialized": materialized, "dispatched": dispatched}
 
 
-async def give_up_stale(sessions: SessionFactory, *, chat, machines=None) -> int:
+async def give_up_stale(
+    sessions: SessionFactory,
+    *,
+    chat,
+    announce: Announce | None = None,
+    machines=None,
+) -> int:
     """Fail every instruction to an AI teammate that has not started half an
     hour after it was given (`agent.GIVE_UP_AFTER`), and say so once in each
     conversation where a person's message went unanswered: whoever waits there
-    sees it, and 「重试」 starts a turn again. Returns how many gave up."""
+    sees it, and 「重试」 starts a turn again. Returns how many gave up.
+
+    ``announce`` writes the line a task closed here leaves where it came from
+    (`review.task_landing.tell_origin_ended`); `agent` reads this package, so
+    it is handed in rather than imported. A caller that closes no task may
+    leave it out; one that does and left it out is miswired, and fails."""
     stamp = _utcnow()
     told: dict[tuple[uuid.UUID, str, uuid.UUID | None], None] = {}
     async with sessions() as session:
@@ -271,9 +292,21 @@ async def give_up_stale(sessions: SessionFactory, *, chat, machines=None) -> int
             # A finished task waiting on this instruction to be written up
             # closes without it.
             if (row.payload or {}).get(CLOSES_TASK) and row.conversation_id:
-                await close_after_summary(
+                closed = await close_after_summary(
                     session, row.conversation_id, chat, machines=machines
                 )
+                # Closed without its write-up: where it came from still hears
+                # how it ended.
+                if closed is not None:
+                    if announce is None:  # pragma: no cover - 接线漏了才会走到
+                        # i18n-exempt: developer miswiring
+                        raise RuntimeError("announce was not handed in")
+                    await tell_origin_ended(
+                        session,
+                        closed,
+                        announce=announce,
+                        record_seat=record_seat_instruction,
+                    )
             # Only a person's message is told: 「重试」 starts a turn from the
             # messages still waiting, and a platform instruction is not one. A
             # task's opening says it failed on the task page; a routine's run

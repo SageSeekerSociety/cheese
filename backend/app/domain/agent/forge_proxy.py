@@ -12,6 +12,7 @@ Two Unix domain sockets live in the room's read-only platform socket directory
   terminates TLS for the project's bound forge hosts using a per-machine CA,
   refuses pull-request merges (`PUT /repos/{owner}/{repo}/pulls/{n}/merge` and
   GraphQL `mergePullRequest` / `enablePullRequestAutoMerge`) with `403`,
+  refuses any write to the project's default branch (`writes_default_branch`),
   refuses closing a pull request that is a delivery waiting on a person, or
   deleting or emptying its branch (`forge_requests.read`, asked of
   `platform.sock`), with `403`,
@@ -73,7 +74,9 @@ MERGE_REFUSED_MESSAGE = (
     "to submit it for project review."
 )
 
-_GRAPHQL_MERGE_RE = re.compile(rb"\b(?:mergePullRequest|enablePullRequestAutoMerge)\b")
+_GRAPHQL_MERGE_RE = re.compile(
+    rb"\b(?:mergePullRequest|enablePullRequestAutoMerge|mergeBranch)\b"
+)
 _SYSTEM_CA_PATHS = (
     "/etc/ssl/certs/ca-certificates.crt",
     "/etc/pki/tls/certs/ca-bundle.crt",
@@ -117,6 +120,15 @@ HELD_REFUSED_MESSAGE = (
     "[cheese] This pull request is a delivery waiting for a person's decision. "
     "Closing it, deleting or emptying its branch would void the delivery, and "
     "that is theirs to decide in the task's interface."
+)
+
+
+#: A change enters the project's default branch only as a version of a
+#: delivery that a reviewer adopts; the platform merges it then. A session
+#: writes its task's branch and hands the work in.
+DEFAULT_BRANCH_REFUSED_MESSAGE = (
+    "[cheese] 项目的默认分支不能直接写入。改动提交到任务分支，"
+    "用 cheese_card(action=request) 提交审阅，审阅人采纳后才进入默认分支。"
 )
 
 
@@ -354,10 +366,14 @@ class PlatformSocketClient:
         self._cached_until: float = 0.0
         self._reach: dict[str, tuple[float, bool]] = {}
 
-    def _get_json(self, path: str, timeout: float = 30.0) -> dict:
+    def _get_json(
+        self, path: str, timeout: float = 30.0, attachment: str | None = None
+    ) -> dict:
         conn = _UnixHTTPConnection(self.socket_path, timeout=timeout)
         try:
             headers = {"X-Cheese-Proxy-Proof": self.proof} if self.proof else {}
+            if attachment:
+                headers["X-Cheese-Attachment"] = attachment
             conn.request("GET", path, headers=headers)
             resp = conn.getresponse()
             body = resp.read()
@@ -396,8 +412,15 @@ class PlatformSocketClient:
         asked fresh every time: a delivery filed a minute ago counts."""
         return self._get_json("/api/sandbox/forge-held")["data"]
 
-    def proxy_credential(self, timeout: float = 20.0) -> str:
-        data = self._get_json("/proxy-credential", timeout=timeout)
+    def proxy_credential(
+        self, timeout: float = 20.0, attachment: str | None = None
+    ) -> str:
+        """A short-lived credential for what goes outside the sandbox: the
+        environment's own, or — naming the ``attachment`` whose command asks,
+        as a preview does — that attachment's."""
+        data = self._get_json(
+            "/proxy-credential", timeout=timeout, attachment=attachment
+        )
         return str(data["token"])
 
     def reaches(self, url: str) -> bool:
@@ -630,18 +653,44 @@ class _TerminatedHTTPHandler(BaseHTTPRequestHandler):
         headers["Connection"] = "close"
 
         write = forge_requests.read(self.command, self.path, dict(self.headers), body)
-        if write.any() and proxy.closes_held_delivery(
-            write,
-            scheme=self.target_scheme,
-            host=self.target_host,
-            port=self.target_port,
-            path=self.path,
-            headers=headers,
-            forge=data,
-        ):
-            payload = json.dumps({"message": HELD_REFUSED_MESSAGE}).encode("utf-8")
-            self.send_response(403, "Forbidden")
-            self.send_header("Content-Type", "application/json")
+        place = {
+            "scheme": self.target_scheme,
+            "host": self.target_host,
+            "port": self.target_port,
+            "path": self.path,
+            "headers": headers,
+            "forge": data,
+        }
+        refused = None
+        if write.any() and proxy.writes_default_branch(write, **place):
+            refused = DEFAULT_BRANCH_REFUSED_MESSAGE
+        elif write.any() and proxy.closes_held_delivery(write, **place):
+            refused = HELD_REFUSED_MESSAGE
+        if refused is not None:
+            # A push is refused the way a forge's hook refuses one, so git
+            # shows the reason; an HTTP error would show only its status.
+            report = (
+                forge_requests.refused_push(dict(self.headers), body, refused)
+                if forge_requests.normalized_path(self.path).endswith(
+                    "/git-receive-pack"
+                )
+                and self.command == "POST"
+                else None
+            )
+            if report is not None:
+                status, kind, payload = (
+                    200,
+                    "application/x-git-receive-pack-result",
+                    report,
+                )
+            else:
+                status, kind, payload = (
+                    403,
+                    "application/json; charset=utf-8",
+                    json.dumps({"message": refused}, ensure_ascii=False).encode(),
+                )
+            self.send_response(status)
+            self.send_header("Content-Type", kind)
             self.send_header("Content-Length", str(len(payload)))
             self.send_header("Connection", "close")
             self.end_headers()
@@ -818,10 +867,11 @@ class ForgeProxyRuntime:
             if not self._ahead_of_base(forge, bases[branch], sha):
                 return True
         if write.node_ids:
-            return self._names_held(
+            # A node id that is a held pull request (or its issue) or a held
+            # branch's ref; one that cannot be resolved counts.
+            nodes = self._resolve_nodes(
                 write.node_ids,
-                numbers,
-                set(bases),
+                "... on PullRequest{number} ... on Issue{number} ... on Ref{name}",
                 scheme=scheme,
                 host=host,
                 port=port,
@@ -829,13 +879,18 @@ class ForgeProxyRuntime:
                 headers=headers,
                 forge=forge,
             )
+            if nodes is None:
+                return True
+            return any(
+                (node or {}).get("number") in numbers
+                or (node or {}).get("name") in bases
+                for node in nodes
+            )
         return False
 
-    def _names_held(
+    def writes_default_branch(
         self,
-        node_ids: frozenset[str],
-        numbers: set[int],
-        branches: set[str],
+        write: forge_requests.ForgeWrite,
         *,
         scheme: str,
         host: str,
@@ -844,12 +899,101 @@ class ForgeProxyRuntime:
         headers: dict[str, str],
         forge: dict,
     ) -> bool:
-        """Whether any of these GitHub node ids is a held pull request (or
-        its issue) or a held branch's ref; True when they cannot be resolved."""
+        """Whether `write` would create, move, force, delete or rename the
+        project's default branch, commit onto it, make another branch the
+        default, or delete the repository. A change enters the default branch
+        only as a delivery a reviewer adopts, and the platform merges it then
+        with its own credential, never through here.
+
+        Node ids are resolved, and a pull request's head read, on the forge
+        with the proxy's credential; where that cannot be answered, or which
+        branch is written cannot be read, it is refused."""
+        default = forge.get("default_branch") or ""
+        if write.default_branch or write.deletes_repository:
+            return True
+        if not default:
+            return False
+        if default in write.branches:
+            return True
+        if any(branch == default for branch, _sha in write.pushes):
+            return True
+        for rest in write.ref_paths:
+            if rest in (f"git/refs/heads/{default}", f"branches/{default}"):
+                return True
+            if rest.startswith(f"branches/{default}/"):
+                return True
+        for number in write.updated_pulls:
+            if self._pull_head(forge, number) in (None, default):
+                return True
+        if write.branch_node_ids:
+            nodes = self._resolve_nodes(
+                write.branch_node_ids,
+                "... on PullRequest{headRefName} ... on Ref{name}",
+                scheme=scheme,
+                host=host,
+                port=port,
+                path=path,
+                headers=headers,
+                forge=forge,
+            )
+            if nodes is None:
+                return True
+            for node in nodes:
+                node = node or {}
+                if default in (node.get("headRefName"), node.get("name")):
+                    return True
+        return False
+
+    def _pull_head(self, forge: dict, number: int) -> str | None:
+        """The head branch of pull request `number`, asked of the forge's API;
+        None when it cannot be read."""
+        api = urllib.parse.urlsplit(forge.get("api_url") or "https://api.github.com")
+        repo = forge.get("repo") or ""
+        if not repo or not api.hostname:
+            return None
+        tls = (api.scheme or "https") == "https"
+        try:
+            status, _reason, _headers, answer = self.forward_forge_http(
+                scheme="https" if tls else "http",
+                host=api.hostname,
+                port=api.port or (443 if tls else 80),
+                method="GET",
+                path=f"{api.path.rstrip('/')}/repos/{repo}/pulls/{number}",
+                headers={
+                    "Host": api.netloc,
+                    "Authorization": f"token {forge.get('token') or ''}",
+                    "Accept": "application/json",
+                    "User-Agent": "cheese-forge-proxy",
+                    "Connection": "close",
+                },
+                body=b"",
+                forge=forge,
+            )
+            if status != 200:
+                return None
+            head = json.loads(answer)["head"]["ref"]
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+        return head if isinstance(head, str) else None
+
+    def _resolve_nodes(
+        self,
+        node_ids: frozenset[str],
+        selection: str,
+        *,
+        scheme: str,
+        host: str,
+        port: int,
+        path: str,
+        headers: dict[str, str],
+        forge: dict,
+    ) -> list | None:
+        """These GitHub node ids, each read with `selection`, asked of the
+        GraphQL endpoint the request went to; None when they cannot be
+        resolved."""
         query = json.dumps(
             {
-                "query": "query($ids:[ID!]!){nodes(ids:$ids){"
-                "... on PullRequest{number} ... on Issue{number} ... on Ref{name}}}",
+                "query": "query($ids:[ID!]!){nodes(ids:$ids){" + selection + "}}",
                 "variables": {"ids": sorted(node_ids)},
             }
         ).encode("utf-8")
@@ -875,14 +1019,10 @@ class ForgeProxyRuntime:
             )
             nodes = json.loads(answer)["data"]["nodes"]
         except (OSError, ValueError, KeyError, TypeError):
-            return True
+            return None
         if status != 200 or not isinstance(nodes, list):
-            return True
-        for node in nodes:
-            node = node or {}
-            if node.get("number") in numbers or node.get("name") in branches:
-                return True
-        return False
+            return None
+        return nodes
 
     def _ahead_of_base(self, forge: dict, base: str | None, sha: str) -> bool:
         """Whether `sha`, pushed to a held branch, still has commits over the
@@ -1169,8 +1309,18 @@ class _PreviewSocketHandler(socketserver.BaseRequestHandler):
         except OSError:
             return
         header_bytes, _, remainder = bytes(head).partition(b"\r\n\r\n")
+        # The preview is the teammate's whose command started it: the helper
+        # names that command's attachment (`preview_tunnel`).
+        attachment = next(
+            (
+                line.split(":", 1)[1].strip()
+                for line in header_bytes.decode("latin-1").split("\r\n")
+                if line.lower().startswith("x-cheese-attachment:")
+            ),
+            None,
+        )
         try:
-            token = proxy.platform.proxy_credential(timeout=15)
+            token = proxy.platform.proxy_credential(timeout=15, attachment=attachment)
         except Exception as exc:
             msg = f"HTTP/1.1 503 Service Unavailable\r\nX-Cheese-Error: {exc}\r\n\r\n"
             with contextlib.suppress(OSError):
@@ -1201,7 +1351,9 @@ class _PreviewSocketHandler(socketserver.BaseRequestHandler):
             lines = [
                 line
                 for line in header_bytes.decode("latin-1").split("\r\n")
-                if not line.lower().startswith("authorization:")
+                if not line.lower().startswith(
+                    ("authorization:", "x-cheese-attachment:")
+                )
             ]
             lines.append(f"Authorization: Bearer {token}")
             rewritten = ("\r\n".join(lines) + "\r\n\r\n").encode("latin-1") + remainder

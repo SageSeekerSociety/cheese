@@ -182,7 +182,7 @@ def test_closing_a_task_revokes_its_card_and_the_poller_stops_touching_it(
 
     card = _cards(client, tid)[0]
     assert card["status"] == "revoked"
-    assert "任务已关闭" in card["note"]
+    assert "任务已结束" in card["note"]
     assert f"#{number}" in card["note"]
 
     # 再跑一跳：这张卡已经不在轮询名单里了，GitHub 一次都不该被打。
@@ -220,7 +220,7 @@ def test_a_poll_converges_a_card_left_on_a_task_closed_behind_the_api(
 
     card = _cards(client, tid)[0]
     assert card["status"] == "revoked"
-    assert "任务已关闭" in card["note"]
+    assert "任务已结束" in card["note"]
     assert f"#{number}" in card["note"]
     assert fake.status_calls == []
     assert fake.prs[number]["state"] == "open"

@@ -1,6 +1,6 @@
 {
-  "loadFailed": "Couldn't load the default model",
-  "reset": "Restore the default model",
+  "loadFailed": "Could not load the project main model",
+  "reset": "Back to automatic",
   "save": "Save",
-  "saveFailed": "Couldn't save the default model"
+  "saveFailed": "Could not save the project main model"
 }

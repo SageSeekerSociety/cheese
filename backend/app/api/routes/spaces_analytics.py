@@ -402,7 +402,8 @@ async def get_space_learning_filters(
     service: SpaceLearningService = Depends(get_space_learning_service),
     db=Depends(get_db),
 ) -> dict:
-    """这一格能筛的两维: 成员、知识点。时间那一维在前端的筛选栏里。
+    """这一格能筛的一维: 知识点。时间那一维在前端的筛选栏里。没有「成员」：发言只
+    标本空间固定代号，按人筛就等于把代号对回一个人（学情分析 step 3）。
 
     这里比同族其它三条多一道 `_ensure_space_visible`，因为返回的东西里有一项不
     是行数据: `knowledgePoints` 报的是这个课程自己划的分类格子
@@ -424,20 +425,20 @@ async def get_space_learning_filters(
 async def get_space_learning_questions(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     resolver: ActorResolverDep,
-    student: str | None = Query(default=None),
     from_ts: int | None = Query(default=None, alias="from"),
     to_ts: int | None = Query(default=None, alias="to"),
     knowledgePoint: int | None = Query(default=None),
     auth_user: AuthUserInfo = Depends(require_auth_user),
     service: SpaceLearningService = Depends(get_space_learning_service),
 ) -> dict:
-    """按成员 / 时间 / 知识点筛出来的成员发言，每条都带得回原文的坐标。"""
+    """按时间 / 知识点筛出来的成员发言，每条只标本空间固定代号、都带得回原文的坐标。
+
+    没有「按成员」那一维：老师只看全班整体（学情分析 step 3）。"""
     _ = auth_user
     actor = await resolver.resolve()
     data = await service.questions(
         space_id=space_id,
         handle=_learning_handle(actor),
-        student=student,
         from_ts=from_ts,
         to_ts=to_ts,
         knowledge_point=knowledgePoint,
@@ -452,7 +453,6 @@ async def get_space_learning_questions(
 async def get_space_learning_queues(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     resolver: ActorResolverDep,
-    student: str | None = Query(default=None),
     from_ts: int | None = Query(default=None, alias="from"),
     to_ts: int | None = Query(default=None, alias="to"),
     auth_user: AuthUserInfo = Depends(require_auth_user),
@@ -464,7 +464,6 @@ async def get_space_learning_queues(
     data = await service.queues(
         space_id=space_id,
         handle=_learning_handle(actor),
-        student=student,
         from_ts=from_ts,
         to_ts=to_ts,
     )

@@ -25,6 +25,10 @@ walking the route's dependency tree) and the check (FastAPI runs it):
   one. Every signed-in person reaches the handler; nobody signed in is refused
   here. A route that *changes* something declares ``Can`` on it instead; this
   is only for the route that creates it.
+- ``PLATFORM_ADMIN``: the route is the platform's own (``/admin/…``) and only
+  a platform admin reaches the handler (``app.api.admin_deps``: the admin list,
+  and no 芝士 acting for one). There is no object for ``Can`` to judge: the
+  admin acts on the platform, wherever the row they touch lives.
 - ``ROUTE_DECIDES``: everyone reaches the handler, which authorizes the caller
   itself (``ActorResolver`` and friends). The routes written before ``Can``
   judged every caller still declare it and move onto ``Can`` a batch at a
@@ -61,6 +65,7 @@ from fastapi.requests import HTTPConnection
 from fastapi.routing import APIRoute
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.admin_deps import PlatformAdminDep
 from app.api.auth import ActorResolver, get_actor_resolver
 from app.auth import can
 from app.auth.checker import get_auth_user
@@ -84,7 +89,7 @@ WRITE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 class WriteAccess:
     """One declaration: which callers reach the handler."""
 
-    kind: Literal["route_decides", "can", "holds_link", "as_oneself"]
+    kind: Literal["route_decides", "can", "holds_link", "as_oneself", "platform_admin"]
 
     @property
     def name(self) -> str:
@@ -357,6 +362,20 @@ class _AsOneself(_SignedIn):
 
 #: A route that creates a row belonging to the caller: see ``AS_ONESELF`` above.
 AS_ONESELF = Depends(_AsOneself())
+
+
+@dataclass(frozen=True, eq=False)
+class _PlatformAdmin(WriteAccess):
+    kind: Literal["platform_admin"] = "platform_admin"
+
+    async def __call__(  # type: ignore[override]
+        self, handle: PlatformAdminDep
+    ) -> None:
+        """``require_platform_admin`` has refused everyone else by now."""
+
+
+#: A route of the platform's own admin console: see ``PLATFORM_ADMIN`` above.
+PLATFORM_ADMIN = Depends(_PlatformAdmin())
 
 
 @dataclass(frozen=True)

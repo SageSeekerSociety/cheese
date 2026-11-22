@@ -67,6 +67,8 @@ def _task(room_id: uuid.UUID, *, created_at: datetime, title: str = "task") -> A
         accepted_at=None,
         conclusion=None,
         closing_since=None,
+        deploying_since=None,
+        deploy_blocked_url=None,
         created_at=created_at,
     )
 

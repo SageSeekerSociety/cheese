@@ -36,7 +36,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth.project_access import may_read_project
@@ -47,10 +47,10 @@ from app.domain.identity.handles import agent_handle_column
 from app.domain.project.models import Project, ProjectRole, ProjectRoleDef
 from app.domain.project.repositories import ProjectRepository
 from app.domain.project_permissions import Template
+from app.domain.space.learning_privacy import codes_for, masker_for
 from app.domain.space.models import Space, SpaceCategory
 from app.domain.task.models import Task
 from app.domain.topic.models import Topic, not_a_private_chat
-from app.domain.user.models import User, UserProfile
 
 # 一条「提问」在界面上占多少字。摘要是给人扫一眼的，完整的原文点回去看。
 QUOTE_LIMIT = 160
@@ -65,6 +65,40 @@ REVIEW_FLAG_MISSING = (
 )
 
 
+def member_words() -> list[ColumnElement[bool]]:
+    """「这是成员自己说的话」—— 数据 › 学习 与每晚的学情分析共用的那一份判据。
+
+    参与者写的消息，不是芝士（或它的分身）说的，也不是这个项目的导师说的 —— 导师是来
+    看的老师，他的话不是学生撞上的问题（#3830）。「是不是人说的」问的是署名而不是档位
+    —— ``AuthorType`` 早就只剩「参与者 / 平台自己」两档，人和 agent 都是 participant
+    （见 ``block/authorship.py``）。所以判据是 ``agent_handle_column`` 的否定，和「这句
+    是不是芝士说的」同一个前缀，改命名规则两边一起改。
+    """
+    return [
+        Block.kind == BlockKind.message,
+        participant_blocks(),
+        ~agent_handle_column(Block.author),
+        # A mentor's own words are not a student's question: the role is known
+        # by its template mark, whatever the project calls it.
+        ~select(ProjectRole.id)
+        .join(ProjectRoleDef, ProjectRoleDef.id == ProjectRole.role_id)
+        .where(
+            ProjectRole.project_id == Block.project_id,
+            ProjectRole.user_handle == Block.author,
+            ProjectRoleDef.template == Template.mentor.value,
+        )
+        .exists(),
+    ]
+
+
+def readable_rooms() -> list[ColumnElement[bool]]:
+    """读得的房间：语句里要已 join 上 ``Topic``（按 ``room_column``）。
+
+    私聊和仅成员可见的频道都不读：说话的人只给在场的人看（issue #945）。
+    """
+    return [not_a_private_chat(), Topic.members_only.is_(False)]
+
+
 class _Question:
     """一条能点回原文的成员发言，以及它落在哪个知识点上。"""
 
@@ -74,7 +108,7 @@ class _Question:
         "project_id",
         "project_name",
         "student",
-        "student_name",
+        "member_code",
         "topic_title",
         "knowledge_point",
         "created_at",
@@ -87,8 +121,9 @@ class _Question:
         block_id: uuid.UUID,
         topic_id: uuid.UUID,
         project: Project,
+        project_name: str,
         student: str,
-        student_name: str,
+        member_code: str,
         topic_title: str,
         knowledge_point: str | None,
         created_at: datetime,
@@ -97,9 +132,9 @@ class _Question:
         self.block_id = block_id
         self.topic_id = topic_id
         self.project_id = project.id
-        self.project_name = project.name
+        self.project_name = project_name
         self.student = student
-        self.student_name = student_name
+        self.member_code = member_code
         self.topic_title = topic_title
         self.knowledge_point = knowledge_point
         self.created_at = created_at
@@ -111,8 +146,7 @@ class _Question:
             "topicId": str(self.topic_id),
             "projectId": str(self.project_id),
             "projectName": self.project_name,
-            "student": self.student,
-            "studentName": self.student_name,
+            "memberCode": self.member_code,
             "topicTitle": self.topic_title,
             "knowledgePoint": self.knowledge_point,
             "createdAt": int(self.created_at.timestamp() * 1000),
@@ -237,38 +271,16 @@ class SpaceLearningService:
         *,
         from_dt: datetime | None,
         to_dt: datetime | None,
-        author: str | None = None,
     ):
-        """成员说的话: 参与者写的、而且不是芝士（或它的分身）说的，也不是导师说的
-        —— 导师是来看的老师，他的话不是学生撞上的问题（#3830）。
-
-        「是不是人说的」问的是署名而不是档位 —— ``AuthorType`` 早就只剩
-        「参与者 / 平台自己」两档，人和 agent 都是 participant（见
-        ``block/authorship.py``）。所以判据是 ``agent_handle_column`` 的否定，
-        和「这句是不是芝士说的」同一个前缀，改命名规则两边一起改。
-        """
+        """成员说的话（``member_words``），在读得的房间里（``readable_rooms``）。"""
         stmt = (
             select(Block)
             .select_from(Block)
             .join(Topic, Topic.id == room_column(Block.conversation_id))
             .where(
                 Block.project_id.in_(project_ids),
-                Block.kind == BlockKind.message,
-                participant_blocks(),
-                ~agent_handle_column(Block.author),
-                # A mentor's own words are not a student's question: the role
-                # is known by its template mark, whatever the project calls it.
-                ~select(ProjectRole.id)
-                .join(ProjectRoleDef, ProjectRoleDef.id == ProjectRole.role_id)
-                .where(
-                    ProjectRole.project_id == Block.project_id,
-                    ProjectRole.user_handle == Block.author,
-                    ProjectRoleDef.template == Template.mentor.value,
-                )
-                .exists(),
-                # 私聊和私密频道都不属于管理员看板：说话的人只给在场的人看。
-                not_a_private_chat(),
-                Topic.members_only.is_(False),
+                *member_words(),
+                *readable_rooms(),
             )
             .order_by(Block.created_at.desc())
             .limit(QUESTION_LIMIT)
@@ -277,8 +289,6 @@ class SpaceLearningService:
             stmt = stmt.where(Block.created_at >= from_dt)
         if to_dt is not None:
             stmt = stmt.where(Block.created_at <= to_dt)
-        if author is not None:
-            stmt = stmt.where(Block.author == author)
         return stmt
 
     async def _rooms_of(self, blocks: list[Block]) -> dict[uuid.UUID, uuid.UUID]:
@@ -292,25 +302,11 @@ class SpaceLearningService:
         )
         return {block_id: room_id for block_id, room_id in rows}
 
-    async def _display_names(self, handles: set[str]) -> dict[str, str]:
-        """handle → 给人看的名字。名字在 profile 上，不在 user 上。"""
-        if not handles:
-            return {}
-        rows = (
-            await self._session.execute(
-                select(User.username, UserProfile.nickname)
-                .outerjoin(UserProfile, UserProfile.user_id == User.id)
-                .where(User.username.in_(handles))
-            )
-        ).all()
-        # 没起昵称就退回 handle —— 空白比 handle 更难认。
-        return {row[0]: (row[1] or row[0]) for row in rows}
-
     async def _collect_questions(
         self,
         projects: dict[uuid.UUID, Project],
         *,
-        student: str | None,
+        space_id: int,
         from_dt: datetime | None,
         to_dt: datetime | None,
         knowledge_point: int | None,
@@ -334,7 +330,7 @@ class SpaceLearningService:
             (
                 await self._session.execute(
                     self._student_question_blocks(
-                        project_ids, from_dt=from_dt, to_dt=to_dt, author=student
+                        project_ids, from_dt=from_dt, to_dt=to_dt
                     )
                 )
             )
@@ -353,7 +349,8 @@ class SpaceLearningService:
         ).all()
         titles_by_topic = {row[0]: row[1] for row in topic_rows}
 
-        names = await self._display_names({b.author for b in blocks})
+        codes = await codes_for(self._session, space_id, {b.author for b in blocks})
+        masker = await masker_for(self._session, space_id)
 
         result: list[_Question] = []
         for block in blocks:
@@ -368,12 +365,14 @@ class SpaceLearningService:
                     block_id=block.id,
                     topic_id=rooms[block.id],
                     project=project,
+                    project_name=masker.mask(project.name),
                     student=block.author,
-                    student_name=names.get(block.author, block.author),
-                    topic_title=titles_by_topic.get(rooms[block.id], ""),
+                    member_code=codes.get(block.author, ""),
+                    # 房间名、项目名常带着成员的名字（「张三的作业」），一并遮。
+                    topic_title=masker.mask(titles_by_topic.get(rooms[block.id], "")),
                     knowledge_point=name,
                     created_at=block.created_at,
-                    quote=_excerpt(block.content),
+                    quote=_excerpt(masker.mask(block.content)),
                 )
             )
         return result
@@ -383,31 +382,14 @@ class SpaceLearningService:
     # ------------------------------------------------------------------
 
     async def filters(self, *, space_id: int, handle: str | None) -> dict[str, Any]:
-        """这门课里能筛的两维: 成员、知识点。时间是前端那一条，不在这里列。"""
+        """这门课里能筛的一维: 知识点。时间是前端那一条，不在这里列。
+
+        没有「成员」这一维：老师只看全班整体（学情分析 step 3），发言只标本空间固定
+        代号，按人筛就等于把代号对回一个人。"""
         project_ids = await self._readable_project_ids(space_id=space_id, handle=handle)
-        projects = await self._load_projects(project_ids)
-
-        # 成员是说过话的人，不是项目的所有者：一个小组项目里不止一个学生。
-        owners = sorted(
-            {
-                b.author
-                for b in (
-                    await self._session.execute(
-                        self._student_question_blocks(
-                            list(projects), from_dt=None, to_dt=None
-                        )
-                    )
-                )
-                .scalars()
-                .all()
-            }
-        )
-        names = await self._display_names(set(owners))
-
         return {
-            "students": [{"handle": h, "name": names.get(h, h)} for h in owners],
             "knowledgePoints": await self._knowledge_point_options(space_id),
-            "projectCount": len(projects),
+            "projectCount": len(project_ids),
         }
 
     async def questions(
@@ -415,17 +397,16 @@ class SpaceLearningService:
         *,
         space_id: int,
         handle: str | None,
-        student: str | None,
         from_ts: int | None,
         to_ts: int | None,
         knowledge_point: int | None,
     ) -> dict[str, Any]:
-        """按成员 / 时间 / 知识点筛出来的成员发言，每条都能点回原文。"""
+        """按时间 / 知识点筛出来的成员发言，每条只标代号、都能点回原文。"""
         project_ids = await self._readable_project_ids(space_id=space_id, handle=handle)
         projects = await self._load_projects(project_ids)
         items = await self._collect_questions(
             projects,
-            student=student,
+            space_id=space_id,
             from_dt=_from_ms(from_ts),
             to_dt=_to_ms(to_ts),
             knowledge_point=knowledge_point,
@@ -437,7 +418,6 @@ class SpaceLearningService:
         *,
         space_id: int,
         handle: str | None,
-        student: str | None,
         from_ts: int | None,
         to_ts: int | None,
     ) -> dict[str, Any]:
@@ -454,7 +434,7 @@ class SpaceLearningService:
         projects = await self._load_projects(project_ids)
         questions = await self._collect_questions(
             projects,
-            student=student,
+            space_id=space_id,
             from_dt=_from_ms(from_ts),
             to_dt=_to_ms(to_ts),
             knowledge_point=None,
@@ -576,7 +556,8 @@ class SpaceLearningService:
             )
         ).all()
         titles_by_topic = {row[0]: row[1] for row in topic_rows}
-        names = await self._display_names({b.author for b in readable})
+        codes = await codes_for(self._session, space_id, {b.author for b in readable})
+        masker = await masker_for(self._session, space_id)
 
         grouped: dict[str, list[Block]] = {}
         for block in readable:
@@ -589,17 +570,17 @@ class SpaceLearningService:
         for index, (point, point_blocks) in enumerate(grouped.items(), start=1):
             excerpts = []
             for block in sorted(point_blocks, key=lambda b: b.created_at):
-                owner = block.author
                 excerpts.append(
                     {
                         "blockId": str(block.id),
                         "topicId": str(rooms[block.id]),
                         "projectId": str(block.project_id),
-                        "student": owner,
-                        "studentName": names.get(owner, owner),
-                        "topicTitle": titles_by_topic.get(rooms[block.id], ""),
+                        "memberCode": codes.get(block.author, ""),
+                        "topicTitle": masker.mask(
+                            titles_by_topic.get(rooms[block.id], "")
+                        ),
                         "createdAt": int(block.created_at.timestamp() * 1000),
-                        "quote": _excerpt(block.content),
+                        "quote": _excerpt(masker.mask(block.content)),
                     }
                 )
             sections.append(

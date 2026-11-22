@@ -122,7 +122,6 @@ async def _teammates_on_bobs_device(client):
             session = await AgentSessionService(db).ensure(
                 topic_id, handle, harness="claude-code"
             )
-            session.execution_request = {"generation": str(uuid.uuid4())}
             await AgentSessionService(db).set_environment(
                 topic_id,
                 handle,

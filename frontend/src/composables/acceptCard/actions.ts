@@ -45,6 +45,22 @@ export interface AcceptCardActionsHost {
   reload: (alongside?: Promise<unknown>) => Promise<void>
 }
 
+/**
+ * 采纳这张卡看到的那一版：带着屏幕上那一版的 head 和交付物版本去采纳，合并碰到冲突时说一句，
+ * 真采纳了记一笔（邀请奖励那边要知道）。页签页头上那颗和主线上那颗走的都是这一条。
+ * 被拒（版本过时、合并态不让合）照常抛出，由调用方报错并重读。
+ */
+export async function acceptAsShown(
+  card: AcceptCard,
+  me: string,
+  store: ReturnType<typeof useWorkspaceStore>
+): Promise<AcceptCard> {
+  const updated = await acceptCard(card.id, me, card.merge_state.head_sha, card.deliverable?.revision ?? null)
+  if (updated.status === 'conflict') store.error = t('topic.accept.conflict', { agent: store.agentName })
+  if (updated.status === 'accepted') void noteAccepted()
+  return updated
+}
+
 export function useAcceptCardActions(host: AcceptCardActionsHost) {
   const { store, me, pendingCard, acceptedCard, needsPr, comments, reload } = host
 
@@ -111,11 +127,7 @@ export function useAcceptCardActions(host: AcceptCardActionsHost) {
     if (!card) return
     acceptBusy.value = true
     try {
-      const updated = await acceptCard(card.id, me.value, card.merge_state.head_sha, card.deliverable?.revision ?? null)
-      if (updated.status === 'conflict') {
-        store.error = t('topic.accept.conflict', { agent: store.agentName })
-      }
-      if (updated.status === 'accepted') void noteAccepted()
+      await acceptAsShown(card, me.value, store)
       // 卡已经定了：开着的退回框和里面那半句理由不再适用。
       showRejectInput.value = false
       rejectNote.value = ''

@@ -36,6 +36,7 @@ vi.mock('../../api', async () => {
     ...actual,
     getAcceptCards: (...a: unknown[]) => getAcceptCards(...a),
     getPrChecks: vi.fn().mockResolvedValue({ available: false }),
+    getHandInStanding: vi.fn().mockResolvedValue({ unhanded: false, waiting: false }),
     rejectCard: (...a: unknown[]) => rejectCard(...a),
     getTopic: vi.fn().mockResolvedValue({ id: 't1', status: 'active' }),
   }
@@ -195,7 +196,7 @@ describe('横条只说现在在等什么', () => {
     expect(bar(container)).toContain('等待检查')
     const strip = container.querySelector('.accept-bar')!
     expect(buttonNamed(strip, '退回')).toBeUndefined()
-    expect(buttonNamed(strip, '采纳并完成任务')).toBeUndefined()
+    expect(buttonNamed(strip, '采纳')).toBeUndefined()
   })
 
   it('可以合并、审阅人是我时，退回和采纳就在横条上', async () => {
@@ -203,7 +204,7 @@ describe('横条只说现在在等什么', () => {
     const strip = container.querySelector('.accept-bar')!
     expect(bar(container)).toContain('待你审阅')
     expect(buttonNamed(strip, '退回')).toBeDefined()
-    expect(buttonNamed(strip, '采纳并完成任务')).toBeDefined()
+    expect(buttonNamed(strip, '采纳')).toBeDefined()
   })
 
   it('审阅人是别人时只说在等谁，不放我点了也会被拒的退回和采纳', async () => {
@@ -211,7 +212,7 @@ describe('横条只说现在在等什么', () => {
     const strip = container.querySelector('.accept-bar')!
     expect(bar(container)).toContain('待 @bob 审阅')
     expect(buttonNamed(strip, '退回')).toBeUndefined()
-    expect(buttonNamed(strip, '采纳并完成任务')).toBeUndefined()
+    expect(buttonNamed(strip, '采纳')).toBeUndefined()
   })
 
   it('等的那个人按显示名写，不按 handle', async () => {
@@ -246,7 +247,7 @@ describe('横条只说现在在等什么', () => {
       reviewButton: true,
     })
     const strip = container.querySelector('.accept-bar')!
-    expect(buttonNamed(strip, '采纳并完成任务')).toBeUndefined()
+    expect(buttonNamed(strip, '采纳')).toBeUndefined()
     // 已经有一颗「审阅」，状态那半句不再跟箭头。
     expect(strip.querySelector('.accept-bar__go')).toBeNull()
     await fireEvent.click(buttonNamed(strip, '审阅')!)

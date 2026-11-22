@@ -45,6 +45,12 @@ EXPIRED = "expired"
 #: The two kinds that settle a question without anybody answering it. They are
 #: not answers: ``answered`` stays false, and the card is free to take one.
 CLOSED_BY_THE_ASKER = (WITHDRAWN, EXPIRED)
+#: A person typed something in reply to the question that is not one of its
+#: options. Whether it is the answer or only talk about the question (asking
+#: what it means, changing the subject) is for the asking agent to say
+#: (`block.questions.confirm_pending`): until it does, the question stays open
+#: and the yellow light stays on. Not an answer: ``answered`` ignores it.
+PENDING = "pending"
 
 
 def asked_of(meta: dict | None) -> tuple[str, ...]:
@@ -90,7 +96,16 @@ def _said(meta: dict | None) -> list[dict]:
     return [
         entry
         for entry in ((meta or {}).get("answer_log") or [])
-        if (entry or {}).get("kind") not in CLOSED_BY_THE_ASKER
+        if (entry or {}).get("kind") not in (*CLOSED_BY_THE_ASKER, PENDING)
+    ]
+
+
+def pending_replies(meta: dict | None) -> list[dict]:
+    """Typed replies the asking agent has not yet confirmed as answers."""
+    return [
+        entry
+        for entry in ((meta or {}).get("answer_log") or [])
+        if (entry or {}).get("kind") == PENDING
     ]
 
 

@@ -19,6 +19,8 @@ COPY backend/app/domain/agent/harness/claude_code/remote_execution/runtime_core.
 COPY backend/app/domain/agent/harness/claude_code/remote_execution/runtime_commands.py /opt/cheese/runtime_commands.py
 COPY backend/app/domain/agent/harness/claude_code/remote_execution/runtime_context.py /opt/cheese/runtime_context.py
 COPY backend/app/domain/agent/harness/claude_code/remote_execution/runtime_calls.py /opt/cheese/runtime_calls.py
+COPY backend/app/domain/agent/harness/claude_code/remote_execution/runtime_terminal.py /opt/cheese/runtime_terminal.py
+COPY backend/app/domain/agent/harness/claude_code/remote_execution/runtime_language.py /opt/cheese/runtime_language.py
 COPY backend/app/domain/agent/harness/claude_code/remote_execution/mcp_process.py /opt/cheese/mcp_process.py
 COPY backend/app/domain/agent/harness/claude_code/remote_execution/private.py /opt/cheese/private.py
 # The egress proxy private chats reach the network through (see private.py).

@@ -75,7 +75,6 @@ async def test_output_replayed_for_a_closed_turn_does_not_run_it_again(
     first = _chat(factory, tmp_path, AgentWorkRunner(InProcessBroker()))
     started = await first.native_turns.begin(project, topic, turn, session_id="sess")
     assert started is not None
-    await started.known_commits
     long_ago = datetime.now(UTC) - timedelta(days=19)
     async with factory() as session:
         await session.execute(
@@ -106,8 +105,6 @@ async def test_output_replayed_for_a_closed_turn_does_not_run_it_again(
     )
 
     revived = chat.live.hook_work.get((topic, turn))
-    if revived is not None and revived.known_commits is not None:
-        await revived.known_commits
     assert revived is None, "补发的输出让一轮已经关掉的轮重新算在跑"
     assert turn not in chat.live.active_turn_ids.get(topic, set())
     row = await turn_row(factory, turn)

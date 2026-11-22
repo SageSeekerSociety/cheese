@@ -28,6 +28,8 @@ const taskDetail = vi.fn()
 const listCategories = vi.fn()
 const listAgentTypes = vi.fn()
 const apiRequest = vi.fn()
+// 学情分析：这块板的开关与知识点清单（默认关着）。
+const readLearningAnalysis = vi.fn()
 /** 问芝士发出去的那几次请求体（事件流答一句就完）。 */
 const asked: Record<string, unknown>[] = []
 
@@ -129,6 +131,8 @@ vi.mock('@/api/spaces', () => ({
     listCategories: (...a: unknown[]) => listCategories(...a),
     listDomainGroups: async () => ({ groups: [] }),
     listMaterials: async () => ({ materials: [], canManage: false }),
+    // 学情分析：这一栏的开关与知识点清单（默认关着）。用例要量那一栏时改 `readLearningAnalysis`。
+    readLearningAnalysis: (...a: unknown[]) => readLearningAnalysis(...a),
   },
 }))
 
@@ -263,6 +267,11 @@ beforeEach(() => {
       : {}
   )
   listCategories.mockResolvedValue({ categories: [CATEGORY_A, CATEGORY_B] })
+  readLearningAnalysis.mockResolvedValue({
+    learningAnalysis: { enabled: false },
+    knowledgePoints: [],
+    canManage: false,
+  })
   listAgentTypes.mockResolvedValue({
     data: [preset('academic-research', '学术研究'), preset('coding-tutor', '编程陪练')],
     total: 2,
@@ -428,5 +437,29 @@ describe('改题页：修改草稿', () => {
 
     const [row] = [...drafts.values()]
     await waitFor(() => expect(row.fields.name).toBe('问芝士那一阵里改的'), { timeout: 3000 })
+  })
+})
+
+describe('改题页：涉及的知识点', () => {
+  it('这块板开着时，挂上一条知识点，跟着这份修改存进草稿', async () => {
+    readLearningAnalysis.mockResolvedValue({
+      learningAnalysis: { enabled: true },
+      knowledgePoints: [
+        { id: 1, name: '相关子查询', displayOrder: 0 },
+        { id: 2, name: '索引', displayOrder: 1 },
+      ],
+      canManage: true,
+    })
+    taskDetail.mockResolvedValue({ task: task(CATEGORY_A.id) })
+    taskForm = draftOf(CATEGORY_A.id).fields
+    const view = await mount()
+    await waitFor(() => expect(view.getByTestId('knowledge-points')).toBeTruthy(), { timeout: 3000 })
+
+    await fireEvent.click(view.getByTestId('knowledge-point-add'))
+    await fireEvent.input(await view.findByRole('checkbox', { name: '索引' }), { target: { checked: true } })
+
+    await waitFor(() => expect(drafts.size).toBe(1), { timeout: 3000 })
+    const [row] = [...drafts.values()]
+    await waitFor(() => expect(row.fields.knowledgePointIds).toEqual([2]), { timeout: 3000 })
   })
 })

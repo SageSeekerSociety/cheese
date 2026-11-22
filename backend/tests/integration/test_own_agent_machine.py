@@ -39,6 +39,7 @@ from app.domain.topic.models import Topic
 from app.domain.user.models import User
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.support.devices import enrollment_team, place_in_project_team
+from tests.support.environments import attach_anew
 
 pytestmark = pytest.mark.anyio
 
@@ -383,15 +384,19 @@ async def _launch_env(client, own, *, leased_on):
         row = await AgentSessionService(db).ensure(
             own.topic_id, own.handle, harness="claude-code"
         )
-        row.work_lease = {
-            "kind": "device",
-            "device_id": leased_on,
-            "generation": str(uuid.uuid4()),
-            "status": "ready",
-            "workspace": "/where/the/executor/holds/it",
-            "url": "http://platform/execution",
-            "state": "/where/the/executor/keeps/state",
-        }
+        await attach_anew(
+            db,
+            row,
+            {
+                "kind": "device",
+                "device_id": leased_on,
+                "generation": str(uuid.uuid4()),
+                "status": "ready",
+                "workspace": "/where/the/executor/holds/it",
+                "url": "http://platform/execution",
+                "state": "/where/the/executor/keeps/state",
+            },
+        )
         await db.commit()
     channel = OwnerChannel(
         DeviceChannel(hub=_hub(), session_factory=client.test_request_factory)

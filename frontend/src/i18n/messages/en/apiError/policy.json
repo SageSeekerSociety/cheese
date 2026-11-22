@@ -1,5 +1,7 @@
 {
   "managementNeedsOwnSignIn": "This authorization is only for running tasks and cannot be used for management; sign in with your own account to do this",
   "managementNotForTeammates": "AI teammates cannot perform management actions",
+  "overseerNoOwnSeat": "Platform admin rights can't give you a seat here; ask an owner or admin to add you",
+  "overseerNoWayIn": "Platform admin rights don't include ways in; links and invite codes are for the owner and admins here",
   "policyOverTier": "{what} “{label}” is in tier {tier}, which this project doesn't allow. Use a resource within the allowed tiers, or ask a project manager to change the tier policy."
 }

@@ -62,6 +62,19 @@ export function connectGithubRepo(
 ): Promise<{ connected: boolean; repo?: string; account?: string; install_url?: string }> {
   return request(`/projects/${encodeURIComponent(projectId)}/github/connect`, { method: 'POST' })
 }
+// Move a platform-hosted project to an empty GitHub repository: copies every
+// branch, then binds the project to it. {connected:false, install_url} means
+// the App has to be installed on that repository first; its callback lands
+// back on the settings page with ?github_install=migrate to ask again.
+export function migrateToGithub(
+  projectId: string,
+  url: string
+): Promise<{ connected: boolean; repo?: string; install_url?: string; reopened_prs?: number }> {
+  return request(`/projects/${encodeURIComponent(projectId)}/github/migrate`, {
+    method: 'POST',
+    body: JSON.stringify({ url }),
+  })
+}
 // Personal OAuth/App connections (1.0 router, see legacyRequest): every
 // provider the user has linked, not just github_app; callers filter by providerId.
 export function listOAuthConnections(userId: string): Promise<{ connections: OAuthConnectionInfo[] }> {

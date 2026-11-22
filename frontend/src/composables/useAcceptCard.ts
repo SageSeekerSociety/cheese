@@ -16,10 +16,14 @@ import { useAcceptCardActions } from '@/composables/acceptCard/actions'
 import { useAcceptCardBar } from '@/composables/acceptCard/bar'
 import { useAcceptCards } from '@/composables/acceptCard/cards'
 import { useAcceptCardDerive } from '@/composables/acceptCard/derive'
+import { useHandIn } from '@/composables/acceptCard/handIn'
 import { signInWithGithub } from '@/composables/useGithubSignIn'
 import { noteAccepted, primeInvitePrompt } from '@/composables/useInvitePrompt'
 import { useReviewComments } from '@/composables/useReviewComments'
 
+import { t } from '@/i18n'
+import { memberName } from '@/lib/agentNames'
+import { mayIn } from '@/lib/projectPermissions'
 import { myHandle } from '@/me'
 import { useWorkspaceStore } from '@/stores/workspace'
 
@@ -30,6 +34,8 @@ export interface AcceptCardHost {
   taskId?: string | null
   /** 谁在看这张卡。默认是登录的那个账号；演示页没有登录的人，读者扮的是卡上点名的审阅人。 */
   viewer?: string
+  /** 任务所在的项目：看的人能不能改它的文件（`edit_content`），决定给不给提交审阅。 */
+  projectId?: string | null
 }
 
 export function useAcceptCard(props: AcceptCardHost) {
@@ -81,11 +87,36 @@ export function useAcceptCard(props: AcceptCardHost) {
     autoMergeVisible,
     reviewerName,
     deciderName,
-    decisionOpen,
+    decisionOpen: cardDecisionOpen,
     acceptLabel,
     forceMergeVisible,
     reviewerChoices,
   } = useAcceptCardDerive({ store, me, pendingCard, acceptedCard, deliveringCard })
+
+  // 人自己提交审阅（acceptCard/handIn.ts）。有人保存过、还没交进去的修改不在等审阅的那一版
+  // 里，这时不给退回和采纳，页头换成「再提交一版」：采纳的得是改过的那一版。
+  const handIn = useHandIn({
+    taskId,
+    me,
+    waiting: () => !!pendingCard.value,
+    mayHandIn: () =>
+      mayIn(
+        store.projects.find((project) => project.id === props.projectId),
+        'edit_content'
+      ),
+    onHandedIn: () => load(),
+    reportError: (error, fallback) => store.reportError(error, fallback),
+  })
+  const decisionOpen = computed(() => cardDecisionOpen.value && handIn.acceptable.value)
+  // 提交面板里能选的审阅人：自己排在最前，写「（你）」。
+  const handInReviewers = computed(() => {
+    const people = reviewerChoices.value.map((m) => ({ handle: m.user_handle, name: memberName(m) || m.user_handle }))
+    const mine = people.find((p) => p.handle === me.value)
+    return [
+      ...(mine ? [{ handle: mine.handle, name: t('work.room.accept.handIn.you', { name: mine.name }) }] : []),
+      ...people.filter((p) => p.handle !== me.value),
+    ]
+  })
 
   // 横条那一行、那个圈、有没有东西可画、以及对外说的相位（acceptCard/bar.ts）。
   const { bar, barColumn, hasBox, phase } = useAcceptCardBar({
@@ -129,7 +160,8 @@ export function useAcceptCard(props: AcceptCardHost) {
     acceptedCard,
     needsPr,
     comments,
-    reload: (alongside?: Promise<unknown>) => load(alongside),
+    // 采纳被拒的原因可能正是有没交进去的修改：页头的提交状态一起重读。
+    reload: (alongside?: Promise<unknown>) => Promise.all([load(alongside), handIn.load()]).then(() => undefined),
   })
 
   watch(
@@ -153,7 +185,8 @@ export function useAcceptCard(props: AcceptCardHost) {
     forceMergeVisible,
     phase,
     loaded,
-    // 台面上的那几张卡
+    // 台面上的那几张卡；`acceptCards` 是这件任务递过的每一张（决定过的也在）
+    acceptCards: cards.acceptCards,
     pendingCard,
     acceptedCard,
     deliveringCard,
@@ -185,7 +218,7 @@ export function useAcceptCard(props: AcceptCardHost) {
     // 这件任务的批注
     comments,
     // 动作
-    reload: () => load(),
+    reload: () => Promise.all([load(), handIn.load()]).then(() => undefined),
     onDownloadDeliverable: actions.onDownloadDeliverable,
     onApproveCard: actions.onApproveCard,
     onReassignCard: actions.onReassignCard,
@@ -196,6 +229,9 @@ export function useAcceptCard(props: AcceptCardHost) {
     onToggleAutoMerge: actions.onToggleAutoMerge,
     onRejectCard: actions.onRejectCard,
     onVoidCard: actions.onVoidCard,
+    // 人自己提交审阅
+    handIn,
+    handInReviewers,
     // 画的时候顺手要用的
     author: me,
     agentName,
@@ -207,7 +243,7 @@ export type AcceptCardState = ReturnType<typeof useAcceptCard>
 
 const ACCEPT_CARD: InjectionKey<AcceptCardState> = Symbol('acceptCard')
 
-// 一个页面上同一张卡有好几处要读：对话栏的横条、「改动」页顶部，以及专注模式里面板
+// 一个页面上同一张卡有好几处要读：对话栏的横条、「改动」页顶部，以及对话看不见时工作面板
 // 底部那一条。各自取一份的话，在一处点了采纳，另一处还停在点之前的样子，两份轮询
 // 也各打一遍。所以页面取一份、往下发，几处读的是同一份。
 export function provideAcceptCard(host: AcceptCardHost): AcceptCardState {

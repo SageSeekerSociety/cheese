@@ -45,6 +45,20 @@ describe('previewOf', () => {
     expect(previewOf({ start_mode: '直接' }, terms).fields).toEqual({})
   })
 
+  it('maps the knowledge points Cheese names to the list of this space', () => {
+    const shown = previewOf(
+      { knowledge_points: ['相关子查询', '清单里没有'] },
+      {
+        ...terms,
+        knowledgePoints: [
+          { id: 21, name: '相关子查询' },
+          { id: 22, name: '索引' },
+        ],
+      }
+    )
+    expect(shown.fields.knowledgePointIds).toEqual([21])
+  })
+
   it('leaves out what is not finished or not in the space', () => {
     const shown = previewOf({ name: 'Lab', deadline: '2026-11-0', category: '作业', difficulty: '中' }, terms)
     expect(shown.fields).toEqual({ name: 'Lab' })

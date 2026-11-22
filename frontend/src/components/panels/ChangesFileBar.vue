@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 改动面板顶部那条横条：单独打开一份文件时才有。返回、这份文件、它的两面（差异 /
-// 全文），以及对它做的事。
+// 全文），以及对它做的事。编辑不在这一格：「编辑」把它开到任务的「文件」那一格。
 //
 // 从 `PanelChangesView` 里分出来的（那个文件到了行数上限）：它管的是「打开着的那一份
 // 文件」这一面，和下面的正文、和没打开文件时的全部改动面互不相干。事件原样往上传，
@@ -19,12 +19,13 @@ const props = defineProps<{
   openPath: string | null
   /** 这件任务的状态；结束了的任务还要说一句只读。 */
   sourceStatus: string
-  fileDirty: boolean
   openDiff: FileDiff | null
   openIsDocument: boolean
-  effectiveView: 'diff' | 'edit'
+  effectiveView: 'diff' | 'text'
+  /** 这份文件哪里都改不了（已提交版本、任务结束、二进制…）。 */
   fileReadOnly: boolean
-  fileSaving: boolean
+  /** 这件任务有「文件」那一格，能去那里编辑。 */
+  canEdit?: boolean
   currentTask: RoomTask | undefined
   fileSource: FileSource
   fileToolReady: boolean
@@ -33,8 +34,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'close-file': []
-  'view-changed': [view: 'diff' | 'edit']
-  save: []
+  'view-changed': [view: 'diff' | 'text']
+  'edit-file': []
   'select-version': [source: FileSource]
   download: []
   refresh: []
@@ -62,11 +63,10 @@ const { mdAndUp } = useDisplay()
     <span class="changes-bar__path" :title="props.openPath">
       {{ mdAndUp ? props.openPath : props.openPath.split('/').pop() }}
     </span>
-    <span v-if="props.fileDirty" class="changes-bar__dot" :title="t('work.room.changes.unsaved')" />
     <v-spacer v-if="mdAndUp" />
-    <!-- Diff / edit are two faces of the same file, and only a changed file has
+    <!-- Diff / text are two faces of the same file, and only a changed file has
          both. A document has neither: its diff is the one line "binary file
-         differs", and editing it as text would corrupt it. -->
+         differs". -->
     <div v-if="props.openDiff && !props.openIsDocument" class="seg seg--sm">
       <button
         type="button"
@@ -79,26 +79,18 @@ const { mdAndUp } = useDisplay()
       <button
         type="button"
         class="seg__btn"
-        :class="{ 'seg__btn--on': props.effectiveView === 'edit' }"
-        @click="emit('view-changed', 'edit')"
+        :class="{ 'seg__btn--on': props.effectiveView === 'text' }"
+        @click="emit('view-changed', 'text')"
       >
-        {{ props.fileReadOnly || !mdAndUp ? t('work.room.changes.fullText') : t('work.room.changes.edit') }}
+        {{ t('work.room.changes.fullText') }}
       </button>
     </div>
-    <!-- Read-only files (binary / oversized / images) get no save button at
-       all: saving one is what corrupted them. On a phone every file is
-       read-only (see the CodeEditor branch), so there is no save either; one
-       rule, not one per file. -->
+    <!-- A file nobody can edit (binary / oversized / images, a committed version,
+       an ended task) says so; one that can be edited opens in the task's 文件
+       panel. On a phone the 文件 panel only reads, so nothing is offered. -->
     <span v-if="mdAndUp && props.fileReadOnly" class="changes-bar__ro">{{ t('work.room.changes.readOnly') }}</span>
-    <BaseButton
-      v-else-if="mdAndUp && props.effectiveView === 'edit'"
-      kind="primary"
-      size="sm"
-      :loading="props.fileSaving"
-      :disabled="!props.fileDirty"
-      @click="emit('save')"
-    >
-      {{ t('work.room.changes.save') }}
+    <BaseButton v-else-if="mdAndUp && props.canEdit" kind="secondary" size="sm" @click="emit('edit-file')">
+      {{ t('work.room.changes.edit') }}
     </BaseButton>
     <ChangesMoreMenu
       :current-task="props.currentTask"
@@ -145,13 +137,6 @@ const { mdAndUp } = useDisplay()
   color: var(--muted);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-.changes-bar__dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--muted);
-  flex: 0 0 auto;
 }
 .changes-bar__ro {
   font-size: 12px;

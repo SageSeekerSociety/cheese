@@ -167,7 +167,7 @@ describe('任务页头', () => {
 
     const theirs = mount({ owner_handle: 'bob', waiting_on: 'bob' })
     expect(theirs.getByTestId('task-phrase').textContent).toBe('待审阅')
-    expect(theirs.getByTestId('task-progress-note').textContent).toContain('等 ')
+    expect(theirs.getByTestId('task-progress-note').textContent).toContain('等bob')
     expect(theirs.getByTestId('task-progress-note').textContent).not.toContain('等你')
   })
 
@@ -179,7 +179,7 @@ describe('任务页头', () => {
       needs_my_action: false,
     })
     expect(view.getByTestId('task-progress-note').textContent).not.toContain('等你')
-    expect(view.getByTestId('task-progress-note').textContent).toContain('等 ')
+    expect(view.getByTestId('task-progress-note').textContent).toContain('等bob')
   })
 
   it('多人问题的实际被问者在页头看到等你', () => {
@@ -193,7 +193,7 @@ describe('任务页头', () => {
   })
 
   // 队友报的那一句是看板这一格的出处：页头照说，会话走了也不改它，只在旁边说一声。
-  it('队友说在等：页头写它报的状态和原话，会话走了也照旧，旁边写已离开', () => {
+  it('队友说在等结果：页头写进行中和它的原话，会话走了也照旧，旁边写已离开', () => {
     const said = {
       presentation: { column: 'building', phrase: 'waiting' },
       progress_state: 'waiting',
@@ -202,13 +202,13 @@ describe('任务页头', () => {
       progress_set_at: '2026-10-05T00:00:00Z',
     } as Partial<RoomTask>
     const here = mount(said)
-    expect(here.getByTestId('task-phrase').textContent).toBe('在等')
+    expect(here.getByTestId('task-phrase').textContent).toBe('进行中')
     expect(here.getByTestId('task-progress-note').textContent).toContain('等 CI 跑完')
     expect(here.queryByTestId('task-agent-left')).toBeNull()
     here.unmount()
 
     const gone = mount({ ...said, agent_left_at: '2026-10-05T01:00:00Z' })
-    expect(gone.getByTestId('task-phrase').textContent).toBe('在等')
+    expect(gone.getByTestId('task-phrase').textContent).toBe('进行中')
     expect(gone.getByTestId('task-progress-note').textContent).toContain('等 CI 跑完')
     expect(gone.getByTestId('task-agent-left').textContent).toContain('已离开')
   })

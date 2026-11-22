@@ -68,5 +68,15 @@
     "deleteChannel": "删除频道失败",
     "createTopic": "创建频道失败",
     "convertMessage": "未能转换这条消息"
+  },
+  "layout": {
+    "add": "添加页签",
+    "close": "关闭{title}",
+    "collapse": "收起",
+    "expand": "展开{title}",
+    "maximize": "放大",
+    "restore": "还原",
+    "reset": "恢复默认摆法",
+    "tabs": "页签"
   }
 }

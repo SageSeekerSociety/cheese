@@ -1,10 +1,11 @@
 // 新手引导的后半程：新用户进项目的「综合」之后，一个浮窗一步一步带着把第一件事做完。
 //
-// 第一步就是人来要做的那件事：把输入框里的第一件事交给芝士。之后每一步要人真的做了
-// 才往下走：点开芝士回复的那条支线、打开它建的任务、采纳第一份交付（服务端记下了
-// 合并）。界面上的地方不先讲，用到时才讲：采纳以后，最后一步指向总览，采纳的结果
-// 在「做出了什么」里成了项目的一个新版本，点「下一步」走完。做没做到看两样：服务端的事实（上手的 `asked` / `accepted`，
-// ChatPanel 问来后写进来）和页面上出现了什么（`v-guide-anchor` 登记的控件：支线开着、
+// 第一步就是人来要做的那件事：把输入框里的第一件事交给芝士。芝士就在频道里回复，先给
+// 计划；人在输入框里回一句，它才动手。之后每一步要人真的做了才往下走：打开它建的任务、
+// 看它中途摆出的预览、采纳第一份交付（服务端记下了合并）。界面上的地方不先讲，用到时才讲：采纳以后，最后一步指向
+// 总览，采纳的结果在「做出了什么」里成了项目的一个新版本，再提一句可以邀请人、开自己
+// 的项目，点「完成」走完。做没做到看两样：服务端的事实（上手的 `asked` / `accepted`，
+// ChatPanel 问来后写进来）和页面上出现了什么（`v-guide-anchor` 登记的控件：芝士的回复、
 // 任务页开着）。
 //
 // 该指的东西还没出现时（芝士还在回、任务还没建），浮窗指着一个等得到它的地方（对话
@@ -31,8 +32,8 @@ export interface GuideStep {
   anchors: string[]
   /** 该圈的还没出现时，浮窗指着这里等（不画圈）。 */
   waiting?: string[]
-  /** 圈到的是这一个时用 `textFailed`：该出现的东西出了错（芝士没回成）。 */
-  failed?: string
+  /** 这个锚点在页面上时，这一步还在等它做完（芝士正在回）：浮窗指着它，说 `textWaiting`。 */
+  busy?: string
   /** 这几个锚点是整块区域（任务页）：不画圈，只把浮窗放在上面。 */
   areas?: string[]
   /** 有它就是动作步：做到了自己往下走，没有「下一步」。 */
@@ -43,29 +44,39 @@ export const GUIDE_STEPS: GuideStep[] = [
   { key: 'send', anchors: ['composer-send'], done: (c) => c.facts.asked },
   {
     key: 'reply',
-    anchors: ['reply-thread', 'reply-failed'],
-    failed: 'reply-failed',
-    // 芝士还在回：指着那一行等，不说「回复了」。
-    waiting: ['reply-coming', 'timeline'],
-    // 没回成就停在这一步：后面几步讲的是计划和任务，都还没有。
-    done: (c) => c.has('thread-pane') && !c.has('reply-failed') && !c.has('reply-coming'),
+    // 芝士还在回：指着输入框上面那一行「正在工作」，回复落下之前不说「回复了」。
+    anchors: ['agent-reply'],
+    busy: 'reply-coming',
+    waiting: ['timeline'],
+    // 回复落下、它不再工作，就往下走。
+    done: (c) => c.facts.answered && c.has('agent-reply') && !c.has('reply-coming'),
   },
-  // 圈支线的输入框本身：要人在那里回一句，浮窗就不能压着它。
-  { key: 'confirm', anchors: ['thread-composer'], waiting: ['reply-thread'] },
+  // 圈输入框本身：要人在那里回一句，浮窗就不能压着它。人已经在任务页上时，浮窗落在任务页上，
+  // 「下一步」照常往下走。
+  { key: 'confirm', anchors: ['composer-input'], waiting: ['agent-reply', 'task-page'] },
   {
     key: 'task',
     anchors: ['task-card', 'task-row'],
-    waiting: ['timeline', 'thread-pane'],
-    // 支线转成的任务在右半边打开，任务页由那里的「整页打开」进。
-    done: (c) => c.has('task-page') || c.has('task-pane'),
+    waiting: ['timeline'],
+    // 频道里点开任务，先在频道右边审阅它（那里有「打开任务」）；任务页也算点开了。
+    done: (c) => c.has('task-page') || c.has('review-open-task'),
   },
   // 任务页是一整块区域：正文可能还是空的，只圈标题栏那一条什么也说明不了，浮窗就落在
-  // 页面上。还只在支线右半边时圈的是「整页打开」那颗按钮，那是颗要点的控件，照常画圈。
+  // 页面上。
   {
     key: 'taskPage',
-    anchors: ['task-page', 'task-open-page'],
+    anchors: ['task-page'],
     areas: ['task-page'],
-    waiting: ['task-card', 'task-row'],
+    // 人还在频道右边那一栏里：指着那里的「打开任务」。
+    waiting: ['review-open-task', 'task-card', 'task-row'],
+  },
+  // 芝士做到一半摆出来的那份东西（`cheese show` 落成的预览卡）。看到就讲怎么点开、
+  // 怎么提修改；交付一到（或已经采纳过）就往下走，芝士没摆预览也不会卡在这里。
+  {
+    key: 'preview',
+    anchors: ['preview-card'],
+    waiting: ['task-page', 'timeline'],
+    done: (c) => c.has('accept-card') || c.facts.accepted,
   },
   {
     key: 'accept',
@@ -82,7 +93,7 @@ export interface GuideStop {
   /** 要指的目标；该圈的还没出现时是 `waiting` 里等到的那个。 */
   target: HTMLElement
   /** 文案的后半段（`welcome.guide.<key>.<text>`）：在等、出了错，还是照常讲。 */
-  text: 'text' | 'textWaiting' | 'textFailed'
+  text: 'text' | 'textWaiting'
   /** 整块区域（任务页）：不画圈，只放浮窗。 */
   area: boolean
   /** 动作步：做到了自己往下走，没有「下一步」。 */
@@ -101,9 +112,10 @@ export function resolveGuideStep(
   find: (name: string) => HTMLElement | null,
   { replaying = false }: { replaying?: boolean } = {}
 ): GuideStop | null {
-  const hit = step.anchors.find((name) => find(name))
+  const busy = step.busy ? find(step.busy) : null
+  const hit = busy ? undefined : step.anchors.find((name) => find(name))
   const target = hit ? find(hit) : null
-  const waiting = target ? null : (step.waiting ?? []).map(find).find(Boolean)
+  const waiting = target ? null : busy ?? (step.waiting ?? []).map(find).find(Boolean)
   // 重播时每一站都要有落脚点：这一步该指的地方没开着（支线、任务页、手机上没侧栏），
   // 就落到频道的时间线上。不然点到这一站整块浮窗会消失，后面也没处点。
   const replayAt = !target && !waiting && replaying ? find(REPLAY_FALLBACK_ANCHOR) : null
@@ -112,7 +124,7 @@ export function resolveGuideStep(
   return {
     key: step.key,
     target: at,
-    text: !target ? 'textWaiting' : hit === step.failed ? 'textFailed' : 'text',
+    text: !target ? 'textWaiting' : 'text',
     area: !hit || !!step.areas?.includes(hit),
     // 重播时**每一站**都有「下一步」：它不从人的旧记录里跳步（`settle` 在重播时不动），
     // 没有这个的话，已经发过消息的人会停在第一站，永远出不去。

@@ -36,6 +36,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.config import settings
 from app.core.db import Base
+from app.domain.agent import sandbox_image
 from app.domain.common import Timestamps, UuidPk
 
 
@@ -140,6 +141,7 @@ class WarmMachine(UuidPk, Timestamps, Base):
     # What the machine's data disk holds, found when it enrolled; handed to the
     # host it becomes (``CloudHost.sandbox_disk_gb``).
     sandbox_disk_gb: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    sandbox_image: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
 
 class CloudHost(UuidPk, Timestamps, Base):
@@ -197,6 +199,7 @@ class CloudHost(UuidPk, Timestamps, Base):
     # it enrolled (`enrollment.bootstrap_script`). A pool host enrolls only with
     # one; NULL on a whole VM, which runs no sandbox.
     sandbox_disk_gb: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    sandbox_image: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # Why the last attempt failed. Kept so a stuck host explains itself.
     enroll_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     enroll_attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
@@ -253,6 +256,18 @@ class CloudHost(UuidPk, Timestamps, Base):
     draining_since: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Whether that host is brought up to date where it is rather than
+    # rebuilt: only its enrollment script changed, so once no sandbox but the
+    # parked ones is on it, the script runs again on the machine and its
+    # homes, stores and parked sandboxes stay (`host_refresh`). False while it
+    # is rebuilt, and on a host that is not draining.
+    refresh_in_place: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=text("false")
+    )
+    # When that run began on the machine; NULL before it has.
+    refresh_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     # A whole cloud VM for one session, not a host of sandboxes: created for
     # that session from ``microcloud_vm_offering_id``, its executor runs with
     # the whole machine (``host`` visibility, sudo), it takes no other session
@@ -269,11 +284,12 @@ class CloudHost(UuidPk, Timestamps, Base):
 
 
 class SandboxHome(UuidPk, Timestamps, Base):
-    """One session's home: its sandbox's directory on a machine, one of the
-    platform's hosts (``host_id``) or a person's computer (``device_id``).
+    """A sandbox's home: its directory on a machine, one of the platform's
+    hosts (``host_id``) or a person's computer (``device_id``), named by the
+    environment it backs (``Environment.sandbox_home_id``).
 
-    Written when the session is placed, before anything is on the disk, so a
-    session waiting for its host keeps its place. On a host it holds one of
+    Written when the environment is placed, before anything is on the disk,
+    so one waiting for its host keeps its place. On a host it holds one of
     the host's slots for as long as it exists.
 
     Every sandbox has the same lifecycle, whoever's machine it is on: it is
@@ -285,13 +301,8 @@ class SandboxHome(UuidPk, Timestamps, Base):
     """
 
     __tablename__ = "sandbox_homes"
+    sandbox_image: Mapped[str | None] = mapped_column(String(255), nullable=True)
     __table_args__ = (
-        Index(
-            "uq_sandbox_homes_current_session",
-            "session_id",
-            unique=True,
-            postgresql_where=text("session_id IS NOT NULL"),
-        ),
         CheckConstraint(
             "(host_id IS NULL) <> (device_id IS NULL)",
             name="ck_sandbox_homes_one_machine",
@@ -346,8 +357,6 @@ class SandboxHome(UuidPk, Timestamps, Base):
     room_resource_id: Mapped[str] = mapped_column(String(36))
     # The directory's resource on the host (the lease's ``resource_id``).
     resource_id: Mapped[str] = mapped_column(String(36))
-    # NULL only for a room's directory from before session leases.
-    session_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     # When the room was told this session's sandbox is being prepared; cleared
     # once it is told the sandbox is ready.
     waiting_since: Mapped[datetime | None] = mapped_column(
@@ -369,6 +378,12 @@ class SandboxHome(UuidPk, Timestamps, Base):
     # session to start again there (`lifecycle._park`). `frozen_at` stays set
     # with it: a parked sandbox is a frozen one that holds no slot.
     parked_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    # Since when a tool call has asked for the frozen sandbox to be woken
+    # (`HostPool._wake_frozen`): the install thaws it before its executor is
+    # asked anything, and a park makes the request moot. NULL while nobody has.
+    thaw_wanted_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     # Since when the sandbox is being destroyed: its home is being deleted
@@ -408,6 +423,25 @@ class HostProjectStore(Base):
     )
     project_key: Mapped[uuid.UUID] = mapped_column(primary_key=True, index=True)
     last_placed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class SandboxRootSnapshot(Timestamps, Base):
+    """The last root diff saved for a session, independent of any host home."""
+
+    __tablename__ = "sandbox_root_snapshots"
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "agent_sessions.id",
+            ondelete="CASCADE",
+            name="fk_sandbox_root_snapshots_session_id_agent_sessions",
+        ),
+        primary_key=True,
+    )
+    image: Mapped[str] = mapped_column(String(255))
+    key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    size: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    md5: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    status: Mapped[str] = mapped_column(String(32))
 
 
 class RetainedHomeArchive(UuidPk, Timestamps, Base):
@@ -462,7 +496,7 @@ class HostReading(UuidPk, Base):
     )
     # The host's swap file, and the pressure the kernel reports on its memory
     # (percent of the last minute and five the kernel spent stalled, from
-    # /proc/pressure/memory), and whether zswap is loaded — NULL on a machine
+    # /proc/pressure/memory), and whether zswap is on — NULL on a machine
     # that reports none of them, as macOS's does.
     swap_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     swap_free_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
@@ -547,6 +581,12 @@ def capacity(host: CloudHost) -> int:
     return max(0, min(hard_capacity(host), by_memory))
 
 
+def sandbox_image_ready(host: CloudHost | WarmMachine) -> bool:
+    return bool(host.sandbox_image) or (
+        isinstance(host, CloudHost) and bool(host.whole_machine)
+    )
+
+
 def hard_capacity(host: CloudHost) -> int:
     """The sandboxes a host runs at once at most, whatever their memory: per
     core, by the deployment's setting, and no more than fit on its data disk.
@@ -563,8 +603,11 @@ def hard_capacity(host: CloudHost) -> int:
     # is placed.
     swap_gb = -(-settings.cloud_host_swap_mb // 1024)
     by_disk = (
-        int(host.sandbox_disk_gb) - settings.cloud_host_disk_reserve_gb - swap_gb
-    ) // settings.cloud_sandbox_disk_gb
+        int(host.sandbox_disk_gb)
+        - settings.cloud_host_disk_reserve_gb
+        - swap_gb
+        - sandbox_image.cache_reservation_gb()
+    ) // (settings.cloud_sandbox_disk_gb + sandbox_image.home_image_reservation_gb())
     return max(0, min(by_cores, by_disk))
 
 

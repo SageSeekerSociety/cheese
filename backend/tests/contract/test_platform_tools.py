@@ -35,6 +35,11 @@ TOPIC = TASK
 #: 读回来 —— 从表里读一遍再断言它等于自己，删掉一整行也是绿的。
 CALLS = {
     "chat_send": ({"content": "这一轮我在这里"}, "POST", f"/topics/{TOPIC}/messages"),
+    "chat_react": (
+        {"message_id": "m-1", "emoji": "👍"},
+        "POST",
+        "/blocks/m-1/reactions",
+    ),
     "cheese_chat.edit": (
         {"action": "edit", "message_id": "m-1", "content": "改过的这一句"},
         "PATCH",
@@ -130,6 +135,16 @@ CALLS = {
         f"/topics/{TOPIC}/accept-card/redeliver",
     ),
     "cheese_card.ready": ({"action": "ready"}, "POST", f"/topics/{TOPIC}/ready"),
+    "cheese_hand_in.prepare": (
+        {"action": "prepare", "items": [{"item": 1, "file": "csim.c"}]},
+        "POST",
+        f"/topics/{TOPIC}/hand-in/prepare",
+    ),
+    "cheese_hand_in.confirm": (
+        {"action": "confirm"},
+        "POST",
+        f"/topics/{TOPIC}/hand-in/confirm",
+    ),
     "cheese_room.rename": (
         {"action": "rename", "text": "推荐原型"},
         "POST",
@@ -147,6 +162,7 @@ CALLS = {
     ),
     "cheese_web.search": ({"action": "search", "query": "芝士"}, "GET", "/web-search"),
     "cheese_help": ({"query": "验收"}, "POST", "/docs/agent/search"),
+    "cheese_find": ({"query": "预算"}, "POST", "/assistant/agent/search"),
     "cheese_help.page": ({"page": "accept"}, "POST", "/docs/agent/read"),
     "cheese_room.members": ({"action": "members"}, "GET", f"/topics/{TOPIC}/members"),
     "cheese_session.status": ({"action": "status"}, "GET", f"/topics/{TOPIC}/status"),
@@ -296,7 +312,7 @@ CALLS = {
 #: 要机器的那一样：推一条任务分支。
 NEEDS_THE_MACHINE = {
     "cheese_card.request": (
-        {"action": "request", "subject": "fix(x): y", "completes_task": True},
+        {"action": "request", "subject": "fix(x): y"},
         "POST",
         f"/topics/{TOPIC}/accept-card",
     ),
@@ -596,7 +612,7 @@ def test_a_routine_the_backend_would_refuse_is_refused_before_it_is_sent(
         (
             "cheese_task",
             {"title": "数据清洗"},
-            "cheese_task 要 action：open / state / close / reopen",
+            "cheese_task 要 action：open / tell / look / accept / report / state / close / reopen",
         ),
         (
             "cheese_task",
@@ -611,7 +627,7 @@ def test_a_routine_the_backend_would_refuse_is_refused_before_it_is_sent(
         ),
         (
             "cheese_card",
-            {"action": "request", "completes_task": True},
+            {"action": "request"},
             "cheese_card(action=request) 缺少参数：subject",
         ),
         (
@@ -715,7 +731,6 @@ def test_acceptance_pushes_the_work_before_it_files_the_card(machine_is_here):
             "action": "request",
             "subject": "fix(x): y",
             "reviewer": "lisi",
-            "completes_task": True,
         },
     )
 

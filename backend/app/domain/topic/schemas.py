@@ -176,6 +176,12 @@ class ConclusionIn(BaseModel):
     conclusion: str = ""
     reporter_handle: str | None = Field(default=None, max_length=64)
     contributor_handles: list[str] | None = None
+    # What a task's own session closing it names as its grounds
+    # (`review.close_grounds`): the owner's message saying it is over, or why
+    # the checklist items left are not being done. People closing it give
+    # neither.
+    owner_message_id: uuid.UUID | None = None
+    unchecked_reason: str | None = Field(default=None, max_length=2000)
 
 
 class DocEditIn(BaseModel):

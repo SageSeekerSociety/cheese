@@ -15,6 +15,7 @@ transaction has committed.
 
 import uuid
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import say
@@ -23,7 +24,9 @@ from app.domain.agent.realtime.broker import get_broker
 from app.domain.agent_session.models import AgentSession
 from app.domain.block.schemas import BlockOut
 from app.domain.conversation.services import room_of
+from app.domain.machine import occupants
 from app.domain.machine.models import SandboxHome
+from app.domain.repository.kept_work import keeps_work
 from app.domain.run_record.service import FRAME as RUN_RECORD_FRAME
 from app.domain.run_record.service import as_payload as run_record_payload
 from app.domain.run_record.service import record as keep_record
@@ -33,8 +36,9 @@ async def _conversation(session: AsyncSession, home: SandboxHome) -> uuid.UUID:
     """The conversation the sandbox is for: its session's. A task's session
     works in the task's own conversation, while ``home.topic_id`` names the
     room its machine belongs to."""
-    if home.session_id is not None:
-        owner = await session.get(AgentSession, home.session_id)
+    owner_id = await session.scalar(select(occupants.a_session_in(home.id)))
+    if owner_id is not None:
+        owner = await session.get(AgentSession, owner_id)
         if owner is not None:
             return owner.conversation_id
     return home.topic_id
@@ -64,7 +68,7 @@ async def _line(
 ) -> dict | None:
     """Say it in the conversation: a person has something to do. A person's
     own 芝士 conversation has no lines of the platform's in it; its 芝士 hears
-    on its next tool call that the sandbox is a new one (``LOST_KEY``) and
+    on its next tool call that the sandbox is a new one (`Attachment.notice`) and
     tells its person, and the line is kept as a record."""
     if home.project_id is None:
         return await _record(session, home, content, meta)
@@ -133,13 +137,20 @@ async def tell_replaced(
     )
 
 
+async def _kept(session: AsyncSession, home: SandboxHome) -> bool:
+    """Whether the sandbox's project keeps its task checkouts' uncommitted
+    work off the sandbox (`repository.kept_work`): there that work comes along
+    to the next one too, and the ``…Kept`` sentence says so."""
+    return home.project_id is not None and await keeps_work(home.project_id, session)
+
+
 async def tell_lost(session: AsyncSession, home: SandboxHome) -> dict | None:
     """The sandbox's host stopped answering and the pool gave up on it: the
-    session works in a new sandbox from what was pushed."""
+    session works in a new sandbox from what was kept."""
     return await _line(
         session,
         home,
-        say("sandboxLost"),
+        say("sandboxLostKept" if await _kept(session, home) else "sandboxLost"),
         {"event_type": "cloud_startup", "severity": "warn"},
     )
 
@@ -150,7 +161,10 @@ async def tell_released(
     return await _record(
         session,
         home,
-        say("sandboxReleased", minutes=minutes),
+        say(
+            "sandboxReleasedKept" if await _kept(session, home) else "sandboxReleased",
+            minutes=minutes,
+        ),
         {"event_type": "sandbox_asleep", "severity": "info"},
     )
 
@@ -159,7 +173,11 @@ async def tell_unpaid(session: AsyncSession, home: SandboxHome) -> dict | None:
     return await _line(
         session,
         home,
-        say("sandboxReleasedNoCredits"),
+        say(
+            "sandboxReleasedNoCreditsKept"
+            if await _kept(session, home)
+            else "sandboxReleasedNoCredits"
+        ),
         {"event_type": "sandbox_asleep", "severity": "warn"},
     )
 

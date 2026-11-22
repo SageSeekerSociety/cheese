@@ -254,6 +254,17 @@ def proc_index(paths: list[Path]) -> set:
 
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
     for path in paths:
+        if cloud_home(path):
+            result = run_command(
+                ["sudo", "-n", SANDBOX_HOST, "index-home", path.name, str(path)]
+            )
+            if result.returncode:
+                # i18n-exempt: runs on the machine; cleanup diagnostic for its log
+                raise RuntimeError(
+                    "sandbox home could not be indexed: " + result.stderr
+                )
+            found.update(tuple(entry) for entry in json.loads(result.stdout)["inodes"])
+            continue
         try:
             top = os.open(str(path), os.O_RDONLY | os.O_DIRECTORY)
         except FileNotFoundError:
@@ -815,7 +826,25 @@ def put_archive(archive: Path, url: str) -> dict:
     return {"size": size, "md5": digest.hexdigest()}
 
 
+def cloud_home(path: Path) -> bool:
+    return (
+        sys.platform == "linux"
+        and Path(SANDBOX_HOST).exists()
+        and path.parent.parent.name == "home"
+        and sandbox_marker(path).with_suffix(".cloud").is_file()
+    )
+
+
 def remove_tree(path: Path) -> None:
+    if cloud_home(path):
+        result = run_command(
+            ["sudo", "-n", SANDBOX_HOST, "remove-home", path.name, str(path)]
+        )
+        if result.returncode:
+            # i18n-exempt: runs on the machine; cleanup diagnostic for its log
+            raise RuntimeError("sandbox home could not be removed: " + result.stderr)
+        return
+
     def retry_unlink(function, name, exc_info):
         error = exc_info[1]
         parent = Path(name).parent
@@ -1546,6 +1575,7 @@ def main() -> None:
         # Last: until the room's directories are gone, they are a sandboxed
         # room's to have written.
         sandbox_marker(home).unlink(missing_ok=True)
+        sandbox_marker(home).with_suffix(".cloud").unlink(missing_ok=True)
         print(json.dumps({"removed": True, "kept": kept}))
     elif action == "tasks":
         # `tasks` are closed tasks of this room; `cleanup` and `room` are unused.

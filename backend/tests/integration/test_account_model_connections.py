@@ -25,6 +25,7 @@ from app.domain.agent.owner_provider import AccountChannel, owner_is_away
 from app.domain.agent.place import OWN_MODEL_KEY
 from app.domain.agent_instance import account_connections
 from app.domain.agent_instance.models import AccountConnection, AgentInstance
+from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.models import AgentSession
 from tests.integration.conftest import (
     session_auth_headers,
@@ -354,11 +355,16 @@ def test_its_session_runs_on_the_session_host_with_its_key_and_hands_none_on(
 
     async def recorded():
         async with client.test_factory() as db:
-            rows = (await db.scalars(select(AgentSession))).all()
-            return json.dumps(
-                [[r.work_lease, r.runtime_location, r.execution_request] for r in rows],
-                default=str,
-            )
+            rows = (
+                await db.execute(
+                    select(
+                        attachments.environment_column(),
+                        AgentSession.runtime_location,
+                        AgentSession.environment_notice,
+                    )
+                )
+            ).all()
+            return json.dumps([list(row) for row in rows], default=str)
 
     assert KEY not in client.portal.call(recorded)
 

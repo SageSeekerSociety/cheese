@@ -27,17 +27,17 @@ from sqlalchemy import select, update
 
 from app.core.config import settings
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
-from app.domain.agent import execution
+from app.domain.agent import execution, sandbox_image
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.identity.services import IdentityService
-from app.domain.machine import lifecycle
+from app.domain.machine import lifecycle, occupants
 from app.domain.machine import session_work as work_lease
 from app.domain.machine.models import AiStatus, CloudHost, MachineStatus, SandboxHome
 from app.domain.machine.repositories import CloudHostRepository
 from app.domain.machine.runner import SandboxSweeper
-from app.domain.machine.sandbox_wait import SANDBOX_LOST, STOPPED_PROCESSES
+from app.domain.machine.sandbox_wait import SANDBOX_LOST_KEPT, STOPPED_PROCESSES
 from app.domain.machine.services import HostPool
 from app.domain.machine.session_work import checkpoint_room
 from app.domain.project.models import Project
@@ -50,6 +50,7 @@ from app.domain.team.models import Team
 from app.domain.topic.models import Topic, TopicStatus
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.microcloud import FakeMicroCloud
+from tests.support.environments import works_in
 
 
 class Hosts:
@@ -256,7 +257,7 @@ def tool_call(case, seat, timeout=5, *, tells_agent=False):
 def home_of(case, seat) -> SandboxHome | None:
     async def read():
         async with case.client.test_request_factory() as db:
-            return await CloudHostRepository(db).current_home(seat.session)
+            return await occupants.home_of(db, seat.session)
 
     return run(case, read)
 
@@ -265,7 +266,7 @@ def host_of(case, seat) -> CloudHost | None:
     async def read():
         async with case.client.test_request_factory() as db:
             repo = CloudHostRepository(db)
-            home = await repo.current_home(seat.session)
+            home = await occupants.home_of(db, seat.session)
             return None if home is None else await repo.get(home.host_id)
 
     return run(case, read)
@@ -277,13 +278,14 @@ def host_comes_up(case, seat, device_id):
     async def enrol():
         async with case.client.test_request_factory() as db:
             repo = CloudHostRepository(db)
-            home = await repo.current_home(seat.session)
+            home = await occupants.home_of(db, seat.session)
             host = await repo.get(home.host_id)
             case.provider.machines[host.machine_id].update(
                 status="running", aiStatus="disabled"
             )
             host.status = MachineStatus.running
             host.ai_status = AiStatus.disabled
+            host.sandbox_image = sandbox_image.default_image()["reference"]
             host.last_seen_at = datetime.now(UTC)
             await repo.mark_enrolled(
                 host,
@@ -328,7 +330,7 @@ def time_passes(case, seat, idle: timedelta):
         async with case.client.test_request_factory() as db:
             await db.execute(
                 update(SandboxHome)
-                .where(SandboxHome.session_id == seat.session)
+                .where(SandboxHome.id == occupants.home_of_session_id(seat.session))
                 .values(active_at=datetime.now(UTC) - idle)
             )
             await db.commit()
@@ -593,7 +595,7 @@ def test_an_idle_sandbox_is_destroyed_and_the_next_tool_call_gets_a_new_one(clou
     assert answer["target"]["device_id"] == "host-a"
     # This machine has no sandbox cgroup for the host program to read, so no
     # process is named: the copy is the one there always was.
-    assert answer["notice"] == SANDBOX_LOST
+    assert answer["notice"] == SANDBOX_LOST_KEPT
     assert not (home / "room" / "notes.md").exists()
     # Told once.
     assert "notice" not in tool_call(cloud, seat, tells_agent=True)
@@ -624,7 +626,7 @@ def test_the_agent_is_told_what_was_running_when_its_sandbox_was_destroyed(
     assert sweep(cloud)["destroyed"] == 1
 
     answer = tool_call(cloud, seat, tells_agent=True)
-    assert answer["notice"] == SANDBOX_LOST + "\n" + STOPPED_PROCESSES.format(
+    assert answer["notice"] == SANDBOX_LOST_KEPT + "\n" + STOPPED_PROCESSES.format(
         processes="  npm run dev\n  python3 -m http.server 8000"
     )
     assert "notice" not in tool_call(cloud, seat, tells_agent=True)
@@ -703,7 +705,7 @@ def test_a_long_turn_that_keeps_using_its_sandbox_keeps_it(cloud):
 def host_drains_since(case, seat, ago: timedelta) -> None:
     async def go():
         async with case.client.test_request_factory() as db:
-            home = await CloudHostRepository(db).current_home(seat.session)
+            home = await occupants.home_of(db, seat.session)
             await db.execute(
                 update(CloudHost)
                 .where(CloudHost.id == home.host_id)
@@ -827,18 +829,17 @@ def a_whole_vm_waits(cloud) -> None:
             )
             db.add(host)
             await db.flush()
-            db.add(
-                SandboxHome(
-                    host_id=host.id,
-                    spec="vm",
-                    project_id=cloud.project_id,
-                    resource_id=str(cloud.seats[2].room),
-                    topic_id=cloud.seats[2].room,
-                    room_resource_id=str(cloud.seats[2].room),
-                    session_id=cloud.seats[2].session,
-                    waiting_since=datetime.now(UTC),
-                )
+            home = SandboxHome(
+                host_id=host.id,
+                spec="vm",
+                project_id=cloud.project_id,
+                resource_id=str(cloud.seats[2].room),
+                topic_id=cloud.seats[2].room,
+                room_resource_id=str(cloud.seats[2].room),
+                waiting_since=datetime.now(UTC),
             )
+            db.add(home)
+            await works_in(db, cloud.seats[2].session, home)
             await db.commit()
 
     run(cloud, seed)
@@ -1034,7 +1035,7 @@ def test_a_tool_call_during_an_unfinished_removal_waits_and_then_gets_a_new_sand
         async with cloud.client.test_request_factory() as db:
             await db.execute(
                 update(SandboxHome)
-                .where(SandboxHome.session_id == seat.session)
+                .where(SandboxHome.id == occupants.home_of_session_id(seat.session))
                 .values(stopped_at=datetime.now(UTC) - lifecycle.STOP_HOLD)
             )
             await db.commit()
@@ -1044,7 +1045,7 @@ def test_a_tool_call_during_an_unfinished_removal_waits_and_then_gets_a_new_sand
     assert not home.exists()
     answer = tool_call(cloud, seat, tells_agent=True)
     assert answer["target"]["device_id"] == "host-a"
-    assert answer["notice"] == SANDBOX_LOST
+    assert answer["notice"] == SANDBOX_LOST_KEPT
 
 
 def test_a_conversation_mid_turn_does_not_keep_other_sandboxes(cloud, monkeypatch):

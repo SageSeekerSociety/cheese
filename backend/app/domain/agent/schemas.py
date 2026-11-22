@@ -256,6 +256,8 @@ class _ModelBodyBase(BaseModel):
     tier: Literal["included", "premium", "frontier"] | None = None
     # 只有平台管理员开通过的团队能用（网关的 `cheese_overseas`）：Claude、GPT、Gemini。
     overseas: bool | None = None
+    # 缓存闲置多久失效，秒（网关的 `cheese_cache_lifetime_s`）；0 清掉。
+    cache_lifetime_s: int | None = Field(default=None, ge=0, le=7 * 24 * 3600)
 
     @field_validator("api_base")
     @classmethod

@@ -21,6 +21,10 @@ import { loadMarkdownReader } from '@/test/markdownReader'
 
 const Panel = ChatPanel as unknown as Component
 const SEAT = 'cheese-t1'
+/** 房间里的第二位队友：这个房间交给的是 SEAT，而发送框点一下交的是最近 @ 过的那位。 */
+const OTHER = 'cheese-t2'
+let roster: { id: string; member_handle: string; name: string; role: string; agent: boolean }[] = []
+let history: Block[] = []
 let vuetify: ReturnType<typeof createVuetify>
 
 const server = {
@@ -62,6 +66,13 @@ beforeEach(() => {
   server.addressing = { agent: null, reason: null, people: [], place: 'channel', task_status: null }
   server.answer = 'posted'
   server.sent = []
+  roster = [
+    { id: '1', member_handle: 'me', name: '我', role: 'owner', agent: false },
+    { id: '2', member_handle: SEAT, name: '芝士', role: 'member', agent: true },
+  ]
+  history = []
+  // 时间线按 handle 认「这条是不是我说的」（`lastMate` 也这么找），所以得先是我。
+  localStorage.setItem('user', JSON.stringify({ id: 1, username: 'me', nickname: 'me' }))
   vi.stubGlobal(
     'WebSocket',
     class {
@@ -99,20 +110,10 @@ beforeEach(() => {
       const unasked = server.answer === 'alone' || server.answer === 'after_agent' ? { unasked: server.answer } : {}
       return json({ code: 200, data: { ...stored(body), ...unasked } })
     }
-    if (u.includes('/members'))
-      return json({
-        code: 200,
-        data: {
-          data: [
-            { id: '1', member_handle: 'me', name: '我', role: 'owner', agent: false },
-            { id: '2', member_handle: SEAT, name: '芝士', role: 'member', agent: true },
-          ],
-          total: 2,
-        },
-      })
+    if (u.includes('/members')) return json({ code: 200, data: { data: roster, total: roster.length } })
     if (u.includes('/progress')) return json({ code: 200, data: { items: [], updated_at: null } })
     if (u.includes('/tasks')) return json({ code: 200, data: { data: [], total: 0 } })
-    return json({ code: 200, data: { data: [], total: 0, has_more: false } })
+    return json({ code: 200, data: { data: history, total: history.length, has_more: false } })
   })
 })
 
@@ -161,6 +162,72 @@ describe('谁也没交给、看起来在等队友的一条：仅你可见的一�
     expect(composerText(view.box)).toContain(`<@${SEAT}>`)
     expect(view.container.querySelector('.composer')!.textContent).toContain('帮我列个下周的计划')
     expect(view.container.textContent).not.toContain(NOTICE)
+    view.unmount()
+  })
+
+  // 这一句是**这个房间**的座位说的：头像、名字、「交给芝士」写的都是它。发出去交给谁
+  // 也必须是它。发送框那颗头像平时画的是「我最近 @ 过的那位」，那位可以是这个房间里的
+  // 另一位队友——照它写 @，屏幕上说的是交给芝士、落库时却交给了芝士O。
+  it('「交给芝士」交给的是这一句写的那位，不是最近 @ 过的那位', async () => {
+    roster.push({ id: '3', member_handle: OTHER, name: '芝士O', role: 'member', agent: true })
+    history = [
+      {
+        id: 'earlier',
+        project_id: 'p1',
+        conversation_id: 't1',
+        turn_id: 'earlier',
+        kind: 'message',
+        author_type: 'participant',
+        author: 'me',
+        content: `<@${OTHER}> 1`,
+        reply_to: null,
+        refs: [],
+        created_at: new Date().toISOString(),
+      } as unknown as Block,
+    ]
+    server.answer = 'alone'
+    const view = await openAndSend('帮我列个下周的计划')
+
+    expect(view.container.querySelector('.ephemeral__name')?.textContent?.trim()).toBe('芝士')
+    await fireEvent.click(view.getByRole('button', { name: '交给芝士' }))
+    await settle()
+
+    expect(composerText(view.box)).toContain(`<@${SEAT}>`)
+    expect(composerText(view.box)).not.toContain(`<@${OTHER}>`)
+    view.unmount()
+  })
+
+  // 报上来的那条截图就是这个样子：回复时输入框里先带着 `@芝士O`（上一次留着的一位），
+  // 屏幕上这一句写着交给芝士，点完却仍是芝士O。草稿里已经有 @ 时，得把它换成这一位。
+  it('草稿里已经 @ 着另一位队友：换成这一句写的那位', async () => {
+    roster.push({ id: '3', member_handle: OTHER, name: '芝士O', role: 'member', agent: true })
+    history = [
+      {
+        id: 'earlier',
+        project_id: 'p1',
+        conversation_id: 't1',
+        turn_id: 'earlier',
+        kind: 'message',
+        author_type: 'participant',
+        author: 'me',
+        content: `<@${OTHER}> 1`,
+        reply_to: null,
+        refs: [],
+        created_at: new Date().toISOString(),
+      } as unknown as Block,
+    ]
+    server.answer = 'alone'
+    const view = await openAndSend('帮我列个下周的计划')
+    // 人手上又点了一下头像：正文开头多了上一次交给的那位。
+    await fireEvent.click(view.container.querySelector<HTMLButtonElement>('.summon__btn')!)
+    await settle()
+    expect(composerText(view.box)).toContain(`<@${OTHER}>`)
+
+    await fireEvent.click(view.getByRole('button', { name: '交给芝士' }))
+    await settle()
+
+    expect(composerText(view.box)).toContain(`<@${SEAT}>`)
+    expect(composerText(view.box)).not.toContain(`<@${OTHER}>`)
     view.unmount()
   })
 
@@ -215,7 +282,7 @@ describe('送到时已经不交给队友了', () => {
 
     expect(server.sent[0]).toMatchObject({ content: '再加一个导出接口', expects_agent: true })
     expect(composerText(view.box)).toBe('再加一个导出接口')
-    expect(view.container.textContent).toContain('任务已关闭，这条不会再自动交给芝士')
+    expect(view.container.textContent).toContain('任务已结束，这条不会再自动交给芝士')
     // 时间线上没有一条「发送失败」或冒充交给了队友的那条：它整条回到了输入框。
     expect(view.container.querySelector('.outbox-fail')).toBeNull()
     expect(view.container.querySelector('.timeline-zone')?.textContent ?? '').not.toContain('再加一个导出接口')

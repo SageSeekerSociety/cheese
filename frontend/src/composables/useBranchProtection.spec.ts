@@ -12,7 +12,7 @@ vi.mock('@/api', async () => ({
 
 import { useBranchProtection } from './useBranchProtection'
 
-import { getBranchProtection, setBranchProtection } from '@/api'
+import { getBranchProtection, listProjectMembers, setBranchProtection } from '@/api'
 
 const rules = (over: Partial<BranchProtectionRules> = {}): BranchProtection => ({
   required_checks: [],
@@ -37,6 +37,18 @@ async function loaded() {
 }
 
 describe('分支保护开关的乐观更新', () => {
+  it('identifies reviewers by personal remarks while keeping account values', async () => {
+    vi.mocked(listProjectMembers).mockResolvedValueOnce({
+      data: [{ user_handle: 'reader', name: 'Public Reader', remark: 'My reviewer', source: 'team' }],
+      total: 1,
+    })
+    const bp = await loaded()
+    const reviewer = bp.bpReviewerItems.value.find((item) => item.value === 'reader')
+    expect(reviewer?.title).toContain('My reviewer')
+    expect(reviewer?.title).toContain('reader')
+    expect(bp.bpMemberItems.value.find((item) => item.value === 'reader')?.title).toContain('My reviewer')
+  })
+
   it('开关当场翻过去，不等服务端；成功用服务端那份覆盖', async () => {
     const bp = await loaded()
     let release!: (r: BranchProtectionRules) => void

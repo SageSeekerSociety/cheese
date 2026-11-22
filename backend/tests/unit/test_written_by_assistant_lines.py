@@ -4,7 +4,7 @@ author's own 芝士 wrote for them reads as theirs, written by their 芝士
 
 from types import SimpleNamespace
 
-from app.domain.agent.harness.prompt import live_input_lines, prompt_line
+from app.domain.agent.harness.lines import live_input_lines, prompt_line
 from app.domain.block.models import BlockKind
 
 

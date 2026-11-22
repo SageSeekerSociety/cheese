@@ -100,6 +100,15 @@ export const workspaceRoutes: RouteRecordRaw = {
       meta: { hideTabs: true, backTo: 'workspace-topic' },
     },
     {
+      // 在频道里审阅一件任务交上来的那一版：同一个组件——桌面上频道主线还在左边，审阅占右边
+      // 那一半；手机上是一整页，← 回到频道。地址里只有任务的编号。
+      name: 'workspace-review',
+      path: `channels/:topicId${NUMBER_OR_ID}/review/:reviewTaskId${NUMBER_OR_ID}`,
+      component: () => import('@/views/workspace/TopicView.vue'),
+      props: addressProps,
+      meta: { hideTabs: true, backTo: 'workspace-topic' },
+    },
+    {
       // 一个频道的全部任务就是项目的全部任务带上这个频道的筛选：发出去的旧地址落到那里。
       path: 'topics/:topicId/tasks',
       redirect: (to) => ({
@@ -195,6 +204,16 @@ export const workspaceRoutes: RouteRecordRaw = {
         backTo: 'workspace-project',
         palette: { label: 'navigation.project.library', icon: 'mdi-folder-outline' },
       },
+    },
+    {
+      // 资料库 › 项目文件：项目当前版本里的文件（已采纳的那一版），一棵目录树加一份文件。
+      // 挂在资料库下面，而不是 `?dir=`：那是资料库里人建的文件夹，一个叫「项目文件」的
+      // 文件夹不该和它撞上。
+      name: 'project-library-files',
+      path: 'library/files',
+      component: () => import('@/views/library/ProjectFiles.vue'),
+      props: addressProps,
+      meta: { titleKey: 'work.library.projectFiles.name', hideTabs: true, backTo: 'project-library' },
     },
     {
       // 全部频道：项目里我能看到的频道，找、加入、新建（新建侧栏那颗 ＋ 也能开）。

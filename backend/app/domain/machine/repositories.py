@@ -3,10 +3,12 @@
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, func, or_, select, text
+from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.environment.models import Environment
+from app.domain.machine import occupants
 from app.domain.machine.models import (
     AI_TRANSITIONAL,
     GONE,
@@ -124,10 +126,31 @@ class CloudHostRepository:
 
     # --- homes ---------------------------------------------------------------
 
+    async def name_home(
+        self, environment_id: uuid.UUID, home: SandboxHome | None
+    ) -> None:
+        """The environment's sandbox is now ``home`` (None: it has none). The
+        one writer of which home an environment names."""
+        await self._session.execute(
+            update(Environment)
+            .where(Environment.id == environment_id)
+            .values(
+                sandbox_home_id=home.id if home is not None else None,
+                host_id=home.host_id if home is not None else None,
+            )
+            .execution_options(synchronize_session="fetch")
+        )
+
     async def put_home(self, host_id: uuid.UUID, home: dict) -> SandboxHome:
-        """Place a new home on a host, from its fields. The host now keeps its
+        """Place a new home on a host, from its fields, as the sandbox of the
+        environment its ``environment_id`` names. The host now keeps its
         project's store too, whatever happens to this home later."""
-        row = SandboxHome(host_id=host_id, **home)
+        home = dict(home)
+        environment_id = home.pop("environment_id")
+        host = await self._session.get(CloudHost, host_id)
+        row = SandboxHome(
+            host_id=host_id, sandbox_image=host.sandbox_image if host else None, **home
+        )
         self._session.add(row)
         project_key = home.get("project_id") or home.get("topic_id")
         if project_key is not None:
@@ -145,6 +168,7 @@ class CloudHostRepository:
                 )
             )
         await self._session.flush()
+        await self.name_home(environment_id, row)
         return row
 
     async def stores(self, project_key: uuid.UUID) -> set[uuid.UUID]:
@@ -159,10 +183,14 @@ class CloudHostRepository:
         )
 
     async def put_device_home(self, device_id: str, home: dict) -> SandboxHome:
-        """Place a new home on a person's computer, from its fields."""
+        """Place a new home on a person's computer, from its fields, as the
+        sandbox of the environment its ``environment_id`` names."""
+        home = dict(home)
+        environment_id = home.pop("environment_id")
         row = SandboxHome(device_id=device_id, **home)
         self._session.add(row)
         await self._session.flush()
+        await self.name_home(environment_id, row)
         return row
 
     async def lock_home(self, home_id: uuid.UUID) -> SandboxHome | None:
@@ -189,15 +217,10 @@ class CloudHostRepository:
             )
         )
 
-    async def current_home(self, session_id: uuid.UUID) -> SandboxHome | None:
-        """The home of the session's placement, as the database has it now:
-        a sweep may have started destroying it since this session last read
-        it."""
-        return await self._session.scalar(
-            select(SandboxHome)
-            .where(SandboxHome.session_id == session_id)
-            .execution_options(populate_existing=True)
-        )
+    async def current_home(self, environment_id: uuid.UUID) -> SandboxHome | None:
+        """The home the environment names, as the database has it now: a
+        sweep may have started destroying it since it was last read."""
+        return await occupants.home_of_environment(self._session, environment_id)
 
     async def homes_on(self, host_id: uuid.UUID) -> list[SandboxHome]:
         return list(
@@ -215,8 +238,9 @@ class CloudHostRepository:
             .where(
                 SandboxHome.topic_id == topic_id,
                 SandboxHome.room_resource_id == room_resource_id,
-                # A home its session left is the idle sweep's, not the room's.
-                SandboxHome.session_id.is_not(None),
+                # A home no environment names any more is the idle sweep's,
+                # not the room's.
+                occupants.environment_of_home(SandboxHome.id).is_not(None),
             )
         )
         return [(home, host) for home, host in rows.all()]

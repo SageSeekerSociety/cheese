@@ -1,4 +1,12 @@
-import type { DomainGroup, Space, SpaceAdminRoleType, SpaceCategory, SpaceTaskTemplate, Topic } from '@/types'
+import type {
+  DomainGroup,
+  Space,
+  SpaceAdminRoleType,
+  SpaceCategory,
+  SpacePermission,
+  SpaceTaskTemplate,
+  Topic,
+} from '@/types'
 
 import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
@@ -36,10 +44,12 @@ export const useSpaceStore = defineStore('space', () => {
     const mine = currentSpace.value?.admins?.find((admin) => admin.user.id === me)
     return mine ? mine.role : 'MEMBER'
   })
-  /** 能审题、看数据、管分类与邀请码：所有者和管理员。 */
-  const isManager = computed(() => myRole.value !== 'MEMBER')
-  /** 只有所有者能改别人的角色、转让所有者、删除空间。 */
-  const isOwner = computed(() => myRole.value === 'OWNER')
+  /** 服务端说读者能做的事；管这块板的不一定在管理员名单里（平台管理员）。 */
+  const may = (permission: SpacePermission) => !!currentSpace.value?.viewerPermissions?.includes(permission)
+  /** 能审题、看数据、管分类与邀请码：所有者、管理员，以及平台管理员。 */
+  const isManager = computed(() => may('edit_settings'))
+  /** 改别人的角色、转让所有者、删除空间：所有者，以及平台管理员。 */
+  const isOwner = computed(() => may('manage_admins'))
 
   const templates = computed<SpaceTaskTemplate[]>(() => {
     if (!currentSpace.value) return []

@@ -13,6 +13,8 @@ import type { NavTarget } from '@/lib/navTarget'
 import type {
   DomainGroup,
   SpaceCategory,
+  SpaceKnowledgePoint,
+  SpaceKnowledgeSuggestion,
   SpaceTeaching,
   TaskDraftFields,
   TaskDraftSummary,
@@ -97,6 +99,21 @@ const props = withDefaults(
     skillCatalogFailed?: boolean
     /** 选中的项目集设的默认队友（`null` = 没设；不给 = 还没选项目集）。 */
     inheritedRole?: string | null
+    /** 这块板开着学情分析：「涉及的知识点」那一栏才摆（没开就不摆）。 */
+    knowledgeEnabled?: boolean
+    /** 这道题已经挂上的知识点编号。表单那一格是唯一的一份（`useTaskForm`），容器把它念下来
+     *  递进来；改了就往上发，由容器填回表单。 */
+    knowledgePointIds?: number[]
+    /** 这块板的知识点清单（所有题目共用）。 */
+    knowledgePointList?: SpaceKnowledgePoint[]
+    /** 清单读到哪一步了。 */
+    knowledgePointState?: 'loading' | 'ready' | 'error'
+    /** AI 读题面给出的建议，还没处理的那几条。 */
+    knowledgeSuggestions?: SpaceKnowledgeSuggestion[]
+    knowledgeSuggesting?: boolean
+    knowledgeSuggestFailed?: boolean
+    /** 我能不能让 AI 读题面、能不能把新知识点加进清单（同一道 `edit_settings` 的门）。 */
+    knowledgeCanSuggest?: boolean
   }>(),
   {
     selectedCategoryId: undefined,
@@ -116,6 +133,14 @@ const props = withDefaults(
     agentTypesFailed: false,
     skillCatalog: () => [],
     skillCatalogFailed: false,
+    knowledgeEnabled: false,
+    knowledgePointIds: () => [],
+    knowledgePointList: () => [],
+    knowledgePointState: 'ready',
+    knowledgeSuggestions: () => [],
+    knowledgeSuggesting: false,
+    knowledgeSuggestFailed: false,
+    knowledgeCanSuggest: false,
   }
 )
 
@@ -149,6 +174,12 @@ const emit = defineEmits<{
   'new-draft': []
   'remove-draft': [id: number]
   'publish-all': []
+  /** 这一栏上挂的知识点变了（整份编号）。 */
+  'update:knowledgePoints': [ids: number[]]
+  /** 让 AI 读题面给几条知识点建议。 */
+  'suggest-knowledge': []
+  /** 采用一条清单里还没有的知识点：容器加进清单，再把它挂上。 */
+  'adopt-new-knowledge': [name: string]
 }>()
 
 defineSlots<{
@@ -363,7 +394,18 @@ defineExpose({
                   :library-to="libraryTo"
                   :skill-catalog="skillCatalog"
                   :skill-catalog-failed="skillCatalogFailed"
+                  :knowledge-enabled="knowledgeEnabled"
+                  :knowledge-points="knowledgePointIds"
+                  :knowledge-point-list="knowledgePointList"
+                  :knowledge-point-state="knowledgePointState"
+                  :knowledge-suggestions="knowledgeSuggestions"
+                  :knowledge-suggesting="knowledgeSuggesting"
+                  :knowledge-suggest-failed="knowledgeSuggestFailed"
+                  :knowledge-can-suggest="knowledgeCanSuggest"
                   @update:model-value="setTeaching"
+                  @update:knowledge-points="emit('update:knowledgePoints', $event)"
+                  @suggest-knowledge="emit('suggest-knowledge')"
+                  @adopt-new-knowledge="emit('adopt-new-knowledge', $event)"
                 />
               </div>
             </template>

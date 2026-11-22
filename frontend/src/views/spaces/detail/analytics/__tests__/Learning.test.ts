@@ -20,6 +20,7 @@ const getLearningFilters = vi.fn()
 const getLearningQueues = vi.fn()
 const getLearningQuestions = vi.fn()
 const buildLearningOutline = vi.fn()
+const getLearningClassOverview = vi.fn()
 
 vi.mock('@/api/spaces', () => ({
   SpacesApi: {
@@ -27,6 +28,7 @@ vi.mock('@/api/spaces', () => ({
     getLearningQueues: (...args: unknown[]) => getLearningQueues(...args),
     getLearningQuestions: (...args: unknown[]) => getLearningQuestions(...args),
     buildLearningOutline: (...args: unknown[]) => buildLearningOutline(...args),
+    getLearningClassOverview: (...args: unknown[]) => getLearningClassOverview(...args),
   },
 }))
 
@@ -57,14 +59,14 @@ const routerSeam = {
 import Learning from '../Learning.vue'
 
 import i18n, { setLocale } from '@/i18n'
+import { LEARNING_CLASS_OVERVIEW } from '@/views/demo/catalogLearningClassFixtures'
 
 const question = (over: Partial<SpaceLearningQuestion> = {}): SpaceLearningQuestion => ({
   blockId: 'block-1',
   topicId: 'topic-1',
   projectId: 'project-1',
   projectName: '项目一',
-  student: 'zhangsan',
-  studentName: '张三',
+  memberCode: 'A7F3',
   topicTitle: '第一次作业',
   knowledgePoint: '循环',
   createdAt: new Date('2026-03-01T10:00:00.000Z').getTime(),
@@ -86,7 +88,6 @@ const REVIEW_REASON =
   '平台没有记录这个信号：芝士判断「这道题我答不了」时不会写下任何东西。这一格等那个信号落库之后才会有内容。'
 
 const filtersPayload: SpaceLearningFilters = {
-  students: [{ handle: 'zhangsan', name: '张三' }],
   knowledgePoints: [{ categoryId: 7, name: '循环' }],
   projectCount: 3,
 }
@@ -132,6 +133,7 @@ beforeEach(() => {
   getLearningQueues.mockReset().mockResolvedValue(queuesPayload())
   getLearningQuestions.mockReset().mockResolvedValue({ questions: [question()], total: 1 })
   buildLearningOutline.mockReset().mockResolvedValue(outlinePayload)
+  getLearningClassOverview.mockReset().mockResolvedValue(LEARNING_CLASS_OVERVIEW)
 })
 
 function mount() {
@@ -204,23 +206,21 @@ describe('待处理队列', () => {
 })
 
 describe('筛选', () => {
-  it('地址栏里的成员与知识点进到发言请求里，队列只收时间与成员', async () => {
+  it('地址栏里的知识点进到发言请求里，成员不进；队列只收时间', async () => {
     route.query = { student: 'zhangsan', knowledgePoint: '7' }
     mount()
 
     await waitFor(() =>
-      expect(getLearningQuestions).toHaveBeenCalledWith(
-        42,
-        expect.objectContaining({ student: 'zhangsan', knowledgePoint: 7 })
-      )
+      expect(getLearningQuestions).toHaveBeenCalledWith(42, expect.objectContaining({ knowledgePoint: 7 }))
     )
+    expect(getLearningQuestions).toHaveBeenCalledWith(42, expect.not.objectContaining({ student: 'zhangsan' }))
     expect(getLearningQueues).toHaveBeenCalledWith(42, expect.not.objectContaining({ knowledgePoint: 7 }))
   })
 })
 
 describe('空态', () => {
   it('一个成员项目都读不到时，画的是空态而不是空列表', async () => {
-    getLearningFilters.mockResolvedValue({ students: [], knowledgePoints: [], projectCount: 0 })
+    getLearningFilters.mockResolvedValue({ knowledgePoints: [], projectCount: 0 })
     getLearningQueues.mockResolvedValue({
       reviewFlag: { available: false, reason: REVIEW_REASON, items: [] },
       stuckPoints: [],

@@ -1,0 +1,1 @@
+- 成员要你把项目里的东西交到项目所来自的题目时，先用 ⟦tool:cheese_hand_in.prepare⟧ 准备，把每个提交项要交什么、还缺什么逐项告诉他，可以用 ⟦tool:cheese_ask⟧ 问他，选项为「提交」「先不提交」。他本人回复同意后，再用 ⟦tool:cheese_hand_in.confirm⟧ 提交。没有成员要求时不提交。

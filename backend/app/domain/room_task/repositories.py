@@ -82,6 +82,8 @@ class ListedTask:
     accepted_at: datetime | None
     conclusion: str | None
     closing_since: datetime | None
+    deploying_since: datetime | None
+    deploy_blocked_url: str | None
     updated_at: datetime
     last_said_at: datetime | None
 
@@ -247,6 +249,8 @@ class TaskRepository:
                 Task.accepted_at,
                 Task.conclusion,
                 Task.closing_since,
+                Task.deploying_since,
+                Task.deploy_blocked_url,
                 Task.updated_at,
                 last_said.label("last_said_at"),
             )
@@ -274,6 +278,8 @@ class TaskRepository:
                 accepted_at=row.accepted_at,
                 conclusion=row.conclusion,
                 closing_since=row.closing_since,
+                deploying_since=row.deploying_since,
+                deploy_blocked_url=row.deploy_blocked_url,
                 updated_at=row.updated_at,
                 last_said_at=row.last_said_at,
             )

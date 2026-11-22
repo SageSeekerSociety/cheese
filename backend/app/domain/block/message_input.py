@@ -6,6 +6,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.core.sentences import say
+from app.domain.block.questions import MAX_QUICK_REPLIES, QUICK_REPLY_CHARS
 
 
 class SlidePageQuoteIn(BaseModel):
@@ -285,6 +286,11 @@ class ChatAttachmentIn(BaseModel):
     content_b64: str | None = None
 
 
+#: The key on a message's meta naming the task it is about (`chat_send`'s
+#: ``task``): the timeline draws the task's tag above the message.
+TASK_TAG = "task_tag"
+
+
 class ChatMessageIn(BaseModel):
     content: str = Field(default="", max_length=100000)
     request_id: uuid.UUID
@@ -297,6 +303,23 @@ class ChatMessageIn(BaseModel):
     # never makes a message call anyone: who is called is read from the
     # message itself (invariant I13).
     expects_agent: bool = False
+    # An AI teammate's message about one task of this channel: its number
+    # (`#15`) or id. The message then carries the task's tag.
+    task: str | None = Field(default=None, max_length=64)
+    # An AI teammate's message in a channel's main line may offer short
+    # answers under it (`block.questions.quick_replies_meta`); a click sends
+    # one as the clicker's own reply.
+    replies: list[str] = Field(default_factory=list, max_length=MAX_QUICK_REPLIES)
+
+    @model_validator(mode="after")
+    def replies_are_short_distinct_answers(self):
+        replies = [text.strip() for text in self.replies]
+        if any(not text or len(text) > QUICK_REPLY_CHARS for text in replies):
+            raise ValueError(say("chatRepliesShort", limit=QUICK_REPLY_CHARS))
+        if len(set(replies)) != len(replies):
+            raise ValueError(say("optionsDistinct"))
+        self.replies = replies
+        return self
 
     @model_validator(mode="after")
     def quote_is_bounded_message_data(self):
@@ -327,10 +350,16 @@ class AddressedAgentOut(BaseModel):
 
 
 class ChatAddressingOut(BaseModel):
-    """Who a draft would be for if sent now (`preview_addressing`)."""
+    """Who a draft would be for if sent now (`preview_addressing`).
+
+    `teammates` is everyone the message would call, in the order the text names
+    them and each once — not just the one whose turn starts first. A message
+    calls every teammate it @-s, so the composer that says "this goes to whom"
+    has to say all of them or it understates the send."""
 
     agent: AddressedAgentOut | None
-    reason: Literal["mention", "reply", "task", "thread", "private"] | None
+    reason: Literal["mention", "reply", "task", "thread", "private", "alone"] | None
     people: list[str]
     place: Literal["channel", "task", "private"]
     task_status: Literal["open", "closed"] | None
+    teammates: list[AddressedAgentOut] = Field(default_factory=list)

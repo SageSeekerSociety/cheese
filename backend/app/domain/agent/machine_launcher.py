@@ -610,7 +610,10 @@ case "$CS" in "\\$HOME"*) CS="$REAL_HOME${{CS#\\$HOME}}";; esac
 if [ -n "$CS" ] && mkdir -p "$CS" 2>/dev/null; then
   export UV_CACHE_DIR="$CS/uv-cache"
   export UV_PYTHON_INSTALL_DIR="$CS/uv-python"
+  # pnpm 11 and later read only `pnpm_config_*`; pnpm 10 and older only
+  # `npm_config_*`. Both name the one store, so either version lands in it.
   export npm_config_store_dir="$CS/pnpm-store"
+  export pnpm_config_store_dir="$CS/pnpm-store"
   export npm_config_cache="$CS/npm-cache"
   export PIP_CACHE_DIR="$CS/pip-cache"
   # Re-export it RESOLVED. What arrived carries a literal `$HOME` the backend

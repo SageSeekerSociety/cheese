@@ -1190,10 +1190,10 @@
     }
   },
   "projectTasksView": {
-    "about": "The project's 'All tasks': tasks grouped by 'whose turn is next' (to-do, in review, in progress, not started), the ones waiting on a person written in warm colour; filterable on top by 'whose', 'which channel' and 'show closed'.",
+    "about": "The project's 'All tasks': tasks grouped by status (needs help, awaiting answer, in review, in progress, not started), the ones waiting on a person written in warm colour; filterable on top by 'whose', 'which channel' and 'show ended'.",
     "s1": {
       "name": "Tasks in progress",
-      "note": "Default cell: a row of filters (all / mine / helping / others, each with a count), a channel menu, show-closed; below, grouped by status, one task per row."
+      "note": "Default cell: a row of filters (all / mine / helping / others, each with a count), a channel menu, show-ended; below, grouped by status, one task per row."
     },
     "s2": {
       "name": "First load",
@@ -1771,6 +1771,113 @@
     "s3": {
       "name": "Card states",
       "note": "Waiting, started, cancelled, gave up after 14 days, a repeating one that is on, one paused for credits. Ended cards are grey and have no button."
+    }
+  },
+  "learningAnalysisView": {
+    "about": "Space settings 'Learning analysis': the switch, the notice-card preview, the knowledge point list, and the privacy rules. Reads and writes live in the container `LearningAnalysis.vue`; this only draws and emits.",
+    "s1": {
+      "name": "On, two points in the list",
+      "note": "Default: the switch is on, the notice section offers a 'Preview', the knowledge point list shows two rows with rename / delete at the end, and three read-only privacy rules sit at the bottom."
+    },
+    "s2": {
+      "name": "A plain member sees this page",
+      "note": "No manage rights: the switch shows but cannot be moved, and the list offers no 'New knowledge point' — a button that can only fail (403) is worse than none."
+    },
+    "s3": {
+      "name": "Could not load",
+      "note": "The config could not be read: the whole block becomes an error with a retry, not 'off' — that would report a board that is on as off."
+    }
+  },
+  "myLearningInsightView": {
+    "about": "“My learning insight”: the page only its owner can see. On the left, the one knowledge point most worth working on (summary, evidence, mark inaccurate) and every knowledge point on a three-step bar; on the right, where the page comes from and what the member asks most. The container `MyLearningInsight.vue` fetches; this view only draws and emits.",
+    "s1": {
+      "name": "With results",
+      "note": "Default: the focus is “Correlated subqueries · Weak” with one piece of evidence and “mark it inaccurate”; one point mastered and one not touched yet; the side column lists the two tasks read and two kinds of frequent questions."
+    },
+    "s2": {
+      "name": "No analysis yet",
+      "note": "The analysis is on but tonight's pass has not read this member yet: an empty state on the left saying how it reads, the side column still saying what is read and who sees what."
+    },
+    "s3": {
+      "name": "Analysis off in this space",
+      "note": "The space has not turned learning analysis on (the sidebar hides the entry; only a direct link lands here): says so and draws nothing else."
+    },
+    "s4": {
+      "name": "Could not load",
+      "note": "Not read: the whole block becomes an error with a retry, not “no results yet”."
+    },
+    "s5": {
+      "name": "Practice and review reminders",
+      "note": "Under the point to work on: “Make 3 practice questions” and “Read a short explanation first”; a set a teacher sent that is still being prepared is under “Practice to do”; the review reminders on the right list one that is due, with another set to do."
+    }
+  },
+  "knowledgePointField": {
+    "about": "'Knowledge points involved': shared by the publish and edit pages. Adopted points are chips outside, with a 'Add from the list' beside them that unfolds the whole list; the AI's suggestions from the problem text go below, and only 'Adopt' takes effect.",
+    "s1": {
+      "name": "One adopted, two suggestions",
+      "note": "Default: the adopted 'Correlated subquery' is a chip; below are two suggestions — one already in the list ('Adopt' puts it on), one marked 'not in the list' ('Add to the list and adopt')."
+    },
+    "s2": {
+      "name": "Nothing adopted yet",
+      "note": "No knowledge point adopted: that row says 'Nothing adopted yet' and offers only 'Add from the list'; without permission to read the problem text no AI button shows."
+    },
+    "s3": {
+      "name": "The list could not load",
+      "note": "The list could not be read: it says so and offers no candidates, but never drops the ids already on the task — one failed request must not lose them."
+    }
+  },
+  "learningClassView": {
+    "about": "Learning analysis (the class as a whole): seven tabs, the knowledge point detail and the export entry; quotes carry codes only, and groups under 3 people are not analysed.",
+    "s1": {
+      "name": "Overview",
+      "note": "Four numbers, completion per problem, points worth teaching next; the existing messages and queues follow."
+    },
+    "s2": {
+      "name": "Hard points",
+      "note": "Quadrant and per-point table; a point under 3 people only says it is not analysed."
+    },
+    "s3": {
+      "name": "Knowledge point",
+      "note": "People stuck, common misconceptions with coded quotes, mastery and teaching advice; no names."
+    },
+    "s4": {
+      "name": "Frequent questions",
+      "note": "Question groups ranked by people, with this week's change and a coded quote."
+    },
+    "s5": {
+      "name": "Frequent words",
+      "note": "Word cloud, ranking and frequent errors."
+    },
+    "s6": {
+      "name": "Problem difficulty",
+      "note": "Completion, turns, time, stuck rate and answer-seeking per problem."
+    },
+    "s7": {
+      "name": "How they ask",
+      "note": "Question kinds, weekday × time heat map and three levels of reliance."
+    },
+    "s8": {
+      "name": "Trend",
+      "note": "People stuck per point per week; weeks under 3 people are gaps."
+    },
+    "s9": {
+      "name": "Off",
+      "note": "Learning analysis is off: a hint to turn it on in settings, and the existing content."
+    },
+    "s10": {
+      "name": "Load failed",
+      "note": "The analysis did not load: the reason and a retry, with the existing content still shown."
+    }
+  },
+  "learningPracticeDialog": {
+    "about": "The practice dialog: three AI-made multiple-choice questions aimed at where the member is stuck; each answer shows right or wrong and an explanation at once, and finishing folds the result into the judgment on that point. Only the member sees it.",
+    "s1": {
+      "name": "Halfway",
+      "note": "Question 1 right, question 2 wrong with its explanation, question 3 not answered; “Done” needs every question answered."
+    },
+    "s2": {
+      "name": "Finished",
+      "note": "2 of 3 correct, the level unchanged, and the date of the next review."
     }
   }
 }

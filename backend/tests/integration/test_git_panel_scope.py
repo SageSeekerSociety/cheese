@@ -80,6 +80,7 @@ def _seed_session(client, topic_id: uuid.UUID, session_id: str) -> None:
                 agent_handle=CHEESE_HANDLE,
                 resume_token=session_id,
                 harness="claude-code",
+                generation=0,
             )
             await s.commit()
 

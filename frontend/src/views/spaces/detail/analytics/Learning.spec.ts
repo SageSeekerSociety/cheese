@@ -8,13 +8,31 @@ const api = vi.hoisted(() => ({
   getLearningQueues: vi.fn(),
   getLearningQuestions: vi.fn(),
   buildLearningOutline: vi.fn(),
+  getLearningClassOverview: vi.fn(),
+  getLearningClassPoints: vi.fn(),
+  getLearningClassPoint: vi.fn(),
+  getLearningClassQuestions: vi.fn(),
+  getLearningClassExcerpts: vi.fn(),
+  getLearningClassWords: vi.fn(),
+  getLearningClassTasks: vi.fn(),
+  getLearningClassBehavior: vi.fn(),
+  getLearningClassTrend: vi.fn(),
+  exportLearningClassReport: vi.fn(),
 }))
+const download = vi.hoisted(() => ({ saveBlob: vi.fn(), announceDownload: vi.fn(), announceDownloadFailure: vi.fn() }))
+vi.mock('@/lib/download', () => download)
 vi.mock('@/api/spaces', () => ({ SpacesApi: api }))
 vi.mock('vuetify-sonner', () => ({ toast: { error: vi.fn() } }))
 
 import Learning from './Learning.vue'
 
 import i18n from '@/i18n'
+import {
+  LEARNING_CLASS_EXCERPTS,
+  LEARNING_CLASS_OVERVIEW,
+  LEARNING_CLASS_POINT,
+  LEARNING_CLASS_QUESTIONS,
+} from '@/views/demo/catalogLearningClassFixtures'
 import {
   LEARNING_FILTERS,
   LEARNING_OUTLINE,
@@ -34,7 +52,6 @@ let state: Record<string, unknown>
 let send: (event: string, ...args: unknown[]) => void
 const Probe = defineComponent({
   props: [
-    'student',
     'knowledgePoint',
     'loading',
     'outlineLoading',
@@ -52,6 +69,32 @@ const Probe = defineComponent({
     return () => null
   },
 })
+let view: Record<string, unknown>
+let tell: (event: string, ...args: unknown[]) => void
+/** 学情分析那一半的画面：记下它收到的值，原有内容照样从 legacy 插槽画出来。 */
+const AnalysisProbe = defineComponent({
+  props: [
+    'sub',
+    'pointId',
+    'enabled',
+    'loading',
+    'failed',
+    'errorDetail',
+    'overview',
+    'points',
+    'pointDetail',
+    'questions',
+    'words',
+    'tasks',
+    'behavior',
+    'trend',
+  ],
+  setup(props, { emit, slots }) {
+    view = props
+    tell = emit
+    return () => slots.legacy?.()
+  },
+})
 async function render(query = '') {
   const router = createRouter({
     history: createMemoryHistory(),
@@ -59,7 +102,17 @@ async function render(query = '') {
   })
   await router.push(`/spaces/7/learning${query}`)
   await router.isReady()
-  renderComponent(Learning, { global: { plugins: [router, i18n], stubs: { LearningView: Probe } } })
+  renderComponent(Learning, {
+    global: {
+      plugins: [router, i18n],
+      stubs: {
+        LearningView: Probe,
+        LearningAnalysisView: AnalysisProbe,
+        LearningExcerptDialog: true,
+        LearningExportDialog: true,
+      },
+    },
+  })
   await flushPromises()
   return { router }
 }
@@ -69,6 +122,10 @@ beforeEach(() => {
   api.getLearningQueues.mockResolvedValue(LEARNING_QUEUES)
   api.getLearningQuestions.mockResolvedValue({ questions: LEARNING_QUESTIONS })
   api.buildLearningOutline.mockResolvedValue(LEARNING_OUTLINE)
+  api.getLearningClassOverview.mockResolvedValue(LEARNING_CLASS_OVERVIEW)
+  api.getLearningClassQuestions.mockResolvedValue(LEARNING_CLASS_QUESTIONS)
+  api.getLearningClassPoint.mockResolvedValue(LEARNING_CLASS_POINT)
+  api.getLearningClassExcerpts.mockResolvedValue(LEARNING_CLASS_EXCERPTS)
 })
 afterEach(() => {
   cleanup()
@@ -93,22 +150,16 @@ describe('学习看板容器', () => {
     expect(state['loading']).toBe(false)
   })
 
-  it('路由筛选映射到两个模型，模型变化写回路由且后退更新模型', async () => {
+  it('知识点筛选进出路由；地址里的成员筛选不再发给后端', async () => {
     const { router } = await render('?student=alice&knowledgePoint=7')
-    expect(state['student']).toBe('alice')
     expect(state['knowledgePoint']).toBe(7)
-    expect(api.getLearningQuestions).toHaveBeenCalledWith(
-      7,
-      expect.objectContaining({ student: 'alice', knowledgePoint: 7 })
-    )
-    send('update:student', 'bob')
+    expect(api.getLearningQuestions).toHaveBeenCalledWith(7, expect.objectContaining({ knowledgePoint: 7 }))
+    expect(api.getLearningQuestions.mock.calls[0][1]).not.toHaveProperty('student')
     send('update:knowledgePoint', null)
     await flushPromises()
-    expect(router.currentRoute.value.query.student).toBe('bob')
     expect(router.currentRoute.value.query.knowledgePoint).toBeUndefined()
-    await router.push({ query: { student: 'alice', knowledgePoint: '7' } })
+    await router.push({ query: { knowledgePoint: '7' } })
     await flushPromises()
-    expect(state['student']).toBe('alice')
     expect(state['knowledgePoint']).toBe(7)
   })
 
@@ -128,7 +179,7 @@ describe('学习看板容器', () => {
     expect(state['selected']).toEqual(['b-1', 'b-2'])
     const refresh = deferred<typeof LEARNING_QUEUES>()
     api.getLearningQueues.mockReturnValue(refresh.promise)
-    await router.push({ query: { student: 'bob' } })
+    await router.push({ query: { knowledgePoint: '8' } })
     await flushPromises()
     expect(state['loading']).toBe(true)
     expect(state['queues']).toEqual(LEARNING_QUEUES)
@@ -165,5 +216,45 @@ describe('学习看板容器', () => {
     await flushPromises()
     expect(state['failed']).toBe(false)
     expect(state['errorDetail']).toBeNull()
+  })
+
+  it('学情分析：一进来读总览，切到别的页签才读那一页，切回来不重读', async () => {
+    await render()
+    expect(api.getLearningClassOverview).toHaveBeenCalledWith(7)
+    expect(view['enabled']).toBe(true)
+    expect(view['overview']).toEqual(LEARNING_CLASS_OVERVIEW)
+    tell('update:sub', 'questions')
+    await flushPromises()
+    expect(api.getLearningClassQuestions).toHaveBeenCalledOnce()
+    expect(view['questions']).toEqual(LEARNING_CLASS_QUESTIONS)
+    tell('update:sub', 'overview')
+    tell('update:sub', 'questions')
+    await flushPromises()
+    expect(api.getLearningClassQuestions).toHaveBeenCalledOnce()
+    expect(api.getLearningClassOverview).toHaveBeenCalledOnce()
+  })
+
+  it('学情分析没读到时，原有的发言与队列照样读、照样画', async () => {
+    api.getLearningClassOverview.mockRejectedValueOnce(new Error('down'))
+    await render()
+    expect(view['failed']).toBe(true)
+    expect(view['enabled']).toBeNull()
+    expect(state['queues']).toEqual(LEARNING_QUEUES)
+  })
+
+  it('点开知识点读它的详情；摘录按组去取；导出把文件交给浏览器', async () => {
+    await render()
+    tell('openPoint', 2)
+    await flushPromises()
+    expect(api.getLearningClassPoint).toHaveBeenCalledWith(7, 2)
+    expect(view['pointDetail']).toEqual(LEARNING_CLASS_POINT)
+    tell('openExcerpts', { misconception: 11 })
+    await flushPromises()
+    expect(api.getLearningClassExcerpts).toHaveBeenCalledWith(7, { misconception: 11 })
+    const blob = new Blob(['x'])
+    api.exportLearningClassReport.mockResolvedValueOnce(blob)
+    tell('export', 2)
+    await flushPromises()
+    expect(api.exportLearningClassReport).not.toHaveBeenCalled()
   })
 })

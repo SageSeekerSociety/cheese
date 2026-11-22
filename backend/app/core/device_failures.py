@@ -64,6 +64,15 @@ class DeviceCallError(RuntimeError):
         self.failure_code = failure_code
 
 
+#: The ``failure_code`` of a ``DeviceCallError`` the connector raised itself
+#: because it could not reach the executor it was asked to call — its state
+#: directory or socket is gone, as when the executor stopped for sitting idle,
+#: or the connection broke mid-call — as opposed to the executor's own answer
+#: refusing the call. Carried across the connection owner with the rest of the
+#: failure (`device_hub_rpc`).
+EXECUTOR_UNREACHABLE = "executor_unreachable"
+
+
 class DeviceNotReady(DeviceCallError):
     """The link is up, but this machine cannot serve calls yet.
 

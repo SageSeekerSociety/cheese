@@ -90,12 +90,11 @@ export const CHANGES_TASK = CHANGES.currentTask as RoomTask
 export const CHANGES_BAR_PROPS = {
   openPath: CHANGES.openPath,
   sourceStatus: CHANGES.sourceStatus,
-  fileDirty: CHANGES.fileDirty,
   openDiff: CHANGES.openDiff,
   openIsDocument: CHANGES.openIsDocument,
   effectiveView: CHANGES.effectiveView,
   fileReadOnly: CHANGES.fileReadOnly,
-  fileSaving: CHANGES.fileSaving,
+  canEdit: true,
   currentTask: CHANGES.currentTask,
   fileSource: CHANGES.fileSource,
   fileToolReady: CHANGES.fileToolReady,
@@ -127,8 +126,7 @@ export const CHANGES_CONTENT_PROPS = {
   fileBinary: CHANGES.fileBinary,
   fileTooLarge: CHANGES.fileTooLarge,
   fileBytes: CHANGES.fileBytes,
-  fileDraft: CHANGES.fileDraft,
-  fileReadOnly: CHANGES.fileReadOnly,
+  fileText: CHANGES.fileText,
 }
 
 /** 全部改动那一面（`ChangesAllView`）。树常驻那一档在这里是关的：树常驻 / 只在顶部
@@ -260,17 +258,12 @@ export function changesBundle(over: Overrides<PanelChangesBundle> = {}): PanelCh
     treeFiles: computed(() => v.treeFiles),
     allFiles: ref(v.allFiles),
     openPath: ref(v.openPath),
-    fileDraft: ref(v.fileDraft),
-    // 上一次读到或存下的正文；没改过就是手上这一份（`fileDirty` 在产品里就是两者不等）。
-    fileSaved: ref(v.fileDirty ? '' : v.fileDraft),
-    fileSaving: ref(v.fileSaving),
-    fileDirty: computed(() => v.fileDirty),
+    fileText: ref(v.fileText),
     fileVersion: ref(v.fileVersion),
     fileBinary: ref(v.fileBinary),
     fileTooLarge: ref(v.fileTooLarge),
     fileBytes: ref(v.fileBytes),
     fileReadOnly: computed(() => v.fileReadOnly),
-    fileConflict: ref(v.fileConflict),
     openDiff: computed(() => v.openDiff),
     openDiffLines: computed(() => v.openDiffLines),
     effectiveView: computed(() => v.effectiveView),
@@ -283,7 +276,6 @@ export function changesBundle(over: Overrides<PanelChangesBundle> = {}): PanelCh
     openImageError: computed(() => v.openImageError),
     collapsedDirs: ref(v.collapsedDirs),
     revealTick: ref(v.revealTick),
-    draftCount: computed(() => v.draftCount),
     docBytes: computed(() => v.docBytes),
     docLoading: computed(() => v.docLoading),
     docError: computed(() => v.docError),
@@ -300,17 +292,8 @@ export function changesBundle(over: Overrides<PanelChangesBundle> = {}): PanelCh
     selectFile: noopAsync,
     closeFile: noop,
     selectVersion: noopAsync,
-    // 这一格要回一句「这份文件我这儿有没有」（没有就由工作面板退到项目当前版本）。
-    // 预览站里没有真文件，开哪一份都当开到了。
-    openFile: async () => true,
     toggleDir: noop,
     downloadOpenFile: noopAsync,
-    saveFile: noopAsync,
-    overwriteFile: noopAsync,
-    fileMerge: ref(null),
-    resolveMerge: noop,
-    cancelMerge: noop,
-    reloadOpenFile: noopAsync,
     onRevisionDecided: noopAsync,
   }
 }

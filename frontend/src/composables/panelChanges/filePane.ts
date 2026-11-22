@@ -1,29 +1,27 @@
-// 「改动」这一格打开着的那一份文件：状态、清单、读取、草稿和只读判据。
+// 「改动」这一格打开着的那一份文件：状态、清单、读取和「能不能编辑」的判据。
 //
-// 这一层管的全是「对打开的那一份文件做什么」。工作树差异在 `gitChanges.ts`，文件树
-// 在 `fileTree.ts`，存回去与冲突取舍在 `fileSave.ts`，文档的字节与修订在
-// `documentPane.ts`，和上一版的比较在 `officeCompare.ts`；任务、来源和加载策略还在
-// 组合根 `../usePanelChanges.ts`。
+// 这一格只看、只审：编辑在任务的「文件」那一格（`useTaskFiles`），这里只回答这份文件
+// 能不能去那里编辑。工作树差异在 `gitChanges.ts`，文件树在 `fileTree.ts`，文档的字节
+// 与修订在 `documentPane.ts`，和上一版的比较在 `officeCompare.ts`；任务、来源和加载
+// 策略还在组合根 `../usePanelChanges.ts`。
 import type { ComputedRef, Ref } from 'vue'
 import type { FileSource, RoomTask, WorkspaceFile } from '../../cx_types'
 import type { FileDiff } from '../../lib/diff'
-import type { MergeConflict } from '../../types/reviewComment'
 import type { PanelChangesProps } from './types'
 
-import { computed, onBeforeUnmount, ref } from 'vue'
+import { computed, ref } from 'vue'
 
 import { downloadFile, listFiles, readFile, RequestTimeoutError, workspaceFileRawUrl } from '../../api'
 import { parseDiffLines } from '../../lib/diff'
 import { useRawImage } from '../useRawImage'
 import { useTopicMemory } from '../useTopicMemory'
 
-import { usePanelFileSave } from './fileSave'
 import { usePanelFileTree } from './fileTree'
 
 import { t } from '@/i18n'
 
-/** 打开的文件看哪一面：它的 diff，还是可编辑的全文。 */
-export type FileView = 'diff' | 'edit'
+/** 打开的文件看哪一面：它的 diff，还是全文。 */
+export type FileView = 'diff' | 'text'
 
 export interface FilePaneDeps {
   props: PanelChangesProps
@@ -67,33 +65,28 @@ export function usePanelFilePane(deps: FilePaneDeps) {
   } = deps
 
   // ---- 文件: a two-pane browser — the tree stays visible on the left, the opened
-  // file loads on the right: its diff, or the editable text (save = 人改文件
-  // 即指令). ----
+  // file loads on the right: its diff, or its text. ----
   const files = ref<WorkspaceFile[]>([])
   const openPath = ref<string | null>(null)
-  const fileDraft = ref<string>('')
-  const fileSaved = ref<string>('') // last loaded/saved content, for the dirty flag
-  const fileSaving = ref(false)
+  const fileText = ref<string>('')
   const fileView = ref<FileView>('diff')
   // 每一次「打开哪一份」的序号：路上的读回来时对不上就丢掉。
   let fileRequest = 0
   // 横条上关于「这一份文件」的那半（路径、差异/编辑、保存）只在文件区真的摆出来时才有。
   const fileToolReady = computed(() => !sourceUnavailable.value && !noRepo.value && !loading.value && !errorMsg.value)
-  const fileDirty = computed(() => fileDraft.value !== fileSaved.value)
-  // Version of the open file as it was read; echoed back on save so a write that
-  // lost a race to 芝士 is rejected instead of silently erasing their edits.
+  // Version of the open file as it was read (a document's revisions are keyed by it).
   const fileVersion = ref<string | null>(null)
   // Files that must not be edited as text: binary (a text round-trip destroys
-  // them) or too large to send. They open read-only, with no 保存 button.
+  // them) or too large to send.
   const fileBinary = ref(false)
   const fileTooLarge = ref(false)
   const fileBytes = ref(0)
-  const fileEditable = ref(false)
+  // The file cannot be edited in the task's「文件」panel either: the bar says
+  // 只读 instead of offering 编辑.
   const fileReadOnly = computed(
     () =>
       props.readOnly ||
       fileSource.value === 'committed' ||
-      !fileEditable.value ||
       currentTask.value?.status !== 'open' ||
       // 待审阅时不直接改：审的这一版会在审的过程中变掉。想改的地方写成修改建议。
       currentTask.value?.card?.status === 'pending' ||
@@ -101,45 +94,14 @@ export function usePanelFilePane(deps: FilePaneDeps) {
       fileTooLarge.value ||
       openIsImage.value
   )
-  // Drafts belong to a source and path, including the version they were edited from.
-  // They outlive this panel (it is rebuilt for every topic): an unsaved edit left in
-  // one topic's file is still there when the reader comes back to it.
-  const { drafts, lastFiles } = useTopicMemory()
+  // The file last open in each source: switching back to the source reopens it.
+  const { lastFiles } = useTopicMemory()
   function sourceKey() {
     return `${selectedTask.value}:${fileSource.value}`
   }
-  function draftKey(path: string) {
-    return `${sourceKey()}:${path}`
+  function keepOpenFile() {
+    if (openPath.value) lastFiles.set(sourceKey(), openPath.value)
   }
-  function keepDraft() {
-    if (!openPath.value) return
-    lastFiles.set(sourceKey(), openPath.value)
-    if (fileDirty.value) {
-      drafts.set(draftKey(openPath.value), {
-        content: fileDraft.value,
-        saved: fileSaved.value,
-        version: fileVersion.value,
-      })
-    } else {
-      drafts.delete(draftKey(openPath.value))
-    }
-  }
-  function warnBeforeUnload(event: BeforeUnloadEvent) {
-    if (!fileDirty.value && !drafts.size) return
-    event.preventDefault()
-    event.returnValue = ''
-  }
-  window.addEventListener('beforeunload', warnBeforeUnload)
-  onBeforeUnmount(() => {
-    window.removeEventListener('beforeunload', warnBeforeUnload)
-    keepDraft()
-  })
-
-  // Set when the backend rejected a save as a conflict. Nobody wins by default —
-  // the human sees it and picks.
-  const fileConflict = ref(false)
-  // 存的时候和芝士这段时间的修改重叠了：三方的那几段，逐处选一个版本再存。
-  const fileMerge = ref<MergeConflict | null>(null)
 
   const tree = usePanelFileTree({ fileDiffs, files })
 
@@ -150,7 +112,7 @@ export function usePanelFilePane(deps: FilePaneDeps) {
   const openDiffLines = computed(() => (openDiff.value ? parseDiffLines(openDiff.value.body) : []))
   // 差异 is the default face of a changed file — reviewing is what this tab is
   // for — but a file with no diff has only one face, so the toggle is not offered.
-  const effectiveView = computed<FileView>(() => (openDiff.value ? fileView.value : 'edit'))
+  const effectiveView = computed<FileView>(() => (openDiff.value ? fileView.value : 'text'))
 
   const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'bmp', 'avif'])
   function isImagePath(path: string): boolean {
@@ -181,33 +143,23 @@ export function usePanelFilePane(deps: FilePaneDeps) {
     await downloadFile(openRawUrl.value, openPath.value.split('/').pop() || 'file')
   }
 
-  // 文件 state is per-source. openPath/fileDraft describe a file in the CURRENT
-  // source's worktree, so switching source must drop them: carrying them over meant
-  // the next 保存 wrote one worktree's draft into another's tree, at the same path.
+  // 文件 state is per-source. openPath/fileText describe a file in the CURRENT
+  // source's worktree, so switching source must drop them.
   function resetFilePanel() {
     files.value = []
     openPath.value = null
-    fileDraft.value = ''
-    fileSaved.value = ''
+    fileText.value = ''
     fileVersion.value = null
     fileBinary.value = false
     fileTooLarge.value = false
     fileBytes.value = 0
-    fileEditable.value = false
-    fileConflict.value = false
     tree.collapsedDirs.value = new Set()
   }
 
-  // A directed open asked for by a <&path> chip. Whoever reaches loadFiles first
-  // consumes it, so the listing can never auto-select the first file over the one
-  // the reader actually clicked.
+  // The file to reopen once the listing of the newly chosen source is read.
+  // Whoever reaches loadFiles first consumes it, so the listing can never
+  // auto-select another file over it.
   let pendingOpen: string | null = null
-
-  // 上一次指名要开的文件在这份清单里。`openFile` 拿它给调用者回话：没在——文件不在
-  // 这一支的工作副本里，或者清单根本没拿到（任务找不到、项目没接仓库、取清单出错）——
-  // 就该换个地方开它（工作面板退到「项目当前版本」那一格），而不是停在一格开不出它的
-  // 「改动」上。
-  let openFound = false
 
   // Two callers can ask for the listing in the same tick — `openFile` asks
   // directly, and coming on screen makes the activation watcher ask too. Letting
@@ -246,7 +198,6 @@ export function usePanelFilePane(deps: FilePaneDeps) {
           pendingOpen = null
           return
         }
-        openFound = true
         // Keep the directed path reserved while its read is in flight, so a
         // later diff/list response cannot start an automatic first-file read.
         await selectFile(want)
@@ -267,16 +218,15 @@ export function usePanelFilePane(deps: FilePaneDeps) {
     }
   }
 
-  // 回到全部改动那一面。没保存的修改照常暂存，回到这个文件还在。
+  // 回到全部改动那一面。
   function closeFile() {
-    keepDraft()
+    keepOpenFile()
     fileRequest += 1
     openPath.value = null
-    fileConflict.value = false
   }
 
   async function selectFile(path: string) {
-    keepDraft()
+    keepOpenFile()
     const request = ++fileRequest
     const epochAt = epoch()
     const pid = props.projectId
@@ -284,7 +234,6 @@ export function usePanelFilePane(deps: FilePaneDeps) {
     const task = selectedTask.value
     if (!pid) return
     errorMsg.value = null
-    fileConflict.value = false
     // Each file opens on its diff — that is what a review surface is for. Files
     // this topic never touched have no diff and open on their text.
     fileView.value = 'diff'
@@ -292,8 +241,7 @@ export function usePanelFilePane(deps: FilePaneDeps) {
     // Images render as images — Monaco would show mangled bytes.
     if (isImagePath(path)) {
       openPath.value = path
-      fileDraft.value = ''
-      fileSaved.value = ''
+      fileText.value = ''
       fileVersion.value = null
       fileBinary.value = false
       fileTooLarge.value = false
@@ -307,23 +255,12 @@ export function usePanelFilePane(deps: FilePaneDeps) {
       // its draft — in the panel.
       if (selectedTask.value !== task || epoch() !== epochAt || fileRequest !== request) return
       openPath.value = path
-      // Binary and oversized files arrive with no content: they open read-only,
-      // so the draft stays empty and there is nothing to write back.
-      fileDraft.value = f.content ?? ''
-      fileSaved.value = f.content ?? ''
+      // Binary and oversized files arrive with no content.
+      fileText.value = f.content ?? ''
       fileVersion.value = f.version
       fileBinary.value = f.binary
       fileTooLarge.value = f.too_large
       fileBytes.value = f.bytes ?? listed
-      fileEditable.value = f.editable !== false && f.source !== 'committed'
-      const draft = drafts.get(draftKey(path))
-      if (draft && !f.binary && !f.too_large) {
-        fileDraft.value = draft.content
-        fileSaved.value = draft.saved
-        fileVersion.value = draft.version
-        fileView.value = 'edit'
-        fileConflict.value = f.version !== draft.version
-      }
       tree.revealInTree(path)
     } catch (e) {
       if (selectedTask.value !== task || epoch() !== epochAt || fileRequest !== request) return
@@ -331,32 +268,11 @@ export function usePanelFilePane(deps: FilePaneDeps) {
     }
   }
 
-  const editor = usePanelFileSave({
-    props,
-    task: selectedTask,
-    openPath,
-    fileDraft,
-    fileSaved,
-    fileVersion,
-    fileSaving,
-    fileDirty,
-    fileReadOnly,
-    fileConflict,
-    fileMerge,
-    drafts,
-    draftKey,
-    epoch,
-    errorMsg,
-    reload: selectFile,
-  })
-
   /** 换了来源或任务：这一代读回来的东西一样都不留。 */
   function resetSource() {
     fileRequest += 1
     filesInFlight = null
     pendingOpen = null
-    openFound = false
-    fileSaving.value = false
     resetFilePanel()
   }
 
@@ -370,26 +286,16 @@ export function usePanelFilePane(deps: FilePaneDeps) {
     return lastFiles.get(sourceKey()) ?? null
   }
 
-  /** 指名要开的那一份开出来了没有（`openFile` 拿它回话）。 */
-  function hasOpenFileFound(): boolean {
-    return openFound
-  }
-
   return {
     files,
     openPath,
-    fileDraft,
-    fileSaved,
-    fileSaving,
-    fileDirty,
+    fileText,
     fileToolReady,
     fileVersion,
     fileBinary,
     fileTooLarge,
     fileBytes,
     fileReadOnly,
-    fileConflict,
-    fileMerge,
     fileView,
     treeFiles: tree.treeFiles,
     collapsedDirs: tree.collapsedDirs,
@@ -400,21 +306,14 @@ export function usePanelFilePane(deps: FilePaneDeps) {
     openIsImage,
     openImageSrc: openImage.src,
     openImageError: openImage.error,
-    draftCount: computed(() => drafts.size),
-    keepDraft,
+    keepOpenFile,
     loadFiles,
     selectFile,
     closeFile,
     downloadOpenFile,
     toggleDir: tree.toggleDir,
-    saveFile: editor.saveFile,
-    overwriteFile: editor.overwriteFile,
-    resolveMerge: editor.resolveMerge,
-    cancelMerge: editor.cancelMerge,
-    reloadOpenFile: editor.reloadOpenFile,
     resetSource,
     setPendingOpen,
     lastFileForSource,
-    hasOpenFileFound,
   }
 }
