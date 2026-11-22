@@ -49,5 +49,21 @@
   "revisedStarterReplaced": "replaced the starter code",
   "revisedStarterRemoved": "removed the starter code",
   "starterFailedNext": "You can download {file} from {folder} in the library and commit it to the repository yourself; if it isn't there, ask the publisher for a copy",
-  "starterFolder": "the “{folder}” folder"
+  "starterFolder": "the “{folder}” folder",
+  "submitTitle": "What to hand in",
+  "submitGo": "Go to submit",
+  "submitClosed": "No longer accepting",
+  "submitNewTask": "New task to write code",
+  "submitCodeOnly": "Code",
+  "submitCodeHint": "Write and self-test the code in a new task; on submit, the platform runs the test cases on the project's default branch",
+  "submitLatest": "Last handed in: version {version} ({when})",
+  "submitNone": "Nothing handed in yet",
+  "submitTestsRunning": "tests running",
+  "submitTestsFailed": "the run failed",
+  "submitTestsDone": "{passed}/{total} test cases passed",
+  "submitKind": {
+    "text": "Text, graded by hand",
+    "file": "File",
+    "code": "Code, run against test cases"
+  }
 }

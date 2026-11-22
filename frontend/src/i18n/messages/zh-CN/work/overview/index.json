@@ -49,5 +49,21 @@
   "revisedStarterReplaced": "替换起始代码",
   "revisedStarterRemoved": "删除起始代码",
   "starterFailedNext": "可以在资料库{folder}里下载 {file}，自己提交到代码仓库；文件夹里没有就向出题人要一份",
-  "starterFolder": "「{folder}」文件夹"
+  "starterFolder": "「{folder}」文件夹",
+  "submitTitle": "提交要求",
+  "submitGo": "去提交",
+  "submitClosed": "已不收提交",
+  "submitNewTask": "新建任务写代码",
+  "submitCodeOnly": "代码",
+  "submitCodeHint": "在新建的任务里写代码并自测；交的时候，平台拿项目默认分支的代码跑测试点",
+  "submitLatest": "最近交了第 {version} 版（{when}）",
+  "submitNone": "还没有交过",
+  "submitTestsRunning": "测试点评测中",
+  "submitTestsFailed": "评测没跑成",
+  "submitTestsDone": "测试点通过 {passed}/{total}",
+  "submitKind": {
+    "text": "文本，老师手动判",
+    "file": "文件",
+    "code": "代码，跑测试点"
+  }
 }

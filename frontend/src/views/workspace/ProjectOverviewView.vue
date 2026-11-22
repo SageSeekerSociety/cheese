@@ -26,7 +26,9 @@ import AppPage from '@/components/common/AppPage.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import OverviewDraftForm from '@/components/overview/OverviewDraftForm.vue'
+import type { LatestHandIn, SubmissionRequirement } from '@/components/overview/SubmissionRequirementsCard.vue'
 import SituationCard from '@/components/overview/SituationCard.vue'
+import SubmissionRequirementsCard from '@/components/overview/SubmissionRequirementsCard.vue'
 import TaskStateMark from '@/components/task/TaskStateMark.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
@@ -39,6 +41,14 @@ import { taskTitle } from '@/lib/topicState'
 export interface ChallengeStages {
   stages: TaskStage[]
   statuses: TaskStageStatus[]
+}
+
+/** 领题项目的「提交要求」卡要的东西；不是领题项目、或还没读到，是 null（不画这张卡）。 */
+export interface ProjectSubmission {
+  entries: SubmissionRequirement[]
+  hasTests: boolean
+  submittable: boolean
+  latest: LatestHandIn | null
 }
 
 export interface ProjectStarter {
@@ -69,6 +79,8 @@ const props = defineProps<{
   challengeStages?: ChallengeStages | null
   /** 代码仓库从题目第几版的起始代码开始、放好了没有；没有起始代码、或读不到，是 null。 */
   starter?: ProjectStarter | null
+  /** 提交要求卡；见 ProjectSubmission。 */
+  submission?: ProjectSubmission | null
   /** 「题目更新」那几行能不能点到题目的历史版本页：看的人看得到这道题的 `题目/` 才能。 */
   taskLinked?: boolean
   /** 最近进展；还没读到是 null。 */
@@ -110,6 +122,10 @@ const emit = defineEmits<{
   'open-task-version': [version: number]
   /** 打开项目资料库里的「题目」文件夹。 */
   'open-task-folder': []
+  /** 去题目页的提交表单。 */
+  'go-submit': []
+  /** 在这个项目里新建任务写代码。 */
+  'new-task': []
 }>()
 
 // Only a project from a staged task shows the timeline, so the overview loads it
@@ -231,6 +247,15 @@ function stateOf(task: RoomTask): TaskState {
       :writing="situation.writing"
       :agent-name="agentName ?? ''"
       :agent-handle="agentHandle ?? null"
+    />
+    <SubmissionRequirementsCard
+      v-if="submission && submission.entries.length + (submission.hasTests ? 1 : 0) > 0"
+      :entries="submission.entries"
+      :has-tests="submission.hasTests"
+      :submittable="submission.submittable"
+      :latest="submission.latest"
+      @go-submit="emit('go-submit')"
+      @new-task="emit('new-task')"
     />
     <div class="overview">
       <div class="overview__main">
