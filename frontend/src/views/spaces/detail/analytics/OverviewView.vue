@@ -25,12 +25,12 @@
     />
 
     <template v-else-if="overview">
-      <!-- 学生学得怎么样：最靠前的一句。老师进数据页先看到它，不必切到「学情分析」页签。 -->
+      <!-- 成员学得怎么样：最靠前的一句。管理员进数据页先看到它，不必切到「学情分析」页签。 -->
       <section class="an-card learning-now" data-testid="overview-learning">
         <div class="learning-now__head">
           <h3 class="an-card__title">{{ t('spaces.analytics.overview.learning.title') }}</h3>
           <BaseButton
-            v-if="learning?.enabled && learning.reported > 0"
+            v-if="learning?.enabled && (learning.mastery?.reported ?? 0) > 0"
             kind="ghost"
             size="sm"
             @click="emit('openLearning')"
