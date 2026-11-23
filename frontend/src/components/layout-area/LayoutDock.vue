@@ -282,8 +282,11 @@ function heldSize(group: DockviewGroupPanel): { id: string; axis: 'width' | 'hei
 function sizeOf(axis: 'width' | 'height', size: number): { width: number } | { height: number } {
   return axis === 'width' ? { width: size } : { height: size }
 }
+// Measured, not `group.api.width`: that one follows dockview's own size events and still
+// says the old size in the pass where a neighbour was just shown or resized.
 function sizeAlong(group: DockviewGroupPanel, axis: 'width' | 'height'): number {
-  return axis === 'width' ? group.api.width : group.api.height
+  const rect = group.element.getBoundingClientRect()
+  return axis === 'width' ? rect.width : rect.height
 }
 
 function applyPolicies() {
@@ -375,11 +378,25 @@ function splitOf(group: DockviewGroupPanel): Element | null {
   return group.element.closest('.dv-view')?.parentElement?.parentElement ?? null
 }
 
+function sizesNow(dock: DockviewApi): string {
+  return dock.groups
+    .map((group) => `${Math.round(sizeAlong(group, 'width'))}x${Math.round(sizeAlong(group, 'height'))}`)
+    .join(' ')
+}
 function restoreHeldWidths(dock: DockviewApi) {
-  for (const group of dock.groups) {
+  const off = (group: DockviewGroupPanel) => {
     const wanted = heldSize(group)
-    if (!wanted || !group.api.isVisible) continue
-    if (Math.abs(sizeAlong(group, wanted.axis) - wanted.size) > 1) group.api.setSize(sizeOf(wanted.axis, wanted.size))
+    return wanted && group.api.isVisible && Math.abs(sizeAlong(group, wanted.axis) - wanted.size) > 1
+      ? wanted
+      : undefined
+  }
+  // Giving one cell its width can be what gives the next one room (the first asked while the
+  // row was still cramped), so the round repeats while it keeps changing something.
+  for (let round = 0, before = ''; round < 3 && before !== (before = sizesNow(dock)); round += 1) {
+    for (const group of dock.groups) {
+      const wanted = off(group)
+      if (wanted) group.api.setSize(sizeOf(wanted.axis, wanted.size))
+    }
   }
 }
 
