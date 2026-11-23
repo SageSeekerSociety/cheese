@@ -603,8 +603,10 @@ async function save() {
   gap: 8px;
 }
 .co-link {
+  flex: none;
   padding: 0;
   border: 0;
+  white-space: nowrap;
   background: none;
   font-size: 12px;
   line-height: var(--lh-12);
