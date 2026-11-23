@@ -14,6 +14,14 @@
  * applied on top of dockview's groups; the tabs and cell actions are ours, styled with
  * the product tokens.
  *
+ * A cell can float: it is a dockview floating group, a window over the grid that the reader
+ * moves by its title bar and resizes from its edges, kept wholly inside the area (also when
+ * the area shrinks). The panel keeps its instance, and a panel rendered always (an iframe, a
+ * terminal) is not even moved in the page. A floating group's title bar is dockview's own,
+ * blank: the area teleports the panel's title bar into it (`floatHead`). Docking it back
+ * reloads the layout with the panels kept (`reuseExistingPanels`), the panel in the place the
+ * area gives it (`homeOf`).
+ *
  * Space is not shared in proportion when the area resizes (`proportional-layout` off): a
  * cell with a width of its own (or, in a column, a height) is a low-priority view in
  * dockview's terms and keeps it, and the other cells absorb the change, as a code editor's
@@ -33,7 +41,7 @@ import type {
   IDockviewPanelProps,
 } from 'dockview-vue'
 import type { LayoutArrangement, LayoutCell, SplitDirection } from './arrangement'
-import type { CellSizing } from './dockviewJson'
+import type { CellSizing, FloatBox } from './dockviewJson'
 import type { LayoutPanelInfo } from './types'
 
 import { computed, markRaw, nextTick, onBeforeUnmount, reactive, ref, shallowRef, watch } from 'vue'
@@ -47,6 +55,7 @@ import {
   cellsOf,
   defaultWeights,
   defaultWeightsAmong,
+  gridCellsOf,
   hasPlacementFault,
   hidesTabs,
   homeCell,
@@ -58,8 +67,9 @@ import {
   setCollapsed,
   spawnLanding,
   withCellIds,
+  withoutFloating,
 } from './arrangement'
-import { fromDockview, STRIP_SIZE, toDockview } from './dockviewJson'
+import { fitFloat, floatBoxes, fromDockview, STRIP_SIZE, toDockview } from './dockviewJson'
 import LayoutAddMenu from './LayoutAddMenu.vue'
 import LayoutSignal from './LayoutSignal.vue'
 import { clampWidth } from './widths'
@@ -90,8 +100,15 @@ const props = defineProps<{
   fixedHeights: Record<string, number>
   /** The page's default: double-clicking a divider gives its split these sizes back. */
   defaultArrangement: LayoutArrangement
-  /** Show this panel (and open its cell), or fold or open its cell; acted on once per `n`. */
-  request: { id: string; fold?: boolean; n: number } | null
+  /**
+   * Show this panel (and open its cell), fold or open its cell, or pop it out of the grid into
+   * a floating window and dock it back (`float`); acted on once per `n`.
+   */
+  request: { id: string; fold?: boolean; float?: boolean; n: number } | null
+  /** Where this panel floated last, if it has. */
+  floatBox: (id: string) => FloatBox | undefined
+  /** The arrangement with a panel that floated (and is now in no cell) back in its place. */
+  homeOf: (arrangement: LayoutArrangement, id: string) => LayoutArrangement
 }>()
 
 const emit = defineEmits<{
@@ -115,6 +132,10 @@ const emit = defineEmits<{
   close: [id: string]
   /** The reader double-clicked the tab of a temporary panel. */
   keep: [id: string]
+  /** The title bar of the floating window this panel is the visible one of, or null when it is no longer one. */
+  floatHead: [id: string, element: HTMLElement | null]
+  /** Where the floating window holding these panels sits now. */
+  floatMoved: [ids: string[], box: FloatBox]
 }>()
 
 const { t } = useI18n()
@@ -169,7 +190,21 @@ function box() {
   return { width: root.value?.clientWidth || 1200, height: root.value?.clientHeight || 800 }
 }
 
-function load(arrangement: LayoutArrangement) {
+const isFloatingGroup = (group: DockviewGroupPanel) => group.api.location.type === 'floating'
+
+/** Where a floating cell opens: where its panel floated last, else in the middle of the area. */
+function floatBoxOf(cell: LayoutCell): FloatBox {
+  const remembered = props.floatBox(cell.active ?? cell.panels[0])
+  if (remembered) return remembered
+  const area = box()
+  return { left: (area.width - 480) / 2, top: (area.height - 320) / 2, width: 480, height: 320 }
+}
+
+/**
+ * Lays an arrangement out afresh. `keepPanels` moves the panels dockview already has into it
+ * instead of making them anew: their content is not mounted again (docking a window back).
+ */
+function load(arrangement: LayoutArrangement, keepPanels = false) {
   const dock = api.value
   if (!dock) return
   loading = true
@@ -186,8 +221,14 @@ function load(arrangement: LayoutArrangement) {
       expanded = new Map()
     } else {
       const size = box()
-      const { layout, expandedSizes } = toDockview({ root: next.root }, size, panelState, props.sizing)
-      dock.fromJSON(layout)
+      const { layout, expandedSizes } = toDockview(
+        { root: next.root, floating: next.floating },
+        size,
+        panelState,
+        props.sizing,
+        floatBoxOf
+      )
+      dock.fromJSON(layout, keepPanels ? { reuseExistingPanels: true } : undefined)
       // Saved sizes need not add up to the area as it is now (a cell hidden or folded when they
       // were taken): the grid is laid out to the area itself, or it keeps their sum until the
       // area next changes size, leaving the rest of the area empty.
@@ -237,7 +278,70 @@ function sync() {
   model.value = next
   applyPolicies()
   refreshActives()
+  refreshFloats()
   emit('change', next)
+}
+
+// ---------------------------------------------------------------- floating windows
+
+/** The title bar each panel that is the visible one of a floating window is handed, and the boxes last reported. */
+const floatHeads = new Map<string, HTMLElement>()
+let boxesBefore = ''
+function refreshFloats() {
+  const dock = api.value
+  if (!dock) return
+  const heads = new Map<string, HTMLElement>()
+  for (const group of dock.groups) {
+    const bar = isFloatingGroup(group)
+      ? group.element.closest('.dv-resize-container')?.querySelector<HTMLElement>(':scope > .dv-floating-titlebar')
+      : null
+    if (bar && group.activePanel) heads.set(group.activePanel.id, bar)
+  }
+  for (const [id, bar] of floatHeads) if (heads.get(id) !== bar) emit('floatHead', id, null)
+  for (const [id, bar] of heads) if (floatHeads.get(id) !== bar) emit('floatHead', id, bar)
+  floatHeads.clear()
+  heads.forEach((bar, id) => floatHeads.set(id, bar))
+  const boxes = floatBoxes(dock.toJSON())
+  const key = JSON.stringify(boxes)
+  if (key === boxesBefore) return
+  boxesBefore = key
+  for (const { panels, box } of boxes) emit('floatMoved', panels, box)
+}
+
+/** Pops the cell of this panel out of the grid: where it floated last, else just inside where it sits now. */
+function float(id: string) {
+  const dock = api.value
+  const panel = dock?.getPanel(id)
+  if (!dock || !panel || isFloatingGroup(panel.group) || !root.value) return
+  exitMaximize()
+  const split = splitOf(panel.group)
+  const here = panel.group.element.getBoundingClientRect()
+  const area = root.value.getBoundingClientRect()
+  const at = fitFloat(
+    props.floatBox(id) ?? {
+      left: here.left - area.left + 24,
+      top: here.top - area.top + 24,
+      width: Math.min(Math.max(here.width, 440), 560),
+      height: Math.min(Math.max(here.height, 260), 360),
+    },
+    box()
+  )
+  dock.addFloatingGroup(panel, { position: { left: at.left, top: at.top }, width: at.width, height: at.height })
+  // The cells left in its split share the room as when a cell of the kind is hidden.
+  if (info.value.get(id)?.evensOut && split?.isConnected) evenOut(split, false)
+  schedule()
+}
+
+/** Puts a floating panel back in the grid, where the area says it belongs, its instance kept. */
+function dockBack(id: string) {
+  const dock = api.value
+  const panel = dock?.getPanel(id)
+  if (!dock || !panel || !isFloatingGroup(panel.group)) return
+  load(props.homeOf(withoutFloating(model.value, id), id), true)
+  const back = dock.getPanel(id)
+  const split = back ? splitOf(back.group) : null
+  if (info.value.get(id)?.evensOut && split) evenOut(split, false)
+  back?.api.setActive()
 }
 
 // ---------------------------------------------------------------- what is on screen
@@ -302,6 +406,14 @@ function applyPolicies() {
   for (const group of dock.groups) {
     const id = group.id
     const panels = infosOf(group)
+    if (isFloatingGroup(group)) {
+      // A window over the grid: no strip, no limits, no share of a split. The page hiding its
+      // panel hides the window; showing it again brings the window back where it was.
+      if (group.header.hidden !== hidesTabs(panels)) group.header.hidden = hidesTabs(panels)
+      const hidden = panels.length > 0 && panels.every((panel) => panel.hidden)
+      if (!maximizedGroup.value && group.api.isVisible === hidden) group.api.setVisible(!hidden)
+      continue
+    }
     const folded = collapsed.has(id)
     const headerHidden = folded || hidesTabs(panels)
     if (group.header.hidden !== headerHidden) group.header.hidden = headerHidden
@@ -462,7 +574,7 @@ function maximize(id: string | null) {
   if (!dock) return
   const panel = id ? dock.getPanel(id) : undefined
   if (!panel) return void exitMaximize()
-  if (maximizedGroup.value === panel.group.id || !panel.group.api.isVisible) return
+  if (maximizedGroup.value === panel.group.id || !panel.group.api.isVisible || isFloatingGroup(panel.group)) return
   enterMaximize(panel.group)
 }
 
@@ -492,7 +604,7 @@ function addTo(group: DockviewGroupPanel | null, id: string) {
   })
 }
 
-const cellCount = computed(() => cellsOf(model.value).length)
+const cellCount = computed(() => gridCellsOf(model.value).length)
 
 const groupOf = (id: string) => info.value.get(id)?.group
 
@@ -578,7 +690,8 @@ function onReady(event: DockviewReadyEvent) {
       if (pinned(e.panel.id)) e.nativeEvent.preventDefault()
     }),
     dock.onWillDragGroup((e) => {
-      if (e.group.panels.some((panel) => pinned(panel.id))) e.nativeEvent.preventDefault()
+      // A floating window goes back by its own button, not by being dragged onto the grid.
+      if (isFloatingGroup(e.group) || e.group.panels.some((panel) => pinned(panel.id))) e.nativeEvent.preventDefault()
     }),
     dock.onWillShowOverlay((e) => {
       // Nothing lands around the whole area, in a folded cell or in a cell without tabs.
@@ -643,6 +756,8 @@ watch(
     const panel = dock.getPanel(request.id)
     if (!panel) return
     const group = panel.group
+    if (request.float === true) return void float(request.id)
+    if (request.float === false) return void dockBack(request.id)
     if (request.fold === true) return void collapse(group)
     if (request.fold === false || collapsed.has(group.id)) expand(group.id)
     if (request.fold !== undefined) return
@@ -675,7 +790,10 @@ watch(
 /** A divider is being dragged: the widths cells keep on their own may change now. */
 let dragging = false
 function onPointerDown(event: PointerEvent) {
-  if (!(event.target instanceof Element) || !event.target.closest('.dv-sash')) return
+  if (!(event.target instanceof Element)) return
+  // dockview floats a tab or a cell on shift-press; here only a title bar's button floats one.
+  if (event.shiftKey && event.target.closest('.dv-tab, .dv-void-container')) return void event.preventDefault()
+  if (!event.target.closest('.dv-sash')) return
   dragging = true
   window.addEventListener('pointerup', endDrag)
   window.addEventListener('pointercancel', endDrag)
@@ -776,7 +894,7 @@ const noContextMenu = () => []
     <DockviewVue
       class="layout-dock__view"
       :theme="theme"
-      :disable-floating-groups="true"
+      floating-group-bounds="boundedWithinViewport"
       :disable-dnd="locked"
       :proportional-layout="false"
       :get-tab-context-menu-items="noContextMenu"
@@ -1044,6 +1162,12 @@ const noContextMenu = () => []
   --dv-inactivegroup-hiddenpanel-tab-color: var(--muted);
   --dv-separator-border: var(--line);
   --dv-paneview-header-border-color: var(--line);
+  /* A floating window: a dialog's elevation; its title bar is the panel's own (see below). */
+  --dv-floating-border: 1px solid var(--line);
+  --dv-floating-box-shadow: var(--shadow-2);
+  --dv-floating-titlebar-height: auto;
+  --dv-floating-titlebar-background-color: var(--surface);
+  --dv-floating-group-dragging-opacity: 1;
 
   font-family: inherit;
   color: var(--text);
@@ -1134,6 +1258,69 @@ const noContextMenu = () => []
 .layout-dock-theme .dv-drop-target-selection,
 .layout-dock-theme .dv-drop-target-anchor {
   border-radius: var(--radius-md);
+}
+
+/* A floating window, rounded as a dialog. Its title bar holds the panel's own bar (teleported in
+   by the area), so it takes that bar's height; its content keeps inside the rounded corners. */
+.layout-dock-theme .dv-resize-container {
+  min-width: 240px;
+  min-height: 120px;
+  border-radius: var(--radius-lg);
+}
+.layout-dock-theme .dv-resize-container > .dv-floating-titlebar {
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+.layout-dock-theme .dv-resize-container > .dv-grid-view,
+.layout-dock-theme .dv-render-overlay.dv-render-overlay-float {
+  overflow: hidden;
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+
+/* A window's edges resize it. dockview's grips are 4px straddling the edge, and over a panel
+   rendered always (a terminal, an iframe) the panel covers their inner half: they reach out
+   past the edge instead, as a desktop window's do. */
+.layout-dock-theme .dv-resize-container .dv-resize-handle-top,
+.layout-dock-theme .dv-resize-container .dv-resize-handle-bottom {
+  height: 8px;
+}
+.layout-dock-theme .dv-resize-container .dv-resize-handle-left,
+.layout-dock-theme .dv-resize-container .dv-resize-handle-right {
+  width: 8px;
+}
+.layout-dock-theme .dv-resize-container .dv-resize-handle-top {
+  top: -6px;
+}
+.layout-dock-theme .dv-resize-container .dv-resize-handle-bottom {
+  bottom: -6px;
+}
+.layout-dock-theme .dv-resize-container .dv-resize-handle-left {
+  left: -6px;
+}
+.layout-dock-theme .dv-resize-container .dv-resize-handle-right {
+  right: -6px;
+}
+.layout-dock-theme .dv-resize-container .dv-resize-handle-topleft,
+.layout-dock-theme .dv-resize-container .dv-resize-handle-topright,
+.layout-dock-theme .dv-resize-container .dv-resize-handle-bottomleft,
+.layout-dock-theme .dv-resize-container .dv-resize-handle-bottomright {
+  width: 12px;
+  height: 12px;
+}
+.layout-dock-theme .dv-resize-container .dv-resize-handle-topleft {
+  top: -6px;
+  left: -6px;
+}
+.layout-dock-theme .dv-resize-container .dv-resize-handle-topright {
+  top: -6px;
+  right: -6px;
+}
+.layout-dock-theme .dv-resize-container .dv-resize-handle-bottomleft {
+  bottom: -6px;
+  left: -6px;
+}
+.layout-dock-theme .dv-resize-container .dv-resize-handle-bottomright {
+  right: -6px;
+  bottom: -6px;
 }
 
 /* Global, not scoped: DockviewVue renders a fragment, so the scope attribute never reaches it. */

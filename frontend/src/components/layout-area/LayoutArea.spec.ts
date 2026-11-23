@@ -245,11 +245,27 @@ describe('LayoutArea with panels that carry a title bar of their own', () => {
     expect(onClose).toHaveBeenCalledWith('two')
   })
 
+  it('popped out into a window and docked back, a panel keeps what was typed in it, and the window is remembered', async () => {
+    mountWide()
+    await waitFor(() => expect(seen('note two')).not.toBeNull())
+    await fireEvent.update(seen('note two')!, 'draft')
+    await fireEvent.click(await screen.findByRole('button', { name: i18n.global.t('shell.layout.float') }))
+    const dock = await screen.findByRole('button', { name: i18n.global.t('shell.layout.dock') })
+    expect((seen('note two') as HTMLTextAreaElement).value).toBe('draft')
+    await waitFor(() => expect(JSON.parse(localStorage.getItem(KEY) ?? '{}').floating?.[0]?.panels).toEqual(['two']))
+    await fireEvent.click(dock)
+    await screen.findByRole('button', { name: i18n.global.t('shell.layout.float') })
+    expect((seen('note two') as HTMLTextAreaElement).value).toBe('draft')
+    await waitFor(() => expect(JSON.parse(localStorage.getItem(KEY) ?? '{}').floating).toBeUndefined())
+  })
+
   it('a cell of such panels has no tabs and shows only the one opened', async () => {
     const { area } = mountWide()
     await waitFor(() => expect(seen('note two')).not.toBeNull())
     expect(seen('note three')).toBeNull()
-    expect(screen.queryAllByRole('tab')).toHaveLength(0)
+    // The plain panel beside them keeps its tab; the titled ones show none.
+    expect(screen.queryAllByRole('tab').map((t) => t.textContent?.trim())).not.toContain('Two')
+    expect(screen.queryAllByRole('tab').map((t) => t.textContent?.trim())).not.toContain('Three')
     area.value!.open('three')
     await waitFor(() => expect(seen('note three')).not.toBeNull())
     expect(seen('note two')).toBeNull()

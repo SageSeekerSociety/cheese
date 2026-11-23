@@ -1,19 +1,20 @@
 /**
  * What a panel keeps on its own, whatever arrangement it is placed in: the width of its
- * cell (`LayoutPanel.width`) and whether that cell is folded (`LayoutPanel.foldKey`),
- * remembered in the browser under their keys. The width never leaves the panel's bounds,
- * whatever was stored.
+ * cell (`LayoutPanel.width`), whether that cell is folded (`LayoutPanel.foldKey`) and where
+ * it floats when it is popped out of the grid, remembered in the browser under their keys.
+ * The width never leaves the panel's bounds, whatever was stored.
  *
  * One live value per key, shared by everyone who reads it: a width dragged in one place
  * (the area's divider, or a drawer showing the same panel outside the area) is the width
  * every other place shows at once.
  */
 import type { Ref } from 'vue'
+import type { FloatBox } from './dockviewJson'
 import type { LayoutPanelWidth } from './types'
 
 import { ref } from 'vue'
 
-import { storageGet, storageSet } from '@/lib/browserStorage'
+import { storageGet, storageGetJson, storageSet, storageSetJson } from '@/lib/browserStorage'
 
 export function clampWidth(spec: LayoutPanelWidth, width: number): number {
   return Math.min(spec.max, Math.max(spec.min, Math.round(width)))
@@ -67,4 +68,25 @@ export function rememberWidth(spec: LayoutPanelWidth, width: number, persist = t
   current.value = kept
   if (persist && spec.storageKey) storageSet(spec.storageKey, String(kept))
   return kept
+}
+
+const floatKey = (id: string) => `cheesex.layoutFloat.${id}`
+
+/** Where this panel floated last on this device, or undefined when nothing usable was stored. */
+export function rememberedFloat(id: string): FloatBox | undefined {
+  const saved = storageGetJson<Partial<FloatBox>>(floatKey(id))
+  if (!saved) return undefined
+  const { left, top, width, height } = saved
+  const sizes = [left, top, width, height]
+  if (!sizes.every((n) => typeof n === 'number' && Number.isFinite(n))) return undefined
+  return { left: left!, top: top!, width: width!, height: height! }
+}
+
+export function rememberFloat(id: string, box: FloatBox): void {
+  storageSetJson(floatKey(id), {
+    left: Math.round(box.left),
+    top: Math.round(box.top),
+    width: Math.round(box.width),
+    height: Math.round(box.height),
+  })
 }
