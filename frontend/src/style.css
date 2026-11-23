@@ -238,8 +238,13 @@
   --terminal-status-ink: #9aa0a6;
   --terminal-status-fill: rgba(0, 0, 0, 0.5);
 
+  /* ---- A task's 终端: its ground ----
+     The surface in the light theme; in the dark theme a step below --canvas, so
+     the terminal reads as a well under the editor beside it. */
+  --terminal-surface: var(--surface);
+
   /* ---- A task's 终端: the 16 ANSI colours ----
-     The task terminal is drawn on --surface and follows the theme, so the
+     The task terminal is drawn on --terminal-surface and follows the theme, so the
      colours a program asks for (red, green, …, and their bright forms) follow
      it too: the status and code inks where they exist, a magenta and a bright
      cyan of their own where they do not. Every one is text, and each clears
@@ -632,7 +637,9 @@
   --terminal-status-ink: #9aa0a6;
   --terminal-status-fill: rgba(0, 0, 0, 0.5);
 
-  /* A task's 终端 (see the light block). On --surface (#1b1d20): black 8.1,
+  --terminal-surface: #0f1012;
+  /* A task's 终端 (see the light block). On --surface (#1b1d20), and higher still on
+     --terminal-surface (#0f1012): black 8.1,
      red 7.7, green 9.7, yellow 10.3, blue 7.7, magenta 7.8, cyan 9.0, white
      11.6; bright black 8.1, red 5.3, green 8.4, yellow 9.2, blue 6.6, magenta
      9.0, cyan 11.6, white 15.4. Black is the muted ink here: on a dark ground
