@@ -76,6 +76,8 @@ const props = defineProps<{
   acceptElsewhere?: boolean
   /** 手机上：采纳那一条只放「审阅」，决定在「改动」页底部。 */
   acceptReviewButton?: boolean
+  /** 任务页的编辑器那一种：采纳那一条上「审阅」一颗摆在「退回 / 采纳」前面。 */
+  acceptReviewAlongside?: boolean
   /** 正在就地采纳的那件任务（主线上交付那几颗按钮）。 */
   adoptingTask?: string | null
   // 换过 AI 队友之后 +1，对话栏据此重拉名册（它显示的 AI 名字来自那份名册）。
@@ -317,6 +319,7 @@ defineExpose({
           :task-id="taskId ?? undefined"
           :topic-status="topic.status"
           :review-button="acceptReviewButton"
+          :review-alongside="acceptReviewAlongside"
           @phase="emit('phase', $event)"
           @review="emit('review')"
           @rejecting="rejecting = $event"

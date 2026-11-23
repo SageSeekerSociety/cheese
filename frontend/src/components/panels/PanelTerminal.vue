@@ -2,8 +2,8 @@
 // One shell's screen: an xterm in the 终端 tab. It draws what it is handed and says what is
 // typed into it; where the bytes come from and go to is the host's (`work/TerminalHost.vue`).
 // Images a program draws show inline, and a web address in the output opens in a new tab.
-// The screen keeps the panel's own surface and type (the approved prototype draws the
-// terminal on `--surface` in the mono face), so it follows the theme like the rest of the panel.
+// The screen is drawn in the mono face on `--terminal-surface`, which follows the theme: the
+// panel's own surface in the light theme, a well darker than the editor beside it in the dark.
 import '@xterm/xterm/css/xterm.css'
 
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -84,10 +84,10 @@ function token(name: string): string {
 
 function theme() {
   return {
-    background: token('--surface'),
+    background: token('--terminal-surface'),
     foreground: token('--text'),
     cursor: token('--ink'),
-    cursorAccent: token('--surface'),
+    cursorAccent: token('--terminal-surface'),
     selectionBackground: token('--accent-wash'),
     // The 16 colours a program asks for, legible on the panel's surface in either theme.
     ...Object.fromEntries(ANSI.map((name) => [name, token(`--terminal-ansi-${kebab(name)}`)])),
@@ -180,7 +180,7 @@ defineExpose({
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  background: var(--surface);
+  background: var(--terminal-surface);
 }
 .term__screen {
   flex: 1;

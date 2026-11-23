@@ -541,7 +541,7 @@ describe('任务页头', () => {
     expect(queryByRole('button', { name: '左栏' })).toBeNull()
     expect(getByRole('button', { name: '概览' })).not.toBeNull()
 
-    await rerender({ form: 'editor', editorParts: { left: true, terminal: false, conversation: true } })
+    await rerender({ form: 'editor', blocks: [], editorParts: { left: true, terminal: false, conversation: true } })
     expect(queryByRole('button', { name: '概览' })).toBeNull()
     expect(getByRole('button', { name: '左栏' }).getAttribute('aria-pressed')).toBe('true')
     expect(getByRole('button', { name: '终端' }).getAttribute('aria-pressed')).toBe('false')
@@ -551,10 +551,35 @@ describe('任务页头', () => {
     expect(emitted('toggle-part')).toEqual([['terminal'], ['conversation']])
   })
 
-  it('开不了终端的任务（只读、关了）在编辑器里不摆终端那一颗', async () => {
-    const { getByRole, queryByRole, rerender } = mount()
-    await rerender({ form: 'editor', editorParts: { left: true, terminal: null, conversation: true } })
-    expect(getByRole('button', { name: '左栏' })).not.toBeNull()
-    expect(queryByRole('button', { name: '终端' })).toBeNull()
+  it('编辑器里页头只留任务名和状态：在等谁、有未提交的修改、负责人收在任务名旁边那一颗里', async () => {
+    const { getByRole, queryByText, rerender } = mount({
+      presentation: { column: 'needs_you', phrase: 'awaiting_review' },
+      card: { id: 'c1', status: 'pending', version: 1, reviewer: 'alice' },
+    } as Partial<RoomTask>)
+    await rerender({ form: 'chat', unhanded: true })
+    expect(queryByText('有未提交的修改')).not.toBeNull()
+    expect(queryByText('alice 负责')).not.toBeNull()
+
+    await rerender({ form: 'editor', unhanded: true, editorParts: { left: true, terminal: true, conversation: true } })
+    expect(queryByText('有未提交的修改')).toBeNull()
+    expect(queryByText('alice 负责')).toBeNull()
+    await fireEvent.click(getByRole('button', { name: '任务信息' }))
+    await waitFor(() => expect(queryByText('有未提交的修改')).not.toBeNull())
+    expect(queryByText('负责人')).not.toBeNull()
+  })
+
+  it('编辑器里 ⋯ 里有在中间打开概览、预览的两项', async () => {
+    const { getByRole, rerender, emitted } = mount()
+    await rerender({
+      form: 'editor',
+      editorParts: { left: true, terminal: true, conversation: true },
+      blocks: [
+        { key: 'overview', label: '概览', icon: 'mdi-file-document-outline', on: false, more: true },
+        { key: 'preview', label: '预览', icon: 'mdi-eye-outline', on: false, more: true },
+      ],
+    })
+    await fireEvent.click(getByRole('button', { name: '更多操作' }))
+    await fireEvent.click(await waitFor(() => getByRole('menuitem', { name: '预览' })))
+    expect(emitted('toggle-block')).toEqual([['preview']])
   })
 })

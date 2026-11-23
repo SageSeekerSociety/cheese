@@ -6,9 +6,13 @@
 //
 // 桌面上页面几块并排摆开时，还有「对话 / 编辑器」两种摆法的开关（`form`）。对话那一种里，右边
 // 是框在一起的一组按钮，一样东西一颗（概览、改动、文件、终端，现场和预览在 ⋯ 里），开着的是按下的
-// 样子（`blocks`）；编辑器那一种里是三颗：左栏、终端、对话，各自藏起或摆回那一块（`editorParts`）。
+// 样子（`blocks`）；编辑器那一种里是三颗：左栏、下面（终端和现场）、对话，各自藏起或摆回那一块
+// （`editorParts`），⋯ 也在这一组里，里面多了概览、预览两项（`blocks`，点了在中间打开）。
 // 那一组排在这一行最后，只有提交按钮在它后面。平板横放的浮层那一档没有摆法可选，照旧是「概览」那颗
 // 面板开关。
+//
+// 编辑器那一种里文件是主角，页头只留任务名和状态：在等谁那一句、有未提交的修改、负责人收在任务名
+// 旁边那一颗里（点开就是负责人那一颗原来打开的任务信息，上面多那两句）。
 import type { MenuCommand } from '@/commands'
 import type { RoomTask, Topic, TopicMemberRow } from '@/cx_types'
 import type { HandInAction } from '@/lib/handIn'
@@ -79,9 +83,9 @@ const props = withDefaults(
     panelControls?: string
     /** 此刻摆的是哪一种（对话 / 编辑器）；没得选（手机、平板横放）时 null，不摆开关。 */
     form?: 'chat' | 'editor' | null
-    /** 编辑器里左栏、终端、对话三块各自在不在屏幕上；终端是 null 时这件任务开不了终端，不摆那一颗。 */
-    editorParts?: { left: boolean; terminal: boolean | null; conversation: boolean }
-    /** 对话那一种摆法里那一组按钮。 */
+    /** 编辑器里左栏、下面（终端和现场）、对话三块各自在不在屏幕上。 */
+    editorParts?: { left: boolean; terminal: boolean; conversation: boolean }
+    /** 对话那一种摆法里那一组按钮；编辑器里是 ⋯ 里在中间打开的那几样。 */
     blocks?: TaskBlockButton[]
   }>(),
   // 不给就是连着的：Vue 会把没传的布尔 prop 当成 false，那样每个页头都会写「未连接」。
@@ -116,16 +120,12 @@ const partButtons = computed(() => {
   if (props.form !== 'editor' || !parts) return []
   return [
     { part: 'left' as const, icon: 'mdi-dock-left', label: t('work.task.form.left'), on: parts.left },
-    ...(parts.terminal === null
-      ? []
-      : [
-          {
-            part: 'terminal' as const,
-            icon: 'mdi-dock-bottom',
-            label: t('work.task.form.terminal'),
-            on: parts.terminal,
-          },
-        ]),
+    {
+      part: 'terminal' as const,
+      icon: 'mdi-dock-bottom',
+      label: t('work.task.form.terminal'),
+      on: parts.terminal,
+    },
     {
       part: 'conversation' as const,
       icon: 'mdi-dock-right',
@@ -134,6 +134,20 @@ const partButtons = computed(() => {
     },
   ]
 })
+/** 编辑器那一种：页头只留任务名和状态，别的收进任务名旁边那一颗。 */
+const editorHead = computed(() => props.form === 'editor' && mdAndUp.value)
+/** 编辑器里 ⋯ 里在中间打开的那几样。 */
+const editorOpens = computed(() => (props.form === 'editor' ? props.blocks : []))
+/** 编辑器里那两个菜单由别处的按钮打开、挨着它摆：任务名旁边那一颗、那一组里的 ⋯。 */
+const infoEl = ref<HTMLElement | null>(null)
+const moreOpen = ref(false)
+// The menu closes itself on a press outside it, this button included: a press on the button
+// while it is open is a close, not a second open.
+const moreWasOpen = ref(false)
+const detailsWasOpen = ref(false)
+const moreEl = ref<HTMLElement | null>(null)
+const elementOf = (el: unknown): HTMLElement | null =>
+  el instanceof HTMLElement ? el : ((el as { $el?: unknown } | null)?.$el as HTMLElement | null) ?? null
 
 /** 对话那一种摆法里那一组：直接摆出来的几颗，和收在 ⋯ 里的几样。 */
 const blockButtons = computed(() => (props.form === 'chat' ? props.blocks.filter((block) => !block.more) : []))
@@ -320,6 +334,7 @@ const menuActions = computed<MenuCommand[]>(() =>
 const showsMenu = computed(
   () =>
     takesPart.value ||
+    editorOpens.value.length > 0 ||
     menuActions.value.some((action) => action.id === 'task.reopen' || action.id === 'room.resetLayout')
 )
 // 两条既有用例按这两个 test id 找按钮：其余项不必有。
@@ -352,7 +367,7 @@ function actionTestId(id: string): string | undefined {
           :size="13"
         />
         <span
-          v-if="state?.line"
+          v-if="state?.line && !editorHead"
           class="task-header__note"
           data-testid="task-progress-note"
           :data-user-content="progressNote ? '' : undefined"
@@ -371,13 +386,27 @@ function actionTestId(id: string): string | undefined {
         <span v-if="agentLeft" class="task-header__left" data-testid="task-agent-left">{{
           t('work.task.progress.left', { name: leftName })
         }}</span>
-        <span v-if="unhanded && isOpen" class="task-header__unhanded" data-testid="task-unhanded">{{
+        <span v-if="unhanded && isOpen && !editorHead" class="task-header__unhanded" data-testid="task-unhanded">{{
           t('work.room.accept.handIn.unhanded')
         }}</span>
         <span v-if="connected === false" class="task-header__disconnected" role="status">{{
           t('work.room.header.disconnected')
         }}</span>
       </span>
+      <BaseButton
+        v-if="editorHead && task?.owner_handle"
+        :ref="(el: unknown) => (infoEl = elementOf(el))"
+        kind="ghost"
+        size="sm"
+        icon="mdi-information-outline"
+        class="task-header__info"
+        :class="{ 'task-header__part--on': detailsOpen }"
+        :title="t('work.task.details')"
+        :aria-label="t('work.task.details')"
+        data-testid="task-details"
+        @pointerdown="detailsWasOpen = detailsOpen"
+        @click="detailsOpen = !detailsWasOpen"
+      />
     </div>
 
     <SegmentedControl
@@ -391,8 +420,14 @@ function actionTestId(id: string): string | undefined {
       @update:model-value="(value: 'chat' | 'editor') => value !== form && emit('form', value)"
     />
 
-    <v-menu v-if="task?.owner_handle" v-model="detailsOpen" location="bottom end" :close-on-content-click="false">
-      <template #activator="{ props: menuProps }">
+    <v-menu
+      v-if="task?.owner_handle"
+      v-model="detailsOpen"
+      :target="editorHead ? infoEl ?? undefined : undefined"
+      :location="editorHead ? 'bottom start' : 'bottom end'"
+      :close-on-content-click="false"
+    >
+      <template v-if="!editorHead" #activator="{ props: menuProps }">
         <button
           type="button"
           class="task-header__owner"
@@ -415,6 +450,15 @@ function actionTestId(id: string): string | undefined {
         </button>
       </template>
       <v-card class="task-details">
+        <!-- In the 编辑器 form these two stand here instead of beside the task's name. -->
+        <template v-if="editorHead">
+          <p v-if="state?.line" class="task-details__lead t-meta" data-testid="task-progress-note">
+            {{ state.line }}
+          </p>
+          <p v-if="unhanded && isOpen" class="task-details__lead t-meta" data-testid="task-unhanded">
+            {{ t('work.room.accept.handIn.unhanded') }}
+          </p>
+        </template>
         <dl class="task-details__list t-meta">
           <div class="task-details__row">
             <dt>{{ t('work.task.owner') }}</dt>
@@ -557,8 +601,13 @@ function actionTestId(id: string): string | undefined {
       </v-card>
     </v-menu>
 
-    <v-menu v-if="task && showsMenu" location="bottom end">
-      <template #activator="{ props: menuProps }">
+    <v-menu
+      v-if="task && showsMenu"
+      v-model="moreOpen"
+      :target="editorHead ? moreEl ?? undefined : undefined"
+      location="bottom end"
+    >
+      <template v-if="!editorHead" #activator="{ props: menuProps }">
         <BaseButton
           v-bind="menuProps"
           icon="mdi-dots-horizontal"
@@ -570,6 +619,18 @@ function actionTestId(id: string): string | undefined {
         />
       </template>
       <v-list density="compact" role="menu" :aria-label="t('work.task.more')">
+        <template v-if="editorOpens.length">
+          <v-list-item
+            v-for="block in editorOpens"
+            :key="block.key"
+            role="menuitem"
+            :title="block.label"
+            :prepend-icon="block.icon"
+            :data-task-block="block.key"
+            @click="emit('toggle-block', block.key)"
+          />
+          <v-divider v-if="menuActions.length" class="my-1" />
+        </template>
         <v-list-item
           v-for="action in menuActions"
           :key="action.id"
@@ -594,6 +655,19 @@ function actionTestId(id: string): string | undefined {
         :title="button.label"
         :aria-pressed="button.on ? 'true' : 'false'"
         @click="emit('toggle-part', button.part)"
+      />
+      <BaseButton
+        v-if="task && showsMenu"
+        :ref="(el: unknown) => (moreEl = elementOf(el))"
+        kind="ghost"
+        size="sm"
+        icon="mdi-dots-horizontal"
+        class="task-header__part"
+        :title="t('work.task.more')"
+        :aria-label="t('work.task.more')"
+        data-testid="task-more"
+        @pointerdown="moreWasOpen = moreOpen"
+        @click="moreOpen = !moreWasOpen"
       />
     </div>
     <div
@@ -823,9 +897,37 @@ function actionTestId(id: string): string | undefined {
   color: var(--muted);
   font-size: 12px;
 }
-/* 两种摆法的开关和编辑器里那三颗：和别的按钮一样不伸缩。 */
+/* 两种摆法的开关：框在一起的两段，按下的那一段垫一层底。 */
 .task-header__form {
   flex: none;
+  gap: 0;
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+  border: 1px solid var(--line-2);
+}
+.task-header__form :deep(.segmented__option) {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 0;
+}
+.task-header__form :deep(.segmented__option + .segmented__option) {
+  border-left: 1px solid var(--line-2);
+}
+.task-header__form :deep(.segmented__option--on) {
+  background: var(--fill-2);
+}
+/* 编辑器里任务名旁边那一颗：在等谁、有未提交的修改、负责人收在里面。 */
+.task-header__info {
+  flex: none;
+  width: 26px;
+  min-width: 0;
+  height: 26px;
+  color: var(--muted);
+}
+.task-details__lead {
+  margin: 0 0 6px;
+  color: var(--text);
 }
 /* 框在一起的一组小图标按钮，和频道页头上那一组同一个样子。 */
 .task-header__parts {

@@ -5,6 +5,7 @@ import type { RoomTask } from '@/cx_types'
 import type { PreviewLocate } from '@/lib/previewQuestion'
 import type { TaskSource } from '@/types/taskOrigin'
 import type { TaskOverviewHandle } from './topicView/actions'
+import type { TaskForm } from './topicView/editorForm'
 import type { ChatColumnHandle, WorkPanelHandle } from './topicView/shared'
 
 import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, provide, ref, toRef, watch } from 'vue'
@@ -162,6 +163,25 @@ const taskForm = useTaskForm({
   taskId: () => props.taskId,
   available: () => mdAndUp.value && !!props.taskId && !panelFloat.value,
 })
+/**
+ * 换摆法。地址里的 `?tab=` 是对话那一种的：换到编辑器之前先拿掉它，编辑器开着哪几个页签是它自己
+ * 记着的，不把对话那一种开着的概览带进来。
+ */
+async function chooseForm(form: TaskForm) {
+  if (form === 'editor' && route.query.tab !== undefined)
+    await router.replace({ query: { ...route.query, tab: undefined } })
+  taskForm.choose(form)
+}
+// 编辑器里 `?tab=` 只是一个口子：地址点名的那一样（「审阅」、贴进来的链接）由面板开成一个页签，
+// 地址随即拿掉它，下一次点名同一样时照样开。面板挂上之后才拿：它挂上时要先读到。
+watch(
+  [() => taskForm.editor.value, panelTab, () => !!panelRef.value],
+  ([editor, tab, mounted]) => {
+    if (!editor || tab === undefined || !mounted) return
+    void nextTick(() => router.replace({ query: { ...route.query, tab: undefined } }))
+  },
+  { immediate: true }
+)
 
 // 右栏此刻开着哪一份文件：撰写框上「芝士会看到你在看什么」那一行读它
 // （lib/viewingContext.ts）。面板收起时什么也没在看。
@@ -300,7 +320,7 @@ const { taskHeaderBinding, topicHeaderBinding } = useTopicHeader({
   channelBlocks: () => channelBlocks.value,
   toggleChannelBlock: (key) => toggleChannelBlock(key),
   form: () => (room.workLayout.value && props.taskId && !panelFloat.value ? taskForm.chosen.value : null),
-  chooseForm: taskForm.choose,
+  chooseForm: (form) => void chooseForm(form),
   editorParts: () => editorParts.value,
   toggleEditorPart,
   blocks: () => taskBlocks.value,
@@ -553,7 +573,13 @@ const roomFiles = useConversationFiles(computed(() => (props.taskId ? null : pro
  * 现场和预览收在 ⋯ 里（预览只在有东西可看、或它那一块开着时）。
  */
 const taskBlocks = computed<TaskBlockButton[]>(() => {
-  if (!props.taskId || taskForm.editor.value) return []
+  if (!props.taskId) return []
+  // 编辑器里是 ⋯ 里的两项：在中间打开概览、预览。
+  if (taskForm.editor.value) {
+    return fixedTabs()
+      .filter((tab) => tab.key === 'overview' || tab.key === 'preview')
+      .map((tab) => ({ key: tab.key, label: tab.title, icon: tab.icon, on: false, more: true }))
+  }
   const shown = room.chatBlocks.value
   const on = (key: string) => (key === 'overview' ? shown.overview : shown.open.includes(key))
   const meta = new Map(fixedTabs().map((tab) => [tab.key, tab]))
@@ -578,6 +604,7 @@ const taskBlocks = computed<TaskBlockButton[]>(() => {
 })
 /** 页头上那一组里点了一颗：开着的那一块关掉；关着的打开（工作面板那一侧收着时先打开它）。 */
 function toggleBlock(key: string) {
+  if (taskForm.editor.value) return panelRef.value?.select?.(key)
   const shown = room.chatBlocks.value
   if (key === 'overview' ? shown.overview : shown.open.includes(key)) return room.closeBlock(key)
   if (!panelOpen.value) panelShow()
@@ -585,7 +612,7 @@ function toggleBlock(key: string) {
 }
 /** 一块标题栏上的「在编辑器里打开」：换到编辑器，翻到那一格（那份文件、那个终端）。 */
 async function openInEditor(key?: string) {
-  taskForm.choose('editor')
+  await chooseForm('editor')
   if (!key) return
   if (key.startsWith('terminal:') && !room.editorParts.terminal) room.toggleEditorPart('terminal')
   // 编辑器那一种摆法要先交给外壳、摆出来，才翻得到。
@@ -597,7 +624,7 @@ async function openInEditor(key?: string) {
 useSearchShortcut({
   enabled: () => !!props.taskId && mdAndUp.value && !panelFloat.value,
   run: async () => {
-    if (!taskForm.editor.value) taskForm.choose('editor')
+    if (!taskForm.editor.value) await chooseForm('editor')
     if (!room.editorParts.left) room.toggleEditorPart('left')
     // 编辑器那一种摆法要先交给外壳、摆出来，左栏才在。
     await nextTick()
@@ -605,27 +632,17 @@ useSearchShortcut({
     panelRef.value?.searchFiles?.()
   },
 })
-/** 编辑器里页头右边那三颗按下没有；没得开终端（只读、任务关了）时终端那一颗是 null，不摆。 */
-const editorParts = computed(() => {
-  const parts = room.editorParts
-  const tabs = workTabs()
-  const terminals = tabs.some((tab) => tab.terminal && tab.spawns)
-  const anyTerminal = tabs.some((tab) => tab.terminal && !tab.spawns)
-  return {
-    left: parts.left,
-    terminal: terminals ? parts.terminal && anyTerminal : null,
-    conversation: parts.conversation,
-  }
-})
-/** 页头上藏起或摆回一块。终端一格都没开时，按下就开一格。 */
+/** 编辑器里页头右边那三颗按下没有。 */
+const editorParts = computed(() => ({ ...room.editorParts }))
+/** 页头上藏起或摆回一块。摆回下面那一块时一个终端都没开（而能开）的话，开一个。 */
 function toggleEditorPart(part: 'left' | 'terminal' | 'conversation') {
-  if (part === 'terminal' && !editorParts.value.terminal) {
-    if (!room.editorParts.terminal) room.toggleEditorPart('terminal')
-    const anyTerminal = workTabs().some((tab) => tab.terminal && !tab.spawns)
-    if (!anyTerminal) void (panelRef.value as { spawnTab?: (key: string) => void } | null)?.spawnTab?.('terminal')
-    return
-  }
   room.toggleEditorPart(part)
+  if (part !== 'terminal' || !room.editorParts.terminal) return
+  const tabs = workTabs()
+  const canOpen = tabs.some((tab) => tab.terminal && tab.spawns)
+  const anyTerminal = tabs.some((tab) => tab.terminal && !tab.spawns)
+  if (canOpen && !anyTerminal)
+    void (panelRef.value as { spawnTab?: (key: string) => void } | null)?.spawnTab?.('terminal')
 }
 const conversationTarget = computed(() => room.panels.outlet(CONVERSATION))
 /** 对话那一格里的那一块：窄档的面板浮层就压在它上面。 */
@@ -937,6 +954,7 @@ void openPlace()
               :composer-closed="composerClosed"
               :ask-closed="askClosed"
               :accept-elsewhere="acceptElsewhere"
+              :accept-review-alongside="taskForm.editor.value"
               :chapters="chapters.rows.value"
               :chapterable="canChapter"
               :chapter-ids="chapters.chapterIds.value"
@@ -1009,6 +1027,7 @@ void openPlace()
               @locate="onLocate"
               @navigate="router.push($event)"
               @open-editor="openInEditor"
+              @hide-bottom="room.editorParts.terminal && room.toggleEditorPart('terminal')"
             >
               <!-- 对话看不见时，采纳那一条贴在读者在看的那一格底下：要做的决定不能跟着消失。 -->
               <template v-if="mdAndUp && acceptElsewhere && selectedTopic" #dock>
@@ -1017,6 +1036,7 @@ void openPlace()
                   :topic-id="selectedTopic.id"
                   :task-id="taskId ?? undefined"
                   :topic-status="selectedTopic.status"
+                  :review-alongside="taskForm.editor.value"
                   @review="onReview"
                 />
               </template>

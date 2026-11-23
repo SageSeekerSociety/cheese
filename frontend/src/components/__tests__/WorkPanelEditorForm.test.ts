@@ -57,6 +57,8 @@ vi.mock('@/api', async () => {
     listTaskTerminals: vi.fn(async () => ({ terminals: [] })),
     getAgentControl: vi.fn(async () => ({ id: null, connected: false, tasks: {} })),
     getPreview: vi.fn(async () => null),
+    // 现场, below the centre.
+    getTranscript: vi.fn(async () => ({ data: [], total: 0 })),
     // 搜索: the lines of the task's files holding the text, case ignored.
     searchTaskFiles: vi.fn(async (_p: string, _t: string, q: string) => ({
       files: Object.entries(FILES).flatMap(([path, text]) => {
@@ -86,6 +88,7 @@ vi.mock('../CodeEditor.vue', () => ({
   },
 }))
 
+import { EDITOR_BOTTOM, EDITOR_CENTRE } from '../work/workLayout'
 import WorkPanel from '../WorkPanel.vue'
 
 import { searchTaskFiles } from '@/api'
@@ -114,31 +117,44 @@ beforeAll(() => {
 beforeEach(() => {
   setLocale('zh-CN')
   localStorage.clear()
+  for (const cell of document.querySelectorAll('[data-cell]')) cell.remove()
 })
 
-/** The task page's work panel on a layout that is in one form or the other. */
-function mountTask() {
-  const editor = ref(false)
-  // What each cell has in front: in the 对话 form the work panel's cell; in the 编辑器 form the
-  // left column, the centre, and nothing else here.
-  const front = ref<Set<string>>(new Set(['code']))
-  const panel = ref<{ openFile: (path: string) => Promise<void>; searchFiles: () => void } | null>(null)
+/**
+ * The task page's work panel on a layout that is in one form or the other. `tab` is the
+ * address's `?tab=`, which the page empties again once the 编辑器 form has taken it.
+ */
+function mountTask(opts: { editor?: boolean; tab?: string } = {}) {
+  const editor = ref(!!opts.editor)
+  const tab = ref<string | undefined>(opts.tab ?? 'code')
+  // What each cell has in front: in the 对话 form the work panel's cell; in the 编辑器 form its
+  // four parts, whatever is asked for.
+  const EDITOR_CELLS = ['navigator', EDITOR_CENTRE, EDITOR_BOTTOM]
+  const front = ref<Set<string>>(new Set(opts.editor ? EDITOR_CELLS : ['code']))
+  const panel = ref<{
+    openFile: (path: string) => Promise<void>
+    searchFiles: () => void
+    select: (key: string) => void
+  } | null>(null)
   const Host = defineComponent(() => () => {
     const layout: WorkLayout = {
-      outlet: () => undefined,
+      // The 编辑器 form's centre and the part below it are cells of their own.
+      outlet: (key) => (editor.value ? cellOf(key) : undefined),
       visible: front.value,
-      show: (key) => (front.value = new Set([...(editor.value ? ['navigator'] : []), key])),
+      show: (key) => {
+        if (!editor.value) front.value = new Set([key])
+      },
       head: () => undefined,
       editor: editor.value,
       blocks: !editor.value,
     }
     return h(
       WorkPanel,
-      { ref: panel, topic: room, taskId: 'task-1', activityTick: 0, tab: 'code', layout },
+      { ref: panel, topic: room, taskId: 'task-1', activityTick: 0, tab: tab.value, layout },
       { overview: () => h('p', '概览的内容') }
     )
   })
-  render(Host, {
+  const mounted = render(Host, {
     global: {
       plugins: [createVuetify({ components, directives }), i18n],
       stubs: {
@@ -153,18 +169,33 @@ function mountTask() {
   })
   function toEditor() {
     editor.value = true
-    front.value = new Set(['navigator', 'code'])
+    front.value = new Set(EDITOR_CELLS)
   }
   function toChat() {
     editor.value = false
     front.value = new Set(['code'])
   }
-  return { panel, toEditor, toChat, front }
+  return { panel, toEditor, toChat, front, tab, unmount: mounted.unmount }
 }
 
+/** A cell of the layout, made the first time a panel asks for it. */
+function cellOf(key: string): HTMLElement {
+  let cell = document.querySelector<HTMLElement>(`[data-cell="${key}"]`)
+  if (!cell) {
+    cell = document.createElement('div')
+    cell.dataset.cell = key
+    document.body.appendChild(cell)
+  }
+  return cell
+}
+
+/** The row of tabs over the 编辑器 form's centre. */
+const centreTabs = () => within(screen.getByRole('group', { name: '打开的文件' }))
+
+// Read off the attribute: happy-dom's `style` object can lag behind a pane moved by a Teleport.
 const visible = (el: Element | null) => {
-  const pane = el?.closest('.work-pane') as HTMLElement | null
-  return !!pane && pane.style.display !== 'none'
+  const pane = el?.closest('.work-pane')
+  return !!pane && !/display:\s*none/.test(pane.getAttribute('style') ?? '')
 }
 const shownEditor = () => screen.queryAllByTestId('editor').find((el) => visible(el)) as HTMLTextAreaElement | undefined
 
@@ -204,14 +235,13 @@ describe('the same task in both forms', () => {
   })
 
   it('in the 编辑器 form, a file picked under 改动 in the left column shows its changes in the centre', async () => {
-    const { toEditor, front } = mountTask()
+    const { toEditor } = mountTask()
     toEditor()
     await fireEvent.click(await screen.findByRole('button', { name: '改动' }))
     const list = await screen.findByRole('list', { name: '改动' })
     const row = await within(list).findByRole('button', { name: /stack\.c/ }, { timeout: 3000 })
     await fireEvent.click(row)
     await waitFor(() => expect(visible(screen.queryByText('改动：src/stack.c'))).toBe(true))
-    expect([...front.value]).toContain('changes')
   })
 })
 
@@ -347,5 +377,85 @@ describe("the left column's one row in the 文件 view", () => {
     await fireEvent.click(more())
     await fireEvent.click(await screen.findByRole('menuitem', { name: '全部收起' }))
     await waitFor(() => expect(column.getByRole('button', { name: 'src' }).getAttribute('aria-expanded')).toBe('false'))
+  })
+})
+
+describe("the 编辑器 form's centre is one row of tabs", () => {
+  it('entering the 编辑器 form does not open 概览, though the 对话 form had it open', async () => {
+    const { toEditor } = mountTask({ tab: 'overview' })
+    await waitFor(() => expect(visible(screen.queryByText('概览的内容'))).toBe(true))
+    toEditor()
+    await waitFor(() => expect(screen.queryByRole('group', { name: '打开的文件' })).not.toBeNull())
+    expect(centreTabs().queryByRole('button', { name: '概览' })).toBeNull()
+    expect(visible(screen.queryByText('概览的内容'))).toBe(false)
+  })
+
+  it('预览 opened in the 编辑器 form is a tab of the same row, and the open files keep theirs', async () => {
+    const { panel } = mountTask({ editor: true })
+    await waitFor(() => expect(panel.value).not.toBeNull())
+    await panel.value!.openFile('src/stack.c')
+    await waitFor(() => expect(centreTabs().getByRole('button', { name: 'stack.c' })).toBeTruthy())
+
+    panel.value!.select('preview')
+    const preview = await centreTabs().findByRole('button', { name: '预览' })
+    expect(preview.getAttribute('aria-current')).toBe('true')
+    expect(centreTabs().getByRole('button', { name: 'stack.c' })).toBeTruthy()
+    expect(shownEditor()).toBeUndefined()
+
+    // Back on the file: its text is shown again.
+    await fireEvent.click(centreTabs().getByRole('button', { name: 'stack.c' }))
+    await waitFor(() => expect(shownEditor()?.dataset.file).toBe('src/stack.c'))
+  })
+
+  it('every tab closes from its own ×, and closing one shows its neighbour', async () => {
+    const { panel } = mountTask({ editor: true })
+    await waitFor(() => expect(panel.value).not.toBeNull())
+    await panel.value!.openFile('src/stack.c')
+    panel.value!.select('overview')
+    await centreTabs().findByRole('button', { name: '概览' })
+    expect(centreTabs().getByRole('button', { name: '关闭 stack.c' })).toBeTruthy()
+
+    await fireEvent.click(centreTabs().getByRole('button', { name: '关闭 概览' }))
+    await waitFor(() => expect(centreTabs().queryByRole('button', { name: '概览' })).toBeNull())
+    await waitFor(() => expect(shownEditor()?.dataset.file).toBe('src/stack.c'))
+  })
+
+  it('审阅 asks for 改动 by the address: it opens as a tab of the centre, every time it is asked', async () => {
+    const { panel, tab } = mountTask({ editor: true, tab: undefined })
+    await waitFor(() => expect(panel.value).not.toBeNull())
+    tab.value = 'changes'
+    const changes = await centreTabs().findByRole('button', { name: '改动' })
+    expect(changes.getAttribute('aria-current')).toBe('true')
+    await waitFor(() => expect(visible(screen.queryByText('改动：全部'))).toBe(true))
+
+    // The page empties the address; the tab is closed; 审阅 again opens it again.
+    tab.value = undefined
+    await fireEvent.click(centreTabs().getByRole('button', { name: '关闭 改动' }))
+    await waitFor(() => expect(centreTabs().queryByRole('button', { name: '改动' })).toBeNull())
+    tab.value = 'changes'
+    expect(await centreTabs().findByRole('button', { name: '改动' })).toBeTruthy()
+  })
+
+  it('a changed file picked in the left column opens as its own tab, named after the file', async () => {
+    mountTask({ editor: true })
+    await fireEvent.click(await screen.findByRole('button', { name: '改动' }))
+    const list = await screen.findByRole('list', { name: '改动' })
+    await fireEvent.click(await within(list).findByRole('button', { name: /stack\.c/ }, { timeout: 3000 }))
+    const diff = await centreTabs().findByRole('button', { name: /stack\.c\s*改动/ })
+    expect(diff.getAttribute('aria-current')).toBe('true')
+    await waitFor(() => expect(visible(screen.queryByText('改动：src/stack.c'))).toBe(true))
+  })
+
+  it('the 编辑器 form opens again on the tabs it had for this task, on this device', async () => {
+    const first = mountTask({ editor: true })
+    await waitFor(() => expect(first.panel.value).not.toBeNull())
+    first.panel.value!.select('overview')
+    await centreTabs().findByRole('button', { name: '概览' })
+    first.unmount()
+
+    mountTask({ editor: true, tab: undefined })
+    const overview = await centreTabs().findByRole('button', { name: '概览' })
+    expect(overview.getAttribute('aria-current')).toBe('true')
+    await waitFor(() => expect(visible(screen.queryByText('概览的内容'))).toBe(true))
   })
 })
