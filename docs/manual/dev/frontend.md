@@ -148,6 +148,8 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 
 桌面频道页上这些不画成页签：对话旁边一次只显示一样（`WorkLayout.single`），每一样带布局层画的标题栏（`titled` 面板），面板往里放「返回」和名字（`work/WorkPaneHead.vue`），打开的一件任务把它的页头放进同一条标题栏；新打开的一份文件换掉上一份，「返回」回到打开它的那一样。切换靠页头那四颗按钮（`TopicHeader` 的 `panelThings`）。任务页、私聊页、手机和浮层照旧画页签。
 
+任务页的编辑器那一种摆法（`WorkLayout.editor`，页头开关见 `topicView/editorForm.ts`）里，任务的文件、文件树展开到哪、语言服务和改动的取数由 `WorkPanel` 拿着一份（`useTaskFiles`、`useTaskFileTree`、`useTaskLanguage`、`usePanelChanges`），交给「文件」那一格（`TaskFilesHost`，`tree` 为 null 时不画树）、左栏（`panels/TaskNavigator.vue`，`NAVIGATOR`）和「改动」那一格（`PanelChangesHost` 的 `changes`）；两种摆法因此是同一份打开的文件。单开在旁边的一份文件（`work:`）和单独挂着的宿主自己取。固定的几格（概览、现场、改动、预览）在编辑器里打开时才进中间（`roomLayout.ts` 的 `opened`），进任务时面板不替读者挑一格；终端用布局层的 `below` 落在中间那一格下面。
+
 总览两边各是一个组件：频道是 `components/channel/ChannelOverview.vue`（频道说明，「综合」换成项目目标的 `PanelDoc`；置顶 `ChannelOverviewPins`；进行中；最近关闭），任务是 `components/task/TaskOverview.vue`（开始信息、任务文档的 `PanelDoc`、这一轮的清单、`TaskOutputs` 产出、`TaskRelatedList` 相关）。其余页签的内容在 `components/panels/` 下：`PanelSite`（现场，`SiteRecordTree` / `SiteRecordRow`；顶上那一行是和输入框上方同一个 `room/MemberActivity`）、`PanelChanges`（改动，没绑仓库时 `PanelChanges.noRepo`）、`PanelPreview`（预览，含文档与媒体）、`PanelCard`（共用外壳）。
 
 ## 空间页 {#space}

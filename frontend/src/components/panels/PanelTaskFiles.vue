@@ -3,27 +3,26 @@
 // works in — as a tree on the left and the files opened from it on the right,
 // a tab each, one shown. Files side by side are cells of the layout: a file
 // opened beside (`single`) is a cell of its own with that file, no tree and no
-// tabs.
+// tabs. In the task page's 编辑器 form the tree is a column of its own, so this
+// panel is the open files alone (`tree` null).
 //
 // It draws what `composables/useTaskFiles` holds and hands the person's
 // actions back to it; nothing here fetches. On a phone the file is shown as
 // text, without loading the editor, and without tabs.
 import type { OpenTaskFile, TaskFilesBundle } from '../../composables/useTaskFiles'
+import type { TaskFileTreeState } from '../../composables/useTaskFileTree'
 import type { LanguageLink } from '../../lib/lsp/link'
-import type { LayoutPanelWidth } from '../layout-area'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
-import { foldersOf, taskFileRows } from '../../lib/taskFileTree'
-import ConfirmDialog from '../base/ConfirmDialog.vue'
 import CodeEditor from '../CodeEditor.vue'
-import AdaptiveDialog from '../common/AdaptiveDialog.vue'
 import FileKindMark from '../common/FileKindMark.vue'
 import { rememberedWidth, rememberWidth } from '../layout-area'
 import ReviewMergePicker from '../review/ReviewMergePicker.vue'
 
 import ChangesOpenFile from './ChangesOpenFile.vue'
-import TaskFileTree from './TaskFileTree.vue'
+import TaskFileBrowser from './TaskFileBrowser.vue'
+import { TASK_FILE_TREE_WIDTH } from './taskFileTreeWidth'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
@@ -41,10 +40,12 @@ const props = withDefaults(
     agentName?: string
     /** A cell holding one file: no tree, and no finding another file here. */
     single?: boolean
+    /** Which folders of the tree are open (`useTaskFileTree`); null draws no tree here. */
+    tree?: TaskFileTreeState | null
     /** The task's language servers, for the editor (`composables/useTaskLanguage`). */
     language?: LanguageLink | null
   }>(),
-  { changed: () => [], readOnly: false, phone: false, agentName: '', single: false, language: null }
+  { changed: () => [], readOnly: false, phone: false, agentName: '', single: false, tree: null, language: null }
 )
 
 const emit = defineEmits<{
@@ -55,34 +56,12 @@ const emit = defineEmits<{
 const f = props.files
 
 // ---- the tree ----
-const openDirs = ref<Set<string>>(new Set())
-const revealTick = ref(0)
-watch(
-  () => f.openPath.value,
-  (path) => {
-    if (!path) return
-    const next = new Set(openDirs.value)
-    for (const dir of foldersOf(path)) next.add(dir)
-    openDirs.value = next
-    revealTick.value += 1
-  },
-  { immediate: true }
-)
-function collapseAll() {
-  openDirs.value = new Set()
-}
-function toggle(path: string) {
-  const next = new Set(openDirs.value)
-  if (next.has(path)) next.delete(path)
-  else next.add(path)
-  openDirs.value = next
-}
-const rows = computed(() => taskFileRows(f.files.value, f.dirs.value, openDirs.value))
-const changedSet = computed(() => new Set([...props.changed, ...f.touched.value]))
+const showTree = computed(() => !props.single && !!props.tree)
 const treeEditable = computed(() => !props.readOnly && !props.phone)
 
-// ---- the tree's width: dragged on the line beside it, remembered in this browser ----
-const TREE_WIDTH: LayoutPanelWidth = { initial: 232, min: 160, max: 420, storageKey: 'cheesex.taskFilesTreeWidth' }
+// ---- the tree's width: dragged on the line beside it, remembered in this browser (the 编辑器
+// form's tree column keeps the same width) ----
+const TREE_WIDTH = TASK_FILE_TREE_WIDTH
 const treeWidth = rememberedWidth(TREE_WIDTH)
 const TREE_STEP = 16
 const dragging = ref(false)
@@ -195,63 +174,6 @@ function pickQuick(path: string) {
   quickOpen.value = false
   void f.open(path)
 }
-
-// ---- creating, renaming, deleting ----
-type Naming = { kind: 'file' | 'dir'; folder: string } | { kind: 'rename'; path: string }
-const naming = ref<Naming | null>(null)
-const nameDraft = ref('')
-const namingOpen = ref(false)
-const busy = ref(false)
-function askCreate(kind: 'file' | 'dir', folder: string) {
-  naming.value = { kind, folder }
-  nameDraft.value = ''
-  namingOpen.value = true
-}
-function askRename(path: string) {
-  naming.value = { kind: 'rename', path }
-  nameDraft.value = path.slice(path.lastIndexOf('/') + 1)
-  namingOpen.value = true
-}
-const namingTitle = computed(() => {
-  const now = naming.value
-  if (!now) return ''
-  if (now.kind === 'rename') return t('project.artifacts.rename')
-  return now.kind === 'file' ? t('work.room.taskFiles.newFile') : t('work.room.taskFiles.newFolder')
-})
-const cleanName = computed(() => nameDraft.value.trim().replace(/^\/+|\/+$/g, ''))
-async function submitName() {
-  const now = naming.value
-  const name = cleanName.value
-  if (!now || !name) return
-  busy.value = true
-  let ok: boolean
-  if (now.kind === 'rename') {
-    const at = now.path.lastIndexOf('/')
-    const to = at < 0 ? name : `${now.path.slice(0, at)}/${name}`
-    ok = to === now.path || (await f.arrange({ operation: 'move', path: now.path, to }))
-  } else {
-    const path = now.folder ? `${now.folder}/${name}` : name
-    ok = await f.arrange({ operation: now.kind === 'file' ? 'create' : 'mkdir', path })
-    if (ok && now.folder) openDirs.value = new Set(openDirs.value).add(now.folder)
-  }
-  busy.value = false
-  if (ok) namingOpen.value = false
-}
-
-const removing = ref<string | null>(null)
-const removeOpen = ref(false)
-function askRemove(path: string) {
-  removing.value = path
-  removeOpen.value = true
-}
-async function confirmRemove() {
-  const path = removing.value
-  if (!path) return
-  busy.value = true
-  const ok = await f.arrange({ operation: 'delete', path })
-  busy.value = false
-  if (ok) removeOpen.value = false
-}
 </script>
 
 <template>
@@ -292,30 +214,27 @@ async function confirmRemove() {
 
     <div
       class="task-files__body"
-      :class="{ 'task-files__body--phone': props.phone, 'task-files__body--single': props.single }"
+      :class="{
+        'task-files__body--phone': props.phone,
+        'task-files__body--single': props.single,
+        'task-files__body--treeless': !showTree,
+      }"
       :style="{ '--task-files-tree': `${treeWidth}px` }"
     >
-      <TaskFileTree
-        v-if="!props.single"
-        :rows="rows"
-        :open="openDirs"
-        :active-path="f.openPath.value"
-        :changed="changedSet"
+      <TaskFileBrowser
+        v-if="showTree && props.tree"
+        :files="props.files"
+        :tree="props.tree"
+        :changed="props.changed"
         :editable="treeEditable"
-        :reveal-tick="revealTick"
         :can-split="!props.phone"
         @select="f.open($event)"
         @open-beside="emit('open-beside', $event)"
-        @toggle="toggle"
-        @create="askCreate"
-        @rename="askRename"
-        @remove="askRemove"
         @find="quickOpen = true"
-        @collapse-all="collapseAll"
       />
       <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- a focusable separator: pointer drag, arrow keys, double-click reset -->
       <div
-        v-if="!props.single && !props.phone"
+        v-if="showTree && !props.phone"
         class="task-files__sash"
         :class="{ 'task-files__sash--drag': dragging }"
         role="separator"
@@ -419,36 +338,6 @@ async function confirmRemove() {
     </div>
 
     <ChangesOpenFile v-if="!props.single" v-model="quickOpen" :files="f.files.value" @pick="pickQuick" />
-    <AdaptiveDialog
-      v-model="namingOpen"
-      :title="namingTitle"
-      size="sm"
-      :primary-label="namingTitle"
-      :primary-loading="busy"
-      :primary-disabled="!cleanName"
-      @primary="submitName"
-    >
-      <!-- eslint-disable vuejs-accessibility/no-autofocus -- the person asked to name something; the field takes the focus -->
-      <v-text-field
-        v-model="nameDraft"
-        autofocus
-        autocomplete="off"
-        variant="outlined"
-        density="compact"
-        hide-details
-        :label="t('work.room.taskFiles.name')"
-        @keydown.enter.prevent="submitName"
-      />
-      <!-- eslint-enable vuejs-accessibility/no-autofocus -->
-    </AdaptiveDialog>
-    <ConfirmDialog
-      v-model="removeOpen"
-      :title="t('work.room.taskFiles.deleteTitle', { name: removing ?? '' })"
-      :confirm-label="t('project.artifacts.delete')"
-      danger
-      :loading="busy"
-      @confirm="confirmRemove"
-    />
   </div>
 </template>
 
@@ -499,14 +388,14 @@ async function confirmRemove() {
   min-width: 0;
   min-height: 0;
 }
-.task-files__body--single {
+.task-files__body--treeless {
   grid-template-columns: minmax(0, 1fr);
 }
 .task-files__body--phone {
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 40%) minmax(0, 1fr);
 }
-.task-files__body--phone > .task-tree {
+.task-files__body--phone > .task-file-browser {
   border-bottom: 1px solid var(--line);
 }
 /* The line between the tree and the files, with a grip that shows at rest and

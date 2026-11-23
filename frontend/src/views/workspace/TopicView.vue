@@ -21,6 +21,7 @@ import { useTopicAddress } from './topicView/address'
 import { useAdoptInPlace } from './topicView/adoptInPlace'
 import { useCardPhase, useTopicConversation } from './topicView/conversation'
 import { useDeliveryTab } from './topicView/delivery'
+import { useTaskForm } from './topicView/editorForm'
 import { useTopicHeader } from './topicView/header'
 import { useTopicLive } from './topicView/live'
 import { useTopicPanelState } from './topicView/panel'
@@ -54,7 +55,7 @@ import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
 import { openRoomTasksQuery, roomTaskQuery } from '@/query/room'
 import { useWorkspaceStore } from '@/stores/workspace'
-import { CONVERSATION, useRoomLayout } from '@/views/workspace/roomLayout'
+import { CONVERSATION, type RoomWorkTab, useRoomLayout } from '@/views/workspace/roomLayout'
 import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
 import { useChannelOverview } from '@/views/workspace/useChannelOverview'
 import { useTaskOverview } from '@/views/workspace/useTaskOverview'
@@ -145,6 +146,12 @@ const {
   closeLabel,
   show: panelShow,
 } = panelState
+
+// ---- 任务页的两种摆法：对话、编辑器（见 topicView/editorForm.ts 和 roomLayout.ts）----
+const taskForm = useTaskForm({
+  taskId: () => props.taskId,
+  available: () => mdAndUp.value && !!props.taskId && !panelFloat.value,
+})
 
 // 右栏此刻开着哪一份文件：撰写框上「芝士会看到你在看什么」那一行读它
 // （lib/viewingContext.ts）。面板收起时什么也没在看。
@@ -283,6 +290,10 @@ const { taskHeaderBinding, topicHeaderBinding } = useTopicHeader({
   panelThings: () => fixedTabs(),
   panelShown: () => (panelOpen.value ? panelRef.value?.activeTab?.() ?? null : null),
   togglePlace,
+  form: () => (room.workLayout.value && props.taskId && !panelFloat.value ? taskForm.chosen.value : null),
+  chooseForm: taskForm.choose,
+  editorParts: () => editorParts.value,
+  toggleEditorPart,
 })
 /**
  * 页头上那几颗按钮（频道页）：点的那一样正显示着就收起这一处；否则把这一处打开在它上面。打开
@@ -401,7 +412,7 @@ function fixedTabs(): WorkTabMeta[] {
   )
 }
 /** 工作面板此刻有哪几格：固定的几格，打开的任务，打开的文件。 */
-function workTabs() {
+function workTabs(): RoomWorkTab[] {
   const handle = panelRef.value as WorkPanelMeta | null
   return [
     ...fixedTabs().map((tab) => ({ ...tab, alwaysRender: tab.key === 'preview' })),
@@ -419,9 +430,10 @@ function workTabs() {
   ]
 }
 const room = useRoomLayout(usePagePanels, {
-  kind: () => (mdAndUp.value ? (props.taskId ? 'task' : 'room') : null),
+  kind: () => (mdAndUp.value ? (props.taskId ? (taskForm.editor.value ? 'editor' : 'task') : 'room') : null),
   tabs: workTabs,
-  workHidden: () => !roomReady.value || !docked.value,
+  // 编辑器里各块藏不藏是它自己的（页头右边那三颗），不跟着对话那一种的面板收没收。
+  workHidden: () => !roomReady.value || (!taskForm.editor.value && !docked.value),
   floating: () => panelFloat.value,
   hide: { label: () => closeLabel.value, run: () => closePanel() },
   onActivated: (key) => (panelRef.value as { activated?: (key: string) => void } | null)?.activated?.(key),
@@ -430,6 +442,28 @@ const room = useRoomLayout(usePagePanels, {
   onSpawn: (key) => void (panelRef.value as { spawnTab?: (key: string) => void } | null)?.spawnTab?.(key),
 })
 roomLayoutHandle = room
+/** 编辑器里页头右边那三颗按下没有；没得开终端（只读、任务关了）时终端那一颗是 null，不摆。 */
+const editorParts = computed(() => {
+  const parts = room.editorParts
+  const tabs = workTabs()
+  const terminals = tabs.some((tab) => tab.terminal && tab.spawns)
+  const anyTerminal = tabs.some((tab) => tab.terminal && !tab.spawns)
+  return {
+    left: parts.left,
+    terminal: terminals ? parts.terminal && anyTerminal : null,
+    conversation: parts.conversation,
+  }
+})
+/** 页头上藏起或摆回一块。终端一格都没开时，按下就开一格。 */
+function toggleEditorPart(part: 'left' | 'terminal' | 'conversation') {
+  if (part === 'terminal' && !editorParts.value.terminal) {
+    if (!room.editorParts.terminal) room.toggleEditorPart('terminal')
+    const anyTerminal = workTabs().some((tab) => tab.terminal && !tab.spawns)
+    if (!anyTerminal) void (panelRef.value as { spawnTab?: (key: string) => void } | null)?.spawnTab?.('terminal')
+    return
+  }
+  room.toggleEditorPart(part)
+}
 const conversationTarget = computed(() => room.panels.outlet(CONVERSATION))
 /** 对话那一格里的那一块：窄档的面板浮层就压在它上面。 */
 const conversationBox = ref<HTMLElement | null>(null)

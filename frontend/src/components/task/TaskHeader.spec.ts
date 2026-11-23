@@ -475,4 +475,57 @@ describe('任务页头', () => {
       window.dispatchEvent(new Event('resize'))
     }
   })
+
+  it('桌面上页面几块并排时，页头有「对话 / 编辑器」开关，标着此刻是哪一种，点另一种就换', async () => {
+    const { getByRole, rerender, emitted } = mount()
+    await rerender({ form: 'chat' })
+    const group = getByRole('radiogroup', { name: '摆法' })
+    expect(getByRole('radio', { name: '对话' }).getAttribute('aria-checked')).toBe('true')
+    expect(getByRole('radio', { name: '编辑器' }).getAttribute('aria-checked')).toBe('false')
+    expect(group).not.toBeNull()
+    await fireEvent.click(getByRole('radio', { name: '编辑器' }))
+    expect(emitted('form')).toEqual([['editor']])
+  })
+
+  it('没得选（页面没交给外壳并排摆开）时不摆那个开关', () => {
+    const { queryByRole } = mount()
+    expect(queryByRole('radiogroup', { name: '摆法' })).toBeNull()
+  })
+
+  it('手机上不摆那个开关', async () => {
+    const prevWidth = window.innerWidth
+    window.innerWidth = 390
+    window.dispatchEvent(new Event('resize'))
+    try {
+      const { queryByRole, rerender } = mount()
+      await rerender({ form: 'chat' })
+      expect(queryByRole('radiogroup', { name: '摆法' })).toBeNull()
+    } finally {
+      window.innerWidth = prevWidth
+      window.dispatchEvent(new Event('resize'))
+    }
+  })
+
+  it('编辑器里「概览」那颗换成左栏、终端、对话三颗，各自说着那一块在不在，点了就藏起或摆回', async () => {
+    const { getByRole, queryByRole, rerender, emitted } = mount()
+    await rerender({ form: 'chat', editorParts: { left: true, terminal: false, conversation: true } })
+    expect(queryByRole('button', { name: '左栏' })).toBeNull()
+    expect(getByRole('button', { name: '概览' })).not.toBeNull()
+
+    await rerender({ form: 'editor', editorParts: { left: true, terminal: false, conversation: true } })
+    expect(queryByRole('button', { name: '概览' })).toBeNull()
+    expect(getByRole('button', { name: '左栏' }).getAttribute('aria-pressed')).toBe('true')
+    expect(getByRole('button', { name: '终端' }).getAttribute('aria-pressed')).toBe('false')
+    expect(getByRole('button', { name: '对话' }).getAttribute('aria-pressed')).toBe('true')
+    await fireEvent.click(getByRole('button', { name: '终端' }))
+    await fireEvent.click(getByRole('button', { name: '对话' }))
+    expect(emitted('toggle-part')).toEqual([['terminal'], ['conversation']])
+  })
+
+  it('开不了终端的任务（只读、关了）在编辑器里不摆终端那一颗', async () => {
+    const { getByRole, queryByRole, rerender } = mount()
+    await rerender({ form: 'editor', editorParts: { left: true, terminal: null, conversation: true } })
+    expect(getByRole('button', { name: '左栏' })).not.toBeNull()
+    expect(queryByRole('button', { name: '终端' })).toBeNull()
+  })
 })

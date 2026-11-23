@@ -12,6 +12,10 @@
 // `components/work/PanelDocHost.vue`。
 //
 // 这一格顶部那块（这次交付的情况）也是在这里塞进去的（`AcceptReviewHead`）。
+//
+// 工作面板里这一份取数由面板自己拿着、交进来（`changes`）：任务页的编辑器那一种摆法里，
+// 左栏的「改动」清单和这一格读的是同一份。没交进来（单独挂着、演示里）就自己取。
+import type { PanelChangesBundle } from '../../composables/usePanelChanges'
 import type { ReviewBundle } from '../../types/reviewComment'
 
 import { computed } from 'vue'
@@ -37,15 +41,18 @@ const props = withDefaults(
     refreshTick?: number
     /** The task has a 文件 panel: an open file can be edited there. */
     canEdit?: boolean
+    /** 这一格的取数，由拿着它的那一层交进来；不给就自己取。 */
+    changes?: PanelChangesBundle | null
   }>(),
-  { active: false, refreshTick: 0, readOnly: false, canEdit: false }
+  { active: false, refreshTick: 0, readOnly: false, canEdit: false, changes: null }
 )
 
 const emit = defineEmits<{ 'edit-file': [path: string] }>()
 
 // 整只 props 递进去，而不是抄一份值：取数那一层要跟着这几个 prop 变（换个房间、切
 // 到这一格），抄出来的那一份是死的。
-const changes = usePanelChanges(props)
+// 交进来还是自己取，挂上时定一次。
+const changes = props.changes ?? usePanelChanges(props)
 
 // 批注跟着采纳卡那一份走：对话栏里的退回、横条上的「未发送」读的是同一份。
 const accept = injectAcceptCard()

@@ -47,7 +47,11 @@ import { computed, defineAsyncComponent, nextTick, reactive, ref, useId, useSlot
 import { useQuery } from '@tanstack/vue-query'
 
 import { provideAcceptCard } from '../composables/useAcceptCard'
+import { usePanelChanges } from '../composables/usePanelChanges'
 import { useRoomFileProbe } from '../composables/useRoomFileProbe'
+import { useTaskFiles } from '../composables/useTaskFiles'
+import { useTaskFileTree } from '../composables/useTaskFileTree'
+import { useTaskLanguage } from '../composables/useTaskLanguage'
 import { useTaskTerminals } from '../composables/useTaskTerminals'
 import { useTopicMemory } from '../composables/useTopicMemory'
 import { useTopicWorkSummary } from '../composables/useTopicWorkSummary'
@@ -63,6 +67,7 @@ import { roomTabs, TERMINAL_TAB } from './panels/panelTabList'
 import PanelTabs, { type PanelTab } from './panels/PanelTabs.vue'
 import { confirmAnnotationDiscard } from './panels/preview/annotationDiscard'
 import { usePreviewPointer } from './panels/preview/usePreviewPointer'
+import TaskNavigator, { type NavigatorView } from './panels/TaskNavigator.vue'
 import RoomFilesPanelHost from './room/RoomFilesPanelHost.vue'
 import RoutinePanelHost from './routine/RoutinePanelHost.vue'
 import DeliveryReviewHead from './work/DeliveryReviewHead.vue'
@@ -71,7 +76,7 @@ import PanelPreviewHost from './work/PanelPreviewHost.vue'
 import PanelSiteHost from './work/PanelSiteHost.vue'
 import TaskFilesHost from './work/TaskFilesHost.vue'
 import TerminalHost from './work/TerminalHost.vue'
-import { workPaneId } from './work/workLayout'
+import { NAVIGATOR, workPaneId } from './work/workLayout'
 import WorkPane from './work/WorkPane.vue'
 import WorkPaneHead from './work/WorkPaneHead.vue'
 import ProjectFileTab from './ProjectFileTab.vue'
@@ -612,6 +617,51 @@ useCommands(() =>
   }))
 )
 
+// ---- 任务的文件和改动：这一栏拿着，几格都从这里读 ----
+// 「文件」那一格（打开的文件和编辑器）、编辑器那一种摆法里左边那一栏（同一棵树、同一份改动清单）
+// 和「改动」那一格读的是同一份：在一种摆法里打开的文件，换到另一种还是那一份（同一个编辑器、
+// 同一份撤销记录），在左栏点一份改动，中间的「改动」就翻到它。单开在旁边的一份文件
+// （`work:`）不在此列，那一格自己拿着自己那一份。
+const editorForm = computed(() => !!props.layout?.editor)
+const navigatorView = ref<NavigatorView>('files')
+const taskFiles = useTaskFiles({
+  projectId: () => projectId.value,
+  taskId: () => props.taskId,
+  readOnly: () => changesReadOnly.value,
+  active: () => shown('code') || shown(NAVIGATOR),
+  refreshTick: () => refreshTick.value,
+})
+const taskTree = useTaskFileTree(taskFiles)
+// 跳到定义落在另一份文件里：在「文件」那一格里打开它，停在那一行。
+const { link: taskLanguage } = useTaskLanguage({
+  taskId: () => props.taskId,
+  machine: () => taskFiles.machine.value,
+  open: (path, line) => void taskFiles.open(path, { start: line, end: line }),
+})
+// 在频道里打开的一件任务（`review`）没有左栏：它的「改动」那一格自己取。
+const changes = props.review
+  ? null
+  : usePanelChanges(
+      reactive({
+        topicId,
+        projectId,
+        taskId: computed(() => props.taskId),
+        readOnly: changesReadOnly,
+        active: computed(() => shown('changes') || (shown(NAVIGATOR) && navigatorView.value === 'changes')),
+        refreshTick,
+      })
+    )
+/** 左栏里点了一份文件：在中间打开它。 */
+async function openFromNavigator(path: string) {
+  void taskFiles.open(path)
+  await setTab('code')
+}
+/** 左栏「改动」里点了一份：中间的「改动」翻到这份文件的改动。 */
+async function openChange(path: string) {
+  if (!(await setTab('changes'))) return
+  void changes?.selectFile(path)
+}
+
 /** What the signal on a tab means, for people who reach it by hover or reader. */
 function tabTitle(tab: TabDef): string {
   const detailed = (detail: string) => t('work.room.panel.tabDetail', { label: tab.label, detail })
@@ -752,11 +802,12 @@ const fileMeta = computed<WorkTabMeta[]>(() =>
 const terminalMeta = computed<WorkTabMeta[]>(() =>
   offersTerminals.value
     ? [
-        { key: TERMINAL_TAB.key, title: TERMINAL_TAB.label, icon: TERMINAL_TAB.icon, spawns: true },
+        { key: TERMINAL_TAB.key, title: TERMINAL_TAB.label, icon: TERMINAL_TAB.icon, spawns: true, terminal: true },
         ...terminals.ids.value.map((id) => ({
           key: TERMINAL_KEY + id,
           title: terminalTitle(id),
           icon: TERMINAL_TAB.icon,
+          terminal: true,
         })),
       ]
     : []
@@ -793,11 +844,16 @@ function activated(key: string) {
   if (key === 'changes') markChangesSeen()
   emit('update:tab', key)
 }
-/** 布局区里一格能关的页签（打开的任务、自由区的文件）被关掉了。 */
+/** 布局区里一格能关的页签（打开的任务、自由区的文件、编辑器里打开在中间的概览之类）被关掉了。 */
 function closeTab(key: string) {
   if (isDelivery(key)) void closeDelivery(key)
   else if (key.startsWith(TERMINAL_KEY)) closeTerminal(key)
   else if (key.startsWith(FILE_TAB)) void closeFile(key.slice(FILE_TAB.length))
+  else if (key === active.value) {
+    // 编辑器那一种摆法里中间关掉了一格固定的（概览、改动……）：此刻在看的回到打开的文件。
+    active.value = tabs.value.some((tab) => tab.key === 'code') ? 'code' : defaultTab.value
+    emit('update:tab', active.value)
+  }
 }
 /** 频道页上标题栏里的「返回」：和关掉那一格同一件事，回到打开它的那一格。 */
 function goBack(key: string) {
@@ -874,6 +930,11 @@ watch(
   [() => props.cardPhase, summaryLoaded],
   ([card, loaded]) => {
     if (settled.value || card === undefined) return
+    // 编辑器那一种摆法：文件是主角，进任务时不替读者把现场、改动摆到中间。
+    if (editorForm.value) {
+      settled.value = true
+      return
+    }
     // 手机上房间永远开在对话：输入框就在那一格里，自动跳去现场等于把它藏起来。
     // 现场那一格上的呼吸点照样说着「正在工作」。
     if (props.withChat) {
@@ -1296,9 +1357,30 @@ defineExpose({
               :active="shown('changes')"
               :refresh-tick="refreshTick"
               :can-edit="!review && tabs.some((tab) => tab.key === 'code')"
+              :changes="changes"
               @edit-file="openInFiles"
             />
             <template v-if="docked === 'changes'" #dock><slot name="dock" /></template>
+          </WorkPane>
+          <!-- 编辑器那一种摆法里左边那一栏：任务的文件树和这件任务改过的文件。 -->
+          <WorkPane
+            v-if="mounted.has(NAVIGATOR) && taskId"
+            :target="target(NAVIGATOR)"
+            :pane-id="workPaneId(NAVIGATOR)"
+            :shown="shown(NAVIGATOR)"
+          >
+            <TaskNavigator
+              v-model:view="navigatorView"
+              :files="taskFiles"
+              :tree="taskTree"
+              :changed="summary.changedFiles"
+              :diffs="changes?.fileDiffs.value ?? []"
+              :active-change="shown('changes') ? changes?.openPath.value ?? null : null"
+              :read-only="changesReadOnly"
+              @open-file="openFromNavigator"
+              @open-beside="openBeside"
+              @open-change="openChange"
+            />
           </WorkPane>
           <!-- 任务的工作副本：人在这里浏览、编辑芝士干活的那一份文件。读者打开它（页签「+」、
                点一个文件链接、「改动」里的「编辑」）才摆出来。 -->
@@ -1319,6 +1401,9 @@ defineExpose({
               :changed="summary.changedFiles"
               :phone="withChat"
               :agent-name="agentName"
+              :files="taskFiles"
+              :tree="editorForm ? null : taskTree"
+              :language="taskLanguage"
               @open-beside="openBeside"
             />
             <template v-if="docked === 'code'" #dock><slot name="dock" /></template>

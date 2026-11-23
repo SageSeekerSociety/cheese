@@ -76,6 +76,19 @@ describe('LayoutArea on a narrow screen', () => {
     await waitFor(() => expect(shown('note one').value).toBe('draft'))
   })
 
+  it('keeps what was typed in a panel when the page switches to another arrangement that also has it', async () => {
+    const { rerender } = mount()
+    await waitFor(() => shown('note one'))
+    await fireEvent.update(shown('note one'), 'draft')
+    await rerender({
+      storageKey: `${KEY}.other`,
+      panels: [PANELS[0], PANELS[2]],
+      defaultArrangement: { root: { direction: 'row', children: [{ panels: ['three'] }, { panels: ['one'] }] } },
+    })
+    await fireEvent.click(tab('One'))
+    await waitFor(() => expect(shown('note one').value).toBe('draft'))
+  })
+
   it('shows the panels of the arrangement saved for this page', async () => {
     localStorage.setItem(KEY, JSON.stringify({ v: 1, root: { panels: ['three', 'one'], active: 'three' } }))
     mount()

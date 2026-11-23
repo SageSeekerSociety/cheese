@@ -30,10 +30,9 @@ import {
   activatePanel,
   cellOfPanel,
   cellsOf,
-  placeBeside,
   placedPanels,
-  placeInGroup,
   placePanel,
+  placeTransient,
   reconcile,
   restoreArrangement,
   sameArrangement,
@@ -108,6 +107,7 @@ const spawners = computed<LayoutPanelInfo[]>(() =>
       icon: panel.icon,
       group: panel.group,
       beside: panel.beside,
+      below: panel.below,
       spawns: true,
     }))
 )
@@ -125,13 +125,13 @@ const infos = computed<LayoutPanelInfo[]>(() =>
 const groupOf = (id: string) => byId.value.get(id)?.group
 const transient = computed(() => new Set(placeable.value.filter((panel) => panel.transient).map((panel) => panel.id)))
 
-/** Transient panels that are not placed yet go to their group's cell, or beside the panel they name. */
-function placeTransient(arrangement: LayoutArrangement, id: string): LayoutArrangement {
-  const beside = byId.value.get(id)?.beside
-  return beside ? placeBeside(arrangement, id, beside) : placeInGroup(arrangement, id, groupOf)
+/** Transient panels that are not placed yet go to their group's cell, or beside or below the panel they name. */
+function placeTransientPanel(arrangement: LayoutArrangement, id: string): LayoutArrangement {
+  const panel = byId.value.get(id)
+  return panel ? placeTransient(arrangement, panel, groupOf) : arrangement
 }
 function withTransients(arrangement: LayoutArrangement, ids: readonly string[]): LayoutArrangement {
-  return ids.reduce((next, id) => (transient.value.has(id) ? placeTransient(next, id) : next), arrangement)
+  return ids.reduce((next, id) => (transient.value.has(id) ? placeTransientPanel(next, id) : next), arrangement)
 }
 
 /** A panel whose fold is remembered on its own gets that fold, whatever the arrangement says. */
@@ -438,7 +438,7 @@ function open(id: string) {
   pendingOpen = null
   chosen.value = id
   if (!placed.value.includes(id)) {
-    commit(transient.value.has(id) ? placeTransient(arrangement.value, id) : placePanel(arrangement.value, id))
+    commit(transient.value.has(id) ? placeTransientPanel(arrangement.value, id) : placePanel(arrangement.value, id))
   }
   if (isNarrow.value || !dockReady.value) {
     let next = activatePanel(arrangement.value, id)

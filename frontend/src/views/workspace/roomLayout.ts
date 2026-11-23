@@ -12,6 +12,13 @@
 // 落到这一组页签最多的那一格里，✕ 也只在那一格上。「收起」（✕、页头的开关）收的是只装着这一组
 // 的那几格；挪进对话那一格的不跟着收。
 //
+// 任务页还有第二种摆法「编辑器」（页头上的开关，`kind` 为 'editor'，摆法另记一份）：同一件任务，
+// 文件是主角。左边一栏是任务的文件树和改过的文件（`NAVIGATOR`，宽度自己记着，和「文件」那一格里
+// 的树同宽）；中间是打开的文件，概览、现场、改动、预览打开时也进中间这一格，成为能关的页签（不
+// 常摆着，`opened` 记着打开了哪几样）；终端在中间下面那一格；对话在右边一栏，宽度自己记着。三块
+// 各自能藏起来（页头右边那三颗，`editorParts`），记在这台设备上。两种摆法里同一个 id 的那几块是
+// 同一个实例：对话、打开的文件、终端换摆法时不重挂。
+//
 // 放大（页签栏或标题栏上的 ⤢）是布局层的；对话因此看不见的这段时间里有了新回复，那颗还原按钮
 // 上带一个点（对话这一块的信号）。挪过摆法之后，「恢复默认摆法」在页头 ⋯ 和命令面板里。
 import type { ComputedRef, Ref } from 'vue'
@@ -19,16 +26,33 @@ import type { LayoutNode } from '@/components/layout-area'
 import type { WorkLayout, WorkTabMeta } from '@/components/work/workLayout'
 import type { PagePanel, PagePanels, PagePanelsHandle } from '@/layouts/pagePanels'
 
-import { computed, ref, watch } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 
 import { useCommands } from '@/commands'
-import { workPaneId } from '@/components/work/workLayout'
+import { TASK_FILE_TREE_WIDTH } from '@/components/panels/taskFileTreeWidth'
+import { NAVIGATOR, workPaneId } from '@/components/work/workLayout'
 import { t } from '@/i18n'
+import { storageGetJson, storageSetJson } from '@/lib/browserStorage'
 
 /** 对话那一块。 */
 export const CONVERSATION = 'conversation'
 /** 工作面板那几格同属的一组。 */
 export const WORK_GROUP = 'work'
+/** 编辑器那一种摆法：中间那一格里的一组（打开的文件，和打开在中间的概览之类）。 */
+export const CENTRE_GROUP = 'centre'
+/** 编辑器那一种摆法：中间下面那一格里的终端。 */
+export const TERMINAL_GROUP = 'terminals'
+
+/** 编辑器那一种摆法里三块各自在不在屏幕上（页头右边那三颗）。 */
+export interface EditorParts {
+  left: boolean
+  terminal: boolean
+  conversation: boolean
+}
+export type EditorPart = keyof EditorParts
+const PARTS_KEY = 'cheesex.editorParts'
+/** 编辑器里右边那一栏对话的宽度：拖过就记住。 */
+const CONVERSATION_WIDTH = { initial: 400, min: 320, max: 640, storageKey: 'cheesex.editorConversationWidth' }
 
 /** 工作面板的一格，交给布局区时还要说的几样。 */
 export interface RoomWorkTab extends WorkTabMeta {
@@ -39,8 +63,11 @@ export interface RoomWorkTab extends WorkTabMeta {
 }
 
 export interface RoomLayoutOptions {
-  /** 这一页的摆法记在哪个键下（同一种页面共用）；null 是这一档不交给外壳（手机、平板）。 */
-  kind: () => 'room' | 'task' | 'dm' | null
+  /**
+   * 这一页的摆法记在哪个键下（同一种页面共用）；null 是这一档不交给外壳（手机、平板）。任务页的
+   * 编辑器那一种摆法是 'editor'。
+   */
+  kind: () => 'room' | 'task' | 'editor' | 'dm' | null
   /** 工作面板此刻有哪几格，按页签顺序。 */
   tabs: () => RoomWorkTab[]
   /** 工作面板那一侧收着（或是浮层）：只装着工作面板的格子藏起来。 */
@@ -70,12 +97,102 @@ export function useRoomLayout(
   noteChatNews: () => void
   /** 页头开关开合的那几块的 id：交给外壳时是工作面板在屏幕上的那几格，否则是整块面板。 */
   panelControls: ComputedRef<string>
+  /** 编辑器那一种摆法里三块各自在不在屏幕上；`toggleEditorPart` 藏起或摆回一块。 */
+  editorParts: Readonly<EditorParts>
+  toggleEditorPart: (part: EditorPart) => void
 } {
   const chatNews: Ref<boolean> = ref(false)
+
+  const savedParts = storageGetJson<Partial<EditorParts>>(PARTS_KEY)
+  const editorParts = reactive<EditorParts>({
+    left: savedParts?.left !== false,
+    terminal: savedParts?.terminal !== false,
+    conversation: savedParts?.conversation !== false,
+  })
+  function toggleEditorPart(part: EditorPart) {
+    editorParts[part] = !editorParts[part]
+    storageSetJson(PARTS_KEY, { ...editorParts })
+  }
+  /** 编辑器里打开在中间的那几格固定的（概览、现场、改动、预览），按打开的先后。 */
+  const opened = ref<string[]>([])
+  /** 固定的那几格（不是打开的文件、终端，也不是「文件」那一格）：编辑器里打开时才进中间。 */
+  const onDemand = (tab: RoomWorkTab) => !tab.transient && !tab.closable && !tab.spawns && !tab.terminal
+
+  function editorSpec(): PagePanels {
+    const hidden = opts.workHidden()
+    const work: PagePanel[] = opts.tabs().flatMap((tab): PagePanel[] => {
+      const base: PagePanel = {
+        id: tab.key,
+        title: tab.title,
+        icon: tab.icon,
+        faint: tab.faint,
+        hint: tab.hint,
+        signal: tab.signal,
+        temporary: tab.temporary,
+        alwaysRender: tab.alwaysRender,
+        hidden,
+      }
+      if (tab.terminal) {
+        return [
+          {
+            ...base,
+            spawns: tab.spawns,
+            transient: tab.transient,
+            closable: !!tab.transient,
+            group: TERMINAL_GROUP,
+            below: 'code',
+            hidden: hidden || !editorParts.terminal,
+          },
+        ]
+      }
+      // 打开的文件那一格：只有它一格时不画页签栏，打开了别的（概览、改动……）才出现。
+      if (tab.key === 'code') return [{ ...base, group: CENTRE_GROUP, stripWhenShared: true, minWidth: 360 }]
+      if (onDemand(tab)) {
+        return opened.value.includes(tab.key) ? [{ ...base, group: CENTRE_GROUP, transient: true, closable: true }] : []
+      }
+      return [{ ...base, group: CENTRE_GROUP, transient: tab.transient, beside: tab.beside, closable: true }]
+    })
+    return {
+      key: 'editor',
+      panels: [
+        {
+          id: NAVIGATOR,
+          title: t('work.task.form.left'),
+          bare: true,
+          width: TASK_FILE_TREE_WIDTH,
+          hidden: hidden || !editorParts.left,
+        },
+        ...work,
+        {
+          id: CONVERSATION,
+          title: t('work.room.tabs.chat'),
+          icon: 'mdi-message-outline',
+          minWidth: CONVERSATION_WIDTH.min,
+          width: CONVERSATION_WIDTH,
+          stripWhenShared: true,
+          // 任务还没读到时只有对话可看：这时它不藏。
+          hidden: !hidden && !editorParts.conversation,
+          signal: chatNews.value ? { kind: 'dot' } : undefined,
+        },
+      ],
+      arrangement: {
+        direction: 'row',
+        children: [{ panels: [NAVIGATOR] }, { panels: ['code'] }, { panels: [CONVERSATION] }],
+      },
+      onActivated: (id) => id !== CONVERSATION && opts.onActivated(id),
+      onClose: (id) => {
+        opened.value = opened.value.filter((key) => key !== id)
+        opts.onClose(id)
+      },
+      onKeep: opts.onKeep,
+      onSpawn: opts.onSpawn,
+    }
+  }
 
   function spec(): PagePanels | null {
     const kind = opts.kind()
     if (!kind) return null
+    if (kind === 'editor') return editorSpec()
     // 频道页：每一格带自己的标题栏，✕ 是布局层画的，收起的是这一处。
     const titled = kind === 'room'
     const hideAction = { icon: 'mdi-close', label: opts.hide.label(), run: opts.hide.run }
@@ -136,14 +253,23 @@ export function useRoomLayout(
 
   const panels = usePanels(spec)
 
+  /** 编辑器里要显示一格固定的：先把它摆进中间（打开了才有它那一块），再翻到它。 */
+  function show(key: string) {
+    if (opts.kind() === 'editor' && !opened.value.includes(key)) {
+      const tab = opts.tabs().find((one) => one.key === key)
+      if (tab && onDemand(tab)) opened.value = [...opened.value, key]
+    }
+    panels.show(key)
+  }
   const workLayout = computed<WorkLayout | null>(() =>
     panels.active.value && !opts.floating()
       ? {
           outlet: (key) => panels.outlet(key),
           visible: panels.visible.value,
-          show: (key) => panels.show(key),
+          show,
           single: opts.kind() === 'room',
           head: (key) => panels.headOutlet(key),
+          editor: opts.kind() === 'editor',
         }
       : null
   )
@@ -191,5 +317,7 @@ export function useRoomLayout(
     noteChatNews: () => {
       if (!conversationInSight.value) chatNews.value = true
     },
+    editorParts,
+    toggleEditorPart,
   }
 }
