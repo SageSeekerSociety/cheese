@@ -12,9 +12,11 @@ export interface WorkLayout {
   /** 这一格标题栏里面板那一段的落点（`blocks` 时才有）：返回、名字写在这里。 */
   head: (key: string) => HTMLElement | undefined
   /**
-   * 任务页的「编辑器」那一种摆法：文件是主角。任务的文件树是左边单独的一栏（`NAVIGATOR`），
-   * 「文件」那一格只剩打开的文件；概览、现场、改动、预览不常摆着，打开时才进中间，所以进任务
-   * 时不替读者挑一格打开。
+   * 任务页的「编辑器」那一种摆法：文件是主角。布局区里只有四块：左栏（`NAVIGATOR`）、中间
+   * （`EDITOR_CENTRE`）、中间下面（`EDITOR_BOTTOM`）和对话。中间那一块是一排页签：打开的文件、
+   * 改动、概览、预览、从对话里打开的一份产出，各是这一排里的一个页签，内容都落在中间那一块里；
+   * 下面那一块是一排终端加「现场」。哪一样落在哪一块、此刻翻到哪一个页签由工作面板定
+   * （`components/work/editorTabs.ts`），布局区只知道这四块。
    */
   editor?: boolean
   /**
@@ -26,11 +28,27 @@ export interface WorkLayout {
   blocks?: boolean
 }
 
-/** 编辑器那一种摆法里左边那一栏（文件 / 改动）。 */
+/** 编辑器那一种摆法里左边那一栏（文件 / 搜索 / 改动）。 */
 export const NAVIGATOR = 'navigator'
+/** 编辑器那一种摆法里中间那一块：一排页签，下面是翻到的那一个。 */
+export const EDITOR_CENTRE = 'editor:centre'
+/** 编辑器那一种摆法里中间下面那一块：一排终端和「现场」。 */
+export const EDITOR_BOTTOM = 'editor:bottom'
 
 /** 「对话」那一种摆法里的终端那一块：一次显示一个终端。 */
 export const TERMINAL_BLOCK = 'terminals'
+
+/**
+ * 编辑器那一种摆法里一样东西落在哪一块：终端和现场在下面，「在旁边打开」的一份工作文件单开
+ * 一格，左栏是左栏，别的（打开的文件、改动、概览、预览、从对话里打开的产出）都是中间那一排里的
+ * 一个页签。
+ */
+export function editorCellOf(key: string): string {
+  if (key === NAVIGATOR || key === EDITOR_CENTRE || key === EDITOR_BOTTOM) return key
+  if (key === 'site' || key === TERMINAL_BLOCK || key.startsWith('terminal:')) return EDITOR_BOTTOM
+  if (key.startsWith('file:work:')) return key
+  return EDITOR_CENTRE
+}
 
 /** 工作面板一格内容的元素 id：页头「概览」那颗开关用它说自己管着哪几块。 */
 export function workPaneId(key: string): string {
@@ -54,6 +72,6 @@ export interface WorkTabMeta {
   beside?: string
   /** 能开好几格的一种（终端）：总列在「+」里，选它是要页面新开一格，它自己不摆出来。 */
   spawns?: boolean
-  /** 一格终端，或开终端的那一种：编辑器那一种摆法里它们同在中间下面那一格。 */
+  /** 一格终端，或开终端的那一种。 */
   terminal?: boolean
 }

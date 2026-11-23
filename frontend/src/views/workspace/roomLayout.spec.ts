@@ -10,10 +10,10 @@ import { computed, defineComponent, h, nextTick, ref } from 'vue'
 import { render } from '@testing-library/vue'
 import { describe, expect, it, vi } from 'vitest'
 
-import { CENTRE_GROUP, CONVERSATION, useRoomLayout } from './roomLayout'
+import { CONVERSATION, useRoomLayout } from './roomLayout'
 
 import { cellsOf, isSplit, placeTransient, reconcile } from '@/components/layout-area/arrangement'
-import { NAVIGATOR, TERMINAL_BLOCK } from '@/components/work/workLayout'
+import { EDITOR_BOTTOM, EDITOR_CENTRE, NAVIGATOR, TERMINAL_BLOCK } from '@/components/work/workLayout'
 
 /** 一个只记下页面交来了什么的外壳。 */
 function setup(
@@ -304,30 +304,38 @@ describe('任务页的「对话」那一种摆法', () => {
 })
 
 describe('任务页的编辑器那一种摆法', () => {
-  it('左边是文件栏，中间是打开的文件，终端在它下面，对话在右边', () => {
+  it('左边是文件栏，中间一块，下面一块（终端和现场），对话在右边', () => {
     const { declared } = setup('editor', TASK_TABS)
-    expect(laidOut(declared)).toEqual([[NAVIGATOR], ['code'], ['terminal:t1'], [CONVERSATION]])
+    expect(laidOut(declared)).toEqual([[NAVIGATOR], [EDITOR_CENTRE], [EDITOR_BOTTOM], [CONVERSATION]])
     const root = declared.arrangement
     expect(isSplit(root) && root.direction).toBe('row')
-    // 两边各自有宽度，拖过就记住；中间那一格占剩下的。
+    // 两边各自有宽度，下面那一块有自己的高度，拖过就记住；中间那一块占剩下的。
     expect(panel(declared, NAVIGATOR)?.width).toBeTruthy()
     expect(panel(declared, CONVERSATION)?.width).toBeTruthy()
-    expect(panel(declared, 'code')?.width).toBeUndefined()
+    expect(panel(declared, EDITOR_BOTTOM)?.height).toBeTruthy()
+    expect(panel(declared, EDITOR_CENTRE)?.width).toBeUndefined()
   })
 
-  it('概览、现场、改动、预览不常摆着，要显示哪一样时才打开在中间，成为能关的一格', () => {
+  it('不管要显示的是哪一样，都落在中间或下面那一块里，不另开一格', () => {
     const { declared, room, spec, shown } = setup('editor', TASK_TABS)
-    expect(declared.panels.map((one) => one.id)).not.toContain('changes')
-    room.workLayout.value!.show('changes')
-    const now = spec()
-    expect(shown).toContain('changes')
-    expect(panel(now, 'changes')).toMatchObject({ group: CENTRE_GROUP, closable: true })
-    expect(laidOut(now)).toEqual([[NAVIGATOR], ['code', 'changes'], ['terminal:t1'], [CONVERSATION]])
-    now.onClose!('changes')
-    expect(spec().panels.map((one) => one.id)).not.toContain('changes')
+    const cells = declared.panels.map((one) => one.id)
+    for (const key of ['overview', 'changes', 'preview', 'code', 'file:a.md']) room.workLayout.value!.show(key)
+    expect(new Set(shown)).toEqual(new Set([EDITOR_CENTRE]))
+    room.workLayout.value!.show('site')
+    room.workLayout.value!.show('terminal:t1')
+    expect(shown.slice(-2)).toEqual([EDITOR_BOTTOM, EDITOR_BOTTOM])
+    expect(spec().panels.map((one) => one.id)).toEqual(cells)
   })
 
-  it('页头上的三颗各自藏起、再摆回左栏、终端和对话', () => {
+  it('下面那一块藏着时，要显示一个终端或现场就把它摆回来', () => {
+    const { room, spec } = setup('editor', TASK_TABS)
+    room.toggleEditorPart('terminal')
+    expect(panel(spec(), EDITOR_BOTTOM)?.hidden).toBe(true)
+    room.workLayout.value!.show('site')
+    expect(panel(spec(), EDITOR_BOTTOM)?.hidden).toBe(false)
+  })
+
+  it('页头上的三颗各自藏起、再摆回左栏、下面那一块和对话', () => {
     const { room, spec } = setup('editor', TASK_TABS)
     const hidden = () =>
       spec()
@@ -338,8 +346,7 @@ describe('任务页的编辑器那一种摆法', () => {
     expect(hidden()).toEqual([NAVIGATOR])
     room.toggleEditorPart('left')
     room.toggleEditorPart('terminal')
-    expect(hidden()).toEqual(expect.arrayContaining(['terminal:t1']))
-    expect(hidden()).not.toContain(NAVIGATOR)
+    expect(hidden()).toEqual([EDITOR_BOTTOM])
     room.toggleEditorPart('terminal')
     room.toggleEditorPart('conversation')
     expect(hidden()).toEqual([CONVERSATION])

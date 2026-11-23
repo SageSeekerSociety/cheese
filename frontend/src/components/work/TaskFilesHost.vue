@@ -45,6 +45,8 @@ const props = withDefaults(
     language?: LanguageLink | null
     /** One file at a time, no tab strip: the 对话 form's 文件 block, whose title bar says the path. */
     light?: boolean
+    /** The tabs are drawn around it: the 编辑器 form's centre. */
+    framed?: boolean
   }>(),
   {
     readOnly: false,
@@ -58,6 +60,7 @@ const props = withDefaults(
     tree: null,
     language: null,
     light: false,
+    framed: false,
   }
 )
 
@@ -110,6 +113,7 @@ defineExpose({
     :agent-name="props.agentName"
     :single="!!props.path"
     :light="props.light"
+    :framed="props.framed"
     :tree="given ? props.tree : ownTree"
     :language="given ? props.language : ownLanguage ?? null"
     @open-beside="emit('open-beside', $event)"

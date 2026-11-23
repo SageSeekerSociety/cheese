@@ -4,8 +4,9 @@
 // file tree), 搜索 (the text of the task's files) and 改动 (the files this task changed,
 // with the lines added and removed; one opens that file's changes in the centre) — and,
 // for 文件, the tree's actions at the right: 新建文件, and a ⋯ with 新建文件夹, 按名称找文件
-// and 全部收起. Which view shows is the page's (`view`), so it stays the same while the
-// form is switched away and back.
+// and 全部收起; for 改动, the same ⋯ as the 改动 panel's (which version to look at,
+// 刷新). Which view shows is the page's (`view`), so it stays the same while the
+// form is switched away and back. The search result last opened from 搜索 stays marked.
 //
 // It draws what the page holds — the task's files (`useTaskFiles`), which folders
 // are open (`useTaskFileTree`), the search (`useTaskSearch`), the changed files and
@@ -13,6 +14,7 @@
 import type { TaskFilesBundle } from '../../composables/useTaskFiles'
 import type { TaskFileTreeState } from '../../composables/useTaskFileTree'
 import type { TaskSearchBundle } from '../../composables/useTaskSearch'
+import type { FileSource, RoomTask } from '../../cx_types'
 import type { FileDiff } from '../../lib/diff'
 import type { MenuAction } from '../common/menuAction'
 
@@ -21,6 +23,7 @@ import { computed, ref, watch } from 'vue'
 import AdaptiveMenu from '../common/AdaptiveMenu.vue'
 import FileKindMark from '../common/FileKindMark.vue'
 
+import ChangesMoreMenu from './ChangesMoreMenu.vue'
 import ChangesOpenFile from './ChangesOpenFile.vue'
 import { CODE_TAB, roomTabs } from './panelTabList'
 import TaskFileBrowser from './TaskFileBrowser.vue'
@@ -48,8 +51,10 @@ const props = withDefaults(
     activeChange?: string | null
     /** The person may not change this task's files. */
     readOnly?: boolean
+    /** Which version of the changes is shown, as the 改动 panel has it: its ⋯ in the row. */
+    version?: { currentTask: RoomTask | undefined; fileSource: FileSource; refreshing: boolean } | null
   }>(),
-  { changed: () => [], diffs: () => [], activeChange: null, readOnly: false, searchFocusTick: 0 }
+  { changed: () => [], diffs: () => [], activeChange: null, readOnly: false, searchFocusTick: 0, version: null }
 )
 
 const emit = defineEmits<{
@@ -62,6 +67,8 @@ const emit = defineEmits<{
   'open-beside': [path: string]
   /** Open this changed file's changes in the centre. */
   'open-change': [path: string]
+  'select-version': [source: FileSource]
+  refresh: []
 }>()
 
 const changesTab = roomTabs({ withChat: false, review: false, task: true }).find((tab) => tab.key === 'changes')!
@@ -144,6 +151,13 @@ const rows = computed(() => {
     })
 })
 
+// ---- the search result last opened ----
+const opened = ref<{ path: string; line: number } | null>(null)
+function openLine(path: string, line: number) {
+  opened.value = { path, line }
+  emit('open-line', path, line)
+}
+
 const finding = ref(false)
 function pickFound(path: string) {
   finding.value = false
@@ -192,6 +206,16 @@ function pickFound(path: string) {
           </template>
         </AdaptiveMenu>
       </div>
+      <div v-else-if="props.view === 'changes' && props.version" class="task-nav__actions">
+        <ChangesMoreMenu
+          :current-task="props.version.currentTask"
+          :file-source="props.version.fileSource"
+          :can-download="false"
+          :refreshing="props.version.refreshing"
+          @select-version="emit('select-version', $event)"
+          @refresh="emit('refresh')"
+        />
+      </div>
     </div>
     <TaskFileBrowser
       v-if="props.view === 'files'"
@@ -216,10 +240,11 @@ function pickFound(path: string) {
       :final="props.search.final.value"
       :environment="searchEnvironment"
       :focus="searchFocus"
+      :opened="opened"
       @update:query="props.search.setQuery"
       @submit="props.search.searchNow()"
       @retry="props.search.searchNow()"
-      @open="(path, line) => emit('open-line', path, line)"
+      @open="openLine"
       @focused="searchFocus = false"
     />
     <template v-else>

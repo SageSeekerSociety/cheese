@@ -77,13 +77,15 @@ import TaskNavigator, { type NavigatorView } from './panels/TaskNavigator.vue'
 import RoomFilesPanelHost from './room/RoomFilesPanelHost.vue'
 import RoutinePanelHost from './routine/RoutinePanelHost.vue'
 import DeliveryReviewHead from './work/DeliveryReviewHead.vue'
+import EditorPart, { type EditorTab } from './work/EditorPart.vue'
+import { diffKey, diffPath, FILE_TABS, paneOfCentre, useEditorTabs } from './work/editorTabs'
 import PanelChangesHost from './work/PanelChangesHost.vue'
 import PanelPreviewHost from './work/PanelPreviewHost.vue'
 import PanelSiteHost from './work/PanelSiteHost.vue'
 import TaskFilePicker from './work/TaskFilePicker.vue'
 import TaskFilesHost from './work/TaskFilesHost.vue'
 import TerminalHost from './work/TerminalHost.vue'
-import { NAVIGATOR, TERMINAL_BLOCK, workPaneId } from './work/workLayout'
+import { EDITOR_BOTTOM, EDITOR_CENTRE, editorCellOf, NAVIGATOR, TERMINAL_BLOCK, workPaneId } from './work/workLayout'
 import WorkPane from './work/WorkPane.vue'
 import WorkPaneHead from './work/WorkPaneHead.vue'
 import ProjectFileTab from './ProjectFileTab.vue'
@@ -279,6 +281,8 @@ const emit = defineEmits<{
   (e: 'return-asked'): void
   // 「对话」那一种摆法里一块标题栏上的「在编辑器里打开」：页面换到编辑器，`key` 是要翻到的那一格。
   (e: 'open-editor', key?: string): void
+  // 编辑器里下面那一块（终端、现场）右上角的「收起」。
+  (e: 'hide-bottom'): void
 }>()
 
 // 主线上按了「退回」：卡读回来、还在等人审阅时，打开写退回理由的那一块。按一次开一次。
@@ -341,6 +345,31 @@ const deliveryOrigin = ref<string | null>(null)
 const blocks = computed(() => !!props.layout?.blocks)
 // 频道页上的那一种：打开的文件在「文件」那一块里，返回回到文件的列表。
 const channelBlocks = computed(() => blocks.value && !props.taskId)
+// 任务页的编辑器那一种摆法：中间、下面两块各是一排页签（`editorTabs`），左栏单独一栏。
+const editorForm = computed(() => !!props.layout?.editor)
+const editorTabs = useEditorTabs(() => props.taskId)
+/** 打开着几份文件（任务文件那一份在下面才有，这里先记一个数）。 */
+const openFileCount = ref(0)
+/** 中间那一排此刻翻到的：记着的是打开的文件、而一份都没开着时，翻到别的里最后打开的那一个。 */
+const centreShown = computed(() => {
+  const centre = editorTabs.centre.value
+  const extra = editorTabs.extra.value
+  return centre === FILE_TABS && !openFileCount.value && extra.length ? extra[extra.length - 1]! : centre
+})
+/** 编辑器里中间那一排翻到的那个页签显示的是哪一格。 */
+const centrePane = computed(() => paneOfCentre(centreShown.value))
+/** 下面那一排此刻翻到的：记着的那个终端已经不在（或还没读到）时是最后开的那个终端，没有就是现场。 */
+const bottomShown = computed(() => {
+  const want = editorTabs.bottom.value
+  const ids = terminalIds.value
+  if (want === 'site' || (want.startsWith('terminal:') && ids.includes(want.slice('terminal:'.length)))) return want
+  return ids.length ? `terminal:${ids[ids.length - 1]}` : 'site'
+})
+/** 这件任务开着的终端（下面才读到，这里先记着）。 */
+const terminalIds = ref<string[]>([])
+/** 中间、下面那两块里放内容的地方（`EditorPart` 画好了交出来）。 */
+const centreBody = ref<HTMLElement | null>(null)
+const bottomBody = ref<HTMLElement | null>(null)
 
 const active = ref<string>(defaultTab.value)
 /** The URL's answer, if it names a tab that exists (or one that used to). */
@@ -385,16 +414,20 @@ function ensureFileFromUrl(key: string | null) {
 // `announce: false` 是「换这一格，但别告诉地址」：平板横放里进房间时自动挑中的那一格
 // 就是这样——它只是「你打开面板时看哪一格」，写进地址等于把浮层也拉起来了，而那一刻
 // 并没有人打开它。（宽档、手机上都用默认的 announce —— 那里地址本来就该跟着走。）
+//
+// 编辑器那一种摆法里，要看的那一样成为中间或下面那一排里的一个页签（`placeInEditor`），地址不跟着
+// 写：编辑器开着哪几个页签是它自己记着的（`editorTabs`），不是 `?tab=`。
 async function setTab(key: string, opts: { guard?: boolean; announce?: boolean } = {}): Promise<boolean> {
   if (key !== active.value && opts.guard !== false && !(await confirmAnnotationDiscard())) return false
   settled.value = true
+  if (editorForm.value) key = placeInEditor(key)
   // Asked again for the tab already chosen: its cell may be folded, hidden behind a
   // maximized one or showing another tab, so the layout is asked again. A change of tab
   // reaches the layout through the watch below.
   if (key === active.value) props.layout?.show(key)
   active.value = key
   if (key === 'changes') markChangesSeen()
-  if (opts.announce !== false) emit('update:tab', key)
+  if (opts.announce !== false && !editorForm.value) emit('update:tab', key)
   return true
 }
 
@@ -438,7 +471,9 @@ watch(
   () => {
     const asked = tabFromUrl() ?? (props.withChat ? defaultTab.value : null)
     ensureFileFromUrl(asked)
-    if (asked && asked !== active.value) active.value = asked
+    // 编辑器里地址点名的一样（贴进来的链接、「审阅」）成为中间或下面那一排里的一个页签。
+    if (asked && editorForm.value) void setTab(asked, { guard: false })
+    else if (asked && asked !== active.value) active.value = asked
     // 地址又点名了此刻在看的那一格（关掉它那一块之后再点「查看改动」）：它那一块再打开。
     else if (asked && blocks.value) props.layout?.show(asked)
   }
@@ -464,16 +499,21 @@ function show(k: string) {
   if (!mounted.value.has(k)) mounted.value = new Set(mounted.value).add(k)
 }
 watch(active, show)
-// 布局区里每一格自己显示：在屏幕上的那几格都挂上。
-watch(
-  () => [...(props.layout?.visible ?? [])],
-  (keys) => keys.forEach(show),
-  { immediate: true }
-)
-
+/**
+ * 此刻在屏幕上的那几格。编辑器里中间、下面两块各显示它那一排翻到的那一格（`editorTabs`），
+ * 布局区只知道那两块。
+ */
+const visibleKeys = computed<ReadonlySet<string>>(() => {
+  const cells = props.layout?.visible ?? new Set<string>()
+  if (!editorForm.value) return cells
+  const keys = new Set([...cells].filter((key) => key !== EDITOR_CENTRE && key !== EDITOR_BOTTOM))
+  if (cells.has(EDITOR_CENTRE)) keys.add(centrePane.value)
+  if (cells.has(EDITOR_BOTTOM)) keys.add(bottomShown.value)
+  return keys
+})
 /** 这一格此刻看得见：布局区里看它那一格，自己排页签时看是不是选中的那一格。 */
 function shown(key: string): boolean {
-  return props.layout ? props.layout.visible.has(key) : active.value === key
+  return props.layout ? visibleKeys.value.has(key) : active.value === key
 }
 /**
  * 对话看不见时（它那一格被放大的格子盖住、或收着）采纳那一条贴在哪一格底下：读者此刻在看的那一格。
@@ -481,8 +521,13 @@ function shown(key: string): boolean {
  */
 const docked = computed(() => (props.layout && slots.dock && shown(active.value) ? active.value : null))
 
-/** 布局区给这一格的落点；自己排页签时没有。 */
+/** 布局区给这一格的落点；自己排页签时没有。编辑器里中间、下面那两块的是它那一排下面那一块。 */
 function target(key: string): HTMLElement | undefined {
+  if (editorForm.value) {
+    const cell = editorCellOf(key)
+    if (cell === EDITOR_CENTRE) return centreBody.value ?? undefined
+    if (cell === EDITOR_BOTTOM) return bottomBody.value ?? undefined
+  }
   return props.layout?.outlet(key)
 }
 watch(active, (now, before) => {
@@ -641,7 +686,6 @@ useCommands(() =>
 // 和「改动」那一格读的是同一份：在一种摆法里打开的文件，换到另一种还是那一份（同一个编辑器、
 // 同一份撤销记录），在左栏点一份改动，中间的「改动」就翻到它。单开在旁边的一份文件
 // （`work:`）不在此列，那一格自己拿着自己那一份。
-const editorForm = computed(() => !!props.layout?.editor)
 const navigatorView = ref<NavigatorView>('files')
 const taskFiles = useTaskFiles({
   projectId: () => projectId.value,
@@ -678,6 +722,13 @@ const changes = props.review
         refreshTick,
       })
     )
+// 布局区里每一格自己显示：在屏幕上的那几格都挂上。
+watch(
+  () => [...visibleKeys.value],
+  (keys) => keys.forEach(show),
+  { immediate: true }
+)
+
 /** 左栏里点了一份文件：在中间打开它。 */
 async function openFromNavigator(path: string) {
   void taskFiles.open(path)
@@ -688,8 +739,9 @@ async function openLineFromNavigator(path: string, line: number) {
   void taskFiles.open(path, { start: line, end: line })
   await setTab('code')
 }
-/** 左栏「改动」里点了一份：中间的「改动」翻到这份文件的改动。 */
+/** 左栏「改动」里点了一份：中间打开这份文件的改动。 */
 async function openChange(path: string) {
+  if (editorForm.value) return void (await pickCentre(diffKey(path)))
   if (!(await setTab('changes'))) return
   void changes?.selectFile(path)
 }
@@ -904,11 +956,180 @@ async function spawnTab(key: string) {
   await setTab(TERMINAL_KEY + id, { guard: false })
 }
 function closeTerminal(key: string) {
-  terminals.close(key.slice(TERMINAL_KEY.length))
+  const id = key.slice(TERMINAL_KEY.length)
+  const before = terminals.ids.value
+  terminals.close(id)
   const next = new Set(mounted.value)
   next.delete(key)
   mounted.value = next
-  if (active.value === key) active.value = defaultTab.value
+  // 编辑器里下面那一排翻到它右边那个终端，没有就左边那个，再没有就是现场。
+  if (editorForm.value && bottomShown.value === key) {
+    const at = before.indexOf(id)
+    const rest = before.filter((one) => one !== id)
+    const neighbour = rest[at] ?? rest[at - 1]
+    editorTabs.showBottom(neighbour ? TERMINAL_KEY + neighbour : 'site')
+  }
+  if (active.value === key) active.value = editorForm.value ? centrePane.value : defaultTab.value
+}
+
+// ---- 编辑器那一种摆法：中间那一排和下面那一排（`editorTabs`）----
+watch(
+  () => taskFiles.tabs.value.length,
+  (n) => (openFileCount.value = n),
+  { immediate: true }
+)
+watch(
+  () => terminals.ids.value,
+  (ids) => (terminalIds.value = ids),
+  { immediate: true }
+)
+/**
+ * 要看的一样在编辑器里落在哪：中间那一排里打开它的页签（开着的就翻到它），或下面那一排翻到它。
+ * 回的是此刻在看的那一格。
+ */
+function placeInEditor(key: string): string {
+  const cell = editorCellOf(key)
+  if (cell === EDITOR_CENTRE) {
+    editorTabs.open(key)
+    // 要的是「改动」本身（「审阅」、命令面板）：全部改动那一面。
+    if (key === 'changes' && changes?.openPath.value) changes.closeFile()
+    return key
+  }
+  if (cell === EDITOR_BOTTOM) {
+    const shownKey = key === TERMINAL_BLOCK ? (shownTerminal.value ? TERMINAL_KEY + shownTerminal.value : 'site') : key
+    editorTabs.showBottom(shownKey)
+    return shownKey
+  }
+  return key
+}
+/** 中间那一排里点了一个页签（或左栏「改动」里点了一份）：翻到它。 */
+async function pickCentre(tabKey: string) {
+  if (paneOfCentre(tabKey) !== active.value && !(await confirmAnnotationDiscard())) return
+  settled.value = true
+  editorTabs.open(tabKey)
+  props.layout?.show(EDITOR_CENTRE)
+}
+// 中间那一排翻到了别的：此刻在看的跟着它；翻到的是改动时，「改动」那一格显示那一份文件（或全部）。
+// 进编辑器时也走这里：回到上一次在编辑器里翻到的那一个。
+watch(
+  () => (editorForm.value ? centreShown.value : null),
+  (centre) => {
+    if (!centre) return
+    const path = diffPath(centre)
+    if (path !== null && changes && changes.openPath.value !== path) void changes.selectFile(path)
+    else if (centre === 'changes' && changes?.openPath.value) changes.closeFile()
+    const pane = paneOfCentre(centre)
+    if (active.value !== pane) active.value = pane
+    if (pane === 'changes') markChangesSeen()
+  },
+  { immediate: true }
+)
+// 「改动」那一格里打开了一份文件、或回到了全部改动：中间那一排翻到对应的那个页签。
+watch(
+  () => changes?.openPath.value ?? null,
+  (path) => {
+    if (!editorForm.value || centrePane.value !== 'changes') return
+    const want = path ? diffKey(path) : 'changes'
+    if (centreShown.value !== want) editorTabs.open(want)
+  }
+)
+// 从对话里打开的一份产出关掉了（或被下一份临时打开的换掉了）：它那个页签跟着走。
+watch(
+  () => openFiles.value.map((f) => fileKey(f.path)),
+  (keys) => {
+    for (const key of editorTabs.extra.value) {
+      if (key.startsWith(FILE_TAB) && !keys.includes(key)) editorTabs.close(key)
+    }
+  }
+)
+/** 下面那一排里点了一个。 */
+function pickBottom(key: string) {
+  settled.value = true
+  editorTabs.showBottom(key)
+  active.value = key
+  props.layout?.show(EDITOR_BOTTOM)
+}
+
+/** 中间那一排里打开的文件那几个页签的键。 */
+const OPEN_FILE = 'open:'
+const baseName = (path: string) => path.slice(path.lastIndexOf('/') + 1)
+/** 中间那一排里打开的文件以外的一个页签。 */
+function centreTab(key: string): EditorTab | null {
+  const path = diffPath(key)
+  if (path !== null) {
+    return { key, title: baseName(path), hint: path, tag: t('work.room.tabs.changes'), closable: true }
+  }
+  if (key.startsWith(FILE_TAB)) {
+    const meta = fileMeta.value.find((one) => one.key === key)
+    return meta ? { key, title: meta.title, temporary: meta.temporary, closable: true } : null
+  }
+  const fixed = panelTabs.value.find((tab) => tab.key === key)
+  return fixed ? { key, title: fixed.label, hint: fixed.title, closable: true } : null
+}
+const centreStrip = computed<EditorTab[]>(() => {
+  if (!editorForm.value) return []
+  const open = taskFiles.openPath.value
+  const files = taskFiles.tabs.value.map((path): EditorTab => {
+    const shownHere = path === open && centreShown.value === FILE_TABS
+    const tag = !shownHere
+      ? undefined
+      : taskFiles.committedCopy.value
+        ? t('work.room.environment.committed')
+        : taskFiles.file.value && !taskFiles.canEdit.value
+          ? t('work.room.changes.readOnly')
+          : undefined
+    return {
+      key: OPEN_FILE + path,
+      title: baseName(path),
+      hint: path,
+      file: baseName(path),
+      tag,
+      held: taskFiles.heldTabs.value.has(path),
+      closable: true,
+    }
+  })
+  const others = editorTabs.extra.value.map(centreTab).filter((tab): tab is EditorTab => !!tab)
+  return [...files, ...others]
+})
+const centreActive = computed(() =>
+  centreShown.value === FILE_TABS
+    ? taskFiles.openPath.value
+      ? OPEN_FILE + taskFiles.openPath.value
+      : null
+    : centreShown.value
+)
+function selectCentre(key: string) {
+  if (!key.startsWith(OPEN_FILE)) return void pickCentre(key)
+  void taskFiles.open(key.slice(OPEN_FILE.length))
+  void pickCentre(FILE_TABS)
+}
+/** 中间那一排里关掉一个页签。 */
+async function closeCentre(key: string) {
+  if (key.startsWith(OPEN_FILE)) return taskFiles.closeTab(key.slice(OPEN_FILE.length))
+  // 从对话里打开的一份产出：它自己关掉（页签跟着它走，见上面）。
+  if (key.startsWith(FILE_TAB)) return void (await closeFile(key.slice(FILE_TAB.length), { back: false }))
+  editorTabs.close(key)
+}
+const bottomStrip = computed(() => {
+  if (!editorForm.value) return { terminals: [] as EditorTab[], site: [] as EditorTab[] }
+  const site = panelTabs.value.find((tab) => tab.key === 'site')
+  return {
+    terminals: terminals.ids.value.map((id, i): EditorTab => {
+      const name = terminals.names.value[id]
+      return {
+        key: TERMINAL_KEY + id,
+        title: t('work.room.terminal.numbered', { n: name?.number ?? i + 1 }),
+        hint: name?.program ?? undefined,
+        closable: true,
+      }
+    }),
+    site: site ? [{ key: 'site', title: site.label, hint: site.title, pulse: !!props.working }] : [],
+  }
+})
+/** 「在旁边打开」此刻打开的那份文件。 */
+function openShownBeside() {
+  const path = taskFiles.openPath.value
+  if (path) void openBeside(path)
 }
 
 /** 布局区里读者点了一格：它就是此刻在看的那一格（地址跟着走）。 */
@@ -917,13 +1138,19 @@ function activated(key: string) {
   settled.value = true
   active.value = key
   if (key === 'changes') markChangesSeen()
-  emit('update:tab', key)
+  if (!editorForm.value) emit('update:tab', key)
 }
 /** 布局区里一格能关的页签（打开的任务、自由区的文件、编辑器里打开在中间的概览之类）被关掉了。 */
 function closeTab(key: string) {
-  if (isDelivery(key)) void closeDelivery(key)
+  if (editorForm.value && editorCellOf(key) === EDITOR_CENTRE) void closeCentre(key)
+  else if (isDelivery(key)) void closeDelivery(key)
   else if (key.startsWith(TERMINAL_KEY)) closeTerminal(key)
-  else if (key.startsWith(FILE_TAB)) void closeFile(key.slice(FILE_TAB.length), { back: !blocks.value })
+  else if (key.startsWith(FILE_TAB) && editorForm.value) {
+    // 编辑器里中间旁边单开的那一份：只关掉它，此刻在看的回到中间那一排翻到的那一个。
+    void closeFile(key.slice(FILE_TAB.length), { back: false }).then(() => {
+      if (active.value === key) active.value = centrePane.value
+    })
+  } else if (key.startsWith(FILE_TAB)) void closeFile(key.slice(FILE_TAB.length), { back: !blocks.value })
   else if (blocks.value) leaveBlock(key)
   else if (key === active.value) {
     // 编辑器那一种摆法里中间关掉了一格固定的（概览、改动……）：此刻在看的回到打开的文件。
@@ -1009,7 +1236,9 @@ function keepTab(key: string) {
   openFiles.value = (id && !props.layout?.blocks && filesByTopic.get(id)) || []
   const asked = tabFromUrl()
   ensureFileFromUrl(asked)
-  active.value = asked ?? defaultTab.value
+  // 编辑器里开在上一次在编辑器里翻到的那个页签；地址点名了一样（贴进来的链接）时它成为一个页签。
+  if (editorForm.value) active.value = asked ? placeInEditor(asked) : centrePane.value
+  else active.value = asked ?? defaultTab.value
   // 「URL 里显式带 ?tab= 时以 URL 为准」: an address that names a tab has already
   // decided, so the phase does not get to.
   settled.value = !!asked
@@ -1065,6 +1294,15 @@ watch(
   },
   { immediate: true }
 )
+
+// 从编辑器换回对话那一种：此刻在看的是对话旁边开着的那一块（布局区摆好之后才知道是哪一块）。
+watch(editorForm, async (now, before) => {
+  if (now || !before) return
+  await nextTick()
+  await nextTick()
+  const front = [...(props.layout?.visible ?? [])].find((key) => keyExists(key))
+  if (front) active.value = front
+})
 
 // 进了布局区：地址点名了哪一格就把它翻到前面；没点名就跟着那一格里此刻在前面的那一格走。
 watch(
@@ -1436,6 +1674,66 @@ defineExpose({
           </BaseButton>
         </WorkPaneHead>
       </template>
+      <!-- The 编辑器 form's centre and the part below it: a row of tabs each, and under it where
+           the work panel teleports the content of the tab shown. Drawn once their cells exist:
+           drawn in place they would stretch the page's own cell. -->
+      <template v-if="editorForm && taskId">
+        <Teleport v-if="layout?.outlet(EDITOR_CENTRE)" :to="layout.outlet(EDITOR_CENTRE)">
+          <EditorPart
+            :tabs="centreStrip"
+            :active="centreActive"
+            :label="t('work.room.taskFiles.openFiles')"
+            @select="selectCentre"
+            @close="closeCentre"
+            @keep="keepTab"
+            @body="centreBody = $event"
+          >
+            <template v-if="centreShown === FILE_TABS && taskFiles.openPath.value" #end>
+              <BaseButton
+                kind="ghost"
+                size="sm"
+                icon="mdi-dock-right"
+                :aria-label="t('work.room.taskFiles.openBeside')"
+                :title="t('work.room.taskFiles.openBeside')"
+                @click="openShownBeside"
+              />
+            </template>
+          </EditorPart>
+        </Teleport>
+        <Teleport v-if="layout?.outlet(EDITOR_BOTTOM)" :to="layout.outlet(EDITOR_BOTTOM)">
+          <EditorPart
+            look="pills"
+            :tabs="bottomStrip.terminals"
+            :after="bottomStrip.site"
+            :active="bottomShown"
+            :label="t('work.task.form.terminal')"
+            @select="pickBottom"
+            @close="closeTerminal"
+            @body="bottomBody = $event"
+          >
+            <template v-if="offersTerminals" #add>
+              <BaseButton
+                kind="ghost"
+                size="sm"
+                icon="mdi-plus"
+                :aria-label="t('work.room.terminal.new')"
+                :title="t('work.room.terminal.new')"
+                @click="spawnTab(TERMINAL_TAB.key)"
+              />
+            </template>
+            <template #end>
+              <BaseButton
+                kind="ghost"
+                size="sm"
+                icon="mdi-chevron-down"
+                :aria-label="t('shell.layout.collapse')"
+                :title="t('shell.layout.collapse')"
+                @click="emit('hide-bottom')"
+              />
+            </template>
+          </EditorPart>
+        </Teleport>
+      </template>
       <PanelTabs
         v-if="!layout"
         :tabs="panelTabs"
@@ -1471,6 +1769,7 @@ defineExpose({
             <slot name="chat" />
           </div>
           <WorkPane
+            :shared="editorForm"
             :target="target('overview')"
             :pane-id="workPaneId('overview')"
             :shown="shown('overview')"
@@ -1481,6 +1780,7 @@ defineExpose({
           </WorkPane>
           <WorkPane
             v-if="!taskId && tabs.some((tab) => tab.key === 'threads')"
+            :shared="editorForm"
             :target="target('threads')"
             :pane-id="workPaneId('threads')"
             :shown="shown('threads')"
@@ -1492,6 +1792,7 @@ defineExpose({
           <template v-for="d in deliveries" :key="d.id">
             <WorkPane
               v-if="mounted.has(deliveryKey(d.id))"
+              :shared="editorForm"
               :target="target(deliveryKey(d.id))"
               :pane-id="workPaneId(deliveryKey(d.id))"
               :shown="shown(deliveryKey(d.id))"
@@ -1502,6 +1803,7 @@ defineExpose({
           </template>
           <WorkPane
             v-if="mounted.has('site')"
+            :shared="editorForm"
             :target="target('site')"
             :pane-id="workPaneId('site')"
             :shown="shown('site')"
@@ -1527,6 +1829,7 @@ defineExpose({
           </WorkPane>
           <WorkPane
             v-if="mounted.has('changes')"
+            :shared="editorForm"
             :target="target('changes')"
             :pane-id="workPaneId('changes')"
             :shown="shown('changes')"
@@ -1548,6 +1851,7 @@ defineExpose({
           <!-- 编辑器那一种摆法里左边那一栏：任务的文件树和这件任务改过的文件。 -->
           <WorkPane
             v-if="mounted.has(NAVIGATOR) && taskId"
+            :shared="editorForm"
             :target="target(NAVIGATOR)"
             :pane-id="workPaneId(NAVIGATOR)"
             :shown="shown(NAVIGATOR)"
@@ -1562,6 +1866,17 @@ defineExpose({
               :diffs="changes?.fileDiffs.value ?? []"
               :active-change="shown('changes') ? changes?.openPath.value ?? null : null"
               :read-only="changesReadOnly"
+              :version="
+                changes
+                  ? {
+                      currentTask: changes.currentTask.value,
+                      fileSource: changes.fileSource.value,
+                      refreshing: changes.refreshing.value,
+                    }
+                  : null
+              "
+              @select-version="changes?.selectVersion($event)"
+              @refresh="changes?.loadAll({ silent: true })"
               @open-file="openFromNavigator"
               @open-line="openLineFromNavigator"
               @open-beside="openBeside"
@@ -1572,6 +1887,7 @@ defineExpose({
                点一个文件链接、「改动」里的「编辑」）才摆出来。 -->
           <WorkPane
             v-if="mounted.has('code')"
+            :shared="editorForm"
             :target="target('code')"
             :pane-id="workPaneId('code')"
             :shown="shown('code')"
@@ -1590,6 +1906,7 @@ defineExpose({
               :files="taskFiles"
               :tree="editorForm || blocks ? null : taskTree"
               :light="blocks"
+              :framed="editorForm"
               :language="taskLanguage"
               @open-beside="openBeside"
             />
@@ -1597,6 +1914,7 @@ defineExpose({
           </WorkPane>
           <WorkPane
             v-if="mounted.has('preview')"
+            :shared="editorForm"
             :target="target('preview')"
             :pane-id="workPaneId('preview')"
             :shown="shown('preview')"
@@ -1624,6 +1942,7 @@ defineExpose({
              在这一格里（`openFile` 先认它是不是房间自己的文件，再挑开哪一格）。 -->
           <WorkPane
             v-if="mounted.has('files')"
+            :shared="editorForm"
             :target="target('files')"
             :pane-id="workPaneId('files')"
             :shown="shown('files')"
@@ -1640,6 +1959,7 @@ defineExpose({
           </WorkPane>
           <WorkPane
             v-if="mounted.has('routines')"
+            :shared="editorForm"
             :target="target('routines')"
             :pane-id="workPaneId('routines')"
             :shown="shown('routines')"
@@ -1660,6 +1980,7 @@ defineExpose({
           <template v-for="id in terminals.ids.value" :key="TERMINAL_KEY + id">
             <WorkPane
               v-if="taskId && mounted.has(TERMINAL_KEY + id)"
+              :shared="editorForm"
               :target="terminalTarget(id)"
               :pane-id="workPaneId(TERMINAL_KEY + id)"
               :shown="terminalShown(id)"
@@ -1676,6 +1997,7 @@ defineExpose({
           <template v-for="f in openFiles" :key="fileKey(f.path)">
             <WorkPane
               v-if="mounted.has(fileKey(f.path))"
+              :shared="editorForm"
               :target="target(fileKey(f.path))"
               :pane-id="workPaneId(fileKey(f.path))"
               :shown="shown(fileKey(f.path))"

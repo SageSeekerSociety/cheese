@@ -8,5 +8,6 @@
   "empty": "No terminal sessions",
   "numbered": "Terminal {n}",
   "switch": "Switch terminal",
-  "start": "Open a terminal"
+  "start": "Open a terminal",
+  "new": "New terminal"
 }

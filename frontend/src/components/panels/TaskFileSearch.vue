@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // The 搜索 view of the 编辑器 form's left column: one box for the text, and under it
 // the lines of the task's files that hold it, by file. A line opens its file at that
-// line in the centre; a file's row opens it at its first match. It draws what the page's
+// line in the centre; a file's row opens it at its first match. The line last opened
+// (`opened`) stays marked. It draws what the page's
 // search holds (`composables/useTaskSearch`) and fetches nothing. A search waiting for the task's
 // environment says so as every surface of the task page does (`TaskEnvironmentNote`).
 import type { FileSearchResult, TaskSearchState } from '../../composables/useTaskSearch'
@@ -29,8 +30,10 @@ const props = withDefaults(
     maxLength?: number
     /** The person just asked for the search (its view button, the shortcut): the box takes the focus. */
     focus?: boolean
+    /** The match last opened from here. */
+    opened?: { path: string; line: number } | null
   }>(),
-  { error: '', final: false, environment: null, maxLength: 200, focus: false }
+  { error: '', final: false, environment: null, maxLength: 200, focus: false, opened: null }
 )
 
 const emit = defineEmits<{
@@ -97,6 +100,7 @@ const files = computed(() =>
 )
 const matchCount = computed(() => files.value.reduce((sum, file) => sum + file.lines.length, 0))
 const typed = computed(() => props.query.trim().length > 0)
+const isOpened = (path: string, line: number) => props.opened?.path === path && props.opened.line === line
 </script>
 
 <template>
@@ -175,6 +179,8 @@ const typed = computed(() => props.query.trim().length > 0)
                   <button
                     type="button"
                     class="search-line"
+                    :class="{ 'search-line--on': isOpened(file.path, hit.line) }"
+                    :aria-current="isOpened(file.path, hit.line) ? 'true' : undefined"
                     :data-line="hit.line"
                     @click="emit('open', file.path, hit.line)"
                   >
@@ -357,6 +363,11 @@ const typed = computed(() => props.query.trim().length > 0)
   text-overflow: ellipsis;
   white-space: pre;
   tab-size: 2;
+}
+.search-line--on,
+.search-line--on:hover {
+  color: var(--ink);
+  background: var(--line-2);
 }
 .search-line__hit {
   color: var(--accent-ink);

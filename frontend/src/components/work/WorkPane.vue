@@ -2,11 +2,15 @@
 // 工作面板的一格内容。面板自己排页签时（手机、平板浮层、频道里打开的任务）它就在面板的内容区
 // 里，选中才显示；桌面上每一格是外壳布局区里的一块（layouts/pagePanels.ts），`target` 是
 // 那一块的落点，它整个传送过去，显示与否由那一格自己定。同一个实例，换摆法、换档都不重挂。
+// 任务页的编辑器那一种摆法里几格同在一块里（中间那一排、下面那一排，`shared`）：落点是那一块的
+// 内容区，显示哪一格由面板定。
 defineProps<{
   /** 布局区给这一格的落点；不给就留在面板里。 */
   target?: HTMLElement
-  /** 留在面板里时，这一格是不是选中的那一格。 */
+  /** 留在面板里、或和别的几格同在一个落点里时，这一格是不是显示着的那一格。 */
   shown: boolean
+  /** 落点里不止这一格（落点还没有时不在面板里显示）。 */
+  shared?: boolean
   /** 手机上换页签时进场那一下的类（`WorkPanel` 的 enterClass）。 */
   paneClass?: string
   /** 这一块的元素 id（`workPaneId`）。 */
@@ -23,7 +27,7 @@ defineSlots<{
 <template>
   <Teleport :to="target" :disabled="!target">
     <div
-      v-show="!!target || shown"
+      v-show="shared ? !!target && shown : !!target || shown"
       :id="paneId"
       class="work-pane"
       :class="[{ 'work-pane--cell': !!target }, paneClass]"

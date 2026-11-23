@@ -4,10 +4,12 @@
 // a tab each, one shown. Files side by side are cells of the layout: a file
 // opened beside (`single`) is a cell of its own with that file, no tree and no
 // tabs. In the task page's 编辑器 form the tree is a column of its own, so this
-// panel is the open files alone (`tree` null). In its 对话 form the panel is a
-// light block (`light`): one file shown, no tree and no tab strip, its path in
-// the block's title bar — the same open files as the 编辑器 form, which keeps
-// the tabs.
+// panel is the open files alone (`tree` null), and the row of tabs above it is
+// the centre's (`framed`): one row for the files and whatever else is open there,
+// so this panel draws neither tabs nor a line repeating the file's name. In its
+// 对话 form the panel is a light block (`light`): one file shown, no tree and no
+// tab strip, its path in the block's title bar — the same open files as the
+// 编辑器 form.
 //
 // It draws what `composables/useTaskFiles` holds and hands the person's
 // actions back to it; nothing here fetches. The task's environment is said
@@ -56,6 +58,8 @@ const props = withDefaults(
     language?: LanguageLink | null
     /** One file at a time, its path said by whatever holds the panel: no tab strip, no path line. */
     light?: boolean
+    /** The tabs are drawn around the panel (the 编辑器 form's centre): no tab strip and no head line. */
+    framed?: boolean
   }>(),
   {
     changed: () => [],
@@ -66,6 +70,7 @@ const props = withDefaults(
     tree: null,
     language: null,
     light: false,
+    framed: false,
   }
 )
 
@@ -119,7 +124,7 @@ function onTreeHandleKey(event: KeyboardEvent) {
 }
 
 // ---- the tabs: one per file opened here (not in a cell holding one file, not on a phone) ----
-const showTabs = computed(() => !props.single && !props.phone && !props.light)
+const showTabs = computed(() => !props.single && !props.phone && !props.light && !props.framed)
 /** The open tabs keep their editor state (undo, scroll) even where the strip is not drawn. */
 const keptTabs = computed(() => (props.single || props.phone ? [] : f.tabs.value))
 const baseName = (path: string) => path.slice(path.lastIndexOf('/') + 1)
@@ -338,7 +343,7 @@ function pickQuick(path: string) {
               />
             </div>
           </div>
-          <div class="task-files__head" :class="{ 'task-files__head--light': props.light }">
+          <div v-if="!props.framed" class="task-files__head" :class="{ 'task-files__head--light': props.light }">
             <span v-if="!props.light" class="task-files__path" :title="f.openPath.value">
               <span v-for="(folder, i) in openFolders" :key="i">{{ folder }} / </span>
               <span class="task-files__name">{{ baseName(f.openPath.value ?? '') }}</span>
@@ -378,7 +383,7 @@ function pickQuick(path: string) {
             @quick-open="quickOpen = !props.single"
           />
         </template>
-        <p v-else-if="(showTabs || props.light) && f.listed.value" class="task-files__empty">
+        <p v-else-if="(showTabs || props.light || props.framed) && f.listed.value" class="task-files__empty">
           {{ t('work.room.taskFiles.noOpenFile') }}
         </p>
       </div>

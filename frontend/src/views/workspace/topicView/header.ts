@@ -53,10 +53,10 @@ export function useTopicHeader<TaskHalf extends Record<string, unknown>>(opts: {
   /** 任务页：此刻摆的是哪一种（对话 / 编辑器）；没得选时 null，页头不摆那个开关。 */
   form?: () => TaskForm | null
   chooseForm?: (form: TaskForm) => void
-  /** 编辑器里页头右边那三颗按下没有（终端那一颗是 null 时不摆）。 */
-  editorParts?: () => { left: boolean; terminal: boolean | null; conversation: boolean }
+  /** 编辑器里页头右边那三颗按下没有。 */
+  editorParts?: () => { left: boolean; terminal: boolean; conversation: boolean }
   toggleEditorPart?: (part: 'left' | 'terminal' | 'conversation') => void
-  /** 对话那一种摆法里页头右边那一组按钮，和点了其中一颗。 */
+  /** 对话那一种摆法里页头右边那一组按钮（编辑器里是 ⋯ 里在中间打开的那几样），和点了其中一颗。 */
   blocks?: () => TaskBlockButton[]
   toggleBlock?: (key: string) => void
 }) {
