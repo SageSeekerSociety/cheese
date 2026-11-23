@@ -1,4 +1,4 @@
-// 主线上那一行：支线里的一轮没回答就出错了，说出错；是额度用完拦下的，说额度用完——
+// 主线上那一行：讨论串里的一轮没回答就出错了，说出错；是额度用完拦下的，说额度用完——
 // 那不是重试能解决的「回复失败」。
 import type { ThreadSummary } from '@/types/threads'
 
@@ -41,7 +41,7 @@ function show(s: ThreadSummary) {
 
 beforeEach(() => setLocale('zh-CN'))
 
-describe('支线出错时主线上那一行', () => {
+describe('讨论串出错时主线上那一行', () => {
   it('额度用完拦下的一轮说额度已用完，不说回复失败', () => {
     const view = show(summary({ failed: true, failed_code: 'credits_exhausted' }))
     expect(view.getByText('额度已用完')).toBeTruthy()
@@ -70,7 +70,7 @@ describe('主线上那一行的头像', () => {
     })
   }
 
-  it('队友正在回复、支线里还没有回复：头像里有它自己，不只是发起的人', () => {
+  it('队友正在回复、讨论串里还没有回复：头像里有它自己，不只是发起的人', () => {
     const view = line(summary({ participants: ['lin'] }), ['cheese-s'])
     expect(view.getByText('芝士 S 正在回复')).toBeTruthy()
     expect(view.getAllByLabelText('芝士 S')).toHaveLength(1)
@@ -87,8 +87,8 @@ describe('主线上那一行的头像', () => {
   })
 })
 
-describe('点开支线之前', () => {
-  it('按下那一行时就去取支线和里面的回复，点开时不用再等；没回来之前再按不会再发', async () => {
+describe('点开讨论串之前', () => {
+  it('按下那一行时就去取讨论串和里面的回复，点开时不用再等；没回来之前再按不会再发', async () => {
     getThread.mockReset().mockReturnValue(new Promise(() => {}))
     listBlocks.mockReset().mockReturnValue(new Promise(() => {}))
     const view = show(summary({ id: 't-warm', reply_count: 2, participants: ['lin'] }))

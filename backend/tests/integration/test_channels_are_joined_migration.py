@@ -3,7 +3,7 @@
 The rules, as stated before the migration was written:
 
 - each channel takes in the people of its project who spoke in it in the last
-  30 days, in its main line or a 支线 under it, and everyone an open task there
+  30 days, in its main line or a 讨论串 under it, and everyone an open task there
   is assigned to — nobody outside the project, and no AI teammate;
 - 综合 seats nobody by name: everyone in the project is in it, so its person
   rows go and its AI teammates stay;
@@ -227,7 +227,7 @@ def migrated() -> Iterator[World]:
 
 def test_people_who_spoke_lately_or_hold_open_work_join_the_channel(migrated):
     front = migrated.seats(migrated.front)
-    # alice spoke in its main line, carol in a 支线 under it; olivia and bob
+    # alice spoke in its main line, carol in a 讨论串 under it; olivia and bob
     # were already seated, and the AI teammate keeps its seat.
     assert set(front) == {"olivia", "bob", "alice", "carol", AGENT}
     # Someone outside the project, and someone who left it, are not taken in.

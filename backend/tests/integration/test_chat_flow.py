@@ -42,7 +42,7 @@ def _create_project_and_topic(client, owner: str = "user-1") -> tuple[str, str]:
 
 
 def _create_project_and_thread(client, owner: str = "user-1") -> tuple[str, str]:
-    """A project and a 支线 in its channel: where 芝士 answers when called."""
+    """A project and a 讨论串 in its channel: where 芝士 answers when called."""
     project_id, topic_id = _create_project_and_topic(client, owner)
     return project_id, in_thread(client, topic_id, owner)
 
@@ -149,7 +149,7 @@ def test_a_persons_doc_edit_is_told_to_the_tasks_agent(client):
     lands in the task as a line, and that line carries what 芝士 is told: where
     the document changed and to read it again — not the new text itself, which
     would displace the work instead of informing it."""
-    # A task's document: channels and 支线 have none.
+    # A task's document: channels and 讨论串 have none.
     _, room_id = _create_project_and_topic(client)
     task_id = open_task(client, room_id, owner="user-1")["id"]
 

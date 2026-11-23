@@ -40,7 +40,9 @@ async def source_text(db, block) -> str:
     thread = await Thread.of_root(db, block.id)
     if thread is None or not thread.reply_count:
         return said
-    return f"{said}\n\n这条消息下的支线：\n{await thread_text(db, thread, root=False)}"
+    return (
+        f"{said}\n\n这条消息下的讨论串：\n{await thread_text(db, thread, root=False)}"
+    )
 
 
 async def thread_text(db, thread, *, root: bool = True) -> str:
@@ -56,7 +58,7 @@ async def thread_text(db, thread, *, root: bool = True) -> str:
     left = thread.reply_count - len(replies)
     if left > 0:
         lines.append(
-            f"（前面还有 {left} 条回复没列出，用 cheese_chat(action=list) 读支线 {thread.id}）"
+            f"（前面还有 {left} 条回复没列出，用 cheese_chat(action=list) 读讨论串 {thread.id}）"
         )
     lines.append(_lines(replies))
     return "\n".join(line for line in lines if line)

@@ -8,7 +8,7 @@ The rules, stated before the code:
 - pinning says so in the main line, once; pinning again says nothing more, and
   unpinning says nothing;
 - anyone who reads the channel sees its pins;
-- what is said in a 支线 is not pinned to the channel.
+- what is said in a 讨论串 is not pinned to the channel.
 """
 
 import uuid

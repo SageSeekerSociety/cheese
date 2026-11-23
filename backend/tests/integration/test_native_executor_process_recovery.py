@@ -47,7 +47,7 @@ def test_new_full_service_process_reuses_original_native_executor(
         client, {"name": "Native process recovery"}, owner="alice"
     ).json()["data"]
     project_id, room = uuid.UUID(project["id"]), uuid.UUID(project["root_topic_id"])
-    # 芝士 answers in a 支线 of the channel.
+    # 芝士 answers in a 讨论串 of the channel.
     topic = uuid.UUID(in_thread(client, str(room), "alice"))
     busy = mode.endswith("busy")
     default_seat = room_agent_seat(client, str(room))

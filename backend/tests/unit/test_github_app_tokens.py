@@ -406,7 +406,7 @@ async def test_user_installation_lookup_uses_user_authority_and_all_pages(monkey
 async def test_a_session_whose_work_is_not_kept_gets_a_token_that_only_reads(
     rsa_key_pem,
 ):
-    """A 支线 or a task not yet started reads the repository, its pull requests
+    """A 讨论串 or a task not yet started reads the repository, its pull requests
     and its CI, and writes nothing. GitHub enforces the levels it is minted
     with, and refuses the whole mint over a level it has no read for."""
     key_path, public = rsa_key_pem
@@ -438,7 +438,7 @@ async def test_a_session_whose_work_is_not_kept_gets_a_token_that_only_reads(
 async def test_a_session_whose_work_is_not_kept_may_rerun_ci_and_still_never_writes(
     rsa_key_pem,
 ):
-    """A routine watching a deployment from a 支线 reruns a flaky job itself
+    """A routine watching a deployment from a 讨论串 reruns a flaky job itself
     instead of handing it to a person: where the installation holds
     `actions: write`, the token that keeps nothing carries it. Everything
     else stays at read, so the repository itself refuses its pushes and its

@@ -1,10 +1,10 @@
 """Who is at work in a channel is read for the conversations the page draws.
 
 `GET /topics` and `GET /topics/{id}` mark the members working in a room, in
-one of its 支线 and on its tasks, from the runners' own word in
+one of its 讨论串 and on its tasks, from the runners' own word in
 ``session_states``. That read used to fetch every session running on the
 platform and keep the page's rows in memory; it now asks for the page's rooms,
-their 支线 and the named tasks only. A session running in another project's
+their 讨论串 and the named tasks only. A session running in another project's
 room is not read, and the page still says who works where.
 """
 

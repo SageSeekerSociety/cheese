@@ -2,7 +2,7 @@
 (app/domain/room_task/naming.py), over the real HTTP stack, database and Valkey.
 
 What is pinned: a task opened without a title is named from its first real
-message — for a task turned from a message, that message and its 支线 — and an
+message — for a task turned from a message, that message and its 讨论串 — and an
 `@` inside a sentence does not hide what the person said; the
 name is checked once against the first turn; later changes wait for a signal
 and a throttle; a task an AI teammate proposed keeps its title until its
@@ -402,7 +402,7 @@ def test_a_task_turned_from_a_discussion_reads_what_was_said_under_it(
     client, alice, gateway
 ):
     """An opener that says too little is not the whole discussion: what was said
-    under it in its 支线 before the task was made is read with it."""
+    under it in its 讨论串 before the task was made is read with it."""
     tid = _turned_from(
         client, alice, "在吗", replies=("dev 机器从外网访问很慢，帮我排查一下",)
     )

@@ -44,7 +44,7 @@ function setup(
       tabs ??
       (() => [
         { key: 'overview', title: '概览', icon: 'mdi-file-document-outline' },
-        { key: 'threads', title: '支线', icon: 'mdi-forum-outline' },
+        { key: 'threads', title: '讨论串', icon: 'mdi-forum-outline' },
         { key: 'file:a.md', title: 'a.md', icon: 'mdi-file-outline', transient: true },
       ]),
     workHidden: () => workHidden.value,

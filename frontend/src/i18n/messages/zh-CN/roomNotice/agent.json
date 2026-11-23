@@ -98,7 +98,7 @@
   "memoryScopePrivate": "你的私人",
   "memoryScopeTeam": "项目共享",
   "mentionUnknownMember": "未能通知 {member}：项目中没有这个成员",
-  "refUnknownConversation": "{ref} 指不到这个项目里的频道、任务或支线，读的人看到的是一个打不开的引用",
+  "refUnknownConversation": "{ref} 指不到这个项目里的频道、任务或讨论串，读的人看到的是一个打不开的引用",
   "messageUndeliveredStale": "消息未送达，已等待 {minutes} 分钟",
   "messageUndeliveredStaleDetail": "没有迹象表明消息已经送达。它等待的时间太久，自动重发可能已经不合适。需要继续的话可以重试，之前的消息会一起带上。",
   "noFirstOutput": "{seconds} 秒内没有任何输出，这次没能开始，平台不会自动重试。",

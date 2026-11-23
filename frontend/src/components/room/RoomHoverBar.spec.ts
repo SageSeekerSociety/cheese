@@ -44,7 +44,7 @@ async function routerStoppedOnTopic() {
   return router
 }
 
-/** 停在频道 tp1 的支线 th1 上：桌面上频道主线在左，支线在右，两边的消息都有悬停条。 */
+/** 停在频道 tp1 的讨论串 th1 上：桌面上频道主线在左，讨论串在右，两边的消息都有悬停条。 */
 async function routerStoppedOnThread() {
   const page = { template: '<div />' }
   const router = createRouter({
@@ -129,7 +129,7 @@ describe('消息的悬停条：复制链接', () => {
     expect(container.querySelector('button[title="已复制链接"]')).toBeTruthy()
   })
 
-  it('支线里一条回复的链接打开那条支线，落在这条回复上', async () => {
+  it('讨论串里一条回复的链接打开那条讨论串，落在这条回复上', async () => {
     const router = await routerStoppedOnThread()
 
     const opened = await copiedFrom(block('r1', 'th1'), router)
@@ -139,7 +139,7 @@ describe('消息的悬停条：复制链接', () => {
     expect(opened.query.block).toBe('r1')
   })
 
-  it('支线页上，频道主线里那一条的链接仍是频道的', async () => {
+  it('讨论串页上，频道主线里那一条的链接仍是频道的', async () => {
     const router = await routerStoppedOnThread()
 
     const opened = await copiedFrom(block('m1', 'tp1'), router)
@@ -188,8 +188,8 @@ describe('右键一条消息', () => {
   })
 })
 
-describe('在支线中回复', () => {
-  it('频道主线上的消息有这一颗，点它就是要这一条的支线', async () => {
+describe('在讨论串中回复', () => {
+  it('频道主线上的消息有这一颗，点它就是要这一条的讨论串', async () => {
     const { container, emitted } = renderBar(block('b1'), undefined, { threadable: true })
     const button = container.querySelector<HTMLButtonElement>('[data-testid="reply-in-thread"]')
     expect(button).not.toBeNull()
@@ -197,7 +197,7 @@ describe('在支线中回复', () => {
     expect((emitted().thread as Block[][])[0][0].id).toBe('b1')
   })
 
-  it('私聊、任务和支线里的消息没有支线，不给这一颗', () => {
+  it('私聊、任务和讨论串里的消息没有讨论串，不给这一颗', () => {
     const { container } = renderBar(block('b1'))
     expect(container.querySelector('[data-testid="reply-in-thread"]')).toBeNull()
   })
@@ -247,7 +247,7 @@ describe('置顶到频道', () => {
   })
 })
 
-describe('支线里 AI 队友的回复：查看它那一轮的过程', () => {
+describe('讨论串里 AI 队友的回复：查看它那一轮的过程', () => {
   const reply = { ...block('r1'), author: 'cheese', turn_id: 'turn-7' }
   const processButton = (container: Element) =>
     container.querySelector<HTMLButtonElement>('[data-testid="message-process"]')
@@ -263,7 +263,7 @@ describe('支线里 AI 队友的回复：查看它那一轮的过程', () => {
     expect(processButton(view.container)).toBeNull()
   })
 
-  it('支线以外不给（主线和任务里，现场就在旁边那一格）', () => {
+  it('讨论串以外不给（主线和任务里，现场就在旁边那一格）', () => {
     const view = renderBar(reply, undefined, { isAgent: true })
     expect(processButton(view.container)).toBeNull()
   })

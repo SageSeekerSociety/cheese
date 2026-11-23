@@ -101,8 +101,8 @@ def no_seat_reads(monkeypatch):
 
 
 async def _seed(factory, *, per_conversation: int = 2):
-    """One channel with five 支线, and messages waiting in each that named the
-    seat. Returns (project id, the 支线, the block ids waiting in each, in the
+    """One channel with five 讨论串, and messages waiting in each that named the
+    seat. Returns (project id, the 讨论串, the block ids waiting in each, in the
     order the scan sees them).
     """
     async with factory() as session:
@@ -141,7 +141,7 @@ async def _seed(factory, *, per_conversation: int = 2):
                     conversation_id=thread.id,
                     author="u",
                     author_type=AuthorType.participant,
-                    content=f"支线里的第 {other} 条",
+                    content=f"讨论串里的第 {other} 条",
                     meta={"agent_recipient": {"handle": HANDLE, "mentioned": True}},
                 )
                 waiting[thread.id].append(block.id)
@@ -296,7 +296,7 @@ async def test_batch_hold_reads_answer_like_their_single_reads(db_factory):
             conversation_id=room.id,
             author="u",
             author_type=AuthorType.participant,
-            content="有支线的主线",
+            content="有讨论串的主线",
         )
         thread = Thread(
             id=uuid.uuid4(),
@@ -366,7 +366,7 @@ async def test_a_message_to_the_teammate_is_answered_where_it_was_said(
 ):
     """A message waiting for the AI teammate starts its turn in the conversation
     it was said in: a channel's main line, a task, a private chat. One said in
-    a channel's main line is answered there, and no 支线 opens under it."""
+    a channel's main line is answered there, and no 讨论串 opens under it."""
     async with db_factory() as session:
         await registered(session, "u")
         project = await project_service(session).create(

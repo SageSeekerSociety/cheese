@@ -246,9 +246,9 @@ def test_the_write_up_closer_and_a_teammate_change_both_finish(
 def test_a_reply_in_a_thread_and_turning_that_thread_into_a_task_both_finish(
     client, stub_hooks, monkeypatch
 ):
-    """Someone replies in a 支线 at the moment someone else turns that 支线
-    into a task. A reply counts itself on the 支线 (trigger
-    ``blocks_thread_replied``) after taking the 支线's numbering; turning it
+    """Someone replies in a 讨论串 at the moment someone else turns that 讨论串
+    into a task. A reply counts itself on the 讨论串 (trigger
+    ``blocks_thread_replied``) after taking the 讨论串's numbering; turning it
     into a task is held once under way, the reply sent, then let go: both
     finish."""
     monkeypatch.setattr(

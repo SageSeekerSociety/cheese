@@ -179,7 +179,7 @@ def test_reaction_on_missing_block_is_404(client):
 def test_a_message_an_ai_teammate_reads_gets_no_reaction_from_the_platform(client):
     """Reading a message puts no reaction on it: what an AI teammate reacts
     with, if anything, is its own to choose (`chat_react`)."""
-    # 芝士 answers in a 支线: that is where it is called and acknowledges.
+    # 芝士 answers in a 讨论串: that is where it is called and acknowledges.
     topic_id = in_thread(client, _create_topic(client), "alice")
     with room_socket(client, topic_id, "alice") as ws:
         post_message(client, topic_id, "alice", {"content": "@芝士 芝士帮我看看"})

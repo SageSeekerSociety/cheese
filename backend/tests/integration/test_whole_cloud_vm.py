@@ -933,7 +933,7 @@ def test_no_whole_vm_is_created_for_a_size_with_no_price(cloud, monkeypatch):
 
 
 def test_every_sandbox_is_marked_as_its_sessions_own(cloud):
-    """A 支线 or a task not yet started runs freely only where nothing else
+    """A 讨论串 or a task not yet started runs freely only where nothing else
     works (the lease's ``own``): a sandbox of its own, a VM sandbox included."""
     case = cloud
     boxed = _room(case, SANDBOX, "Sandbox")

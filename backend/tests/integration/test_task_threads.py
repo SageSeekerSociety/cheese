@@ -1,10 +1,10 @@
-"""一个房间的全部支线，每条带自己的对话.
+"""一个房间的全部讨论串，每条带自己的对话.
 
 一件活以前是一个房间：一整行 `topics`，连带名册、未读游标、归档决策和侧栏那一行。
 它之所以是房间只有一个原因——对话要挂在房间上。现在对话自成一等，
-`blocks.conversation_id` 可以是房间也可以是活，一条支线便宜到不用是房间。
+`blocks.conversation_id` 可以是房间也可以是活，一条讨论串便宜到不用是房间。
 
-这里测的是读路径：一个房间能不能一次读出「所有支线 + 每条支线的对话」，包括
+这里测的是读路径：一个房间能不能一次读出「所有讨论串 + 每条讨论串的对话」，包括
 一句话都没说过的那条（存在但没人说话是个真实答案，不能被丢掉）。
 """
 
@@ -41,11 +41,11 @@ def _backfill_sql() -> tuple[str, str]:
     return module.BACKFILL_TASKS, module.BACKFILL_BLOCKS
 
 
-# --- 读路径：一个房间的全部支线 ----------------------------------------------
+# --- 读路径：一个房间的全部讨论串 ----------------------------------------------
 
 
 def _room_with_threads(client) -> dict:
-    """一个房间：两条支线（一条有两句话，一条一句没说），外加房间自己的一条线。"""
+    """一个房间：两条讨论串（一条有两句话，一条一句没说），外加房间自己的一条线。"""
     ids: dict[str, uuid.UUID] = {}
 
     async def _seed() -> None:
@@ -151,7 +151,7 @@ def test_a_room_reads_back_every_thread_with_its_own_conversation(client):
     assert [t["title"] for t in threads] == ["聊得多的活", "没人说话的活"]
     talkative, silent = threads
     assert [b["content"] for b in talkative["blocks"]] == ["第一句", "第二句", "第三句"]
-    # 一句话没说的活照样是一条支线——不能因为没人开口就从房间里消失
+    # 一句话没说的活照样是一条讨论串——不能因为没人开口就从房间里消失
     assert silent["blocks"] == []
     # 房间自己那条线不在这里，它在 /blocks
     assert all("房间自己的线" not in b["content"] for b in talkative["blocks"])
@@ -160,9 +160,9 @@ def test_a_room_reads_back_every_thread_with_its_own_conversation(client):
 
 
 def test_limit_caps_each_thread_rather_than_the_room(client):
-    """limit 是每条支线各自的窗口。
+    """limit 是每条讨论串各自的窗口。
 
-    如果它卡的是整个房间，一条话多的支线就会把别的支线的开场白挤掉——房间里
+    如果它卡的是整个房间，一条话多的讨论串就会把别的讨论串的开场白挤掉——房间里
     有几条活会取决于哪条活话多，这不是「这个房间有哪些活」的答案。
     """
     ids = _room_with_threads(client)

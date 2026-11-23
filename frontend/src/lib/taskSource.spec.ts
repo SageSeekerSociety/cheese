@@ -27,7 +27,7 @@ describe('sourceRoute', () => {
     })
   })
 
-  it('opens a reply in its 支线, at that reply', () => {
+  it('opens a reply in its 讨论串, at that reply', () => {
     expect(sourceRoute('p1', source('thread', 'th1'))).toEqual({
       name: 'workspace-thread',
       params: { projectId: 'p1', topicId: 'r1', threadId: 'th1' },

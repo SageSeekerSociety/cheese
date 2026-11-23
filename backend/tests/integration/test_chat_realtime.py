@@ -74,7 +74,7 @@ async def test_broker_live_quote_uses_saved_data_and_retries_only_once(
         current = (await members.agent_handles(topic.id))[0]
         other = agent_instance_handle(second.id)
         await members.ensure_agent_seat(topic.id, other)
-        # 芝士 answers in a 支线: that is the conversation the turn runs in.
+        # 芝士 answers in a 讨论串: that is the conversation the turn runs in.
         topic_id = await thread_in(session, topic)
         await session.commit()
 
@@ -577,7 +577,7 @@ async def test_other_teammate_message_runs_beside_the_live_turn(
         )
         second_seat = agent_instance_handle(second.id)
         await TopicMemberService(session).ensure_agent_seat(topic.id, second_seat)
-        # Both teammates answer in a 支线 of the channel they sit in.
+        # Both teammates answer in a 讨论串 of the channel they sit in.
         topic_id = await thread_in(session, topic, "u")
         await session.commit()
     async for _ in svc.converse(
@@ -1631,7 +1631,7 @@ async def test_a_room_still_replaying_holds_only_its_own_turns(
             )
             for title in ("Slow", "Quick")
         ]
-        # 芝士 answers in a 支线 of each channel.
+        # 芝士 answers in a 讨论串 of each channel.
         rooms = [await thread_in(session, channel, "u") for channel in channels]
         slow_channel = channels[0].id
         await session.commit()

@@ -8,7 +8,7 @@ The rules, stated before the code:
 - either way the task's first instruction goes to that teammate;
 - a task is given only a teammate its project has.
 
-On dev (2026-10-06) a person asked 芝士Opus in a 支线, accepted the task it
+On dev (2026-10-06) a person asked 芝士Opus in a 讨论串, accepted the task it
 proposed, and the task was worked by the project's default 芝士 instead.
 """
 
@@ -140,7 +140,7 @@ def test_a_message_asking_a_teammate_turned_into_a_task_keeps_that_teammate(clie
 
     assert upgraded.status_code == 200, upgraded.text
     task = upgraded.json()["data"]["id"]
-    # The message's 支线 became the task; the teammate it called works it.
+    # The message's 讨论串 became the task; the teammate it called works it.
     assert _worked_by(client, task) == seat
 
 

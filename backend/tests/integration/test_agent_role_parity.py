@@ -113,7 +113,7 @@ def test_cross_room_access_requires_membership_and_preserves_identity(
     )
     assert response.status_code == 200, response.text
     assert response.json()["data"]["author"] == handle
-    # 芝士 answers — and asks — in a 支线 of the room.
+    # 芝士 answers — and asks — in a 讨论串 of the room.
     thread = in_thread(client, other, "alice")
     with active_ask(
         client, stub_hooks, monkeypatch, thread, actor="alice", seat=handle
@@ -497,7 +497,7 @@ def test_agent_reads_back_the_weekly_it_wrote(client):
 @pytest.mark.parametrize("where", ["room", "thread"])
 def test_an_agent_reads_the_project_from_where_it_works(client, path, where):
     """芝士在项目的一个频道里干活，就读得到这个项目的东西：项目本身、关联的仓库、
-    名册、别的频道和任务、资料库。它在频道的支线里也一样。不必在请求里再说一遍
+    名册、别的频道和任务、资料库。它在频道的讨论串里也一样。不必在请求里再说一遍
     自己在哪 —— 凭据里写着。"""
     project, origin, _ = _rooms(client)
     place = origin if where == "room" else in_thread(client, origin, "alice")

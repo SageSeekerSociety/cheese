@@ -1,6 +1,6 @@
-"""A 支线's session is told when the 支线 becomes a task.
+"""A 讨论串's session is told when the 讨论串 becomes a task.
 
-In a 支线 nothing the session does on the machine is kept; once the 支线 is a
+In a 讨论串 nothing the session does on the machine is kept; once the 讨论串 is a
 task, its work reaches the project and the people whose word it acts on are
 the task's owner and collaborators. The session carries the same conversation
 on, so nothing it opened with says so: it is told on its next turn, once, and
@@ -28,7 +28,7 @@ from tests.integration.conftest import (
 )
 
 THE_TASK = "## 这个任务"
-BECAME = "这条支线已经转为任务"
+BECAME = "这条讨论串已经转为任务"
 
 
 def _idle(client, conversation: uuid.UUID) -> bool:
@@ -91,14 +91,14 @@ def test_a_thread_session_hears_once_that_its_thread_became_a_task(client):
     thread_id = uuid.UUID(thread)
 
     post_message(client, thread, "alice", {"content": f"<@{seat}> 先看看现状"})
-    _until(lambda: any("先看看现状" in p for p in heard), "the 支线 never had a turn")
+    _until(lambda: any("先看看现状" in p for p in heard), "the 讨论串 never had a turn")
     assert not any(THE_TASK in prompt for prompt in heard)
     _until(
         lambda: (
             all(row.echoed_at for row in _inputs(client, thread_id))
             and _idle(client, thread_id)
         ),
-        "the 支线's turn never finished",
+        "the 讨论串's turn never finished",
     )
 
     made = client.post(

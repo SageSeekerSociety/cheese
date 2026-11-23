@@ -1,7 +1,7 @@
 """What the first move left in the conversation leaves it too.
 
 Memory changes, subagent starts and live-document reminders become run records;
-so do turns that did not finish, except in a 支线, whose message says its reply
+so do turns that did not finish, except in a 讨论串, whose message says its reply
 failed by reading them. A sentence for the agent that no turn has read yet is
 still delivered: its line leaves the room, the sentence stays for the agent.
 """
@@ -105,7 +105,7 @@ def test_the_rest_of_the_platforms_running_leaves_the_room(client):
     asyncio.run(seed())
     said, kept = asyncio.run(move_and_read())
 
-    # The room keeps what a person acts on, and a 支线 keeps its failure.
+    # The room keeps what a person acts on, and a 讨论串 keeps its failure.
     shown = {key for key, meta in said.items() if meta.get("in_room") is not False}
     assert shown == {"failed_in_thread", "needs_a_person"}
     # The agent still gets its unread sentence; the room no longer shows it.

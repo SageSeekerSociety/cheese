@@ -84,8 +84,8 @@ beforeEach(() => {
     json: async () =>
       String(url).includes('/progress')
         ? { code: 200, data: { items: [], updated_at: null } }
-        : // 房间的支线：面板打开时会顺手拉一次，用来画「已派出」标记。不区分的话
-          // 这个替身会把消息当成支线，时间线上多出一串标题为空的标记。
+        : // 房间的讨论串：面板打开时会顺手拉一次，用来画「已派出」标记。不区分的话
+          // 这个替身会把消息当成讨论串，时间线上多出一串标题为空的标记。
           String(url).includes('/tasks')
           ? { code: 200, data: { data: [], total: 0 } }
           : { code: 200, data: { data: history, total: history.length, has_more: false } },

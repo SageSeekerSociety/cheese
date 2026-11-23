@@ -259,7 +259,7 @@ def _event_said(trigger: str, spec: dict) -> str:
     if trigger == "mention":
         who = "、".join(spec.get("fromNames") or []) or "有人"
         where = f"在「{spec['placeName']}」" if spec.get("placeName") else ""
-        return f"{who}{where} @ 你或回复你的支线时"
+        return f"{who}{where} @ 你或回复你的讨论串时"
     if trigger == "review":
         return "有审阅待你处理时"
     if trigger == "due":

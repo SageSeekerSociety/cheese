@@ -1,11 +1,11 @@
 """A routine's run is a message of its teammate's in the channel's main line,
-and the run happens in that message's 支线.
+and the run happens in that message's 讨论串.
 
 The rules, as stated before the code was written:
 
-- the run's own turn may keep what it produces, though a 支线 reads only; a
-  question asked in that 支线 afterwards reads only, like in any 支线;
-- the rule's owner takes part in that 支线, so a reply there reaches them;
+- the run's own turn may keep what it produces, though a 讨论串 reads only; a
+  question asked in that 讨论串 afterwards reads only, like in any 讨论串;
+- the rule's owner takes part in that 讨论串, so a reply there reaches them;
 - once settled, the message says how it went: what the teammate handed back
   when it succeeded, nothing in the teammate's name when it did not, and it
   sits at the bottom of the main line, at the moment the run was settled;

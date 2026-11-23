@@ -14,7 +14,7 @@ import i18n, { setLocale } from '@/i18n'
 
 beforeAll(() => setLocale('zh-CN'))
 
-// 频道里的一条消息引出的两种通知：@ 了我，和我参与的支线里有人回复了。
+// 频道里的一条消息引出的两种通知：@ 了我，和我参与的讨论串里有人回复了。
 function said(type: NotificationType, extra: Record<string, string> = {}): Notification {
   return {
     id: 7,
@@ -69,10 +69,10 @@ it('a mention in a channel says who and where, and opens on the message', async 
   expect(router.currentRoute.value.query.block).toBe('block-3')
 })
 
-it('a reply in a 支线 says who and where, and opens the 支线 on the reply', async () => {
+it('a reply in a 讨论串 says who and where, and opens the 讨论串 on the reply', async () => {
   const { view, router } = await openInTheInbox(said('THREAD_REPLY', { threadId: 'thread-5' }))
 
-  expect(view.getByText('Alice 在「前端」的支线里回复了')).toBeTruthy()
+  expect(view.getByText('Alice 在「前端」的讨论串里回复了')).toBeTruthy()
   expect(view.getByText('看一下这个方案')).toBeTruthy()
   await fireEvent.click(view.getByRole('link'))
   await waitFor(() => expect(router.currentRoute.value.name).toBe('workspace-thread'))

@@ -50,7 +50,7 @@ def _create_project_and_topic(client) -> tuple[str, str]:
 
 
 def _create_project_and_thread(client) -> tuple[str, str]:
-    """A project and a 支线 in its channel: where 芝士 answers when called."""
+    """A project and a 讨论串 in its channel: where 芝士 answers when called."""
     project_id, topic_id = _create_project_and_topic(client)
     return project_id, in_thread(client, topic_id, "user-1")
 

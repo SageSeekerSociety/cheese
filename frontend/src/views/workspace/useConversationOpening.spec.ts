@@ -1,6 +1,6 @@
-/** 在频道主线上转为任务，人留在频道里；在支线里转的，去那件任务的任务页（侧栏任务行点开的
- *  同一处），支线已经开着、转的就是它时也去；点开一条已经原地转成任务的支线，也是任务页。
- *  频道主线上点开一件任务，在频道右边审阅它；支线里、任务页上点开的去任务页。 */
+/** 在频道主线上转为任务，人留在频道里；在讨论串里转的，去那件任务的任务页（侧栏任务行点开的
+ *  同一处），讨论串已经开着、转的就是它时也去；点开一条已经原地转成任务的讨论串，也是任务页。
+ *  频道主线上点开一件任务，在频道右边审阅它；讨论串里、任务页上点开的去任务页。 */
 import type { Block, RoomTask } from '@/cx_types'
 
 import { createMemoryHistory, createRouter } from 'vue-router'
@@ -53,7 +53,7 @@ describe('转为任务之后', () => {
     expect(router.currentRoute.value.name).toBe('workspace-topic')
   })
 
-  it('右半边开着一条支线时，从主线上转另一条消息：人也留在频道里', async () => {
+  it('右半边开着一条讨论串时，从主线上转另一条消息：人也留在频道里', async () => {
     const { router, opening } = setup()
     await router.push('/p/p1/c/r1/t/th0')
     upgradeMessage.mockResolvedValue(made('th1'))
@@ -70,7 +70,7 @@ describe('转为任务之后', () => {
     expect(router.currentRoute.value.params.taskId).toBe('t1')
   })
 
-  it('支线里的一条回复另开一件：去这件任务的任务页', async () => {
+  it('讨论串里的一条回复另开一件：去这件任务的任务页', async () => {
     const { router, opening } = setup()
     await router.push('/p/p1/c/r1/t/th0')
     upgradeMessage.mockResolvedValue(made('t1'))
@@ -79,7 +79,7 @@ describe('转为任务之后', () => {
     expect(router.currentRoute.value.params.taskId).toBe('t1')
   })
 
-  it('这条支线已经开着、原地转成了任务：也去任务页，退回去回到频道而不是那条支线', async () => {
+  it('这条讨论串已经开着、原地转成了任务：也去任务页，退回去回到频道而不是那条讨论串', async () => {
     const { router, opening } = setup()
     await router.push('/p/p1/c/r1')
     await router.push('/p/p1/c/r1/t/th1')
@@ -101,7 +101,7 @@ describe('转为任务之后', () => {
 })
 
 describe('点开一件任务', () => {
-  it('主线上一条消息的支线已经原地转成任务：去任务页，不在右半边当支线开', async () => {
+  it('主线上一条消息的讨论串已经原地转成任务：去任务页，不在右半边当讨论串开', async () => {
     const { router, opening } = setup()
     await router.push('/p/p1/c/r1')
     const block = {
@@ -113,7 +113,7 @@ describe('点开一件任务', () => {
     expect(router.currentRoute.value.params.taskId).toBe('th1')
   })
 
-  it('还没转的支线照旧在右半边打开', async () => {
+  it('还没转的讨论串照旧在右半边打开', async () => {
     const { router, opening } = setup()
     await router.push('/p/p1/c/r1')
     const block = { id: 'b1', thread: { id: 'th1', tasks: [] } } as unknown as Block
@@ -137,7 +137,7 @@ describe('点开一件任务', () => {
     expect(router.currentRoute.value.params.reviewTaskId).toBe('t1')
   })
 
-  it('支线里、任务页上点开一件任务：去它的任务页', async () => {
+  it('讨论串里、任务页上点开一件任务：去它的任务页', async () => {
     const { router, opening } = setup()
     await router.push('/p/p1/c/r1/t/th0')
     await opening.openTask('t1')

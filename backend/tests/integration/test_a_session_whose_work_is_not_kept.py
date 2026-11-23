@@ -1,4 +1,4 @@
-"""A session in a channel — its main line or a 支线 — keeps nothing; a task's
+"""A session in a channel — its main line or a 讨论串 — keeps nothing; a task's
 keeps its work.
 
 On a machine that is its own it reads, runs and changes files like any session:
@@ -9,7 +9,7 @@ with others it only reads, because what it changed would stay among their
 work.
 
 The place decides that, not the credential: one signed while the session was
-in a 支线 goes on saying so until the session goes quiet, and once the 支线
+in a 讨论串 goes on saying so until the session goes quiet, and once the 讨论串
 became a task (``place="became"``) the session works like any task's
 (``place="task"``).
 """
@@ -50,7 +50,7 @@ pytestmark = pytest.mark.anyio
 
 
 async def _session(client, place: str, *, own: bool | None = True) -> dict:
-    """An agent session in a channel's main line (``place="channel"``), a 支线
+    """An agent session in a channel's main line (``place="channel"``), a 讨论串
     (``place="thread"``) or a task, holding a
     machine of the project's; ``own`` is what its lease says about the
     machine, None for a lease recorded before it said anything."""
@@ -224,7 +224,7 @@ async def test_a_task_works_though_its_credential_says_scratch(
     client, monkeypatch, place, own, call
 ):
     """A credential is signed when the session starts and replaced only once
-    the session goes quiet (`screen_identity`): a 支线 that becomes a task
+    the session goes quiet (`screen_identity`): a 讨论串 that becomes a task
     mid-turn goes on presenting one that says its work is not kept. The place
     decides, so on a machine it shares it works all the same."""
     held = await _session(client, place, own=own)
@@ -297,7 +297,7 @@ async def test_the_environments_own_credential_pushes_only_from_a_task(
 ):
     """The credential an environment is handed for itself — what goes
     outside its sandbox, or a command nobody named — keeps its
-    conversation's rule: a 支线's never gets the token that pushes."""
+    conversation's rule: a 讨论串's never gets the token that pushes."""
     held = await _session(client, place)
     async with client.test_factory() as db:
         project = (await db.get(Topic, uuid.UUID(held["room"]))).project_id
@@ -392,7 +392,7 @@ def _github_minted(client, monkeypatch, tmp_path, held: dict) -> tuple[dict, dic
 async def test_its_github_token_may_rerun_ci_and_still_never_pushes(
     client, monkeypatch, tmp_path, place
 ):
-    """A routine run in a 支线 that watches a deployment reruns a flaky CI job
+    """A routine run in a 讨论串 that watches a deployment reruns a flaky CI job
     itself: the repository stays read-only to it, CI does not."""
     held = await _session(client, place)
     data, asked = _github_minted(client, monkeypatch, tmp_path, held)

@@ -137,7 +137,7 @@ describe('任务卡', () => {
       expect([...teammateTaskLines([opened], [said(asked, 'chenmo', null)]).keys()]).toEqual([asked])
     })
 
-    it('人自己转的、从支线里另开的照旧挂在那条消息下面', () => {
+    it('人自己转的、从讨论串里另开的照旧挂在那条消息下面', () => {
       const byPerson = task({ id: 't1', created_by: 'chenmo', upgraded_from_block_id: asked, source_block_id: asked })
       const fromThread = task({ id: 't2', created_by: 'cheese', upgraded_from_block_id: asked, source_block_id: 'r1' })
       expect(teammateTaskLines([byPerson, fromThread], [said(asked, 'chenmo', null)]).size).toBe(0)

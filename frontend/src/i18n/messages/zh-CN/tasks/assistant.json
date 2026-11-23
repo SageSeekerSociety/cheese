@@ -65,7 +65,7 @@
       "daily": "每天",
       "weekly": "每周",
       "all": "所有新消息",
-      "mentions": "只在 {'@'}我和我参与的支线有回复时",
+      "mentions": "只在 {'@'}我和我参与的讨论串有回复时",
       "mute": "静音"
     }
   },
@@ -161,7 +161,7 @@
   "page": {
     "channel": "频道「{name}」",
     "task": "任务「{name}」",
-    "thread": "支线「{name}」",
+    "thread": "讨论串「{name}」",
     "doc": "《{name}》",
     "project": "项目「{name}」",
     "problem": "题目「{name}」",

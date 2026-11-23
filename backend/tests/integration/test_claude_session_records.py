@@ -46,7 +46,7 @@ from tests.support.session_records import (
 
 
 def _room(client, owner: str = "alice") -> str:
-    """A 支线 in the project's channel: where 芝士 answers when called."""
+    """A 讨论串 in the project's channel: where 芝士 answers when called."""
     project = post_project(client, {"name": "P"}, owner=owner).json()["data"]
     return in_thread(client, project["root_topic_id"], owner)
 
@@ -658,7 +658,7 @@ def test_a_teammates_turn_picked_up_by_the_next_backend_stays_the_teammates(
             await session.commit()
 
     client.portal.call(seat_teammate)
-    # The teammate is seated in the channel and answers in a 支线 of it.
+    # The teammate is seated in the channel and answers in a 讨论串 of it.
     room = in_thread(client, room, "alice")
     topic = uuid.UUID(room)
 

@@ -434,7 +434,7 @@ export const CONVERSATION_ENTRIES: CatalogEntry[] = [
   {
     id: 'agent-now-strip',
     title: 'AgentNowStrip',
-    about: '频道、支线页顶部「AI 现在在干什么」：每位在干活的 AI 队友一行，图标、名字、一句话；悬停出详情。',
+    about: '频道、讨论串页顶部「AI 现在在干什么」：每位在干活的 AI 队友一行，图标、名字、一句话；悬停出详情。',
     file: 'src/components/room/AgentNowStrip.vue',
     component: AgentNowStrip,
     needs: ['i18n'],

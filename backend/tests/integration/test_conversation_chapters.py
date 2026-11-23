@@ -2,7 +2,7 @@
 
 The rules, stated before the code:
 
-- a message in a channel's main line, a task or a 支线 can be marked as the
+- a message in a channel's main line, a task or a 讨论串 can be marked as the
   start of a chapter;
 - everyone who reads the conversation reads its chapters, in reading order;
 - in a channel's main line only its members mark one; a task is spoken in by

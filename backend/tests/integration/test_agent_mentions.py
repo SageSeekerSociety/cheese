@@ -149,7 +149,7 @@ def _channel_with_two_agents(client):
 
 def _room_with_two_agents(client):
     project_id, room_id, own, reviewer = _channel_with_two_agents(client)
-    # Both sit on the channel's roster; they talk in a 支线 of it.
+    # Both sit on the channel's roster; they talk in a 讨论串 of it.
     thread = in_thread(client, room_id, "alice")
     return project_id, thread, own, reviewer
 

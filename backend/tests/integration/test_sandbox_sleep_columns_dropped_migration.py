@@ -4,7 +4,7 @@ notice was dropped are told again (migration a9c88363ec79).
 The rules, as stated before the migration was written:
 
 - a kept home archive whose conversation never received its notice (a task's
-  or a 支线's, which the previous release marked told without placing one) is
+  or a 讨论串's, which the previous release marked told without placing one) is
   untold again, so the sandbox sweep tells it; one whose conversation did
   receive it stays told;
 - a home is always on a host: its host column is required.

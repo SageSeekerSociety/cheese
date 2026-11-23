@@ -48,7 +48,7 @@ def _turn(client) -> tuple[str, list[dict]]:
         "/topics",
         json={"project_id": project["id"], "title": "话题"},
     ).json()["data"]["id"]
-    # 芝士 answers in a 支线 of the channel: that is where it fails to start.
+    # 芝士 answers in a 讨论串 of the channel: that is where it fails to start.
     room = in_thread(client, room, "user-1")
     frames = []
     with room_socket(client, room, "user-1") as ws:

@@ -5,7 +5,7 @@ The rules a person can state without the code:
 
 - A draft is for the AI teammate exactly when sending it would start the
   teammate's turn: it @-s the teammate, it replies to the teammate's message,
-  its task's owner says it in an open task, a person says it in a 支线 a
+  its task's owner says it in an open task, a person says it in a 讨论串 a
   teammate was called into, or the only person in the project says it in a
   channel's main line — the last two unless it @-s no one but people.
   Otherwise it is for the people it @-s, or for nobody in particular.
@@ -71,7 +71,7 @@ def _for_whom(client, conversation: str, who: str = "alice", **draft) -> dict:
 
 
 def _task_with_a_turn(client, room: str) -> tuple[str, str]:
-    """A 支线 the teammate answered once in, turned into alice's task. Returns
+    """A 讨论串 the teammate answered once in, turned into alice's task. Returns
     the task and the teammate's seat."""
     seat = room_agent_seat(client, room)
     root = post_message(client, room, "alice", {"content": "登录要不要加验证码？"})
@@ -187,7 +187,7 @@ def test_adding_and_removing_the_at_changes_who_it_is_for(client, stub_hooks):
 def test_a_reply_to_the_teammate_is_for_the_teammate(client, stub_hooks):
     project, _, room = _channel(client)
     thread = in_thread(client, room, "alice")
-    # The teammate says something in the 支线 with its own turn's credential.
+    # The teammate says something in the 讨论串 with its own turn's credential.
     token = mint_scoped_token(project_id=project, topic_id=thread)
     said = client.post(
         f"/topics/{thread}/messages",
@@ -223,7 +223,7 @@ def test_a_thread_with_a_teammate_hands_it_every_message_but_one_to_people(
     from_bob = _for_whom(client, thread, who="bob", content="我补充一个出处")
     to_bob = _for_whom(client, thread, content="<@bob> 你看下这个出处")
 
-    # Before anyone called a teammate into it, the 支线 is among people.
+    # Before anyone called a teammate into it, the 讨论串 is among people.
     assert before["agent"] is None
     assert plain["agent"]["handle"] == seat
     assert plain["reason"] == "thread"

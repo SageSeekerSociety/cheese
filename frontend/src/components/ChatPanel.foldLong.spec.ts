@@ -1,4 +1,4 @@
-// 人在支线和任务里贴一段需求、报错或长文，一条就占满一栏，上下翻前后的对话很难
+// 人在讨论串和任务里贴一段需求、报错或长文，一条就占满一栏，上下翻前后的对话很难
 // （反馈 FB-85）。那里人发的长消息和队友的长回复一样收起，给「展开 / 收起」；频道
 // 主线上人发的消息照旧整条摊开。
 import type { Component } from 'vue'
@@ -114,7 +114,7 @@ beforeAll(loadMarkdownReader)
 describe('自己发的长消息', () => {
   it.each([
     ['任务里的对话', { conversationId: 'task-1' }],
-    ['支线', { conversationId: 'th1', inThread: true }],
+    ['讨论串', { conversationId: 'th1', inThread: true }],
   ])('%s里收起来，「展开」打开、「收起」收回', async (_where, place) => {
     history = [humanMsg('h1', LONG)]
     const { container } = render(Panel, {

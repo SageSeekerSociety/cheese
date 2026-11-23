@@ -3,7 +3,7 @@
 The rules, as a person would state them:
 
 - When a version is handed in for review, the conversation the task came
-  from (the channel's main line, or the 支线 it came from) records it, with
+  from (the channel's main line, or the 讨论串 it came from) records it, with
   the card it filed and which version. The record never says how the review
   stands; it records that the version went in.
 - When a version is returned, the same conversation records who returned it.

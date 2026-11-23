@@ -127,7 +127,7 @@ def test_a_reply_in_a_thread_says_who_replied_where():
             "payload": {**ROOM, "authorName": "Bob", "content": "方案一"},
         }
     )
-    assert letter.subject == "Bob 在「登录页改版」的支线里回复了"
+    assert letter.subject == "Bob 在「登录页改版」的讨论串里回复了"
     assert "方案一" in render_html(letter)
 
 

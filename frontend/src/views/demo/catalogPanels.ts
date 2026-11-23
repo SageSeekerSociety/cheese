@@ -602,10 +602,10 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
   {
     id: 'panel-threads',
     title: 'PanelThreads',
-    about: '频道概览里「支线」那一格：有人回过话的支线，最近有回复的在前，转成任务的写那件任务。',
+    about: '频道概览里「讨论串」那一格：有人回过话的讨论串，最近有回复的在前，转成任务的写那件任务。',
     file: 'src/components/panels/PanelThreads.vue',
     component: PanelThreads,
-    // 顶上那颗「新建支线」（清单第 4 条）是 Vuetify 的按钮，得把 vuetify 装进来。
+    // 顶上那颗「新建讨论串」（清单第 4 条）是 Vuetify 的按钮，得把 vuetify 装进来。
     needs: UI,
     args: {
       rows: THREAD_ROWS,
@@ -619,13 +619,13 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
     },
     states: [
       {
-        name: '两条支线',
+        name: '两条讨论串',
         note: '每一行写挂着的那条消息、最后一句回复和谁说过话；有新回复的亮一个点；出了任务的那一条在回复的位置改写它出的任务和各自的状态。',
         props: {},
         expect: '任务「整理第一周的课件」',
       },
       {
-        name: '读支线的时候',
+        name: '读讨论串的时候',
         note: '手上还一行都没有：骨架，不是转圈。',
         props: { rows: [], loading: true },
         expect: '加载中',
@@ -638,19 +638,19 @@ export const PANEL_ENTRIES: CatalogEntry[] = [
         expect: '加载失败，稍后重试',
       },
       {
-        name: '还没有支线',
-        note: '这个频道里还没有人回过话：空态给一个「新建支线」。',
+        name: '还没有讨论串',
+        note: '这个频道里还没有人回过话：空态给一个「新建讨论串」。',
         props: { rows: [] },
-        expect: '暂无支线',
+        expect: '暂无讨论串',
       },
       {
-        name: '外部协作者看支线',
-        note: '开不了支线的人没有顶上那一颗，空态也不给动作。',
+        name: '外部协作者看讨论串',
+        note: '开不了讨论串的人没有顶上那一颗，空态也不给动作。',
         props: { rows: [], canCreate: false },
-        expect: '暂无支线',
+        expect: '暂无讨论串',
       },
       {
-        name: '有已回收的支线',
+        name: '有已回收的讨论串',
         note: '报错满三天、没人回来的那条收在下面「已回收」一栏里，平时收着；点开能读、能恢复。',
         props: { rows: THREAD_ROWS, recycled: [RECYCLED_THREAD_ROW] },
         expect: '已回收 · 1',
