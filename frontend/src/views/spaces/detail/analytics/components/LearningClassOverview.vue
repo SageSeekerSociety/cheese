@@ -191,8 +191,12 @@ const taskLabel = (task: LearningClassTaskCompletion) =>
   background: var(--warn);
 }
 
+/* 已提交用蓝（--chart-1）。原来取的 --chart-2 是青，和相邻的已通过（--ok 的绿）明度
+   太近：12px 的条上两段几乎连成一片，底下图例的两个色块也难分。「已提交」没有空着的
+   状态色可用（--warn 归进行中、--ok 归已通过），这条完成条一直从图表色族取色，这里
+   换成同族里与绿拉得开的蓝，深浅两套主题各有一档现成的值（style.css 的 --chart-1）。 */
 .lc-bar__part--submitted {
-  background: var(--chart-2);
+  background: var(--chart-1);
 }
 
 .lc-bar__part--passed {
