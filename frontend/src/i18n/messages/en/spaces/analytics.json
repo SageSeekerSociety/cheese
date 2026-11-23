@@ -413,6 +413,8 @@
         "shaky": "Shaky",
         "weak": "Weak"
       },
+      "fewTitle": "Not enough people yet",
+      "weakHint": "Open one to see who is stuck where",
       "weakTitle": "The weakest knowledge points",
       "weakEmpty": "No knowledge point stands out as weak right now.",
       "weakStuck": "{stuck} / {involved} stuck",

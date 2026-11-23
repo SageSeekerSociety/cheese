@@ -100,7 +100,24 @@ describe('总览·成员学得怎么样', () => {
     })
     expect(view.queryByTestId('overview-learning-bar')).toBeNull()
     expect(view.queryByTestId('overview-learning-open')).toBeNull()
+    expect(view.queryByTestId('overview-learning-sub')).toBeNull()
+    expect(view.getByTestId('overview-learning-few').textContent).toContain('人数还不够')
     expect(view.getByTestId('overview-learning').textContent).toContain('每个知识点至少 3 人')
+  })
+
+  it('四格小方块：4 人里 3 人卡住就亮 3 格，人多时最多 8 格按比例亮', () => {
+    const view = mount(LEARNING)
+    const rows = view.getAllByRole('listitem')
+    expect(rows[1]!.querySelectorAll('.learning-now__pips i')).toHaveLength(4)
+    expect(rows[1]!.querySelectorAll('.learning-now__pips i.on')).toHaveLength(3)
+    cleanup()
+    const many = mount({
+      ...LEARNING,
+      focus: [{ knowledgePointId: 9, name: '大班', stuck: 15, involved: 30 }],
+    })
+    const pips = many.getAllByRole('listitem')[0]!
+    expect(pips.querySelectorAll('.learning-now__pips i')).toHaveLength(8)
+    expect(pips.querySelectorAll('.learning-now__pips i.on')).toHaveLength(4)
   })
 
   it('没开学情分析（读不到判断）时只画空状态', () => {

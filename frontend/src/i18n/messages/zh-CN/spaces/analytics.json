@@ -413,7 +413,9 @@
         "shaky": "不稳",
         "weak": "薄弱"
       },
-      "weakTitle": "最薄弱的几个知识点",
+      "fewTitle": "人数还不够，先不出数",
+      "weakHint": "点开看是谁卡在哪",
+      "weakTitle": "最薄弱的知识点",
       "weakEmpty": "目前没有明显薄弱的知识点。",
       "weakStuck": "{stuck} / {involved} 人卡住",
       "open": "看完整的学情分析"

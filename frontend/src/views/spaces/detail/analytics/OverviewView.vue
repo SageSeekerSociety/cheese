@@ -35,9 +35,10 @@
             </p>
           </div>
           <BaseButton
-            v-if="learning?.enabled && (learning.mastery?.reported ?? 0) > 0"
+            v-if="showOpen"
             kind="secondary"
             size="sm"
+            append-icon="mdi-chevron-right"
             data-testid="overview-learning-open"
             @click="emit('openLearning')"
           >
@@ -45,7 +46,7 @@
           </BaseButton>
         </div>
         <v-progress-linear v-if="learningLoading" indeterminate color="primary" />
-        <template v-else-if="learning && mastery">
+        <template v-else-if="learning && mastery && mastery.reported > 0">
           <div
             v-if="mastery.judged > 0"
             class="learning-now__bar"
@@ -66,44 +67,63 @@
               :key="item.key"
               :class="['learning-now__level', `learning-now__level--${item.key}`]"
             >
-              <dt>{{ item.label }}</dt>
+              <dt>
+                <span class="learning-now__dot" aria-hidden="true" />
+                {{ item.label }}
+              </dt>
               <dd>
                 <strong>{{ item.value }}</strong>
                 <span>{{ item.description }}</span>
               </dd>
             </div>
           </dl>
-          <h4 class="learning-now__weak-title">{{ t('spaces.analytics.overview.learning.weakTitle') }}</h4>
+          <hr class="learning-now__rule" />
+          <div class="learning-now__sec">
+            <h4>{{ t('spaces.analytics.overview.learning.weakTitle') }}</h4>
+            <span v-if="learning.focus.length">{{ t('spaces.analytics.overview.learning.weakHint') }}</span>
+          </div>
           <p v-if="!learning.focus.length" class="an-note">
-            {{
-              mastery.reported === 0
-                ? t('spaces.analytics.overview.learning.tooFew', { n: learning.minPeople })
-                : t('spaces.analytics.overview.learning.weakEmpty')
-            }}
+            {{ t('spaces.analytics.overview.learning.weakEmpty') }}
           </p>
           <ul v-else class="learning-now__points">
-            <li v-for="point in learning.focus" :key="point.knowledgePointId">
+            <li v-for="(point, index) in learning.focus" :key="point.knowledgePointId">
               <button
                 type="button"
                 class="learning-now__point"
                 @click="emit('openLearningPoint', point.knowledgePointId)"
               >
+                <span class="learning-now__rank">{{ index + 1 }}</span>
                 <span class="learning-now__name">{{ point.name }}</span>
                 <span class="learning-now__stuck">
-                  {{
-                    t('spaces.analytics.overview.learning.weakStuck', {
-                      stuck: point.stuck,
-                      involved: point.involved,
-                    })
-                  }}
+                  <span class="learning-now__pips" aria-hidden="true">
+                    <i v-for="(on, k) in stuckPips(point)" :key="k" :class="{ on }" />
+                  </span>
+                  <span>
+                    {{
+                      t('spaces.analytics.overview.learning.weakStuck', {
+                        stuck: point.stuck,
+                        involved: point.involved,
+                      })
+                    }}
+                  </span>
+                  <v-icon size="16" class="learning-now__chev">mdi-chevron-right</v-icon>
                 </span>
               </button>
             </li>
           </ul>
         </template>
+        <div
+          v-else-if="learning?.enabled && !learningLoading"
+          class="learning-now__empty"
+          data-testid="overview-learning-few"
+        >
+          <b>{{ t('spaces.analytics.overview.learning.fewTitle') }}</b>
+          <p>{{ t('spaces.analytics.overview.learning.tooFew', { n: learning.minPeople }) }}</p>
+        </div>
         <BaseEmptyState
-          v-else
+          v-else-if="!learning?.enabled"
           size="inline"
+          align="center"
           :title="t('spaces.analytics.overview.learning.offTitle')"
           :desc="t('spaces.analytics.overview.learning.offDesc')"
         />
@@ -230,13 +250,22 @@ const masteryCards = computed(() => {
 /** 标题下一行小字：按几个成员、几个知识点、多少条判断画的。 */
 const masterySubline = computed(() => {
   const m = mastery.value
-  if (!m) return ''
+  if (!m || m.reported <= 0) return ''
   return t('spaces.analytics.overview.learning.subline', {
     people: m.peopleJudged,
     points: m.reported,
     judged: m.judged,
   })
 })
+
+const showOpen = computed(() => !!props.learning?.enabled && (props.learning.mastery?.reported ?? 0) > 0)
+
+/** 一行的四格小方块：每个人一格，卡住的亮红；人多时最多画 8 格，按比例亮。 */
+function stuckPips(point: { stuck: number; involved: number }): boolean[] {
+  const n = Math.min(Math.max(point.involved, 0), 8)
+  const on = point.involved > 8 ? Math.round((point.stuck / point.involved) * n) : point.stuck
+  return Array.from({ length: n }, (_, k) => k < on)
+}
 
 /** 比例条给读屏用的一句：三档各多少人。 */
 const masteryBarLabel = computed(() =>
@@ -302,7 +331,7 @@ const completionDistribution = computed(() =>
 .learning-now {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 .learning-now__head {
@@ -310,6 +339,11 @@ const completionDistribution = computed(() =>
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
+  margin-bottom: 2px;
+}
+
+.learning-now__heading {
+  min-width: 0;
 }
 
 .learning-now__title {
@@ -319,21 +353,23 @@ const completionDistribution = computed(() =>
 .learning-now__sub {
   margin: 2px 0 0;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
   line-height: var(--lh-13);
+  font-variant-numeric: tabular-nums;
 }
 
 .learning-now__bar {
   display: flex;
   gap: 2px;
-  height: 10px;
+  height: 12px;
   overflow: hidden;
-  border-radius: var(--radius-md);
+  border-radius: var(--radius-pill);
+  background: var(--fill-2);
 }
 
 .learning-now__seg {
   flex-basis: 0;
-  min-width: 0;
+  min-width: 4px;
 }
 
 .learning-now__seg--mastered {
@@ -351,19 +387,49 @@ const completionDistribution = computed(() =>
 .learning-now__levels {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 12px;
   margin: 0;
 }
 
+.learning-now__level {
+  min-width: 0;
+  padding: 0 12px 0 0;
+}
+
+.learning-now__level + .learning-now__level {
+  padding-left: 12px;
+  border-left: 1px solid var(--line);
+}
+
 .learning-now__level dt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   color: var(--muted);
   font-size: 12px;
-  line-height: var(--lh-13);
+  line-height: var(--lh-12);
+}
+
+.learning-now__dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.learning-now__level--mastered .learning-now__dot {
+  background: var(--ok);
+}
+
+.learning-now__level--shaky .learning-now__dot {
+  background: var(--warn);
+}
+
+.learning-now__level--weak .learning-now__dot {
+  background: var(--danger);
 }
 
 .learning-now__level dd {
   display: flex;
-  flex-wrap: wrap;
   align-items: baseline;
   gap: 6px;
   margin: 2px 0 0;
@@ -371,33 +437,43 @@ const completionDistribution = computed(() =>
 
 .learning-now__level strong {
   color: var(--ink);
-  font-size: 22px;
-  font-weight: 600;
-  line-height: 1.2;
+  font-size: 23px;
+  font-weight: 650;
+  line-height: var(--lh-23);
+  font-variant-numeric: tabular-nums;
 }
 
 .learning-now__level dd span {
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
 }
 
-.learning-now__level--mastered dt {
-  color: var(--ok-ink);
+.learning-now__rule {
+  height: 1px;
+  margin: 4px 0 0;
+  border: 0;
+  background: var(--line);
 }
 
-.learning-now__level--shaky dt {
-  color: var(--warn-ink);
+.learning-now__sec {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
 }
 
-.learning-now__level--weak dt {
-  color: var(--danger-ink);
-}
-
-.learning-now__weak-title {
+.learning-now__sec h4 {
   margin: 0;
   color: var(--ink);
   font-size: 13px;
   font-weight: 600;
+  line-height: var(--lh-13);
+}
+
+.learning-now__sec span {
+  color: var(--faint);
+  font-size: 12px;
 }
 
 .learning-now__points {
@@ -406,18 +482,19 @@ const completionDistribution = computed(() =>
   list-style: none;
 }
 
-.learning-now__points li + li {
+.learning-now__points li + li .learning-now__point {
   border-top: 1px solid var(--line);
 }
 
 .learning-now__point {
-  display: flex;
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   width: 100%;
-  padding: 10px 0;
+  padding: 10px 6px;
   border: 0;
+  border-radius: var(--radius-md);
   background: none;
   color: var(--text);
   font: inherit;
@@ -425,9 +502,20 @@ const completionDistribution = computed(() =>
   cursor: pointer;
 }
 
+.learning-now__point:hover {
+  background: var(--fill);
+}
+
 .learning-now__point:focus-visible {
   outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
+  outline-offset: -2px;
+}
+
+.learning-now__rank {
+  color: var(--faint);
+  font-size: 12px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 .learning-now__name {
@@ -436,20 +524,87 @@ const completionDistribution = computed(() =>
 }
 
 .learning-now__stuck {
-  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   color: var(--danger-ink);
   font-size: 13px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.learning-now__pips {
+  display: inline-flex;
+  gap: 3px;
+}
+
+.learning-now__pips i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--fill-2);
+}
+
+.learning-now__pips i.on {
+  background: var(--danger);
+}
+
+.learning-now__chev {
+  color: var(--faint);
+}
+
+.learning-now__empty {
+  padding: 20px 8px;
+  text-align: center;
+}
+
+.learning-now__empty b {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--ink);
+  font-size: 14px;
+}
+
+.learning-now__empty p {
+  max-width: 420px;
+  margin: 0 auto;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
 }
 
 @media (max-width: 600px) {
-  .learning-now__head {
-    flex-direction: column;
+  .learning-now__levels {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  .learning-now__level,
+  .learning-now__level + .learning-now__level {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    padding: 0;
+    border: 0;
+  }
+
+  .learning-now__level dd {
+    margin: 0;
+  }
+
+  .learning-now__level strong {
+    font-size: 18px;
+    line-height: 26px;
   }
 
   .learning-now__point {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 2px;
+    grid-template-columns: 20px minmax(0, 1fr);
+  }
+
+  .learning-now__stuck {
+    grid-column: 2;
+    justify-content: space-between;
+    margin-top: -2px;
   }
 }
 </style>
