@@ -83,7 +83,7 @@ export function useConversationFiles(topicId: Ref<string | null>) {
       const [sent, area, shown, docs] = await Promise.all([
         listRoomAttachments(id),
         listRoomFiles(id),
-        listRoomOutputs(id),
+        listRoomOutputs(id, { within: true }),
         listRoomDocuments(id),
       ])
       truncated.value = area.truncated

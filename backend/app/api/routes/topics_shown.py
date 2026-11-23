@@ -377,16 +377,19 @@ async def list_shown(
     topic_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
+    within: bool = False,
 ) -> dict:
     """这个房间里摆出来过的东西 (#1085 结论四)。
 
     一个房间常有好几样值得看的东西，而「当前预览」只说得出最后那一样 —— 这里是全
-    部，新的在前。它们仍然只属于这个房间；要成为项目的产物得有人按一下。问的是频道
-    或私聊时，它的任务和支线里摆出来的也算（「文件」那一格列的是整个频道的）；问的是
-    一件任务或一条支线时，只有它自己的。"""
+    部，新的在前。它们仍然只属于这个房间；要成为项目的产物得有人按一下。
+
+    默认只列这段对话自己摆出来的：一件任务的预览是它自己的，不是频道的。``within`` 为真、
+    问的又是频道或私聊时，连同它的任务和讨论串里摆出来的一起列（「文件」那一格列的是整个
+    频道文件区里的东西）。"""
     place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
-    if place.task is None and place.thread is None:
+    if within and place.task is None and place.thread is None:
         shown = await in_room.shown(db, place.room_id)
     else:
         shown = await BlockRepository(db).shown_in_room(place.conversation_id)

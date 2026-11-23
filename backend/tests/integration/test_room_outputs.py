@@ -211,9 +211,9 @@ def test_saving_from_a_thread_is_said_in_that_thread_and_waits_on_nobody(client)
     assert notices(room_id) == []
 
 
-def test_a_channel_lists_what_its_tasks_showed_and_a_task_only_its_own(client):
-    """频道的「文件」那一格列的是整个频道的：任务交出来的东西也在频道的文件区里。问一件任务
-    时只有它自己摆出来的。"""
+def test_a_channel_asked_for_everything_within_lists_what_its_tasks_showed(client):
+    """频道的「文件」那一格列的是整个频道的：点名要「连同里面的」时，任务交出来的东西也列。
+    不点名时只有频道自己的；问一件任务时总是只有它自己摆出来的。"""
     from tests.integration.conftest import open_task
 
     alice = session_auth_headers("alice")
@@ -228,10 +228,15 @@ def test_a_channel_lists_what_its_tasks_showed_and_a_task_only_its_own(client):
     assert _show(client, project_id, room_id, "channel.html").status_code == 200
     assert _show(client, project_id, task_id, "task.html").status_code == 200
 
-    def listed(place: str) -> list[str]:
-        r = client.get(f"/topics/{place}/shown", headers=alice)
+    def listed(place: str, within: bool = False) -> list[str]:
+        r = client.get(
+            f"/topics/{place}/shown",
+            params={"within": "true"} if within else None,
+            headers=alice,
+        )
         assert r.status_code == 200, r.text
         return [row["path"] for row in r.json()["data"]["data"]]
 
-    assert listed(room_id) == ["task.html", "channel.html"]
-    assert listed(task_id) == ["task.html"]
+    assert listed(room_id, within=True) == ["task.html", "channel.html"]
+    assert listed(room_id) == ["channel.html"]
+    assert listed(task_id, within=True) == ["task.html"]

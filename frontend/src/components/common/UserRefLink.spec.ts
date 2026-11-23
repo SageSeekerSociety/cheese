@@ -59,6 +59,7 @@ vi.mock('@/api', async () => {
     listRoomAttachments: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listRoomDocuments: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listRoomFiles: vi.fn().mockResolvedValue({ data: [], total: 0, truncated: false }),
+    listRoomOutputs: vi.fn().mockResolvedValue({ data: [], total: 0 }),
     listBlocks: (...a: unknown[]) => listBlocks(...a),
     attachmentRawUrl: () => '',
   }
