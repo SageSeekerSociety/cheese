@@ -149,6 +149,16 @@ const emit = defineEmits<{
   font-weight: 600;
   color: var(--ink);
 }
+/* 放不下时先收后面那几样（在等谁、第几版），任务名最后才截。 */
+.delivery-head--embedded .delivery-head__meta {
+  display: flex;
+  flex: 0 1000 auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
 .delivery-head__text,
 .delivery-head__meta {
   display: contents;
