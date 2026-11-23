@@ -22,8 +22,12 @@ const fits = (node: LayoutNode) => !isSplit(node) && node.panels.some((id) => pr
 const bare = computed(() => !!cell.value && hidesTabs(cell.value.panels.map((id) => props.info.get(id) ?? {})))
 const active = computed(() => cell.value && (cell.value.active ?? cell.value.panels[0]))
 
-const hiddenAt = (node: LayoutNode, along: SplitDirection) =>
-  !isSplit(node) && props.sizing(node, along).hidden === true
+/** Out of sight: a hidden cell, or a split whose every cell is hidden (dockview hides it too). */
+function hiddenAt(node: LayoutNode, along: SplitDirection): boolean {
+  if (!isSplit(node)) return props.sizing(node, along).hidden === true
+  const direction = node.direction
+  return node.children.every((child) => hiddenAt(child, direction))
+}
 
 function weight(node: LayoutNode): number {
   return typeof node.size === 'number' && node.size > 0 ? node.size : 1
@@ -44,7 +48,7 @@ const children = computed(() => {
       key: isSplit(child) ? `split-${i}` : child.id ?? `cell-${i}`,
       node: child,
       flex,
-      hidden: own.hidden === true,
+      hidden: hiddenAt(child, s.direction),
       divided: i > 0 && !fits(child) && !fits(s.children[i - 1]) && !hiddenAt(s.children[i - 1], s.direction),
     }
   })

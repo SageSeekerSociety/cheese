@@ -6,5 +6,6 @@
   "notOwner": "只有这台电脑的所有者能打开终端",
   "limit": "最多同时打开 8 个终端",
   "empty": "暂无终端会话",
-  "numbered": "终端 {n}"
+  "numbered": "终端 {n}",
+  "switch": "换一个终端"
 }

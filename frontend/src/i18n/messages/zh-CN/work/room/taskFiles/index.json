@@ -12,5 +12,7 @@
   "openBeside": "在旁边打开",
   "openFiles": "打开的文件",
   "preparing": "正在准备环境",
-  "treeWidth": "文件树宽度"
+  "treeWidth": "文件树宽度",
+  "switchFile": "换一份文件",
+  "up": "上一级"
 }

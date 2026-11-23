@@ -26,7 +26,7 @@ import {
   unplacedPanels,
   withCellIds,
 } from './arrangement'
-import { fromDockview, STRIP_SIZE, toDockview } from './dockviewJson'
+import { cellSizing, fromDockview, STRIP_SIZE, toDockview } from './dockviewJson'
 
 const DECLARED = ['nav', 'chat', 'files', 'preview', 'terminal']
 const OPTIONS = { version: 3, declared: DECLARED, required: ['nav', 'chat'] }
@@ -421,6 +421,32 @@ describe('cells with a width of their own, and hidden cells', () => {
     expect(files.size).toBe(690)
   })
 
+  it('a split whose every cell is hidden is out of sight too, and the cells in sight share its room', () => {
+    const NESTED = withCellIds({
+      root: {
+        direction: 'row',
+        children: [
+          { id: 'chat', panels: ['chat'], size: 1 },
+          {
+            direction: 'column',
+            size: 1,
+            children: [
+              { id: 'a', panels: ['a'] },
+              { id: 'b', panels: ['b'] },
+            ],
+          },
+        ],
+      },
+    })
+    const hiddenColumn = (cell: LayoutCell) => (cell.id === 'a' || cell.id === 'b' ? { hidden: true } : {})
+    const [chat, column] = toDockview({ root: NESTED.root! }, box, panelState, hiddenColumn).layout.grid.root.data as {
+      size: number
+      visible?: boolean
+    }[]
+    expect(chat.size).toBe(1200)
+    expect(column.visible).toBe(false)
+  })
+
   it('reading a layout back while a cell is hidden leaves the weights of the others as they were', () => {
     const ratio = (load: ReturnType<typeof toDockview>) => {
       const cells = cellsOf(fromDockview(load.layout, new Set(), new Map()))
@@ -430,6 +456,48 @@ describe('cells with a width of their own, and hidden cells', () => {
     const shown = toDockview({ root: ROOM.root! }, box, panelState, fixedNav)
     const hidden = toDockview({ root: ROOM.root! }, box, panelState, hiddenFiles)
     expect(ratio(hidden)).toBeCloseTo(ratio(shown), 2)
+  })
+})
+
+describe('a cell with a height of its own', () => {
+  const panelState = (id: string) => ({ id, contentComponent: 'host', title: id })
+  const TERMINAL = { id: 'terminal', height: { initial: 200, min: 100, max: 500 } }
+  const PANELS: Record<string, { id: string; height?: unknown; hidden?: boolean }> = {
+    code: { id: 'code' },
+    preview: { id: 'preview' },
+    terminal: TERMINAL,
+  }
+  const COLUMN = withCellIds({
+    root: {
+      direction: 'column',
+      children: [
+        { id: 'code', panels: ['code'], size: 2 },
+        { id: 'preview', panels: ['preview'], size: 2 },
+        { id: 'terminal', panels: ['terminal'], size: 1 },
+      ],
+    },
+  })
+  const sizing = (cell: LayoutCell, along: 'row' | 'column') =>
+    cellSizing(
+      cell.panels.map((id) => PANELS[id]),
+      along,
+      (id, axis) => (id === 'terminal' && axis === 'height' ? 200 : 0),
+      {}
+    )
+  type Leaf = { size: number; data: { id: string; priority?: string } }
+  const leaves = () =>
+    toDockview({ root: COLUMN.root! }, { width: 600, height: 800 }, panelState, sizing).layout.grid.root.data as Leaf[]
+
+  it('keeps that height in a column, and the cells above share the rest by weight', () => {
+    expect(leaves().map((leaf) => leaf.size)).toEqual([300, 300, 200])
+  })
+
+  it('is the cell that keeps its size when a neighbour comes or goes', () => {
+    expect(leaves().map((leaf) => leaf.data.priority)).toEqual([undefined, undefined, 'low'])
+  })
+
+  it('takes its share by weight when it sits in a row', () => {
+    expect(cellSizing([TERMINAL], 'row', () => 200, {}).fixed).toBeUndefined()
   })
 })
 

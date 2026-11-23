@@ -15,8 +15,9 @@
  * the product tokens.
  *
  * Space is not shared in proportion when the area resizes (`proportional-layout` off): a
- * cell with a width of its own is a low-priority view in dockview's terms and keeps that
- * width, and the other cells absorb the change, as a code editor's side bar does.
+ * cell with a width of its own (or, in a column, a height) is a low-priority view in
+ * dockview's terms and keeps it, and the other cells absorb the change, as a code editor's
+ * side bar and terminal do.
  */
 import 'dockview-vue/dist/styles/dockview.css'
 
@@ -84,6 +85,8 @@ const props = defineProps<{
   maximized: string | null
   /** The width each panel with a width of its own should have now. */
   fixedWidths: Record<string, number>
+  /** The height each panel with a height of its own should have now. */
+  fixedHeights: Record<string, number>
   /** The page's default: double-clicking a divider gives its split these sizes back. */
   defaultArrangement: LayoutArrangement
   /** Show this panel (and open its cell), or fold or open its cell; acted on once per `n`. */
@@ -97,8 +100,8 @@ const emit = defineEmits<{
   shown: [id: string]
   /** The first arrangement is laid out; its hosts follow. */
   ready: []
-  /** The reader dragged the divider of a cell with a width of its own. */
-  resized: [id: string, width: number]
+  /** The reader dragged the divider of a cell with a width (or height) of its own. */
+  resized: [id: string, size: number, axis: 'width' | 'height']
   /** dockview maximized a cell, or let it go (also when something else ended it). */
   maximized: [id: string | null]
   /** The reader picked this panel's tab. */
@@ -259,8 +262,23 @@ const constrained = new Map<string, string>()
 
 /** Groups currently held to their content's height, at that height. */
 const fitted = new Map<string, number>()
-/** Groups with a width of their own, and the width last given to each. */
+/** Groups with a width (or, in a column, a height) of their own, and the size last given to each. */
 const held = new Map<string, number>()
+
+/** The width a group keeps in a row, or the height it keeps in a column, if it keeps one. */
+function heldSize(group: DockviewGroupPanel): { id: string; axis: 'width' | 'height'; size: number } | undefined {
+  const column = parentDirection(model.value, group.id) === 'column'
+  const axis = column ? 'height' : 'width'
+  const fixed = infosOf(group).find((panel) => panel[axis])
+  const size = fixed ? (column ? props.fixedHeights : props.fixedWidths)[fixed.id] : undefined
+  return fixed && size !== undefined ? { id: fixed.id, axis, size } : undefined
+}
+function sizeOf(axis: 'width' | 'height', size: number): { width: number } | { height: number } {
+  return axis === 'width' ? { width: size } : { height: size }
+}
+function sizeAlong(group: DockviewGroupPanel, axis: 'width' | 'height'): number {
+  return axis === 'width' ? group.api.width : group.api.height
+}
 
 function applyPolicies() {
   const dock = api.value
@@ -293,7 +311,9 @@ function applyPolicies() {
       : {
           minimumWidth: min,
           maximumWidth: width?.max ?? UNBOUNDED,
-          minimumHeight: fitHeight ?? 0,
+          // A height of its own has a floor; no ceiling here, so a cell left alone in its
+          // column still fills it.
+          minimumHeight: fitHeight ?? (column ? panels.find((panel) => panel.height)?.height?.min : undefined) ?? 0,
           maximumHeight: fitHeight ?? UNBOUNDED,
         }
     const key = JSON.stringify(constraints)
@@ -314,13 +334,12 @@ function applyPolicies() {
       held.delete(id)
       reshaped = true
     }
-    // A width of its own changed elsewhere (another place showing the same panel): follow
-    // it, once per new value, never in the middle of a drag.
-    const fixed = panels.find((panel) => panel.width)
-    const wanted = fixed && !column ? props.fixedWidths[fixed.id] : undefined
-    if (wanted !== undefined && !dragging && group.api.isVisible && held.get(id) !== wanted) {
-      held.set(id, wanted)
-      if (Math.abs(group.api.width - wanted) > 1) group.api.setSize({ width: wanted })
+    // A width (or height) of its own changed elsewhere (another place showing the same
+    // panel): follow it, once per new value, never in the middle of a drag.
+    const wanted = heldSize(group)
+    if (wanted && !dragging && group.api.isVisible && held.get(id) !== wanted.size) {
+      held.set(id, wanted.size)
+      if (Math.abs(sizeAlong(group, wanted.axis) - wanted.size) > 1) group.api.setSize(sizeOf(wanted.axis, wanted.size))
     }
     if (folded && !stripped.has(id)) {
       stripped.add(id)
@@ -340,10 +359,9 @@ function applyPolicies() {
 
 function restoreHeldWidths(dock: DockviewApi) {
   for (const group of dock.groups) {
-    const fixed = infosOf(group).find((panel) => panel.width)
-    if (!fixed || !group.api.isVisible || parentDirection(model.value, group.id) === 'column') continue
-    const wanted = props.fixedWidths[fixed.id]
-    if (wanted !== undefined && Math.abs(group.api.width - wanted) > 1) group.api.setSize({ width: wanted })
+    const wanted = heldSize(group)
+    if (!wanted || !group.api.isVisible) continue
+    if (Math.abs(sizeAlong(group, wanted.axis) - wanted.size) > 1) group.api.setSize(sizeOf(wanted.axis, wanted.size))
   }
 }
 
@@ -635,10 +653,8 @@ function endDrag() {
   const dock = api.value
   if (!dock) return
   for (const group of dock.groups) {
-    const fixed = infosOf(group).find((panel) => panel.width)
-    if (fixed && group.api.isVisible && parentDirection(model.value, group.id) !== 'column') {
-      emit('resized', fixed.id, Math.round(group.api.width))
-    }
+    const fixed = heldSize(group)
+    if (fixed && group.api.isVisible) emit('resized', fixed.id, Math.round(sizeAlong(group, fixed.axis)), fixed.axis)
   }
 }
 
@@ -667,8 +683,8 @@ function onDoubleClick(event: MouseEvent) {
     children.map((child) => child.panels)
   )
   if (!weights) return
-  const fixedOf = (panels: string[]) =>
-    horizontal && panels.length ? panels.map((id) => info.value.get(id)?.width).find((width) => width) : undefined
+  const axis = horizontal ? 'width' : 'height'
+  const fixedOf = (panels: string[]) => panels.map((id) => info.value.get(id)?.[axis]).find((extent) => extent)
   const fixed = children.map((child) => {
     const width = child.groups.length === 1 ? fixedOf(child.panels) : undefined
     return width ? clampWidth(width, width.initial) : undefined
@@ -683,7 +699,7 @@ function onDoubleClick(event: MouseEvent) {
   })
   children.forEach((child) => {
     const own = fixedOf(child.panels)
-    if (own) emit('resized', child.panels.find((id) => info.value.get(id)?.width)!, clampWidth(own, own.initial))
+    if (own) emit('resized', child.panels.find((id) => info.value.get(id)?.[axis])!, clampWidth(own, own.initial), axis)
   })
 }
 

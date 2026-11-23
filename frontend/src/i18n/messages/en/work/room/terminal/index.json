@@ -6,5 +6,6 @@
   "notOwner": "Only this computer's owner can open a terminal",
   "limit": "At most 8 terminals can be open at once",
   "empty": "No terminal sessions",
-  "numbered": "Terminal {n}"
+  "numbered": "Terminal {n}",
+  "switch": "Switch terminal"
 }

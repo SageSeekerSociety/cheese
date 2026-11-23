@@ -23,6 +23,9 @@
 // 和对话并排；这里只把每一格的内容传送到布局区给的落点（`WorkPane`），并把每一格的名字、
 // 图标、信号交给页面（`tabMeta`）。频道页上（`layout.single`）没有页签条：一次显示一格，每一格
 // 带自己的标题栏，这里往标题栏里放「返回」和名字（`WorkPaneHead`），新打开的一份文件换掉上一份。
+// 任务页「对话」那一种摆法里（`layout.blocks`）也没有页签条：每一格是一块，带自己的标题栏，几块能
+// 同时开着；「文件」那一块一次一份文件（标题栏上的路径换文件），终端那一块一次一个终端，从对话里
+// 打开的一份产出换掉上一份。
 // 手机上、平板的浮层里、频道里打开的一件任务里，这一栏自己画页签条，一次一格。
 //
 // 页签分两段。固定区（概览 / 现场 / 改动 / 预览 / 例行事务）不能关，位置记忆来自这里。自由区是
@@ -60,6 +63,7 @@ import { whenIdle } from '../lib/idle'
 import { tabFile } from '../lib/viewingContext'
 import { withViewTransition } from '../lib/viewTransition'
 
+import BaseButton from './base/BaseButton.vue'
 import ErrorBoundary from './common/ErrorBoundary.vue'
 import DocumentActions from './library/DocumentActions.vue'
 // 这一屏有哪几格（共用表 + 只有产品有的那几格，按频道 / 任务 / 打开的任务挑）。
@@ -74,9 +78,10 @@ import DeliveryReviewHead from './work/DeliveryReviewHead.vue'
 import PanelChangesHost from './work/PanelChangesHost.vue'
 import PanelPreviewHost from './work/PanelPreviewHost.vue'
 import PanelSiteHost from './work/PanelSiteHost.vue'
+import TaskFilePicker from './work/TaskFilePicker.vue'
 import TaskFilesHost from './work/TaskFilesHost.vue'
 import TerminalHost from './work/TerminalHost.vue'
-import { NAVIGATOR, workPaneId } from './work/workLayout'
+import { NAVIGATOR, TERMINAL_BLOCK, workPaneId } from './work/workLayout'
 import WorkPane from './work/WorkPane.vue'
 import WorkPaneHead from './work/WorkPaneHead.vue'
 import ProjectFileTab from './ProjectFileTab.vue'
@@ -264,6 +269,8 @@ const emit = defineEmits<{
   (e: 'close-delivery', taskId: string): void
   // 主线上要的那次「退回」已经在这一栏开出来了。
   (e: 'return-asked'): void
+  // 「对话」那一种摆法里一块标题栏上的「在编辑器里打开」：页面换到编辑器，`key` 是要翻到的那一格。
+  (e: 'open-editor', key?: string): void
 }>()
 
 // 主线上按了「退回」：卡读回来、还在等人审阅时，打开写退回理由的那一块。按一次开一次。
@@ -324,6 +331,8 @@ const deliveryOrigin = ref<string | null>(null)
 
 // 频道页上一次显示一格、每一格带自己的标题栏（`WorkLayout.single`）。
 const single = computed(() => !!props.layout?.single)
+// 任务页「对话」那一种摆法：一样一块，几块能同时开着（`WorkLayout.blocks`）。
+const blocks = computed(() => !!props.layout?.blocks)
 
 const active = ref<string>(defaultTab.value)
 /** The URL's answer, if it names a tab that exists (or one that used to). */
@@ -422,6 +431,8 @@ watch(
     const asked = tabFromUrl() ?? (props.withChat ? defaultTab.value : null)
     ensureFileFromUrl(asked)
     if (asked && asked !== active.value) active.value = asked
+    // 地址又点名了此刻在看的那一格（关掉它那一块之后再点「查看改动」）：它那一块再打开。
+    else if (asked && blocks.value) props.layout?.show(asked)
   }
 )
 
@@ -697,12 +708,14 @@ const tabPanelId = `wp-panel-${useId()}`
 const tabBodyRef = ref<HTMLElement | null>(null)
 const keyExists = (key: string) =>
   tabs.value.some((tab) => tab.key === key) ||
+  (key === TERMINAL_BLOCK && blocks.value && offersTerminals.value) ||
   (key.startsWith(TERMINAL_KEY) && terminals.ids.value.includes(key.slice(TERMINAL_KEY.length))) ||
   (isDelivery(key) && props.deliveries.some((d) => deliveryKey(d.id) === key)) ||
   openFiles.value.some((f) => fileKey(f.path) === key)
 const activeTabLabel = computed(() => {
   if (isDelivery(active.value)) return props.deliveries.find((d) => deliveryKey(d.id) === active.value)?.title
   if (active.value.startsWith(TERMINAL_KEY)) return terminalTitle(active.value.slice(TERMINAL_KEY.length))
+  if (active.value === TERMINAL_BLOCK) return TERMINAL_TAB.label
   return active.value.startsWith('file:')
     ? active.value.slice('file:'.length).split('/').pop()
     : panelTabs.value.find((tab) => tab.key === active.value)?.label
@@ -819,6 +832,37 @@ function terminalTitle(id: string): string {
   const n = name?.number ?? 1
   return n > 1 ? t('work.room.terminal.numbered', { n }) : TERMINAL_TAB.label
 }
+// 「对话」那一种摆法里终端是一块，一次显示一个：读者在它标题栏上挑的那一个，没挑过是最后开的
+// 那一个。编辑器里翻到哪一个，这里也跟着是哪一个。
+const chosenTerminal = ref<string | null>(null)
+const shownTerminal = computed(() => {
+  const ids = terminals.ids.value
+  return chosenTerminal.value && ids.includes(chosenTerminal.value) ? chosenTerminal.value : ids[ids.length - 1] ?? null
+})
+watch(active, (key) => {
+  if (key.startsWith(TERMINAL_KEY)) chosenTerminal.value = key.slice(TERMINAL_KEY.length)
+})
+/** 一个终端此刻落在哪：「对话」那一种摆法里是终端那一块（只有显示着的那一个），别处是它自己那一格。 */
+function terminalTarget(id: string): HTMLElement | undefined {
+  if (!blocks.value) return target(TERMINAL_KEY + id)
+  return id === shownTerminal.value ? target(TERMINAL_BLOCK) : undefined
+}
+function terminalShown(id: string): boolean {
+  return blocks.value ? id === shownTerminal.value && shown(TERMINAL_BLOCK) : shown(TERMINAL_KEY + id)
+}
+watch(
+  () => (blocks.value && shownTerminal.value && shown(TERMINAL_BLOCK) ? shownTerminal.value : null),
+  (id) => id && show(TERMINAL_KEY + id),
+  { immediate: true }
+)
+/** 打开终端那一块：一个终端都没有时开一个。 */
+function openTerminals() {
+  if (!offersTerminals.value) return
+  if (!terminals.ids.value.length) terminals.add()
+  void setTab(TERMINAL_BLOCK)
+}
+const terminalChoices = computed(() => terminals.ids.value.map((id) => ({ id, title: terminalTitle(id) })))
+
 /** 「+」里选了能开好几格的那一种：新开一格，翻到它。 */
 async function spawnTab(key: string) {
   if (key !== TERMINAL_TAB.key || !offersTerminals.value) return
@@ -848,20 +892,47 @@ function activated(key: string) {
 function closeTab(key: string) {
   if (isDelivery(key)) void closeDelivery(key)
   else if (key.startsWith(TERMINAL_KEY)) closeTerminal(key)
-  else if (key.startsWith(FILE_TAB)) void closeFile(key.slice(FILE_TAB.length))
+  else if (key.startsWith(FILE_TAB)) void closeFile(key.slice(FILE_TAB.length), { back: !blocks.value })
+  else if (blocks.value) leaveBlock(key)
   else if (key === active.value) {
     // 编辑器那一种摆法里中间关掉了一格固定的（概览、改动……）：此刻在看的回到打开的文件。
     active.value = tabs.value.some((tab) => tab.key === 'code') ? 'code' : defaultTab.value
     emit('update:tab', active.value)
   }
 }
-/** 频道页上标题栏里的「返回」：和关掉那一格同一件事，回到打开它的那一格。 */
-function goBack(key: string) {
-  closeTab(key)
+/**
+ * 「对话」那一种摆法里关掉了一块：它是此刻在看的那一样时，换成还开着的另一块（地址跟着走）；
+ * 一块都不剩时不换，页面收起这一侧。
+ */
+function leaveBlock(key: string) {
+  if (key !== active.value) return
+  const visible = props.layout?.visible ?? new Set<string>()
+  const next = [...visible].find((one) => one !== key && keyExists(one))
+  if (!next) return
+  active.value = next
+  emit('update:tab', next)
 }
-/** 频道页上每一格标题栏里面板那一段：名字，从别处打开的那几格前面带「返回」。 */
-const paneHeads = computed<{ key: string; title?: string; back: boolean }[]>(() =>
-  single.value
+/** 标题栏里的「返回」：关掉这一格，回到打开它的那一格。 */
+function goBack(key: string) {
+  if (key.startsWith(FILE_TAB)) void closeFile(key.slice(FILE_TAB.length), { back: true })
+  else closeTab(key)
+}
+/**
+ * 频道页和「对话」那一种摆法里每一格标题栏里面板那一段：名字，从别处打开的那几格前面带「返回」。
+ * 「文件」和终端那两块的标题栏另有自己的样子（模板里），不在这里。
+ */
+const paneHeads = computed<{ key: string; title?: string; back: boolean }[]>(() => {
+  if (blocks.value) {
+    return [
+      ...fixedMeta.value
+        .filter((meta) => meta.key !== 'code')
+        .map((meta) => ({ key: meta.key, title: meta.title, back: false })),
+      ...fileMeta.value
+        .filter((meta) => !meta.beside)
+        .map((meta) => ({ key: meta.key, title: meta.title, back: !!fileOrigin.value && keyExists(fileOrigin.value) })),
+    ]
+  }
+  return single.value
     ? [
         ...fixedMeta.value.map((meta) => ({ key: meta.key, title: meta.title, back: false })),
         // 打开的任务：名字那一段由它自己的页头填（`headTarget`）。
@@ -869,7 +940,11 @@ const paneHeads = computed<{ key: string; title?: string; back: boolean }[]>(() 
         ...fileMeta.value.map((meta) => ({ key: meta.key, title: meta.title, back: true })),
       ]
     : []
-)
+})
+/** 「文件」那一块标题栏上换了一份文件。 */
+function pickFile(path: string) {
+  void taskFiles.open(path)
+}
 /** 各格标题栏里名字那一段的落点（打开的任务把它的页头放进去）。 */
 const headOutlets = reactive<Record<string, HTMLElement | null>>({})
 function headOutlet(key: string, element: HTMLElement | null) {
@@ -1046,15 +1121,17 @@ function placeFile(
     ...(skill ? { skill } : {}),
   }
   const temp = next.findIndex((f) => !f.pinned)
-  if (single.value) {
-    // 一次只显示一格：新开的这一份换掉开着的那几份，不在看不见的地方攒着。
-    const gone = next.map((f) => fileKey(f.path))
+  if (single.value || blocks.value) {
+    // 一次只显示一份：新开的这一份换掉开着的那几份，不在看不见的地方攒着。编辑器里单开在旁边
+    // 的工作文件不在此列（它们只在编辑器里有）。
+    const stays = (f: OpenFileTab) => blocks.value && f.path.startsWith(WORK_TAB) && !path.startsWith(WORK_TAB)
+    const gone = next.filter((f) => !stays(f)).map((f) => fileKey(f.path))
     if (gone.some((key) => mounted.value.has(key))) {
       const kept = new Set(mounted.value)
       for (const key of gone) kept.delete(key)
       mounted.value = kept
     }
-    setFiles([tab])
+    setFiles([...next.filter(stays), tab])
     return
   }
   if (temp >= 0) next.splice(temp, 1, tab)
@@ -1129,19 +1206,23 @@ function pinFile(path: string) {
 //
 // 关掉正看着的那一格＝离开一块正在标注的图，所以先问一句，问完再动手拆。后台那几格
 // （没在看）不会拦：它们本就登记不上（见 `annotationDiscard`）。
-async function closeFile(path: string) {
+//
+// 「对话」那一种摆法里标题栏上的 ✕（`back: false`）只关掉这一块，不回到来处：来处那一块要是还
+// 开着，它本来就在旁边。
+async function closeFile(path: string, opts: { back?: boolean } = {}) {
   const at = openFiles.value.findIndex((f) => f.path === path)
   if (at < 0) return
   const key = fileKey(path)
   const wasActive = active.value === key
   if (wasActive && !(await confirmAnnotationDiscard())) return
+  if (opts.back === false) leaveBlock(key)
   const next = openFiles.value.filter((f) => f.path !== path)
   setFiles(next)
   const nextMounted = new Set(mounted.value)
   nextMounted.delete(key)
   mounted.value = nextMounted
-  if (!wasActive) return
-  const neighbour = next[Math.min(at, next.length - 1)]
+  if (!wasActive || opts.back === false) return
+  const neighbour = blocks.value ? undefined : next[Math.min(at, next.length - 1)]
   if (neighbour) {
     setTab(fileKey(neighbour.path))
     return
@@ -1149,7 +1230,9 @@ async function closeFile(path: string) {
   // 来处可能已经不在了（这件任务还没有分支、换过房间），那就还是落到兜底那一格。频道页上
   // 「返回」也回到在频道里打开的那件任务（从它的对话里点开的文件）。
   const origin = fileOrigin.value
-  const back = single.value ? !!origin && keyExists(origin) : tabs.value.some((t) => t.key === origin)
+  const back = single.value || blocks.value ? !!origin && keyExists(origin) : tabs.value.some((t) => t.key === origin)
+  // 「对话」那一种摆法里没有来处可回：只关掉这一块（回到概览会让开别的几块）。
+  if (blocks.value && !back) return
   setTab(origin && back ? origin : defaultTab.value)
 }
 
@@ -1202,7 +1285,7 @@ defineExpose({
   siteBlock,
   previewShown,
   activeTab: () => active.value,
-  select: (key: string) => void setTab(key),
+  select: (key: string) => (key === TERMINAL_BLOCK ? openTerminals() : void setTab(key)),
   fixedMeta,
   fileMeta,
   terminalMeta,
@@ -1253,6 +1336,50 @@ defineExpose({
         @back="goBack(head.key)"
         @outlet="headOutlet(head.key, $event)"
       />
+      <!-- The conversation form's 文件 and 终端 blocks: what their title bars carry beyond a name. -->
+      <template v-if="blocks">
+        <WorkPaneHead :target="layout?.head('code')">
+          <template #title><TaskFilePicker :files="taskFiles" @pick="pickFile" /></template>
+          <BaseButton kind="ghost" size="sm" class="block-head__action" @click="emit('open-editor', 'code')">
+            {{ t('work.task.form.openInEditor') }}
+          </BaseButton>
+        </WorkPaneHead>
+        <WorkPaneHead v-if="offersTerminals" :target="layout?.head(TERMINAL_BLOCK)" :title="TERMINAL_TAB.label">
+          <template v-if="terminalChoices.length > 1" #after-title>
+            <v-menu location="bottom start">
+              <template #activator="{ props: menuProps }">
+                <button
+                  type="button"
+                  class="block-head__pick"
+                  v-bind="menuProps"
+                  :title="t('work.room.terminal.switch')"
+                  data-terminal-pick
+                >
+                  <span class="block-head__pick-name">{{ shownTerminal ? terminalTitle(shownTerminal) : '' }}</span>
+                  <v-icon size="14" icon="mdi-chevron-down" />
+                </button>
+              </template>
+              <v-list density="compact" :aria-label="t('work.room.terminal.switch')">
+                <v-list-item
+                  v-for="choice in terminalChoices"
+                  :key="choice.id"
+                  :title="choice.title"
+                  :active="choice.id === shownTerminal"
+                  @click="chosenTerminal = choice.id"
+                />
+              </v-list>
+            </v-menu>
+          </template>
+          <BaseButton
+            kind="ghost"
+            size="sm"
+            class="block-head__action"
+            @click="emit('open-editor', shownTerminal ? TERMINAL_KEY + shownTerminal : undefined)"
+          >
+            {{ t('work.task.form.openInEditor') }}
+          </BaseButton>
+        </WorkPaneHead>
+      </template>
       <PanelTabs
         v-if="!layout"
         :tabs="panelTabs"
@@ -1402,7 +1529,8 @@ defineExpose({
               :phone="withChat"
               :agent-name="agentName"
               :files="taskFiles"
-              :tree="editorForm ? null : taskTree"
+              :tree="editorForm || blocks ? null : taskTree"
+              :light="blocks"
               :language="taskLanguage"
               @open-beside="openBeside"
             />
@@ -1471,15 +1599,15 @@ defineExpose({
           <template v-for="id in terminals.ids.value" :key="TERMINAL_KEY + id">
             <WorkPane
               v-if="taskId && mounted.has(TERMINAL_KEY + id)"
-              :target="target(TERMINAL_KEY + id)"
+              :target="terminalTarget(id)"
               :pane-id="workPaneId(TERMINAL_KEY + id)"
-              :shown="shown(TERMINAL_KEY + id)"
+              :shown="terminalShown(id)"
               :pane-class="enterClass(TERMINAL_KEY + id)"
             >
               <TerminalHost
                 :task-id="taskId"
                 :terminal-id="id"
-                :active="shown(TERMINAL_KEY + id)"
+                :active="terminalShown(id)"
                 @named="terminals.named(id, $event)"
               />
             </WorkPane>
@@ -1568,6 +1696,34 @@ defineExpose({
 </template>
 
 <style scoped>
+/* What the conversation form's 文件 and 终端 blocks carry in their title bars after the name. */
+.block-head__pick {
+  display: inline-flex;
+  flex: 0 1 auto;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+.block-head__pick:hover {
+  background: var(--fill-2);
+}
+.block-head__pick-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.block-head__action {
+  color: var(--muted);
+}
 .panel-skill {
   flex: 1;
   min-height: 0;

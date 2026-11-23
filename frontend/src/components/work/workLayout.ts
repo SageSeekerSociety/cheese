@@ -22,10 +22,19 @@ export interface WorkLayout {
    * 时不替读者挑一格打开。
    */
   editor?: boolean
+  /**
+   * 任务页的「对话」那一种摆法：每一样是一块，带自己的标题栏（`head`），几块能同时开着。「文件」那
+   * 一块一次一份文件、没有树和页签；终端是一块（`TERMINAL_BLOCK`），一次显示一个；从对话里打开的
+   * 一份产出一次一份，换掉上一份，标题栏上有「返回」。
+   */
+  blocks?: boolean
 }
 
 /** 编辑器那一种摆法里左边那一栏（文件 / 改动）。 */
 export const NAVIGATOR = 'navigator'
+
+/** 「对话」那一种摆法里的终端那一块：一次显示一个终端。 */
+export const TERMINAL_BLOCK = 'terminals'
 
 /** 工作面板一格内容的元素 id：页头「概览」那颗开关用它说自己管着哪几块。 */
 export function workPaneId(key: string): string {

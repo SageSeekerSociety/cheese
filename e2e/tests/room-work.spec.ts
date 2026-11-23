@@ -189,17 +189,15 @@ test("同名文件按任务打开：在「文件」里改的只存进这一件�
     await page.goto(taskPage(first));
     const changes = page.locator(".panel-changes");
     const files = page.locator(".task-files");
-    // 「改动」只看这一件任务改过的文件，只读；「编辑」把这一份开到「文件」那一格里改。
+    // 「改动」只看这一件任务改过的文件，只读；「编辑」把这一份开到「文件」那一块里改，它的标题栏
+    // 写着这份文件的路径。
     await changes
       .locator('.diff-file[data-path="src/login.txt"]')
       .getByRole("button", { name: "打开", exact: true })
       .click();
     await expect(changes.locator(".changes-bar__path")).toHaveText("src/login.txt");
     await changes.getByRole("button", { name: "编辑", exact: true }).click();
-    await expect(files.locator(".task-files__path")).toHaveAttribute(
-      "title",
-      "src/login.txt",
-    );
+    await expect(page.locator("[data-file-pick]")).toHaveText("src/login.txt");
     await files.locator(".monaco-editor .view-lines").click();
     await page.keyboard.press("ControlOrMeta+A");
     await page.keyboard.type("my edit");
@@ -210,14 +208,16 @@ test("同名文件按任务打开：在「文件」里改的只存进这一件�
     await files.screenshot({
       path: testInfo.outputPath("task-files-dark.png"),
     });
-    // 另一件任务的「文件」里，同一个路径是它自己的那一份。
+    // 另一件任务的「文件」里，同一个路径是它自己的那一份。文件树在编辑器那一种摆法里。
     await page.goto(
       `/projects/${project}/topics/${room}/tasks/${second.id}?tab=code`,
     );
-    await files.getByRole("button", { name: "src", exact: true }).click();
+    await page.getByRole("radio", { name: "编辑器" }).click();
+    const tree = page.locator("#work-pane-navigator");
+    await tree.getByRole("button", { name: "src", exact: true }).click();
     // The tree marks a file the task changed (「已修改」) once the task's work
     // summary has arrived, and that mark is part of the button's name.
-    await files.getByRole("button", { name: /^login\.txt( 已修改)?$/ }).click();
+    await tree.getByRole("button", { name: /^login\.txt( 已修改)?$/ }).click();
     await expect(files.locator(".monaco-editor")).toContainText("second task");
     const saved = await api(
       page,
@@ -287,8 +287,11 @@ test("没有芝士做过的任务，alice 也能在「文件」里改并存下",
       `/projects/${project}/topics/${room}/tasks/${task.id}?tab=code`,
     );
     const files = page.locator(".task-files");
-    await files.getByRole("button", { name: "src", exact: true }).click();
-    await files.getByRole("button", { name: /^login\.txt( 已修改)?$/ }).click();
+    // 「文件」那一块标题栏上的路径：还没打开文件时写着「文件」，点开是任务的根目录。
+    await page.locator("[data-file-pick]").click();
+    const list = page.locator(".file-pick__list");
+    await list.getByText("src", { exact: true }).click();
+    await list.getByText("login.txt", { exact: true }).click();
     await expect(files.locator(".monaco-editor")).toContainText(
       "nobody worked here",
     );

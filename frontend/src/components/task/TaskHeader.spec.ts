@@ -74,6 +74,15 @@ const PICKED = [
   { member_handle: 'carol', agent: false, avatar_id: 9 },
 ]
 
+/** 对话那一种摆法里页头那一组：文件和终端开着，改动改了两个文件。 */
+const CHAT_BLOCKS = [
+  { key: 'overview', label: '概览', icon: 'mdi-file-document-outline', on: false },
+  { key: 'changes', label: '改动', hint: '改动（2 个文件）', icon: 'mdi-source-branch', on: false, count: 2 },
+  { key: 'code', label: '文件', icon: 'mdi-folder-outline', on: true },
+  { key: 'terminals', label: '终端', icon: 'mdi-console', on: true },
+  { key: 'site', label: '现场', icon: 'mdi-hammer-wrench', on: false, more: true },
+]
+
 /** `worksTasks`：此刻看的人的角色有没有「新建任务和审阅」这一项（项目成员默认有，导师没有）。 */
 function mount(over: Partial<RoomTask> = {}, people = PEOPLE, agents = AGENTS, worksTasks = true) {
   const loadMachine = vi.fn(async () => {})
@@ -506,9 +515,29 @@ describe('任务页头', () => {
     }
   })
 
+  it('对话那一种摆法里一样东西一颗，开着的是按下的样子；点开着的关掉，点关着的打开', async () => {
+    const { getByRole, queryByRole, rerender, emitted } = mount()
+    await rerender({ form: 'chat', blocks: CHAT_BLOCKS })
+    expect(getByRole('button', { name: '概览' }).getAttribute('aria-pressed')).toBe('false')
+    expect(getByRole('button', { name: '文件' }).getAttribute('aria-pressed')).toBe('true')
+    expect(getByRole('button', { name: '终端' }).getAttribute('aria-pressed')).toBe('true')
+    expect(getByRole('button', { name: '改动（2 个文件）' }).getAttribute('aria-pressed')).toBe('false')
+    // 现场、预览不直接摆出来，在 ⋯ 里。
+    expect(queryByRole('button', { name: '现场' })).toBeNull()
+    await fireEvent.click(getByRole('button', { name: '文件' }))
+    await fireEvent.click(getByRole('button', { name: '概览' }))
+    await fireEvent.click(getByRole('button', { name: '更多' }))
+    await fireEvent.click(await waitFor(() => getByRole('menuitemcheckbox', { name: '现场' })))
+    expect(emitted('toggle-block')).toEqual([['code'], ['overview'], ['site']])
+  })
+
   it('编辑器里「概览」那颗换成左栏、终端、对话三颗，各自说着那一块在不在，点了就藏起或摆回', async () => {
     const { getByRole, queryByRole, rerender, emitted } = mount()
-    await rerender({ form: 'chat', editorParts: { left: true, terminal: false, conversation: true } })
+    await rerender({
+      form: 'chat',
+      blocks: CHAT_BLOCKS,
+      editorParts: { left: true, terminal: false, conversation: true },
+    })
     expect(queryByRole('button', { name: '左栏' })).toBeNull()
     expect(getByRole('button', { name: '概览' })).not.toBeNull()
 
