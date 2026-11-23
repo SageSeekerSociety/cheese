@@ -2,23 +2,26 @@
 //
 // The shell is the machine's (backend `machine/terminals`), not this tab's: closing the page
 // leaves it running, and the tab opened again shows what it wrote. Opening the tab brings the
-// task's machine up first when nothing holds the task's copy (`prepareTaskMachine`, as the 文件
-// panel's first edit does), then attaches over the terminal socket (`taskTerminalWsUrl`):
+// task's environment up first when nothing holds the task's copy, through the page's one state of
+// it (`useTaskEnvironment`, as the 文件 panel's first edit and a search do), then attaches over the
+// terminal socket (`taskTerminalWsUrl`):
 // BINARY frames are the shell's bytes both ways, TEXT frames are what happened (down:
 // `attached`, `exit`, `refused`; up: `resize`, and `ack` once a chunk of output is on screen,
 // which is what lets the machine send more).
-import { onBeforeUnmount, ref } from 'vue'
+import { onBeforeUnmount, ref, watch } from 'vue'
 import { useEventListener } from '@vueuse/core'
 
-import { getTaskMachineStatus, prepareTaskMachine, taskTerminalWsUrl } from '@/api'
+import { useTaskEnvironment } from './useTaskEnvironment'
+
+import { taskTerminalWsUrl } from '@/api'
 
 /**
  * Where the tab is:
- * - `preparing`: the task's machine is being brought up;
- * - `connecting`: reaching the shell;
+ * - `preparing`: the task's environment is being brought up (or failed to be: `environment` says);
+ * - `connecting`: reaching the shell, which wakes an environment that was frozen;
  * - `open`: attached, typing goes to the shell;
  * - `ended`: the shell exited;
- * - `cold`: the machine that held the shell is gone; using the tab starts a new one;
+ * - `cold`: the environment that held the shell is gone; `start` opens a new one;
  * - `refused`: no shell here, for `reason`;
  * - `failed`: the shell could not be reached.
  */
@@ -38,10 +41,6 @@ export interface TaskTerminalHooks {
   named?: (name: { number?: number; program: string | null }) => void
 }
 
-/** How often the machine's bring-up is asked about (ms). */
-const POLL_MS = 2000
-/** How many answers of "nothing is being brought up" are waited out before it counts as failed. */
-const IDLE_POLLS = 10
 /** How a dropped socket is tried again (ms): a release of the process serving it drops it. */
 const RETRY_MS = [500, 1000, 2000, 4000, 8000]
 const REASONS: ReadonlySet<string> = new Set(['not_owner', 'unsupported', 'outdated', 'limit'])
@@ -49,6 +48,9 @@ const REASONS: ReadonlySet<string> = new Set(['not_owner', 'unsupported', 'outda
 export function useTaskTerminal(taskId: () => string, terminalId: () => string, hooks: TaskTerminalHooks) {
   const state = ref<TaskTerminalState>('connecting')
   const reason = ref<TaskTerminalReason | null>(null)
+  /** When the tab started reaching its shell (ms since the epoch). */
+  const connectingSince = ref<number | null>(null)
+  const environment = useTaskEnvironment(taskId)
   let socket: WebSocket | null = null
   let timer: ReturnType<typeof setTimeout> | null = null
   let retries = 0
@@ -68,43 +70,38 @@ export function useTaskTerminal(taskId: () => string, terminalId: () => string, 
     socket = null
   }
 
-  /** Bring the task's machine up when nothing holds its copy, then attach. */
+  /** Bring the task's environment up when nothing holds its copy, then attach. */
   async function start() {
     if (stopped) return
     clearTimer()
     reason.value = null
-    try {
-      const now = await getTaskMachineStatus(taskId())
-      if (now.machine === 'ready') return connect()
-      state.value = 'preparing'
-      if (now.machine !== 'preparing') await prepareTaskMachine(taskId())
-      watchBringUp(0)
-    } catch {
-      state.value = 'failed'
-    }
+    const now = await environment.check()
+    if (stopped) return
+    if (now === 'ready') return connect()
+    state.value = 'preparing'
+    // One that failed or did not answer is asked for again: opening the tab is asking.
+    if (now !== 'preparing') await environment.bringUp()
   }
 
-  function watchBringUp(idle: number) {
-    timer = setTimeout(async () => {
-      timer = null
-      if (stopped) return
-      try {
-        const now = await getTaskMachineStatus(taskId())
-        if (now.machine === 'ready') return connect()
-        if (now.failed || (now.machine === null && idle + 1 > IDLE_POLLS)) {
-          state.value = 'failed'
-          return
-        }
-        watchBringUp(now.machine === null ? idle + 1 : 0)
-      } catch {
-        watchBringUp(idle)
-      }
-    }, POLL_MS)
+  // The environment came up: the tab waiting for it attaches.
+  watch(
+    () => environment.state.value,
+    (now) => {
+      if (now === 'ready' && state.value === 'preparing') connect()
+    }
+  )
+
+  /** The 「重试」 after the shell could not be reached, or the environment did not come up. */
+  function retry() {
+    retries = 0
+    if (state.value === 'preparing') void environment.retry()
+    else void start()
   }
 
   function connect() {
     if (stopped) return
     drop()
+    if (state.value !== 'open' && state.value !== 'connecting') connectingSince.value = Date.now()
     state.value = state.value === 'open' ? 'open' : 'connecting'
     const { cols, rows } = hooks.size()
     const ws = new WebSocket(taskTerminalWsUrl(taskId(), terminalId(), cols, rows))
@@ -173,22 +170,16 @@ export function useTaskTerminal(taskId: () => string, terminalId: () => string, 
       state.value = 'refused'
       return
     }
-    // No shell could be reached. The machine that held it may be gone since (destroyed or
-    // parked): then the tab waits to be used again, and a new shell starts on the next machine.
-    try {
-      const now = await getTaskMachineStatus(taskId())
-      state.value = now.machine === null ? 'cold' : 'failed'
-    } catch {
-      state.value = 'failed'
-    }
+    // No shell could be reached. The environment that held it may be gone since (destroyed or
+    // parked): it is asked afresh, so the whole page learns it, and the tab offers to open a new
+    // shell, which starts on the next environment.
+    const now = await environment.check(true)
+    if (stopped) return
+    state.value = now === 'absent' ? 'cold' : 'failed'
   }
 
-  /** Keystrokes for the shell; in a tab whose machine is gone, the first one brings it back. */
+  /** Keystrokes for the shell. */
   function type(data: string) {
-    if (state.value === 'cold') {
-      void start()
-      return
-    }
     if (state.value === 'open' && socket?.readyState === WebSocket.OPEN) socket.send(encoder.encode(data))
   }
 
@@ -211,5 +202,5 @@ export function useTaskTerminal(taskId: () => string, terminalId: () => string, 
     drop()
   })
 
-  return { state, reason, start, type, resize }
+  return { state, reason, connectingSince, environment, start, retry, type, resize }
 }

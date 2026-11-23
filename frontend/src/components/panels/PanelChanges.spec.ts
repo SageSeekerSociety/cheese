@@ -361,6 +361,18 @@ describe('这一支的活', () => {
     await waitFor(() => expect(getGitDiff).toHaveBeenCalledWith('p1', 'room-1', 't-1', 'live'))
   })
 
+  it('没有环境拿着这份副本时，来源那一项说的是实际给的已提交版本', async () => {
+    // Asked for the live files; with no environment holding the copy the backend answers the
+    // committed changes off the forge and says so.
+    getGitDiff.mockResolvedValue({ diff: DIFF, source: 'committed' })
+    vi.stubGlobal('visualViewport', Object.assign(new EventTarget(), { width: 1024, height: 768, scale: 1 }))
+    mount()
+    await waitFor(() => expect(sectionOf('src/app.ts')).toBeTruthy())
+    await fireEvent.click(screen.getAllByRole('button', { name: '更多' })[0])
+    expect(await screen.findByRole('menuitemradio', { name: /^已提交版本/, checked: true })).toBeTruthy()
+    expect(screen.getByRole('menuitemradio', { name: /^环境里的实时文件/, checked: false })).toBeTruthy()
+  })
+
   it('列文件失败：那句错挂出来，并给一条换版本的出路', async () => {
     listFiles.mockRejectedValue(new Error('文件服务挂了'))
     mount()

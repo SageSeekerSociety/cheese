@@ -20,9 +20,11 @@ from app.domain.agent.harness import harness_for
 from app.domain.agent.harness.claude_code.remote_execution.runtime import Executor
 from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.repositories import AgentSessionRepository
+from app.domain.environment import services as environment_rows
 from app.domain.room_task.models import Task
 from app.domain.topic.models import Topic
 from tests.delivery import delivery_task
+from tests.integration.conftest import _register, session_auth_headers
 from tests.integration.test_file_panel_safety import _mkproject, _owner
 from tests.machine_work import machine_commits, machine_keeps
 from tests.support.environments import remember_place
@@ -206,11 +208,15 @@ def test_pushed_work_shows_while_no_machine_holds_the_task(client, machines, sea
     assert badge == ["backend/usage/models.py", f"deliveries/{task.id}.txt"]
     assert diff.status_code == 200, diff.text
     assert _diffed(diff.json()["data"]["diff"]) == badge
+    # Asked for live, answered off the forge: each answer says so, and the
+    # page marks what it shows as the committed version.
+    assert diff.json()["data"]["source"] == "committed"
     assert listing.status_code == 200, listing.text
     assert set(badge) <= {f["path"] for f in listing.json()["data"]["data"]}
     assert listing.json()["data"]["source"] == "committed"
     assert read.status_code == 200, read.text
     assert read.json()["data"]["content"] == "POOL = 1\n"
+    assert read.json()["data"]["source"] == "committed"
     assert read.json()["data"]["editable"] is False
     assert asked == []
 
@@ -407,6 +413,29 @@ def test_a_task_reads_its_own_machine_not_the_newest_in_the_channel(client, mach
     assert asked == ["working"]
 
 
+def test_changes_its_machine_answers_are_said_to_be_live(client, machines):
+    home, _ = machines
+    pid, room, task = _channel_with_released_older_task(client)
+    _seat(client, task, device="working")
+    worktree = home / ".cheese/tasks" / str(task.id)
+    worktree.mkdir(parents=True)
+    git = ["git", "-C", str(worktree), "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run(["git", "init", str(worktree)], check=True, capture_output=True)
+    (worktree / "README.md").write_text("start\n")
+    for step in (
+        ["add", "."],
+        ["-c", "commit.gpgsign=false", "commit", "-m", "start"],
+        ["update-ref", "refs/remotes/origin/main", "HEAD"],
+    ):
+        subprocess.run([*git, *step], check=True, capture_output=True)
+    (worktree / "draft.md").write_text("draft\n")
+
+    diff = _live(client, pid, room, task, "diff")
+
+    assert diff.status_code == 200, diff.text
+    assert diff.json()["data"]["source"] == "live"
+
+
 @pytest.mark.parametrize("device", ["failing", "gone"])
 def test_a_failing_machine_is_not_reported_as_released(client, machines, device):
     # The machine's own words name its sockets and paths; the person is told
@@ -417,9 +446,12 @@ def test_a_failing_machine_is_not_reported_as_released(client, machines, device)
     response = _live(client, pid, room, task, "diff")
 
     assert response.status_code == 503, response.text
+    # Said as an environment that did not answer, which the page offers to
+    # ask for again; not as one that is gone.
+    assert response.json()["error"]["name"] == "EnvironmentNotResponding"
     message = response.json()["error"]["message"]
     assert "已释放" not in message
-    assert "已提交版本" in message
+    assert "无法响应" in message
     assert "index.lock" not in message and "sock" not in message
 
 
@@ -521,4 +553,56 @@ def test_a_machine_of_an_earlier_room_generation_is_not_read(client, machines):
 
     assert listing.status_code == 200, listing.text
     assert listing.json()["data"]["source"] == "committed"
+    assert asked == []
+
+
+def _mentor(client, pid, handle: str) -> dict[str, str]:
+    """``handle`` joins the project as a mentor: reads it, edits nothing."""
+    _register(client, handle)
+    invited = client.post(
+        f"/projects/{pid}/invitations",
+        json={"user_handle": handle, "role": "mentor"},
+        headers=session_auth_headers("alice"),
+    )
+    assert invited.status_code == 200, invited.text
+    accepted = client.post(
+        f"/invitations/{invited.json()['data']['id']}/respond",
+        json={"accept": True},
+        headers=session_auth_headers(handle),
+    )
+    assert accepted.status_code == 200, accepted.text
+    return session_auth_headers(handle)
+
+
+def test_a_reader_who_may_not_edit_is_told_a_search_needs_the_environment(
+    client, machines
+):
+    # A search brings the task's environment up only for someone who may edit
+    # its files. A reader who may only look is told plainly that the search
+    # needs it running, and nothing is started for them.
+    _, asked = machines
+    pid, room, task = _channel_with_released_older_task(client)
+    machine_commits(pid, task.id, {"notes.md": "a needle here\n"})
+    _published(client, task)
+    _seat(client, task, device="gone", lost=True)
+    reader = _mentor(client, pid, "teacher")
+
+    response = client.get(
+        f"/projects/{pid}/files/search",
+        params={"q": "needle", "topic": str(room), "task": str(task.id)},
+        headers=reader,
+    )
+
+    assert response.status_code == 404, response.text
+    assert response.json()["error"]["name"] == "SearchNeedsEnvironment"
+    assert response.json()["error"]["retryable"] is False
+
+    async def preparing():
+        async with client.test_factory() as session:
+            environment = await environment_rows.environment_of_conversation(
+                session, task.id
+            )
+            return environment is not None and environment.preparing_until is not None
+
+    assert asyncio.run(preparing()) is False
     assert asked == []

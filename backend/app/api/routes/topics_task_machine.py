@@ -9,8 +9,8 @@ preview's wake is asked for and watched (`topics_preview_app`):
   caller's name, and answers at once.
 - ``GET /topics/{task}/machine/status`` is what the page polls meanwhile.
 
-A save does the same on its own when nothing was asked first
-(`workspace.write_file`).
+A save, and a search, do the same on their own when nothing was asked first
+(`workspace.write_file`, `workspace.search_files`).
 """
 
 import uuid

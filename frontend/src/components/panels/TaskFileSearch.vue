@@ -2,12 +2,14 @@
 // The 搜索 view of the 编辑器 form's left column: one box for the text, and under it
 // the lines of the task's files that hold it, by file. A line opens its file at that
 // line in the centre; a file's row opens it at its first match. It draws what the page's
-// search holds (`composables/useTaskSearch`) and fetches nothing.
+// search holds (`composables/useTaskSearch`) and fetches nothing. A search waiting for the task's
+// environment says so as every surface of the task page does (`TaskEnvironmentNote`).
 import type { FileSearchResult, TaskSearchState } from '../../composables/useTaskSearch'
 
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 
 import FileKindMark from '../common/FileKindMark.vue'
+import TaskEnvironmentNote from '../common/TaskEnvironmentNote.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
@@ -19,12 +21,16 @@ const props = withDefaults(
     result: FileSearchResult | null
     /** What the server said when the search failed. */
     error?: string
+    /** Searching again would answer the same: no 「重试」. */
+    final?: boolean
+    /** The task's environment, while the search waits for it. */
+    environment?: { state: 'preparing' | 'failed' | 'unanswered'; since: number | null; detail: string } | null
     /** The longest text the box takes. */
     maxLength?: number
     /** The person just asked for the search (its view button, the shortcut): the box takes the focus. */
     focus?: boolean
   }>(),
-  { error: '', maxLength: 200, focus: false }
+  { error: '', final: false, environment: null, maxLength: 200, focus: false }
 )
 
 const emit = defineEmits<{
@@ -120,12 +126,25 @@ const typed = computed(() => props.query.trim().length > 0)
       />
     </div>
     <template v-if="typed">
-      <div v-if="props.state === 'error'" class="task-search__error" role="alert">
+      <TaskEnvironmentNote
+        v-if="props.state === 'environment' && props.environment"
+        class="task-search__env"
+        :state="props.environment.state"
+        :since="props.environment.since"
+        :detail="props.environment.detail"
+        @retry="emit('retry')"
+      />
+      <div v-else-if="props.state === 'error'" class="task-search__error" role="alert">
         <div class="task-search__error-row">
-          <span class="task-search__error-text">{{ t('work.room.navigator.search.failed') }}</span>
-          <BaseButton kind="ghost" size="sm" @click="emit('retry')">{{ t('global.loadError.retry') }}</BaseButton>
+          <!-- A search that cannot be made says why, and only that; one that failed offers to try again. -->
+          <span class="task-search__error-text" :class="{ 'task-search__error-text--plain': props.final }">{{
+            props.final && props.error ? props.error : t('work.room.navigator.search.failed')
+          }}</span>
+          <BaseButton v-if="!props.final" kind="ghost" size="sm" @click="emit('retry')">{{
+            t('global.loadError.retry')
+          }}</BaseButton>
         </div>
-        <p v-if="props.error" class="task-search__reason">{{ props.error }}</p>
+        <p v-if="props.error && !props.final" class="task-search__reason">{{ props.error }}</p>
       </div>
       <template v-else-if="props.result">
         <p v-if="!files.length" class="task-search__empty">{{ t('work.room.navigator.search.empty') }}</p>
@@ -243,6 +262,10 @@ const typed = computed(() => props.query.trim().length > 0)
 .task-search__error {
   flex: none;
 }
+.task-search__env {
+  flex: none;
+  padding: 0 4px 0 12px;
+}
 .task-search__error-row {
   display: flex;
   gap: 8px;
@@ -254,6 +277,9 @@ const typed = computed(() => props.query.trim().length > 0)
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--danger-ink);
+}
+.task-search__error-text--plain {
+  color: var(--muted);
 }
 .task-search__list {
   flex: 1 1 auto;

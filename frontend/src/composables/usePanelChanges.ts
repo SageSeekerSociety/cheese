@@ -26,6 +26,7 @@ import { usePanelDocument } from './panelChanges/documentPane'
 import { usePanelFilePane } from './panelChanges/filePane'
 import { usePanelGitChanges } from './panelChanges/gitChanges'
 import { usePanelOfficeCompare } from './panelChanges/officeCompare'
+import { useTaskEnvironment } from './useTaskEnvironment'
 
 import { t } from '@/i18n'
 
@@ -60,6 +61,9 @@ export function usePanelChanges(props: PanelChangesProps) {
     if (task?.status !== 'open') return 'committed'
     return requestedSource.value ?? (task.card?.status === 'pending' ? 'committed' : 'live')
   })
+  // 看的不会把环境开起来：要的是环境里的实时文件、而没有环境拿着这份副本时，后端从代码托管
+  // 读已提交版本给它（`GitDiff.source`）。来源那一项照实际给的说，不让「实时文件」挂在那里。
+  const environment = useTaskEnvironment(() => props.taskId)
 
   // 只读看着的这一件（它的分支、状态、卡），不读整个房间的任务清单。
   async function loadTasks() {
@@ -155,6 +159,31 @@ export function usePanelChanges(props: PanelChangesProps) {
   })
 
   const compare = usePanelOfficeCompare({ task: selectedTask, path: pane.openPath })
+
+  /** The source what is shown was really read from. */
+  const shownSource = computed<FileSource>(() =>
+    fileSource.value === 'live' && gitChanges.diffSource.value === 'committed' ? 'committed' : fileSource.value
+  )
+  // What the diff came from is a fact about the task's environment the whole page shares.
+  watch(
+    () => gitChanges.diffSource.value,
+    (read) => {
+      if (fileSource.value !== 'live' || read === null || liveFallback.value !== 'none') return
+      if (read === 'live') environment.sawReady()
+      else environment.sawGone()
+    }
+  )
+  // The environment came up while the committed version stood in for the live files: read the
+  // live ones.
+  watch(
+    () => environment.state.value,
+    (now, was) => {
+      if (now !== 'ready' || was === 'ready' || was === 'unknown') return
+      if (props.active && fileSource.value === 'live' && shownSource.value === 'committed') {
+        void loadAll({ silent: true, fresh: true })
+      }
+    }
+  )
 
   // ---- Loading policy: the surface loads when it comes on screen, the same rule
   // the drawer used ("opening the tool loads it"). One surface now, so both halves
@@ -290,7 +319,8 @@ export function usePanelChanges(props: PanelChangesProps) {
   }
 
   async function selectVersion(source: FileSource) {
-    if (fileSource.value === source) return
+    // Choosing the live files while the committed version stands in for them asks again.
+    if (fileSource.value === source && shownSource.value === source) return
     const path = pane.openPath.value
     pane.keepOpenFile()
     clearSource()
@@ -319,7 +349,8 @@ export function usePanelChanges(props: PanelChangesProps) {
     currentTask,
     sourceStatus,
     sourceUnavailable,
-    fileSource,
+    // What the views say and mark as chosen: the source really shown.
+    fileSource: shownSource,
     fileToolReady: pane.fileToolReady,
     loading,
     refreshing,

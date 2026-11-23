@@ -86,6 +86,13 @@ const VIEWS = computed(() => [
 // ---- the 搜索 box takes the focus when the person asked for it ----
 // Asked before this column was first drawn (the shortcut also brings the column up): asked all the same.
 const searchFocus = ref(props.view === 'search' && props.searchFocusTick > 0)
+/** The task's environment, as the search waiting for it shows it. */
+const searchEnvironment = computed(() => {
+  const env = props.search.environment
+  const state = env.state.value
+  if (state !== 'preparing' && state !== 'failed' && state !== 'unanswered') return null
+  return { state, since: env.since.value, detail: env.detail.value }
+})
 function pickView(key: NavigatorView) {
   if (key === 'search') searchFocus.value = true
   emit('update:view', key)
@@ -206,6 +213,8 @@ function pickFound(path: string) {
       :state="props.search.state.value"
       :result="props.search.result.value"
       :error="props.search.error.value"
+      :final="props.search.final.value"
+      :environment="searchEnvironment"
       :focus="searchFocus"
       @update:query="props.search.setQuery"
       @submit="props.search.searchNow()"

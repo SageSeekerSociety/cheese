@@ -1,6 +1,9 @@
 <script setup lang="ts">
 // 「改动」那一格的 ⋯：偶尔才换的那几样（看哪个版本、下载打开的这份、刷新）。
 //
+// 「看哪个版本」那两项说的是这一格实际给的那一份（`usePanelChanges` 的 `fileSource`）：要的是环境里的
+// 实时文件、而没有环境拿着这份副本时，给的是已提交版本，选中的就是它。
+//
 // 它在两处出现：全部改动那一面的文件清单那一行（顶部那块还在屏幕上时）、滚过顶部之后
 // 那条细栏，以及单独打开一份文件时的横条。三处是同一组选项，所以写一次。桌面上是一个
 // 分了组的下拉菜单，手机上是底部面板。
@@ -102,14 +105,16 @@ const sheetActions = computed<MenuAction[]>(() => {
       <template v-if="currentTask?.status === 'open'">
         <v-list-subheader class="pt-0">{{ t('work.room.changes.version') }}</v-list-subheader>
         <v-list-item
-          role="menuitem"
+          role="menuitemradio"
+          :aria-checked="fileSource === 'live'"
           :title="t('work.room.changes.liveFile')"
           :subtitle="t('work.room.changes.liveNote')"
           :active="fileSource === 'live'"
           @click="emit('select-version', 'live')"
         />
         <v-list-item
-          role="menuitem"
+          role="menuitemradio"
+          :aria-checked="fileSource === 'committed'"
           :title="t('work.room.changes.committedVersion')"
           :subtitle="t('work.room.changes.committedNote')"
           :active="fileSource === 'committed'"

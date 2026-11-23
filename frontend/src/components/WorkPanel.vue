@@ -65,6 +65,7 @@ import { tabFile } from '../lib/viewingContext'
 import { withViewTransition } from '../lib/viewTransition'
 
 import BaseButton from './base/BaseButton.vue'
+import CommittedCopyMark from './common/CommittedCopyMark.vue'
 import ErrorBoundary from './common/ErrorBoundary.vue'
 import DocumentActions from './library/DocumentActions.vue'
 // 这一屏有哪几格（共用表 + 只有产品有的那几格，按频道 / 任务 / 打开的任务挑）。
@@ -661,7 +662,7 @@ function searchFiles() {
 // 跳到定义落在另一份文件里：在「文件」那一格里打开它，停在那一行。
 const { link: taskLanguage } = useTaskLanguage({
   taskId: () => props.taskId,
-  machine: () => taskFiles.machine.value,
+  machine: () => taskFiles.environment.state.value,
   open: (path, line) => void taskFiles.open(path, { start: line, end: line }),
 })
 // 在频道里打开的一件任务（`review`）没有左栏：它的「改动」那一格自己取。
@@ -1394,6 +1395,7 @@ defineExpose({
       <template v-if="blocks">
         <WorkPaneHead :target="layout?.head('code')">
           <template #title><TaskFilePicker :files="taskFiles" @pick="pickFile" /></template>
+          <template v-if="taskFiles.committedCopy.value" #after-title><CommittedCopyMark /></template>
           <BaseButton kind="ghost" size="sm" class="block-head__action" @click="emit('open-editor', 'code')">
             {{ t('work.task.form.openInEditor') }}
           </BaseButton>

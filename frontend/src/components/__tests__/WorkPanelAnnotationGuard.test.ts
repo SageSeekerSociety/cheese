@@ -30,7 +30,9 @@ vi.mock('../panels/preview/annotationDiscard', async (importOriginal) => {
   return { ...actual, confirmAnnotationDiscard: (...a: unknown[]) => confirmDiscard(...a) }
 })
 
-vi.mock('../../api', () => ({
+vi.mock('../../api', async () => ({
+  // The real error class: what a failed read is recognised by.
+  ApiError: (await vi.importActual<typeof import('../../api')>('../../api')).ApiError,
   getPreview: vi.fn(async () => null),
   getTopicWorkSummary: vi.fn(async () => ({ changed_files: ['a.py'], has_run: true })),
   listRoomTasks: vi.fn(async () => ({ data: [], total: 0 })),

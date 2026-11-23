@@ -5,7 +5,7 @@
 //   2. With no machine holding the task, the tab brings one up first and then attaches.
 //   3. A refusal with a reason (the limit, someone else's computer) is said, not retried.
 //   4. The tab learns what names it: the shell's number, the program in its foreground.
-//   5. A shell whose machine went away leaves the tab waiting; using it starts a new one.
+//   5. A shell whose machine went away leaves the tab waiting; opening it again starts a new one.
 import { defineComponent, h } from 'vue'
 import { cleanup, render, screen, waitFor } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -19,7 +19,8 @@ const prepareTaskMachine = vi.fn(async () => {
   return { started: true, reason: null }
 })
 
-vi.mock('@/api', () => ({
+vi.mock('@/api', async () => ({
+  ApiError: (await vi.importActual<typeof import('@/api')>('@/api')).ApiError,
   getTaskMachineStatus: async () => ({ machine: machine.now, failed: null }),
   prepareTaskMachine: () => prepareTaskMachine(),
   taskTerminalWsUrl: (task: string, id: string) => `ws://test/${task}/${id}`,
@@ -138,13 +139,13 @@ describe('a 终端 tab', () => {
     expect(FakeSocket.all).toHaveLength(1)
   })
 
-  it('waits for use when the machine that held the shell is gone, then starts again', async () => {
+  it('waits when the machine that held the shell is gone, then starts again when opened', async () => {
     mount()
     await waitFor(() => expect(FakeSocket.all).toHaveLength(1))
     machine.now = null
     last().say({ type: 'refused', reason: 'unavailable' })
     await screen.findByText(/^cold/)
-    terminal.type('x')
+    void terminal.start()
     await screen.findByText(/^preparing/)
     await waitFor(() => expect(FakeSocket.all).toHaveLength(2), { timeout: 5000 })
   })

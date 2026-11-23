@@ -1,0 +1,8 @@
+{
+  "preparing": "正在准备环境",
+  "waited": "已等待 {seconds} 秒",
+  "waitedMinutes": "已等待 {minutes} 分 {seconds} 秒",
+  "failed": "环境未能准备好",
+  "unanswered": "环境暂时无法响应",
+  "committed": "已提交版本"
+}

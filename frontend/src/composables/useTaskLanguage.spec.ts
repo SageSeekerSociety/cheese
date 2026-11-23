@@ -6,7 +6,7 @@
 //   3. A dropped socket is tried again, further apart each time, then given up on until the
 //      page comes back online.
 import type { LspClient } from '../lib/lsp/client'
-import type { TaskMachineState } from './useTaskFiles'
+import type { TaskEnvironmentState } from './useTaskEnvironment'
 
 import { defineComponent, h, nextTick, ref } from 'vue'
 import { cleanup, render } from '@testing-library/vue'
@@ -61,7 +61,7 @@ const flush = async () => {
 }
 
 /** A cell of the task with a C file open; what the server gave it, latest last. */
-function cell(taskId: string, machine: { value: TaskMachineState }) {
+function cell(taskId: string, machine: { value: TaskEnvironmentState }) {
   const clients: (LspClient | null)[] = []
   render(
     defineComponent({
@@ -94,7 +94,7 @@ describe("a task's language server on the page", () => {
 
   it('is one connection shared by every cell of the task, opened only once the machine is up', async () => {
     const task = `t${++tasks}`
-    const machine = ref<TaskMachineState>('unknown')
+    const machine = ref<TaskEnvironmentState>('unknown')
     const first = cell(task, machine)
     const second = cell(task, machine)
     await flush()
@@ -114,7 +114,7 @@ describe("a task's language server on the page", () => {
   it('does not ask again after a refusal until the machine becomes ready again', async () => {
     vi.useFakeTimers()
     const task = `t${++tasks}`
-    const machine = ref<TaskMachineState>('ready')
+    const machine = ref<TaskEnvironmentState>('ready')
     const clients = cell(task, machine)
     await nextTick()
     sockets(task)[0].refuse('limit')
@@ -132,7 +132,7 @@ describe("a task's language server on the page", () => {
   it('tries a dropped socket again with growing waits, gives up, and tries once more when back online', async () => {
     vi.useFakeTimers()
     const task = `t${++tasks}`
-    const machine = ref<TaskMachineState>('ready')
+    const machine = ref<TaskEnvironmentState>('ready')
     cell(task, machine)
     await nextTick()
     expect(sockets(task)).toHaveLength(1)
@@ -155,7 +155,7 @@ describe("a task's language server on the page", () => {
 
   it('tells the cells when a server that was up goes away', async () => {
     const task = `t${++tasks}`
-    const machine = ref<TaskMachineState>('ready')
+    const machine = ref<TaskEnvironmentState>('ready')
     const clients = cell(task, machine)
     await nextTick()
     sockets(task)[0].ready()
