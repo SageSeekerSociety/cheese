@@ -185,8 +185,13 @@ function load(arrangement: LayoutArrangement) {
       collapsed = new Set()
       expanded = new Map()
     } else {
-      const { layout, expandedSizes } = toDockview({ root: next.root }, box(), panelState, props.sizing)
+      const size = box()
+      const { layout, expandedSizes } = toDockview({ root: next.root }, size, panelState, props.sizing)
       dock.fromJSON(layout)
+      // Saved sizes need not add up to the area as it is now (a cell hidden or folded when they
+      // were taken): the grid is laid out to the area itself, or it keeps their sum until the
+      // area next changes size, leaving the rest of the area empty.
+      dock.layout(size.width, size.height, true)
       collapsed = new Set(
         cellsOf(next)
           .filter((cell) => cell.collapsed)
