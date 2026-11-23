@@ -322,16 +322,20 @@ export function homeCell(
 /** What a cell's panels say about its tab strip. */
 export interface StripPanel {
   bare?: boolean
+  titled?: boolean
   stripWhenShared?: boolean
 }
 
 /**
- * A cell shows no tab strip when its panels are all bare, or when it holds one panel that
- * asks for a strip only once it shares the cell: there is nothing to pick between.
+ * A cell shows no tab strip when its panels are all bare or carry a title bar of their own,
+ * or when it holds one panel that asks for a strip only once it shares the cell: there is
+ * nothing to pick between.
  */
 export function hidesTabs(panels: readonly StripPanel[]): boolean {
   if (!panels.length) return false
-  return panels.every((panel) => panel.bare) || (panels.length === 1 && panels[0].stripWhenShared === true)
+  return (
+    panels.every((panel) => panel.bare || panel.titled) || (panels.length === 1 && panels[0].stripWhenShared === true)
+  )
 }
 
 /**
