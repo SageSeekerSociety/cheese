@@ -5,7 +5,7 @@
  * conversion is tested without a browser and costs the main bundle nothing.
  */
 import type { GroupviewPanelState, SerializedDockview } from 'dockview-vue'
-import type { LayoutArrangement, LayoutCell, LayoutNode, SplitDirection } from './arrangement'
+import type { LayoutArrangement, LayoutCell, LayoutNode, LayoutSplit, SplitDirection } from './arrangement'
 
 import { isSplit } from './arrangement'
 
@@ -30,6 +30,37 @@ export interface CellSizing {
   hidden?: boolean
 }
 
+/** What a cell's panels say about their sizes, as `cellSizing` reads them. */
+export interface SizedPanel {
+  id: string
+  width?: unknown
+  height?: unknown
+  fitHeight?: boolean
+  hidden?: boolean
+}
+
+/**
+ * How a cell of these panels is laid out along its split: a width of its own in a row, a
+ * height of its own or its content's height in a column, and hidden when every panel in
+ * it is. `extentOf` gives the px a panel with a width or height of its own keeps now.
+ */
+export function cellSizing(
+  panels: readonly SizedPanel[],
+  along: SplitDirection,
+  extentOf: (id: string, axis: 'width' | 'height') => number,
+  fitHeights: Readonly<Record<string, number>>
+): CellSizing {
+  const out: CellSizing = {}
+  const wide = panels.find((panel) => panel.width)
+  if (along === 'row' && wide) out.fixed = extentOf(wide.id, 'width')
+  const tall = panels.find((panel) => panel.height)
+  if (along === 'column' && tall) out.fixed = extentOf(tall.id, 'height')
+  const fit = panels.find((panel) => panel.fitHeight)
+  if (along === 'column' && fit) out.fixed = fitHeights[fit.id] ?? 0
+  if (panels.length && panels.every((panel) => panel.hidden)) out.hidden = true
+  return out
+}
+
 export interface DockviewLoad {
   layout: SerializedDockview
   /** For each collapsed cell, the size it opens back to, in px along its split. */
@@ -45,7 +76,8 @@ function weight(node: LayoutNode): number {
  * becomes the dockview group id. A collapsed cell gets `STRIP_SIZE` and a fixed cell
  * its own size; the other open cells share the rest by weight, and the size a
  * collapsed cell had is returned for when it opens. A hidden cell takes no space now
- * and keeps the share it would have for when it is shown.
+ * and keeps the share it would have for when it is shown; so does a split whose every cell
+ * is hidden.
  */
 export function toDockview(
   arrangement: LayoutArrangement & { root: LayoutNode },
@@ -81,7 +113,7 @@ export function toDockview(
     size: number
   ): GridNode => {
     const along = directionOf(orientation)
-    const own = children.map((child) => (isSplit(child) ? {} : sizing(child, along)))
+    const own = children.map((child) => (isSplit(child) ? { hidden: allHidden(child) } : sizing(child, along)))
     const strip = (i: number) => {
       const child = children[i]
       return !isSplit(child) && child.collapsed === true
@@ -109,12 +141,18 @@ export function toDockview(
           fixed !== undefined
             ? fixed
             : Math.round((weight(child) / (own[i].hidden ? allWeights : shownWeights || 1)) * free)
-        return isSplit(child)
-          ? branch(child.children, flip(orientation), cross, extent, extent)
-          : leaf(child, extent, own[i])
+        if (!isSplit(child)) return leaf(child, extent, own[i])
+        const node = branch(child.children, flip(orientation), cross, extent, extent)
+        return own[i].hidden ? { ...node, visible: false } : node
       }),
     }
   }
+
+  /** Every cell under this split is hidden: dockview lays the split out of sight too. */
+  const allHidden = (split: LayoutSplit): boolean =>
+    split.children.every((child) =>
+      isSplit(child) ? allHidden(child) : sizing(child, split.direction).hidden === true
+    )
 
   const root = arrangement.root
   const orientation: Orientation = isSplit(root) ? orientationOf(root.direction) : 'HORIZONTAL'

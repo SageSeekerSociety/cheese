@@ -106,6 +106,7 @@ function mountTask() {
       single: false,
       head: () => undefined,
       editor: editor.value,
+      blocks: !editor.value,
     }
     return h(
       WorkPanel,

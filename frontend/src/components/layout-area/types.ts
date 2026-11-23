@@ -1,14 +1,17 @@
 import type { Component } from 'vue'
 
-/** A width the cell keeps on its own, in px, instead of sharing the area's width by weight. */
+/**
+ * An extent the cell keeps on its own, in px, instead of sharing its split by weight: a
+ * width (`LayoutPanel.width`) or a height (`LayoutPanel.height`).
+ */
 export interface LayoutPanelWidth {
   /** Before the reader has dragged it. */
   initial: number
   min: number
   max: number
   /**
-   * Where the dragged width is remembered in the browser. Every area that places this
-   * panel under the same key opens it at the same width, whatever arrangement it is in.
+   * Where the dragged extent is remembered in the browser. Every area that places this
+   * panel under the same key opens it at the same extent, whatever arrangement it is in.
    */
   storageKey?: string
 }
@@ -88,6 +91,13 @@ export interface LayoutPanel {
    * of its own divider changes it. It does not take part in the weights of its split.
    */
   width?: LayoutPanelWidth
+  /**
+   * In a column, the cell keeps this height when its neighbours come and go or the area
+   * changes size; only a drag of its own divider changes it. It takes no part in the
+   * weights of its split, so a neighbour shown or hidden takes its room from the others:
+   * a strip under the main cells (a terminal) stays the size the reader gave it.
+   */
+  height?: LayoutPanelWidth
   /**
    * The cell is exactly as tall as the panel's content and cannot be resized: a strip
    * such as a page head above other cells. It draws no divider of its own; the content

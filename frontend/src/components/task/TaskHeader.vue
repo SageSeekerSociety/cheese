@@ -4,12 +4,16 @@
 // 在哪台电脑上做，负责人在这里增减协作者），以及 ⋯（重命名、关闭归负责人和协作者，
 // 转交只归负责人；关了的任务，角色有「新建任务和审阅」的人都能重新打开）。
 //
-// 桌面上页面几块并排摆开时，还有「对话 / 编辑器」两种摆法的开关（`form`）。编辑器那一种里，
-// 「概览」那颗面板开关换成三颗：左栏、终端、对话，各自藏起或摆回那一块（`editorParts`）。
+// 桌面上页面几块并排摆开时，还有「对话 / 编辑器」两种摆法的开关（`form`）。对话那一种里，右边
+// 是框在一起的一组按钮，一样东西一颗（概览、改动、文件、终端，现场和预览在 ⋯ 里），开着的是按下的
+// 样子（`blocks`）；编辑器那一种里是三颗：左栏、终端、对话，各自藏起或摆回那一块（`editorParts`）。
+// 那一组排在这一行最后，只有提交按钮在它后面。平板横放的浮层那一档没有摆法可选，照旧是「概览」那颗
+// 面板开关。
 import type { MenuCommand } from '@/commands'
 import type { RoomTask, Topic, TopicMemberRow } from '@/cx_types'
 import type { HandInAction } from '@/lib/handIn'
 import type { Environment, SessionEnvironment, TopicEnvironment } from '@/types/compute'
+import type { TaskBlockButton } from './taskBlocks'
 
 import { computed, ref, watch } from 'vue'
 import { useDisplay } from 'vuetify'
@@ -28,6 +32,7 @@ import UserRef from '@/components/common/UserRefLink.vue'
 import EnvironmentMenu from '@/components/EnvironmentMenu.vue'
 import PanelToggle from '@/components/room/PanelToggle.vue'
 import TaskStateMark from '@/components/task/TaskStateMark.vue'
+import { workPaneId } from '@/components/work/workLayout'
 import { t } from '@/i18n'
 import { environmentName } from '@/lib/environment'
 import { relTime } from '@/lib/relTime'
@@ -76,6 +81,8 @@ const props = withDefaults(
     form?: 'chat' | 'editor' | null
     /** 编辑器里左栏、终端、对话三块各自在不在屏幕上；终端是 null 时这件任务开不了终端，不摆那一颗。 */
     editorParts?: { left: boolean; terminal: boolean | null; conversation: boolean }
+    /** 对话那一种摆法里那一组按钮。 */
+    blocks?: TaskBlockButton[]
   }>(),
   // 不给就是连着的：Vue 会把没传的布尔 prop 当成 false，那样每个页头都会写「未连接」。
   {
@@ -85,6 +92,7 @@ const props = withDefaults(
     panelControls: undefined,
     form: null,
     editorParts: undefined,
+    blocks: () => [],
   }
 )
 
@@ -94,6 +102,8 @@ const emit = defineEmits<{
   (e: 'hand-in'): void
   (e: 'form', form: 'chat' | 'editor'): void
   (e: 'toggle-part', part: 'left' | 'terminal' | 'conversation'): void
+  /** 对话那一种摆法里点了一颗：开着的关掉，关着的打开。 */
+  (e: 'toggle-block', key: string): void
 }>()
 
 const formOptions = computed(() => [
@@ -124,6 +134,10 @@ const partButtons = computed(() => {
     },
   ]
 })
+
+/** 对话那一种摆法里那一组：直接摆出来的几颗，和收在 ⋯ 里的几样。 */
+const blockButtons = computed(() => (props.form === 'chat' ? props.blocks.filter((block) => !block.more) : []))
+const moreBlocks = computed(() => (props.form === 'chat' ? props.blocks.filter((block) => block.more) : []))
 
 const { mdAndUp } = useDisplay()
 const ME = myHandle()
@@ -543,25 +557,6 @@ function actionTestId(id: string): string | undefined {
       </v-card>
     </v-menu>
 
-    <BaseButton v-if="handIn" kind="primary" size="sm" data-testid="task-hand-in" @click="emit('hand-in')">
-      {{ handIn === 'resubmit' ? t('work.room.accept.handIn.resubmit') : t('work.room.accept.handIn.submit') }}
-    </BaseButton>
-    <div v-if="mdAndUp && partButtons.length" class="task-header__parts" data-testid="task-parts">
-      <BaseButton
-        v-for="button in partButtons"
-        :key="button.part"
-        kind="ghost"
-        size="sm"
-        class="task-header__part"
-        :class="{ 'task-header__part--on': button.on }"
-        :icon="button.icon"
-        :aria-label="button.label"
-        :title="button.label"
-        :aria-pressed="button.on ? 'true' : 'false'"
-        @click="emit('toggle-part', button.part)"
-      />
-    </div>
-    <PanelToggle v-else-if="mdAndUp" :open="!!panelOpen" :controls="panelControls" @toggle="emit('toggle-panel')" />
     <v-menu v-if="task && showsMenu" location="bottom end">
       <template #activator="{ props: menuProps }">
         <BaseButton
@@ -586,6 +581,78 @@ function actionTestId(id: string): string | undefined {
         />
       </v-list>
     </v-menu>
+    <div v-if="mdAndUp && partButtons.length" class="task-header__parts" data-testid="task-parts">
+      <BaseButton
+        v-for="button in partButtons"
+        :key="button.part"
+        kind="ghost"
+        size="sm"
+        class="task-header__part"
+        :class="{ 'task-header__part--on': button.on }"
+        :icon="button.icon"
+        :aria-label="button.label"
+        :title="button.label"
+        :aria-pressed="button.on ? 'true' : 'false'"
+        @click="emit('toggle-part', button.part)"
+      />
+    </div>
+    <div
+      v-else-if="mdAndUp && blockButtons.length"
+      class="task-header__parts"
+      role="group"
+      :aria-label="t('work.task.form.blocks')"
+      data-testid="task-blocks"
+    >
+      <span v-for="(block, i) in blockButtons" :key="block.key" class="task-header__block">
+        <BaseButton
+          kind="ghost"
+          size="sm"
+          class="task-header__part"
+          :class="{ 'task-header__part--on': block.on }"
+          :icon="block.icon"
+          :aria-label="block.hint ?? block.label"
+          :title="block.hint ?? block.label"
+          :aria-pressed="block.on ? 'true' : 'false'"
+          :aria-controls="workPaneId(block.key)"
+          :data-panel-toggle="i === 0 ? '' : undefined"
+          :data-task-block="block.key"
+          @click="emit('toggle-block', block.key)"
+        />
+        <span v-if="block.count" class="task-header__count" aria-hidden="true">{{ block.count }}</span>
+      </span>
+      <v-menu v-if="moreBlocks.length" location="bottom end">
+        <template #activator="{ props: menuProps }">
+          <BaseButton
+            v-bind="menuProps"
+            kind="ghost"
+            size="sm"
+            class="task-header__part"
+            :class="{ 'task-header__part--on': moreBlocks.some((block) => block.on) }"
+            icon="mdi-dots-horizontal"
+            :aria-label="t('work.task.form.moreBlocks')"
+            :title="t('work.task.form.moreBlocks')"
+            data-testid="task-blocks-more"
+          />
+        </template>
+        <v-list density="compact" role="menu" :aria-label="t('work.task.form.moreBlocks')">
+          <v-list-item
+            v-for="block in moreBlocks"
+            :key="block.key"
+            role="menuitemcheckbox"
+            :aria-checked="block.on ? 'true' : 'false'"
+            :title="block.label"
+            :prepend-icon="block.icon"
+            :append-icon="block.on ? 'mdi-check' : undefined"
+            :data-task-block="block.key"
+            @click="emit('toggle-block', block.key)"
+          />
+        </v-list>
+      </v-menu>
+    </div>
+    <PanelToggle v-else-if="mdAndUp" :open="!!panelOpen" :controls="panelControls" @toggle="emit('toggle-panel')" />
+    <BaseButton v-if="handIn" kind="primary" size="sm" data-testid="task-hand-in" @click="emit('hand-in')">
+      {{ handIn === 'resubmit' ? t('work.room.accept.handIn.resubmit') : t('work.room.accept.handIn.submit') }}
+    </BaseButton>
   </div>
 
   <p v-if="actionError" class="task-notice t-meta" role="alert">{{ actionError }}</p>
@@ -775,6 +842,28 @@ function actionTestId(id: string): string | undefined {
   min-width: 0;
   height: 30px;
   --v-icon-size-multiplier: 0.85;
+}
+/* 「改动」角上改过几个文件，和编辑器左栏「改动」那一颗同一个记号。 */
+.task-header__block {
+  position: relative;
+  display: inline-flex;
+}
+.task-header__count {
+  position: absolute;
+  top: -2px;
+  right: -4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  pointer-events: none;
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+  color: var(--accent-ink);
+  text-align: center;
+  background: var(--accent-wash);
+  border-radius: var(--radius-pill);
 }
 /* 按下的样子和「概览」开着时一样（PanelToggle）。 */
 .task-header__part--on {

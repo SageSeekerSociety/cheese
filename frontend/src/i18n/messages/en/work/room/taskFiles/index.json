@@ -12,5 +12,7 @@
   "openBeside": "Open to the side",
   "openFiles": "Open files",
   "preparing": "Preparing the environment",
-  "treeWidth": "File tree width"
+  "treeWidth": "File tree width",
+  "switchFile": "Switch file",
+  "up": "Up one level"
 }

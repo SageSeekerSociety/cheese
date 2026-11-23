@@ -4,5 +4,8 @@
   "editor": "Editor",
   "left": "Left column",
   "terminal": "Terminal",
-  "conversation": "Conversation"
+  "conversation": "Conversation",
+  "openInEditor": "Open in editor",
+  "blocks": "Beside the conversation",
+  "moreBlocks": "More"
 }

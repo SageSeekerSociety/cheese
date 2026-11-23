@@ -6,11 +6,19 @@
 // 一份文件。没有页签可点，也就没有拖动；标题栏上的 ✕ 收起这一处（和页头上再点一下正显示的那
 // 一颗同一件事），对话占满。
 //
-// 任务页和私聊页：页签可以拖去和别的并排、拖进对话那一格，格子可以收起、放大。对话那一块和工作
-// 面板固定的那几格不能关（只能挪）；私聊里对话独占一格时不画页签栏，任务页上它和别的格子一样
-// 有页签栏（收起、放大）。工作面板那几格同属 `work` 这一组：新打开的一格（一份文件、一个终端）
-// 落到这一组页签最多的那一格里，✕ 也只在那一格上。「收起」（✕、页头的开关）收的是只装着这一组
+// 私聊页：页签可以拖去和别的并排、拖进对话那一格，格子可以收起、放大。对话那一块和工作面板固定
+// 的那几格不能关（只能挪）；对话独占一格时不画页签栏。工作面板那几格同属 `work` 这一组：新打开的
+// 一格落到这一组页签最多的那一格里，✕ 也只在那一格上。「收起」（✕、页头的开关）收的是只装着这一组
 // 的那几格；挪进对话那一格的不跟着收。
+//
+// 任务页（「对话」那一种摆法，`kind` 为 'task'）：对话旁边是一块一块的，一样东西一块，各带自己的
+// 标题栏（`titled`），没有页签、不能拖，分隔线照样能拖。进任务时旁边是概览；打开别的哪一块，概览就
+// 让开（不和别的并排），页头上的「概览」把它叫回来；最后一块关掉时对话占满，概览不自己回来。几块能
+// 同时开着，各在默认的位置上（`CHAT_ARRANGEMENT`）：文件、预览和从对话里打开的一份产出在对话右边
+// 那一栏里上下排，终端在这一栏最下面、矮一些（高度自己记着）；改动、现场在再往右窄一些的格子里（两样都开
+// 着时并排各一格）——对话右边那一栏里没有别的时，它们自己占那一栏。为此改动、现场各有两处（`side:` 那一处在右边），
+// 此刻摆在哪一处由这里挑，工作面板只认它们的名字（`workLayout` 的 `outlet`、`visible` 替它对上）。
+// 终端是一块（`TERMINAL_BLOCK`），一次显示一个，显示哪一个由工作面板挑。
 //
 // 任务页还有第二种摆法「编辑器」（页头上的开关，`kind` 为 'editor'，摆法另记一份）：同一件任务，
 // 文件是主角。左边一栏是任务的文件树和改过的文件（`NAVIGATOR`，宽度自己记着，和「文件」那一格里
@@ -30,7 +38,7 @@ import { computed, reactive, ref, watch } from 'vue'
 
 import { useCommands } from '@/commands'
 import { TASK_FILE_TREE_WIDTH } from '@/components/panels/taskFileTreeWidth'
-import { NAVIGATOR, workPaneId } from '@/components/work/workLayout'
+import { NAVIGATOR, TERMINAL_BLOCK, workPaneId } from '@/components/work/workLayout'
 import { t } from '@/i18n'
 import { storageGetJson, storageSetJson } from '@/lib/browserStorage'
 
@@ -53,6 +61,26 @@ export type EditorPart = keyof EditorParts
 const PARTS_KEY = 'cheesex.editorParts'
 /** 编辑器里右边那一栏对话的宽度：拖过就记住。 */
 const CONVERSATION_WIDTH = { initial: 400, min: 320, max: 640, storageKey: 'cheesex.editorConversationWidth' }
+
+/** 「对话」那一种摆法里从对话打开的一份产出（文件、文档、技能）：一次一份，开在预览下面。 */
+export const OPENED_GROUP = 'opened'
+/** 改动、现场在窄栏里的那一处。 */
+const SIDE_PREFIX = 'side:'
+/** 有两处的那几样：别的块开着时在窄栏里，没有时自己占对话右边那一栏。 */
+const SIDE_KINDS = ['changes', 'site']
+/** 终端那一块的高度：拖过就记住。 */
+const TERMINAL_HEIGHT = { initial: 220, min: 120, max: 640, storageKey: 'cheesex.taskTerminalHeight' }
+/** 占对话右边那一栏的几样（另一栏只放改动、现场）。 */
+function mainKind(key: string): boolean {
+  return key === 'code' || key === 'preview' || key === TERMINAL_BLOCK || key.startsWith('file:')
+}
+/** 「对话」那一种摆法里，对话右边那几块此刻显示哪几样。 */
+export interface ChatBlocks {
+  /** 概览在（这时别的都让开）。 */
+  overview: boolean
+  /** 读者开着的那几块，按打开的先后。 */
+  open: readonly string[]
+}
 
 /** 工作面板的一格，交给布局区时还要说的几样。 */
 export interface RoomWorkTab extends WorkTabMeta {
@@ -82,6 +110,8 @@ export interface RoomLayoutOptions {
   onKeep: (key: string) => void
   /** 读者在「+」里选了能开好几格的那一种：页面新开一格。 */
   onSpawn: (key: string) => void
+  /** 换了一件任务：「对话」那一种摆法回到刚进来的样子（只有概览）。 */
+  scope?: () => string | null | undefined
 }
 
 export function useRoomLayout(
@@ -100,6 +130,10 @@ export function useRoomLayout(
   /** 编辑器那一种摆法里三块各自在不在屏幕上；`toggleEditorPart` 藏起或摆回一块。 */
   editorParts: Readonly<EditorParts>
   toggleEditorPart: (part: EditorPart) => void
+  /** 「对话」那一种摆法里此刻显示哪几块（工作面板那一侧收着时什么都不显示）。 */
+  chatBlocks: ComputedRef<ChatBlocks>
+  /** 关掉「对话」那一种摆法里的一块（页头上再点一下开着的那一颗）。 */
+  closeBlock: (key: string) => void
 } {
   const chatNews: Ref<boolean> = ref(false)
 
@@ -189,10 +223,167 @@ export function useRoomLayout(
     }
   }
 
+  // ---- 任务页「对话」那一种摆法 ----
+  const chat = reactive<{ overview: boolean; open: string[] }>({ overview: true, open: [] })
+  watch(
+    () => opts.scope?.(),
+    () => {
+      chat.overview = true
+      chat.open = []
+    }
+  )
+  /** 工作面板此刻有的那几样，加上终端那一块（有终端可开时）。 */
+  function present(): Set<string> {
+    // 单开在旁边的工作文件和一格一格的终端只在编辑器里有。
+    const keys = new Set(
+      opts
+        .tabs()
+        .filter((tab) => !tab.beside && !tab.terminal)
+        .map((tab) => tab.key)
+    )
+    if (opts.tabs().some((tab) => tab.terminal)) keys.add(TERMINAL_BLOCK)
+    return keys
+  }
+  // 从对话里打开的一份产出一出现就是读者刚打开的：它那一块和它一起摆出来（布局区要给它新开一格，
+  // 摆出来时就该是看得见的，不是先藏着再翻出来）。
+  watch(
+    () =>
+      opts
+        .tabs()
+        .filter((tab) => tab.transient && !tab.terminal && !tab.beside)
+        .map((tab) => tab.key),
+    (now, before) => {
+      if (opts.kind() !== 'task') return
+      for (const key of now) if (!before?.includes(key)) openBlock(key)
+    },
+    { flush: 'sync' }
+  )
+  const chatBlocks = computed<ChatBlocks>(() => {
+    if (opts.workHidden()) return { overview: false, open: [] }
+    const keys = present()
+    return chat.overview
+      ? { overview: true, open: [] }
+      : { overview: false, open: chat.open.filter((k) => keys.has(k)) }
+  })
+  /** 对话右边那一栏里有东西：改动、现场去窄栏。 */
+  const mainOpen = computed(() => chatBlocks.value.open.some(mainKind))
+  /** 工作面板的一样此刻摆在布局区里的哪一块（只有「对话」那一种摆法里两者不同）。 */
+  function cellOf(key: string): string {
+    if (opts.kind() !== 'task') return key
+    if (key.startsWith('terminal:')) return TERMINAL_BLOCK
+    return SIDE_KINDS.includes(key) && mainOpen.value ? SIDE_PREFIX + key : key
+  }
+  /** 布局区里的一块装的是工作面板的哪一样。 */
+  const contentOf = (id: string) => (id.startsWith(SIDE_PREFIX) ? id.slice(SIDE_PREFIX.length) : id)
+  /** 「对话」那一种摆法里显示一块：概览让开别的，别的让开概览。 */
+  function openBlock(key: string) {
+    if (key === 'overview') chat.overview = true
+    else {
+      const block = key.startsWith('terminal:') ? TERMINAL_BLOCK : key
+      if (block !== TERMINAL_BLOCK && !present().has(block)) return
+      chat.overview = false
+      if (!chat.open.includes(block)) chat.open = [...chat.open, block]
+    }
+  }
+  /**
+   * 关掉一块（标题栏上的 ✕、页头上再点一下开着的那一颗）。工作面板先听到（它此刻在看的那一样
+   * 换成还开着的一块）；关的是概览时，它让开的那几块回来。一块都不剩时对话占满：工作面板那一侧
+   * 收起来，下一次打开从概览开始。
+   */
+  function closeBlock(key: string) {
+    opts.onClose(key)
+    if (key === 'overview') chat.overview = false
+    else chat.open = chat.open.filter((one) => one !== key)
+    const keys = present()
+    if (chat.overview || chat.open.some((one) => keys.has(one))) return
+    chat.overview = true
+    chat.open = []
+    opts.hide.run()
+  }
+
+  function chatSpec(): PagePanels {
+    const shown = chatBlocks.value
+    const inSight = (key: string) => (shown.overview ? key === 'overview' : shown.open.includes(key))
+    const block = (tab: RoomWorkTab, id: string, hidden: boolean): PagePanel => ({
+      id,
+      title: tab.title,
+      icon: tab.icon,
+      faint: tab.faint,
+      hint: tab.hint,
+      signal: tab.signal,
+      alwaysRender: tab.alwaysRender,
+      titled: true,
+      minWidth: SIDE_KINDS.includes(tab.key) ? 300 : 360,
+      hidden,
+    })
+    const work: PagePanel[] = opts.tabs().flatMap((tab): PagePanel[] => {
+      // 终端是一块（下面），单开在旁边的一份工作文件只在编辑器里有。
+      if (tab.terminal || tab.beside) return []
+      if (tab.transient) {
+        return [{ ...block(tab, tab.key, !inSight(tab.key)), transient: true, group: OPENED_GROUP, below: 'preview' }]
+      }
+      if (SIDE_KINDS.includes(tab.key)) {
+        return [
+          block(tab, tab.key, !(inSight(tab.key) && !mainOpen.value)),
+          block(tab, SIDE_PREFIX + tab.key, !(inSight(tab.key) && mainOpen.value)),
+        ]
+      }
+      return [block(tab, tab.key, !inSight(tab.key))]
+    })
+    const terminal: PagePanel = {
+      id: TERMINAL_BLOCK,
+      title: t('work.room.tabs.terminal'),
+      icon: 'mdi-console',
+      titled: true,
+      alwaysRender: true,
+      height: TERMINAL_HEIGHT,
+      hidden: !inSight(TERMINAL_BLOCK),
+    }
+    // 没拖过的人：窄桌面对半分，宽屏（≥ 1440px）把多出来的那块给工作面板；窄栏比对话右边那一栏窄。
+    const wide = window.innerWidth >= 1440
+    const declared = new Set([...work.map((panel) => panel.id), TERMINAL_BLOCK])
+    const column = (ids: string[]): LayoutNode[] =>
+      ids.filter((id) => declared.has(id)).map((id) => ({ panels: [id], size: id === 'overview' ? 4 : 2 }))
+    return {
+      key: 'task',
+      panels: [
+        {
+          id: CONVERSATION,
+          title: t('work.room.tabs.chat'),
+          icon: 'mdi-message-outline',
+          minWidth: 340,
+          stripWhenShared: true,
+          signal: chatNews.value ? { kind: 'dot' } : undefined,
+        },
+        ...work,
+        terminal,
+      ],
+      arrangement: {
+        direction: 'row',
+        children: [
+          { panels: [CONVERSATION], size: wide ? 45 : 50 },
+          {
+            direction: 'column',
+            size: wide ? 55 : 50,
+            children: column(['overview', 'code', 'preview', 'changes', 'site', TERMINAL_BLOCK]),
+          },
+          // 改动、现场在右边各占一格、并排，不叠成一栏：新开一格时 dockview 重新摆一遍，碰上一整栏都藏着的
+          // 一栏会摆乱（页面宽度对不上）。
+          ...SIDE_KINDS.map((key) => ({ panels: [SIDE_PREFIX + key], size: 33 })),
+        ],
+      },
+      onActivated: () => {},
+      onClose: (id) => closeBlock(contentOf(id)),
+      onKeep: opts.onKeep,
+      onSpawn: opts.onSpawn,
+    }
+  }
+
   function spec(): PagePanels | null {
     const kind = opts.kind()
     if (!kind) return null
     if (kind === 'editor') return editorSpec()
+    if (kind === 'task') return chatSpec()
     // 频道页：每一格带自己的标题栏，✕ 是布局层画的，收起的是这一处。
     const titled = kind === 'room'
     const hideAction = { icon: 'mdi-close', label: opts.hide.label(), run: opts.hide.run }
@@ -234,9 +425,8 @@ export function useRoomLayout(
           title: t('work.room.tabs.chat'),
           icon: 'mdi-message-outline',
           minWidth: 480,
-          // 频道和私聊：对话独占一格时不画页签栏，有别的页签拖进来才出现。任务页上对话那一格
-          // 和别的格子一样有页签栏，能收起、放大。
-          stripWhenShared: kind !== 'task',
+          // 对话独占一格时不画页签栏，有别的页签拖进来才出现。
+          stripWhenShared: true,
           signal: chatNews.value ? { kind: 'dot' } : undefined,
         },
         ...work,
@@ -253,32 +443,51 @@ export function useRoomLayout(
 
   const panels = usePanels(spec)
 
-  /** 编辑器里要显示一格固定的：先把它摆进中间（打开了才有它那一块），再翻到它。 */
+  /**
+   * 编辑器里要显示一格固定的：先把它摆进中间（打开了才有它那一块），再翻到它。「对话」那一种摆法里
+   * 打开它那一块（概览让开，或别的让开概览）。
+   */
   function show(key: string) {
-    if (opts.kind() === 'editor' && !opened.value.includes(key)) {
+    const kind = opts.kind()
+    if (kind === 'editor' && !opened.value.includes(key)) {
       const tab = opts.tabs().find((one) => one.key === key)
       if (tab && onDemand(tab)) opened.value = [...opened.value, key]
     }
-    panels.show(key)
+    if (kind === 'task') {
+      openBlock(key)
+      return void panels.show(cellOf(key))
+    }
+    // 终端那一块只在「对话」那一种摆法里有。
+    if (key !== TERMINAL_BLOCK) panels.show(key)
   }
-  const workLayout = computed<WorkLayout | null>(() =>
-    panels.active.value && !opts.floating()
-      ? {
-          outlet: (key) => panels.outlet(key),
-          visible: panels.visible.value,
-          show,
-          single: opts.kind() === 'room',
-          head: (key) => panels.headOutlet(key),
-          editor: opts.kind() === 'editor',
-        }
-      : null
-  )
+  const workLayout = computed<WorkLayout | null>(() => {
+    if (!panels.active.value || opts.floating()) return null
+    const kind = opts.kind()
+    if (kind === 'task') {
+      return {
+        outlet: (key) => panels.outlet(cellOf(key)),
+        visible: new Set([...panels.visible.value].map(contentOf)),
+        show,
+        single: false,
+        blocks: true,
+        head: (key) => panels.headOutlet(cellOf(key)),
+      }
+    }
+    return {
+      outlet: (key) => panels.outlet(key),
+      visible: panels.visible.value,
+      show,
+      single: kind === 'room',
+      head: (key) => panels.headOutlet(key),
+      editor: kind === 'editor',
+    }
+  })
   // 收着时说的是上一次在屏幕上的那几格（再打开回到的就是它们）；从没打开过时是第一格。
   let lastInSight: string[] = []
   const panelControls = computed(() => {
     if (!workLayout.value) return 'topic-panel'
     const keys = opts.tabs().map((tab) => tab.key)
-    const inSight = keys.filter((key) => panels.visible.value.has(key))
+    const inSight = keys.filter((key) => workLayout.value!.visible.has(key))
     if (inSight.length) lastInSight = inSight
     const named = inSight.length ? inSight : lastInSight.filter((key) => keys.includes(key))
     return (named.length ? named : keys.slice(0, 1)).map(workPaneId).join(' ')
@@ -295,7 +504,7 @@ export function useRoomLayout(
     const reset = panels.rearranged.value
       ? [{ id: 'room.resetLayout', title: t('shell.layout.reset'), icon: 'mdi-restore', run: () => panels.reset() }]
       : []
-    const front = opts.tabs().find((tab) => panels.visible.value.has(tab.key))
+    const front = opts.tabs().find((tab) => workLayout.value?.visible.has(tab.key))
     if (!front && !maximizedNow.value) return reset
     const restore = !!maximizedNow.value
     return [
@@ -304,7 +513,7 @@ export function useRoomLayout(
         id: 'room.maximize',
         title: restore ? t('shell.layout.restore') : t('shell.layout.maximize'),
         icon: restore ? 'mdi-arrow-collapse' : 'mdi-arrow-expand',
-        run: () => (restore ? panels.restore() : front && panels.maximize(front.key)),
+        run: () => (restore ? panels.restore() : front && panels.maximize(cellOf(front.key))),
       },
     ]
   })
@@ -319,5 +528,7 @@ export function useRoomLayout(
     },
     editorParts,
     toggleEditorPart,
+    chatBlocks,
+    closeBlock,
   }
 }
