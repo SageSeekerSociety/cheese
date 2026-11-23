@@ -413,7 +413,6 @@
         "shaky": "不稳",
         "weak": "薄弱"
       },
-      "judged": "{n} 条判断",
       "weakTitle": "最薄弱的几个知识点",
       "weakEmpty": "目前没有明显薄弱的知识点。",
       "weakStuck": "{stuck} / {involved} 人卡住",

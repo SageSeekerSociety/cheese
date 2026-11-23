@@ -413,7 +413,6 @@
         "shaky": "Shaky",
         "weak": "Weak"
       },
-      "judged": "{n} judgments",
       "weakTitle": "The weakest knowledge points",
       "weakEmpty": "No knowledge point stands out as weak right now.",
       "weakStuck": "{stuck} / {involved} stuck",
