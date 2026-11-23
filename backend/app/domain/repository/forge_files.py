@@ -487,6 +487,9 @@ class ProjectFiles:
             max_matches=SEARCH_MAX_MATCHES,
             max_per_file=SEARCH_MAX_PER_FILE,
         )
+        if found.get("error") == "search_failed":
+            # git on the machine could not search (a broken checkout, say).
+            raise UpstreamUnavailableError(say("taskSearchFailed"))
         return {"files": found["files"], "truncated": found["truncated"]}
 
     async def _listing(self, revision: str) -> list[dict]:

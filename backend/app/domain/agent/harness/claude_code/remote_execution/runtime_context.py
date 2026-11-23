@@ -308,6 +308,7 @@ def _search(root, params):
     reached instead."""
     query = params.get("query")
     if not isinstance(query, str) or not query or len(query) > SEARCH_QUERY_MAX:
+        # i18n-exempt: the route bounds the text before it is sent here; no reader meets this
         raise ValueError("Invalid search text")
     limit = int(params.get("max_matches", 500))
     per_file = int(params.get("max_per_file", 100))
@@ -392,10 +393,12 @@ def _search(root, params):
     # 1: nothing matched, which is an answer. Stopped on purpose (a cap, the
     # deadline) is an answer too. Anything else did not search.
     if not truncated and not late.is_set() and process.returncode not in (0, 1):
-        raise ValueError(
-            "Cannot search the task's files: "
-            + stderr.decode("utf-8", "replace").strip()[:200]
-        )
+        # Said by the caller in the reader's language; what git wrote stays in
+        # the answer for whoever reads the log.
+        return {
+            "error": "search_failed",
+            "detail": stderr.decode("utf-8", "replace").strip()[:200],
+        }
     return {
         "files": [
             {"path": path, "matches": lines} for path, lines in files.items() if lines
