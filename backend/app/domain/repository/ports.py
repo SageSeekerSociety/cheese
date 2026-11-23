@@ -62,15 +62,16 @@ class WakeWorkingCopy(Protocol):
 
 
 class PrepareWorkingCopy(Protocol):
-    """Bring a task's copy onto a machine for a person's write, with no turn.
+    """Bring a task's copy onto a machine for a person's write or search, with
+    no turn.
 
     Its sandbox may be gone (destroyed or parked), its executor stopped for
     sitting idle, or its machine without a checkout of the task: a person
-    saving the task's files brings it back, with the work it kept laid back,
-    in that person's name. Returns once the copy is there to write; raises,
-    as a retryable refusal, when it is still being prepared after the time a
-    save waits, and with a plain refusal when it cannot be. The implementation
-    is in `machine` (`task_machine.prepare_for_write`), handed in by whoever
-    builds the route; without it nothing is brought back."""
+    saving or searching the task's files brings it back, with the work it
+    kept laid back, in that person's name. Returns once the copy is there;
+    raises, as a retryable refusal, when it is still being prepared after the
+    time the request waits, and with a plain refusal when it cannot be. The
+    implementation is in `machine` (`task_machine.prepare_for_person`), handed
+    in by whoever builds the route; without it nothing is brought back."""
 
     async def __call__(self, task_id: uuid.UUID) -> None: ...

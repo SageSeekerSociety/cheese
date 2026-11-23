@@ -478,6 +478,38 @@ def test_a_save_while_the_machine_is_still_coming_up_says_to_try_again(
     assert later.status_code == 200, later.text
 
 
+def search(case, q):
+    return case.client.get(
+        f"/projects/{case.project_id}/files/search",
+        params={"q": q, "task": str(case.task.id)},
+        headers=case.headers,
+    )
+
+
+def test_a_search_brings_a_destroyed_sandbox_back_then_finds_its_kept_work(
+    task_cloud,
+):
+    """Searching is doing, as saving is: with no machine holding the task's
+    copy, a person's search starts bringing it back, is answered at once that
+    it is being prepared, and once it is ready finds what the copy holds — the
+    work its last sandbox kept laid back."""
+    case = task_cloud
+    destroyed_with_work_kept(case)
+    installed = len(case.machines.installed)
+
+    early = search(case, "kept edit")
+
+    assert early.status_code == 503, early.text
+    assert early.json()["error"]["name"] == "MachinePreparing"
+    assert early.json()["error"]["retryable"] is True
+    assert until_settled(case) == {"machine": "ready", "failed": None}
+    later = search(case, "kept edit")
+    assert later.status_code == 200, later.text
+    assert [f["path"] for f in later.json()["data"]["files"]] == ["notes.md"]
+    assert len(case.machines.installed) == installed + 1
+    assert turns(case) == 0
+
+
 def test_a_task_nobody_worked_on_has_its_machine_brought_up(cloud):
     """A person need not wait for an agent to have worked in a task: asking
     for its machine starts bringing one up."""

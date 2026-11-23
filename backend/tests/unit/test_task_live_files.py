@@ -12,8 +12,11 @@ from app.domain.agent.harness.claude_code.remote_execution.runtime import Execut
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("failure", ["timeout", "offline", "starting"])
-async def test_unavailable_live_files_offer_committed_version(monkeypatch, failure):
-    from app.core.errors import GatewayUnavailableError
+async def test_a_machine_that_does_not_answer_is_said_as_one_not_responding(
+    monkeypatch, failure
+):
+    """The page tells a machine that did not answer from every other refusal by
+    its name, and offers to ask for the environment again."""
     from app.domain.agent.device_hub import DeviceNotReady, DeviceOffline
     from app.domain.repository import forge_files
 
@@ -36,13 +39,12 @@ async def test_unavailable_live_files_offer_committed_version(monkeypatch, failu
         "working_copy",
         AsyncMock(return_value=({"kind": "device"}, False)),
     )
-    with pytest.raises(GatewayUnavailableError, match="重新读取.*已提交版本"):
+    with pytest.raises(forge_files.EnvironmentNotResponding, match="暂时无法响应"):
         await files.live("write", path="report.md", content="edit", version="old")
 
 
 @pytest.mark.anyio
 async def test_live_file_deadline_cancels_the_device_request(monkeypatch):
-    from app.core.errors import GatewayUnavailableError
     from app.domain.repository import forge_files
 
     task = SimpleNamespace(
@@ -71,7 +73,7 @@ async def test_live_file_deadline_cancels_the_device_request(monkeypatch):
         AsyncMock(return_value=({"kind": "device"}, False)),
     )
     monkeypatch.setattr(forge_files.asyncio, "timeout", fast_deadline)
-    with pytest.raises(GatewayUnavailableError):
+    with pytest.raises(forge_files.EnvironmentNotResponding):
         await files.live("tree")
     assert cancelled.is_set()
 
@@ -252,7 +254,8 @@ async def test_a_task_with_no_working_copy_yet_has_no_files_and_no_changes(
     monkeypatch.setattr(forge_files, "branch_head", AsyncMock(return_value=None))
 
     assert await files.files("live") == ([], "live", [])
-    assert await files.diff("live") == ""
+    # Nothing came off a machine: the (empty) changes are named as committed.
+    assert await files.diff("live") == ("", "committed")
     with pytest.raises(NotFoundError):
         await files.live("read", path="README.md")
 

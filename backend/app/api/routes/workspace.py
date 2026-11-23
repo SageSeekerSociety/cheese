@@ -22,6 +22,7 @@ from app.api.request_deps import DbSession
 from app.api.response import ok, page, typed_response
 from app.api.write_access import ROUTE_DECIDES, Can, InProject
 from app.auth.project_access import may_read_project
+from app.auth.project_roles import may
 from app.core.errors import (
     AuthenticationRequiredError,
     GatewayUnavailableError,
@@ -35,11 +36,11 @@ from app.domain.agent.chat import ChatService
 from app.domain.agent.file_edits import announce_edit
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.machine.preview_wake import wake_for_files
-from app.domain.machine.task_machine import prepare_for_write
+from app.domain.machine.task_machine import SEARCH_WAIT_S, prepare_for_person
 from app.domain.project.services import ProjectService
 from app.domain.project_permissions import Permission
 from app.domain.repository.forge_files import SEARCH_QUERY_MAX, ProjectFiles
-from app.domain.repository.ports import WakeWorkingCopy
+from app.domain.repository.ports import PrepareWorkingCopy, WakeWorkingCopy
 from app.domain.review import forge_clients
 from app.domain.review.landed import tasks_that_landed
 from app.domain.room_task.place import Task, TaskStatus, TopicStatus, place_or_404
@@ -218,22 +219,46 @@ class FileSearchOut(BaseModel):
     truncated: bool
 
 
+async def _search_prepare(
+    db, resolver, project_id: uuid.UUID, work: Task | None
+) -> PrepareWorkingCopy | None:
+    """What brings a task's copy onto a machine for a search, as a save brings
+    it (`write_file`): for a person who may edit the task's files, in a task
+    still open, signed in as themselves. Nobody else starts an environment by
+    searching — a reader who may only look, an AI teammate (its own turn has
+    its machine) — and their search of a copy no machine holds is refused as
+    one that needs it."""
+    if work is None or work.status != TaskStatus.open:
+        return None
+    actor = await resolver.resolve(project_id=project_id, topic_id=work.id)
+    if actor.via != "token":
+        return None
+    if not await may(db, project_id, actor.handle, Permission.edit_content):
+        return None
+    # A search is a read: started and answered at once (`SEARCH_WAIT_S`).
+    return partial(prepare_for_person, db.bind, actor, wait_s=SEARCH_WAIT_S)
+
+
 @router.get(
     "/{project_id}/files/search",
-    dependencies=[Depends(require_place_access)],
     **typed_response(FileSearchOut),
 )
 async def search_files(
     project_id: uuid.UUID,
     db: DbSession,
     wake: Wake,
+    resolver: ActorResolverDep,
+    work: Annotated[Task | None, Depends(require_place_access)],
     q: Annotated[str, Query(min_length=1, max_length=SEARCH_QUERY_MAX)],
     topic: uuid.UUID | None = None,
     task: uuid.UUID | None = None,
     source: Literal["live", "committed"] = "live",
 ) -> dict:
     """Search the text of a task's files for the 编辑器 form's 搜索: the lines
-    holding ``q`` as typed, case ignored, grouped by file."""
+    holding ``q`` as typed, case ignored, grouped by file. When no machine
+    holds the task's copy, a person who may edit it brings one up, as a save
+    does, and is answered that it is being prepared
+    (`task_machine.MachinePreparing`) until it is."""
     await ProjectService(db).get_or_404(project_id)
     return ok(
         await ProjectFiles(
@@ -243,6 +268,7 @@ async def search_files(
             release_session=True,
             executor=execution.call,
             wake=wake,
+            prepare=await _search_prepare(db, resolver, project_id, work),
         ).search(q, source)
     )
 
@@ -335,7 +361,7 @@ async def write_file(
         executor=execution.call,
         wake=wake,
         # A save brings the task's machine back when none holds its copy.
-        prepare=partial(prepare_for_write, db.bind, actor),
+        prepare=partial(prepare_for_person, db.bind, actor),
     ).save(path, content, version, base if isinstance(base, str) else None)
     row = await TaskService(db).get(task)
     if row is not None and actor.authenticated and actor.via != "cheese":
@@ -406,7 +432,7 @@ async def arrange_file(
         release_session=True,
         executor=execution.call,
         wake=wake,
-        prepare=partial(prepare_for_write, db.bind, actor),
+        prepare=partial(prepare_for_person, db.bind, actor),
     ).arrange(body.operation, body.path.strip(), body.to.strip() if body.to else None)
     return ok({"path": done.get("path", body.path)})
 
@@ -483,19 +509,19 @@ async def git_diff(
     source: Literal["live", "committed"] = "committed",
 ) -> dict:
     await ProjectService(db).get_or_404(project_id)
-    return ok(
-        {
-            "diff": await ProjectFiles(
-                db,
-                project_id,
-                task,
-                release_session=True,
-                executor=execution.call,
-                wake=wake,
-                compare_status=forge_clients.compare_status,
-            ).diff(source, ref)
-        }
-    )
+    diff, actual_source = await ProjectFiles(
+        db,
+        project_id,
+        task,
+        release_session=True,
+        executor=execution.call,
+        wake=wake,
+        compare_status=forge_clients.compare_status,
+    ).diff(source, ref)
+    # `source`: ``live`` only when the machine holding the task's copy answered;
+    # ``committed`` when the changes came off the forge, asked for or because
+    # no machine holds the copy.
+    return ok({"diff": diff, "source": actual_source})
 
 
 @router.get(

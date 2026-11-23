@@ -551,7 +551,7 @@ async def live_diff(
     """What handing in now would put in the project: the task's working copy
     against its base, uncommitted files included (the committed branch when
     no sandbox holds it)."""
-    return await ProjectFiles(
+    diff, _ = await ProjectFiles(
         db,
         task.project_id,
         task.id,
@@ -559,6 +559,7 @@ async def live_diff(
         executor=executor,
         wake=wake,
     ).diff("live")
+    return diff
 
 
 async def recent_subjects(db: AsyncSession, project_id: uuid.UUID) -> list[str]:

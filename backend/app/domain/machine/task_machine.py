@@ -31,7 +31,8 @@ The bring-up runs in the background, one per environment whichever backend
 process runs it (``Environment.preparing_until``), so a person who asked for
 it is answered at once and asks how far it got (`status`), as an app
 preview's wake is (`preview_wake`). A save that arrives meanwhile waits for
-it a short while (`prepare_for_write`).
+it a short while, and a search starts it and is answered at once
+(`prepare_for_person`).
 """
 
 from __future__ import annotations
@@ -80,7 +81,11 @@ ROUND_S = 60.0
 #: How long a save waits for the machine it brought back before it is answered
 #: as one still being prepared.
 SAVE_WAIT_S = 20.0
-#: How often a save waiting for the machine looks at how far it got.
+#: How long a search waits for it: not at all. A search is a read, which the
+#: browser gives a budget shorter than a save's wait and sends again on a
+#: retryable refusal; the page asks again itself once the machine is ready.
+SEARCH_WAIT_S = 0.0
+#: How often a request waiting for the machine looks at how far it got.
 SAVE_POLL_S = 0.25
 #: Why the last bring-up somebody asked for did not finish: no machine could
 #: be had for it (what the machine said is in the log).
@@ -98,6 +103,14 @@ class MachinePreparing(UpstreamUnavailableError):
 
     def __init__(self) -> None:
         super().__init__(say("taskMachinePreparing"))
+
+
+class MachinePrepareFailed(UpstreamUnavailableError):
+    """Bringing the task's machine back did not finish (`Status.failed`): the
+    page offers to ask for it again."""
+
+    def __init__(self) -> None:
+        super().__init__(say("taskMachinePrepareFailed"))
 
 
 @dataclass(frozen=True)
@@ -166,13 +179,15 @@ async def prepare(
     return True
 
 
-async def prepare_for_write(
+async def prepare_for_person(
     bind, actor: Actor, task_id: uuid.UUID, *, hub=None, wait_s: float | None = None
 ) -> None:
-    """A person's save found no machine holding the task's copy: bring one
-    back (`prepare`) and wait up to ``wait_s`` for it
+    """A person's save or search found no machine holding the task's copy:
+    bring one back (`prepare`) and wait up to ``wait_s`` for it — a save's
+    ``SAVE_WAIT_S`` unless told otherwise
     (`repository.ports.PrepareWorkingCopy`). Raises ``MachinePreparing`` when
-    it is not ready by then, and a refusal when the bring-up failed."""
+    it is not ready by then, and ``MachinePrepareFailed`` when the bring-up
+    failed."""
     async with AsyncSession(bind, expire_on_commit=False) as db:
         await prepare(db, task_id, actor, hub=hub)
     deadline = time.monotonic() + (SAVE_WAIT_S if wait_s is None else wait_s)
@@ -183,7 +198,7 @@ async def prepare_for_write(
             return
         if now.machine is None:
             if now.failed is not None:
-                raise UpstreamUnavailableError(say("taskMachinePrepareFailed"))
+                raise MachinePrepareFailed()
             return
         if time.monotonic() >= deadline:
             raise MachinePreparing()

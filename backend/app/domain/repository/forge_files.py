@@ -123,6 +123,10 @@ _READS = ("tree", "diff", "read")
 #: The operations that change the task's files: a person's save, and their
 #: creating, renaming and deleting files and folders.
 _WRITES = ("write", "write_bytes", "create", "mkdir", "move", "delete")
+#: What a person does that brings the task's copy onto a machine when none
+#: holds it (`ports.PrepareWorkingCopy`): the writes, and a search, which only
+#: a copy on a machine answers. Reading and listing never do.
+_BRINGS_UP = (*_WRITES, "search")
 
 
 class _ExecutorAbsent(Exception):
@@ -133,6 +137,31 @@ class _ExecutorAbsent(Exception):
 class _NoWorkingCopy(NotFoundError):
     """No machine holds the task's working copy and its branch is pushed: one
     file is read from the branch, and nothing can be written to it."""
+
+
+class EnvironmentReleased(UpstreamUnavailableError):
+    """No machine holds the task's copy any more: its sandbox was destroyed or
+    parked (`_released` says what became of its work). The page reads the
+    name (``error.name``) and knows the task's environment is gone, whatever
+    it believed before."""
+
+
+class EnvironmentNotResponding(UpstreamUnavailableError):
+    """The machine holding the task's copy did not answer in time. The page
+    reads the name and offers to ask for the environment again, which checks
+    it end to end (`task_machine.prepare`)."""
+
+    def __init__(self) -> None:
+        super().__init__(say("taskMachineNotResponding"))
+
+
+class SearchNeedsEnvironment(NotFoundError):
+    """A search of a task's copy no machine holds, by someone it is not
+    brought up for: a reader who may not edit the task's files, or a task
+    that has ended. Asking again answers the same."""
+
+    def __init__(self) -> None:
+        super().__init__(say("taskSearchNeedsEnvironment"))
 
 
 class ProjectFiles:
@@ -299,24 +328,28 @@ class ProjectFiles:
         if operation == "search":
             # Searched where the copy is, on its machine: the forge has no
             # search of its own, and reading every file off it is not one.
-            raise NotFoundError(say("taskSearchNeedsEnvironment"))
+            raise SearchNeedsEnvironment()
         revision = await self._copy_revision(task)
         if not revision:
             if operation not in _WHOLE_COPY:
                 raise NotFoundError(say("taskFileNotOnMachine"))
-            return {"tree": {"files": []}, "diff": {"diff": ""}}[operation]
+            return {
+                "tree": {"files": []},
+                "diff": {"diff": "", "source": "committed"},
+            }[operation]
         if operation == "tree":
             return {"files": await self._listing(revision)}
         if operation == "diff":
-            return {"diff": await self.diff("committed")}
+            text, _ = await self.diff("committed")
+            return {"diff": text, "source": "committed"}
         raise _NoWorkingCopy(say("taskFileNotOnMachine"))
 
     async def live(self, operation: str, **params):
         task = await self.task()
         if task is None:
             raise ValidationError(say("taskRequired"))
-        if operation in _WRITES and self._prepare is not None:
-            return await self._write(task, operation, params)
+        if operation in _BRINGS_UP and self._prepare is not None:
+            return await self._bringing_up(task, operation, params)
         found = await self._working_copy(task)
         if (
             found is not None
@@ -328,7 +361,7 @@ class ProjectFiles:
             # says so until a placement replaces it. What it held is read from
             # the forge; a task with nothing there is told what became of its
             # work.
-            raise UpstreamUnavailableError(await self._released(task))
+            raise EnvironmentReleased(await self._released(task))
         if found is None or found[1]:
             # No machine holds a working copy of it: the same as a machine
             # without one.
@@ -336,45 +369,45 @@ class ProjectFiles:
         try:
             result = await self._on_machine(task, found[0], operation, params)
         except _ExecutorAbsent as exc:
-            raise GatewayUnavailableError(say("taskMachineNotResponding")) from exc
+            raise EnvironmentNotResponding() from exc
         if result.get("error") == "not_found":
             if result.get("missing") == "worktree" or operation in _WHOLE_COPY:
                 return await self._without_working_copy(task, operation)
             raise NotFoundError(say("taskFileNotOnMachine"))
         return result
 
-    async def _write(self, task: Any, operation: str, params: dict):
-        """A person's write, to the machine holding the task's copy.
+    async def _bringing_up(self, task: Any, operation: str, params: dict):
+        """A person's write or search, on the machine holding the task's copy.
 
         A copy no machine holds yet — none was ever placed, its sandbox was
         destroyed or parked, or the machine has no checkout of the task — and
         an executor that is not there to answer (it stopped for sitting idle)
         are all the same to the person: the copy is brought onto a machine
-        for them first (`ports.PrepareWorkingCopy`), and then written. Bringing
-        it takes a while; one not ready within the time a save waits is
-        answered as a machine still being prepared, which the save can be
-        sent again after."""
+        for them first (`ports.PrepareWorkingCopy`), and then written or
+        searched. Bringing it takes a while; one not ready within the time the
+        request waits is answered as a machine still being prepared, which the
+        request can be sent again after."""
         assert self._prepare is not None
         found = await self._working_copy(task)
         if found is not None and not found[1]:
             try:
                 result = await self._on_machine(task, found[0], operation, params)
                 if result.get("missing") != "worktree":
-                    return self._written(result)
+                    return self._answered(result)
             except _ExecutorAbsent:
                 pass
         await self._release()
         await self._prepare(task.id)
         found = await self._working_copy(task)
         if found is None or found[1]:
-            raise UpstreamUnavailableError(await self._released(task))
+            raise EnvironmentReleased(await self._released(task))
         try:
             result = await self._on_machine(task, found[0], operation, params)
         except _ExecutorAbsent as exc:
-            raise GatewayUnavailableError(say("taskMachineNotResponding")) from exc
-        return self._written(result)
+            raise EnvironmentNotResponding() from exc
+        return self._answered(result)
 
-    def _written(self, result: dict) -> dict:
+    def _answered(self, result: dict) -> dict:
         if result.get("error") == "not_found":
             raise NotFoundError(say("taskFileNotOnMachine"))
         return result
@@ -408,7 +441,7 @@ class ProjectFiles:
                     },
                 )
         except (TimeoutError, DeviceOffline) as exc:
-            raise GatewayUnavailableError(say("taskMachineNotResponding")) from exc
+            raise EnvironmentNotResponding() from exc
         except DeviceCallError as exc:
             # The machine's own words name its sockets and paths: they go to
             # the log, and the person is told what they can act on.
@@ -417,7 +450,7 @@ class ProjectFiles:
             )
             if exc.failure_code == EXECUTOR_UNREACHABLE:
                 raise _ExecutorAbsent from exc
-            raise GatewayUnavailableError(say("taskMachineNotResponding")) from exc
+            raise EnvironmentNotResponding() from exc
         if result.get("error") == "conflict":
             raise ConflictError(say("taskFileChangedReload"))
         return result
@@ -477,10 +510,14 @@ class ProjectFiles:
         some were left out (`SEARCH_MAX_MATCHES`, `SEARCH_MAX_PER_FILE`, or a
         search that ran too long).
 
-        Only a copy on a machine is searched; one no machine holds, and a
-        task's committed files, answer that they cannot be."""
-        if await self.source(source) != "live":
-            raise NotFoundError(say("taskSearchNeedsEnvironment"))
+        Only a copy on a machine is searched. One no machine holds is brought
+        onto one first when this view was given what brings it
+        (`ports.PrepareWorkingCopy`), as a save is; without it, and for a
+        task's committed files, the answer is that they cannot be searched."""
+        if source != "live" or (
+            self._prepare is None and await self.source(source) != "live"
+        ):
+            raise SearchNeedsEnvironment()
         found = await self.live(
             "search",
             query=query,
@@ -814,7 +851,11 @@ class ProjectFiles:
                 pass
         return paths
 
-    async def diff(self, source: str, ref: str | None = None):
+    async def diff(self, source: str, ref: str | None = None) -> tuple[str, str]:
+        """The changes, and the source they were read from: ``live`` only when
+        a machine holding the task's copy answered them, ``committed`` when
+        they came off the forge — asked for, or because no machine holds the
+        copy."""
         if ref and ref.startswith("-"):
             raise ValidationError(say("commitInvalid"))
         task = await self.task()
@@ -823,7 +864,8 @@ class ProjectFiles:
             base = task.base_branch or await default_branch(
                 self.project_id, self.session
             )
-            return (await self.live("diff", base_branch=base))["diff"]
+            found = await self.live("diff", base_branch=base)
+            return found["diff"], found.get("source", "live")
         binding = await binding_for_project(self.project_id, self.session)
         if binding is None:
             raise NotFoundError(say("forgeNoRepository"))
@@ -832,7 +874,7 @@ class ProjectFiles:
                 if not task.branch_name or not await self._head(
                     self.project_id, self.session, task.branch_name
                 ):
-                    return ""
+                    return "", "committed"
                 raise GatewayUnavailableError(say("committedReviewNotReady"))
             path = f"/pulls/{task.pr_number}" + (
                 ".diff" if binding.kind == "forgejo" else ""
@@ -852,11 +894,11 @@ class ProjectFiles:
                 )
                 if relation not in ("ahead", "identical"):
                     raise NotFoundError(say("commitNotDelivered"))
-            return await self.commit_diff(ref or head)
+            return await self.commit_diff(ref or head), "committed"
         data = await self._data(self.project_id, self.session, path, diff=True)
         if data is None:
             raise NotFoundError(say("revisionDiffNotFound"))
-        return data
+        return data, "committed"
 
     async def commit_diff(self, revision: str):
         binding = await binding_for_project(self.project_id, self.session)
