@@ -146,6 +146,8 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 
 固定页签按页面分（`WorkPanel.vue` 的 `CHANNEL_TABS`）：频道是 `overview`（概览）、`threads`（支线）、`routines`（例行事务）；任务是 `overview`、`site`（现场）、`changes`（改动）、`preview`（预览）。手机上两种页面的第一格都是 `chat`（对话）。旧地址里的 `?tab=doc` / `?tab=tasks` 都并进概览了。另有一类**文件页签**，键是 `file:<路径>`，一份文件一个，「你看一下这个文件」因此也是一条能发的链接。
 
+桌面频道页上这些不画成页签：对话旁边一次只显示一样（`WorkLayout.single`），每一样带布局层画的标题栏（`titled` 面板），面板往里放「返回」和名字（`work/WorkPaneHead.vue`），打开的一件任务把它的页头放进同一条标题栏；新打开的一份文件换掉上一份，「返回」回到打开它的那一样。切换靠页头那四颗按钮（`TopicHeader` 的 `panelThings`）。任务页、私聊页、手机和浮层照旧画页签。
+
 总览两边各是一个组件：频道是 `components/channel/ChannelOverview.vue`（频道说明，「综合」换成项目目标的 `PanelDoc`；置顶 `ChannelOverviewPins`；进行中；最近关闭），任务是 `components/task/TaskOverview.vue`（开始信息、任务文档的 `PanelDoc`、这一轮的清单、`TaskOutputs` 产出、`TaskRelatedList` 相关）。其余页签的内容在 `components/panels/` 下：`PanelSite`（现场，`SiteRecordTree` / `SiteRecordRow`；顶上那一行是和输入框上方同一个 `room/MemberActivity`）、`PanelChanges`（改动，没绑仓库时 `PanelChanges.noRepo`）、`PanelPreview`（预览，含文档与媒体）、`PanelCard`（共用外壳）。
 
 ## 空间页 {#space}

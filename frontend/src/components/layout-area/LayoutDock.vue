@@ -125,6 +125,10 @@ const pinned = (id: string) => info.value.get(id)?.pinned === true
 /** Bare cells (the page head, the sidebar) take no dropped tab; a lone pinned panel's cell does. */
 const bareGroup = (group: DockviewGroupPanel) =>
   group.panels.length > 0 && group.panels.every((panel) => info.value.get(panel.id)?.bare)
+/** A cell with no tab strip to drop a tab on. */
+const tablessGroup = (group: DockviewGroupPanel) =>
+  group.panels.length > 0 &&
+  group.panels.every((panel) => info.value.get(panel.id)?.bare || info.value.get(panel.id)?.titled)
 
 /** The arrangement as dockview shows it now; what the cell chrome reads. */
 const model = shallowRef<LayoutArrangement>({ root: null })
@@ -526,7 +530,7 @@ function onReady(event: DockviewReadyEvent) {
     dock.onWillShowOverlay((e) => {
       // Nothing lands around the whole area, in a folded cell or in a cell without tabs.
       if (e.kind === 'edge') return void e.preventDefault()
-      if (e.group && (!acceptsDrop(model.value, e.group.id) || bareGroup(e.group))) e.preventDefault()
+      if (e.group && (!acceptsDrop(model.value, e.group.id) || tablessGroup(e.group))) e.preventDefault()
     }),
     dock.onDidActivePanelChange(() => refreshActives()),
     dock.onDidAddPanel(watchVisibility),

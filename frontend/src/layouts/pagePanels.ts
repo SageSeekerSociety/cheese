@@ -6,7 +6,8 @@
  * panel — says so here: which panels it has and how they sit by default. The shell puts
  * them in cells below the page's own head and gives each an outlet; the page renders the
  * panel's content into that outlet (a Teleport), so the content stays the page's own
- * component, with the page's provides and state. A page that says nothing is one panel,
+ * component, with the page's provides and state. A titled panel (`titled`) gets a second
+ * outlet in its title bar (`headOutlet`), for what the bar says before its buttons. A page that says nothing is one panel,
  * and needs nothing from this module.
  *
  * The page never learns which cell a panel is in. It can ask for a panel to be shown (its
@@ -73,6 +74,8 @@ export interface PagePanelsHost {
   claim: ShallowRef<Claim | null>
   /** Where each of those panels renders, once its cell exists. */
   outlets: Record<string, HTMLElement | undefined>
+  /** Where a titled panel's title bar takes what the page puts in it, once the bar exists. */
+  headOutlets: Record<string, HTMLElement | undefined>
   /** The panel whose cell fills the area, or null. Not remembered. */
   maximized: Ref<string | null>
   /** The panels on screen now. */
@@ -90,6 +93,7 @@ export function providePagePanels(): PagePanelsHost {
   const host: PagePanelsHost = {
     claim: shallowRef(null),
     outlets: reactive({}),
+    headOutlets: reactive({}),
     maximized: ref(null),
     visible: ref([]),
     area: shallowRef(null),
@@ -109,6 +113,8 @@ export interface PagePanelsHandle {
   /** The shell lays these panels out: render each into `outlet(id)`. */
   active: ComputedRef<boolean>
   outlet: (id: string) => HTMLElement | undefined
+  /** A titled panel's title bar: render what it says (before its buttons) into `headOutlet(id)`. */
+  headOutlet: (id: string) => HTMLElement | undefined
   /** The page panel that fills the area now, if any. */
   maximized: ComputedRef<string | null>
   maximize: (id: string) => void
@@ -163,6 +169,7 @@ export function usePagePanels(spec: () => PagePanels | null): PagePanelsHandle {
   return {
     active,
     outlet: (id) => (active.value ? host!.outlets[id] : undefined),
+    headOutlet: (id) => (active.value ? host!.headOutlets[id] : undefined),
     maximized: computed(() => {
       const id = host?.maximized.value ?? null
       return id && declared.value.includes(id) ? id : null

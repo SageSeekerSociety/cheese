@@ -13,6 +13,7 @@
 // seconds for as long as it was open; usage numbers do not move that fast, and
 // nobody watches them. Now they load once, when the popover is opened.
 import type { MenuAction } from '@/components/common/menuAction'
+import type { WorkTabMeta } from '@/components/work/workLayout'
 import type { ProjectMemberRow, Topic } from '@/cx_types'
 
 import { computed, ref, watch } from 'vue'
@@ -31,7 +32,6 @@ import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import PageSidebarToggle from '@/components/common/Navigation/PageSidebarToggle.vue'
 import ChannelNotifyMenu from '@/components/room/ChannelNotifyMenu.vue'
-import PanelToggle from '@/components/room/PanelToggle.vue'
 import TopicMembers from '@/components/TopicMembers.vue'
 import TopicUsageSummary from '@/components/TopicUsageSummary.vue'
 import { t } from '@/i18n'
@@ -49,18 +49,24 @@ const props = defineProps<{
   me: string
   /** ChatPanel's live socket state — the dot that says 已连接 / 未连接. */
   connected: boolean
-  /** 右侧面板是不是开着——「概览」那颗开关读它。 */
-  panelOpen?: boolean
+  /**
+   * 对话旁边那一处能放的几样固定的东西（概览、支线、文件、例行事务）：页头上一样一颗按钮，带着
+   * 它的名字、图标和信号（支线上有没读过的回复时的点、进行中的件数）。
+   */
+  panelThings?: WorkTabMeta[]
+  /** 那一处此刻显示的是其中哪一样；收着、或显示的是别的（一份文件、一件任务）时是 null。 */
+  panelShown?: string | null
   /** 读者挪过这一页的摆法时给：⋯ 里多一项「恢复默认摆法」。 */
   resetLayout?: () => void
-  /** 「概览」开合的那几块的 id（见 PanelToggle）。 */
+  /** 那几颗按钮开合的那几块的 id。 */
   panelControls?: string
 }>()
 
 const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
   (e: 'rename', title: string): void
-  (e: 'toggle-panel'): void
+  /** 点了其中一样：把那一处开在它上面；它正显示着就收起那一处。 */
+  (e: 'toggle-panel', key: string): void
   // 这个话题换了 AI 队友。对话栏要重拉名册——它显示的 AI 名字来自那份名册。
 }>()
 
@@ -75,6 +81,10 @@ const shortId = computed(() => topicShortId(props.topic.id))
 const title = computed(() => topicTitle(props.topic))
 // 「综合」是项目本身，不是一件事：没有编号，也没有「进行中」这类状态。
 const isWorkTopic = computed(() => props.topic.kind !== 'root')
+/** 按钮上带的件数（概览上进行中的任务）。 */
+function countOf(thing: WorkTabMeta): number {
+  return thing.signal?.kind === 'count' ? thing.signal.count : 0
+}
 // 我对这个频道的通知档位（铃铛）。
 const store = useWorkspaceStore()
 // ---- 用量 popover (was the 资源 drawer) ----
@@ -270,8 +280,28 @@ useCommands(roomCommands)
       @set="(level, until) => store.setNotifyLevel(topic.id, level, until)"
     />
 
-    <!-- 右侧面板的开关。手机上面板是页签里的一格，没有这颗。 -->
-    <PanelToggle v-if="mdAndUp" :open="!!panelOpen" :controls="panelControls" @toggle="emit('toggle-panel')" />
+    <!-- The fixed things that can sit beside the conversation, one button each: opens the place
+         on it, or closes the place when it is the one shown. Phones show them as tabs instead.
+         Focus returns to the first one (data-panel-toggle) when the floating panel closes. -->
+    <div v-if="mdAndUp && panelThings?.length" class="topic-header__things">
+      <span v-for="(thing, i) in panelThings" :key="thing.key" class="topic-header__thing">
+        <BaseButton
+          size="sm"
+          class="topic-header__thing-button tap-target"
+          :class="{ 'topic-header__thing-button--on': panelShown === thing.key }"
+          v-bind="countOf(thing) ? { prependIcon: thing.icon } : { icon: thing.icon }"
+          :data-panel-toggle="i === 0 ? '' : undefined"
+          :data-panel-thing="thing.key"
+          :aria-pressed="panelShown === thing.key ? 'true' : 'false'"
+          :aria-controls="panelControls"
+          :aria-label="thing.hint ?? thing.title"
+          :title="thing.hint ?? thing.title"
+          @click="emit('toggle-panel', thing.key)"
+          ><span v-if="countOf(thing)" class="topic-header__thing-count">{{ countOf(thing) }}</span></BaseButton
+        >
+        <span v-if="thing.signal?.kind === 'dot'" class="topic-header__thing-dot" aria-hidden="true" />
+      </span>
+    </div>
 
     <!-- 这一行常驻的只有标题、状态、成员。其余的都是偶尔才用的，按「做一件事 /
          看一个数」分成两段：专注模式、用量，编号垫在最底下。工作电脑在成员名册里。
@@ -454,6 +484,37 @@ useCommands(roomCommands)
 .pr-state--draft {
   color: var(--faint);
   background: var(--fill);
+}
+/* 对话旁边那一处的几样东西：一组紧挨着的图标按钮，显示着的那一颗是按下的样子。 */
+.topic-header__things {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 2px;
+  align-items: center;
+}
+.topic-header__thing {
+  position: relative;
+  display: inline-flex;
+}
+.topic-header__thing-button--on {
+  color: var(--ink);
+  background: var(--fill-2);
+}
+.topic-header__thing-count {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+/* 有没看过的东西（支线上的新回复）：按钮右上角一颗琥珀点，和页签上的那颗同一个记号。 */
+.topic-header__thing-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  pointer-events: none;
+  background: var(--accent);
+  border-radius: var(--radius-pill);
 }
 /* ⋯ 菜单。一行一件事，行高和别处的菜单一样（36px），分段靠一条 --line。 */
 .room-menu {

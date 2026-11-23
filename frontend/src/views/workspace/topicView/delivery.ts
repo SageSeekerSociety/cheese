@@ -1,9 +1,10 @@
-// 频道右栏里那几格任务页签，以及右栏此刻开着哪一格。
+// 频道右栏里打开的那几件任务，以及右栏此刻开着哪一格。
 //
-// 桌面上，在频道里打开一件任务是右栏固定那几格右边多出的一格能关的页签，写着任务名；打开
-// 另一件再多一格，放不下时那一排横着滚。地址（`reviewTaskId`）只记正选中的那一件：开着
-// 哪几格是这一页的状态，不进地址，刷新之后只回来地址上那一件。一格可以开着而没被选中
-// （交付在你看着别的页签时到了，页签上带一个点），离开它去别的页签它也还在。支线也一样
+// 桌面上，在频道里打开一件任务是右栏里多出的一格，写着任务名。频道页上右栏一次只显示一格
+// （`single`）：打开另一件换掉这一件，「返回」回到打开它之前那一格。右栏是浮层（主区太窄）时
+// 它自己画页签：打开另一件再多一格，放不下时那一排横着滚。地址（`reviewTaskId`）只记正选中的那
+// 一件：开着哪几格是这一页的状态，不进地址，刷新之后只回来地址上那一件。浮层的页签里一格可以
+// 开着而没被选中（交付在你看着别的页签时到了，页签上带一个点），离开它去别的页签它也还在。支线
 // 留在「支线」那一格里。手机上没有右栏，这些都是整页。
 import type { Ref } from 'vue'
 import type { RoomTask } from '@/cx_types'
@@ -37,10 +38,17 @@ export function useDeliveryTab(opts: {
   toChannelTab: (key: string) => void
   /** 正开着的那一件又交了一版：它那一格重读。 */
   refreshDelivery: (taskId: string) => void
+  /** 右栏一次只显示一格、没有页签（频道页的桌面并排）。 */
+  single: () => boolean
 }) {
   /** 开着的那几格，按打开的先后。 */
   const tabs = ref<{ taskId: string; dot: boolean }[]>([])
   function add(taskId: string, dot: boolean) {
+    // 一次只显示一格：打开的这一件换掉开着的那一件，不在看不见的地方攒着。
+    if (opts.single()) {
+      if (tabs.value.length !== 1 || tabs.value[0]!.taskId !== taskId) tabs.value = [{ taskId, dot: false }]
+      return
+    }
     const at = tabs.value.findIndex((tab) => tab.taskId === taskId)
     if (at < 0) tabs.value = [...tabs.value, { taskId, dot }]
     else if (tabs.value[at]!.dot !== dot) tabs.value = tabs.value.map((tab, i) => (i === at ? { ...tab, dot } : tab))
@@ -85,8 +93,9 @@ export function useDeliveryTab(opts: {
 
   /**
    * 页面开着时频道主线上来了一行关于这件任务的新内容：平台记的「已提交审阅」，或者开这件任务的
-   * 队友带着它说的话。它有一版在等我审阅、右栏开着、停在「概览」时，直接打开它；右栏开着但在
-   * 别的页签时，把它那一格加进那一排、不选中，带一个点；右栏收着时不动它。同一版只这样做一次，
+   * 队友带着它说的话。它有一版在等我审阅、右栏开着、停在「概览」时，直接打开它；右栏是带页签的
+   * 浮层、停在别的页签时，把它那一格加进那一排、不选中，带一个点（一次只显示一格时没有那一排，
+   * 不动它）；右栏收着时不动它。同一版只这样做一次，
    * 之后关于它的话不再打开。刷新时已经在主线上的旧内容不算（对话栏只报实时到的那一行）。
    */
   async function arrived(taskId: string) {
@@ -109,8 +118,8 @@ export function useDeliveryTab(opts: {
     if (handled.has(card.id)) return
     handled.add(card.id)
     if (onOverview) return opts.openDelivery(taskId)
-    // 正看着的那一件不带点。
-    if (reviewTaskId === taskId) return
+    // 正看着的那一件不带点；没有页签的右栏没有地方挂点。
+    if (reviewTaskId === taskId || opts.single()) return
     add(taskId, true)
   }
 

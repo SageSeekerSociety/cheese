@@ -1,8 +1,8 @@
 /** 桌面上频道页交给外壳布局区的那几块：对话一块，工作面板的每一格各一块。
  *
  * 对话看不见的时候（别的格子放大了、它那一格收着），这件事里等人做的决定不能跟着消失：
- * 采纳那一条贴到读者在看的那一格工作面板底下，同一时刻只有一份。页签栏上的 ✕ 收起的
- * 是工作面板那几格。布局区本身（拖、放大、记住摆法）是外壳的事，这里用一个只记「交来
+ * 采纳那一条贴到读者在看的那一格工作面板底下，同一时刻只有一份。工作面板那一处标题栏上的
+ * ✕ 收起的是这一处。布局区本身（拖、放大、记住摆法）是外壳的事，这里用一个只记「交来
  * 了哪几块、哪几块在屏幕上」的外壳。
  */
 import type { Component } from 'vue'
@@ -179,11 +179,11 @@ describe('频道页在外壳布局区里', () => {
     })
   })
 
-  it('页签栏上的 ✕ 收起工作面板那几格，对话不动', async () => {
+  it('标题栏上的 ✕ 收起工作面板那一处，对话不动', async () => {
     mountView()
     await waitFor(() => expect(panel('overview')?.hidden).toBe(false))
 
-    panel('overview')!.actions![0].run()
+    shell.claim.value!.spec.onClose!('overview')
 
     await waitFor(() => expect(panel('overview')?.hidden).toBe(true))
     expect(panel('threads')?.hidden).toBe(true)

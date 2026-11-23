@@ -23,6 +23,7 @@ import type { ScrollKeeper } from './keepScroll'
 import type { LayoutPanel, LayoutPanelInfo } from './types'
 
 import { computed, markRaw, onBeforeUnmount, reactive, ref, shallowRef, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useDisplay } from 'vuetify'
 
 import {
@@ -46,6 +47,7 @@ import LayoutStack from './LayoutStack.vue'
 import LayoutStatic from './LayoutStatic.vue'
 import { rememberedFold, rememberedWidth, rememberFold, rememberWidth } from './widths'
 
+import BaseButton from '@/components/base/BaseButton.vue'
 import { storageGet, storageSet } from '@/lib/browserStorage'
 
 const props = withDefaults(
@@ -87,8 +89,11 @@ const emit = defineEmits<{
 defineSlots<{
   /** Content of a panel declared without `component`. */
   panel?: (scope: { id: string }) => unknown
+  /** What a titled panel's title bar says, before its buttons. Without it, the panel's title. */
+  head?: (scope: { id: string }) => unknown
 }>()
 
+const { t } = useI18n()
 const display = useDisplay()
 const isNarrow = computed(() => props.narrow ?? !display.mdAndUp.value)
 
@@ -335,6 +340,26 @@ function setMaximized(id: string | null) {
   emit('update:maximized', id)
 }
 
+// ---------------------------------------------------------------- title bars
+
+/** The cell of this panel is the one that fills the area. */
+function fills(id: string): boolean {
+  const big = maximizedNow.value
+  return !!big && !!cellOfPanel(arrangement.value, id)?.panels.includes(big)
+}
+/** More than one cell in sight: there is something to give this panel's cell the room of. */
+const severalCells = computed(
+  () => cellsOf(arrangement.value).filter((cell) => !sizing(cell, 'row').hidden && !hidesTabsOf(cell)).length > 1
+)
+function hidesTabsOf(cell: LayoutCell): boolean {
+  return cell.panels.every((id) => byId.value.get(id)?.bare)
+}
+/** While this panel's cell fills the area: a panel out of sight carries a mark. */
+function signalledElsewhere(id: string): boolean {
+  const inSight = new Set(cellOfPanel(arrangement.value, id)?.panels ?? [])
+  return placeable.value.some((panel) => panel.signal && !inSight.has(panel.id))
+}
+
 // ---------------------------------------------------------------- narrow
 
 const chosen = ref<string>()
@@ -495,10 +520,57 @@ defineExpose({ reset, open, fold, rearranged })
         <div
           :ref="panelRoot(id)"
           class="layout-area__panel"
-          :class="{ 'layout-area__panel--fit': byId.get(id)?.fitHeight }"
+          :class="{
+            'layout-area__panel--fit': byId.get(id)?.fitHeight,
+            'layout-area__panel--titled': byId.get(id)?.titled,
+          }"
         >
-          <component :is="byId.get(id)!.component" v-if="byId.get(id)?.component" v-bind="byId.get(id)!.props ?? {}" />
-          <slot v-else :id="id" name="panel" />
+          <div v-if="byId.get(id)?.titled" class="layout-head" :data-layout-head="id">
+            <div class="layout-head__main">
+              <slot :id="id" name="head">
+                <span class="layout-head__title">{{ byId.get(id)?.title ?? id }}</span>
+              </slot>
+            </div>
+            <BaseButton
+              v-for="action in byId.get(id)?.actions ?? []"
+              :key="action.label"
+              kind="ghost"
+              size="sm"
+              :icon="action.icon"
+              :aria-label="action.label"
+              :title="action.label"
+              @click="action.run()"
+            />
+            <span v-if="!isNarrow && (severalCells || fills(id))" class="layout-head__signalled">
+              <BaseButton
+                kind="ghost"
+                size="sm"
+                :icon="fills(id) ? 'mdi-arrow-collapse' : 'mdi-arrow-expand'"
+                :aria-label="fills(id) ? t('shell.layout.restore') : t('shell.layout.maximize')"
+                :title="fills(id) ? t('shell.layout.restore') : t('shell.layout.maximize')"
+                data-layout-maximize
+                @click="setMaximized(fills(id) ? null : id)"
+              />
+              <span v-if="fills(id) && signalledElsewhere(id)" class="layout-head__dot" aria-hidden="true" />
+            </span>
+            <BaseButton
+              kind="ghost"
+              size="sm"
+              icon="mdi-close"
+              :aria-label="t('shell.layout.close', { title: byId.get(id)?.title ?? id })"
+              :title="t('shell.layout.close', { title: byId.get(id)?.title ?? id })"
+              :data-layout-close="id"
+              @click="emit('close', id)"
+            />
+          </div>
+          <div class="layout-area__body">
+            <component
+              :is="byId.get(id)!.component"
+              v-if="byId.get(id)?.component"
+              v-bind="byId.get(id)!.props ?? {}"
+            />
+            <slot v-else :id="id" name="panel" />
+          </div>
         </div>
       </Teleport>
     </template>
@@ -539,7 +611,70 @@ defineExpose({ reset, open, fold, rearranged })
   overflow: hidden;
 }
 
-.layout-area__panel--fit {
+.layout-area__body {
+  height: 100%;
+  min-height: 0;
+}
+
+.layout-area__panel--fit,
+.layout-area__panel--fit > .layout-area__body {
   height: auto;
+}
+
+.layout-area__panel--titled {
+  display: flex;
+  flex-direction: column;
+}
+
+.layout-area__panel--titled > .layout-area__body {
+  flex: 1 1 0;
+  height: auto;
+  overflow: hidden;
+}
+
+/* A titled panel's own bar: as tall as a tab strip, so it lines up with the cells beside it. */
+.layout-head {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  align-items: center;
+  height: var(--layout-tab-strip-height, 40px);
+  padding: 0 8px 0 4px;
+  border-bottom: 1px solid var(--line);
+}
+
+.layout-head__main {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+  height: 100%;
+}
+
+.layout-head__title {
+  padding: 0 8px;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.layout-head__signalled {
+  position: relative;
+  display: inline-flex;
+}
+
+.layout-head__dot {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 6px;
+  height: 6px;
+  pointer-events: none;
+  background: var(--accent);
+  border-radius: var(--radius-pill);
 }
 </style>

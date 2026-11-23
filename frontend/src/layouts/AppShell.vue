@@ -76,6 +76,9 @@
         <template #panel="{ id }">
           <div :ref="outletRef(id)" class="app-outlet" :data-page-panel="id" />
         </template>
+        <template #head="{ id }">
+          <div :ref="headOutletRef(id)" class="app-head-outlet" :data-page-head="id" />
+        </template>
       </LayoutArea>
       <!-- 内容区是一整块 surface，外框（一级导航、侧栏、顶栏）是 canvas：设计规范 §1.4。
            左边那条线就是侧栏和内容的分界。桌面上它是布局区里页面那一格的内容（传送进去），手机上
@@ -360,20 +363,26 @@ const sidebarShown = computed(() => sidebarInArea.value && !sidebarFolded.value)
 const outlets = pageHost.outlets
 const { width: sidebarCellWidth } = useElementSize(computed(() => outlets.sidebar ?? null))
 provide(SIDEBAR_CELL_WIDTH, sidebarCellWidth)
-const outletRefs = new Map<string, (element: unknown) => void>()
-function outletRef(id: string) {
-  let fn = outletRefs.get(id)
-  if (!fn) {
-    fn = (element: unknown) => {
-      if (element instanceof HTMLElement) outlets[id] = element
-      else delete outlets[id]
+/** One stable ref callback per panel id and outlet kind: a new function each render would re-run it. */
+function outletRefs(into: Record<string, HTMLElement | undefined>) {
+  const refs = new Map<string, (element: unknown) => void>()
+  return (id: string) => {
+    let fn = refs.get(id)
+    if (!fn) {
+      fn = (element: unknown) => {
+        if (element instanceof HTMLElement) into[id] = element
+        else delete into[id]
+      }
+      refs.set(id, fn)
     }
-    outletRefs.set(id, fn)
+    return fn
   }
-  return fn
 }
+const outletRef = outletRefs(outlets)
+// 有自己标题栏的那几块（`titled`）：标题栏里页面那一段的落点。
+const headOutletRef = outletRefs(pageHost.headOutlets)
 /** 布局区记住摆法用的版本：格子的种类或默认摆法变了就加一，旧的摆法不再读。 */
-const AREA_VERSION = 2
+const AREA_VERSION = 3
 const pageClaim = computed(() => pageHost.claim.value?.spec ?? null)
 const areaKey = computed(() => `cheesex.area.${pageClaim.value?.key ?? 'page'}`)
 const areaPanels = computed<LayoutPanel[]>(() => [
@@ -791,6 +800,15 @@ onBeforeUnmount(
 .app-outlet > * {
   flex: 1 1 auto;
   min-height: 0;
+}
+/* 标题栏里页面那一段：一行，占满按钮左边的地方，挤不下时里面的字自己截断。 */
+.app-head-outlet {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+  height: 100%;
 }
 /* 桌面上内容区左边那条线不再由页面那一格画：它要从页头一直贯到对话和面板底下。侧栏在
    布局区里时，那条线就是布局区的分隔线（也是拖它的地方）；侧栏收着（960–1180）或这一页

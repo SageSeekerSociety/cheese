@@ -21,8 +21,9 @@
 //
 // 桌面上（`layout` 给了）每一格是外壳布局区里的一块：页签条是布局区画的，一格可以拖到别处、
 // 和对话并排；这里只把每一格的内容传送到布局区给的落点（`WorkPane`），并把每一格的名字、
-// 图标、信号交给页面（`tabMeta`）。手机上、平板的浮层里、频道里打开的一件任务里，这一栏
-// 自己画页签条，一次一格。
+// 图标、信号交给页面（`tabMeta`）。频道页上（`layout.single`）没有页签条：一次显示一格，每一格
+// 带自己的标题栏，这里往标题栏里放「返回」和名字（`WorkPaneHead`），新打开的一份文件换掉上一份。
+// 手机上、平板的浮层里、频道里打开的一件任务里，这一栏自己画页签条，一次一格。
 //
 // 页签分两段。固定区（概览 / 现场 / 改动 / 预览 / 例行事务）不能关，位置记忆来自这里。自由区是
 // 读者自己打开的那几份文件，可以关——变化是他自己做的，所以不算「页签自己出现和
@@ -42,7 +43,7 @@ import type { TabDef, TabKey } from './panels/panelTabList'
 import type PanelDocHostComponent from './work/PanelDocHost.vue'
 import type { WorkLayout, WorkTabMeta } from './work/workLayout'
 
-import { computed, defineAsyncComponent, nextTick, ref, useId, useSlots, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, reactive, ref, useId, useSlots, watch } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 
 import { provideAcceptCard } from '../composables/useAcceptCard'
@@ -72,6 +73,7 @@ import TaskFilesHost from './work/TaskFilesHost.vue'
 import TerminalHost from './work/TerminalHost.vue'
 import { workPaneId } from './work/workLayout'
 import WorkPane from './work/WorkPane.vue'
+import WorkPaneHead from './work/WorkPaneHead.vue'
 import ProjectFileTab from './ProjectFileTab.vue'
 import TopicAcceptCard from './TopicAcceptCard.vue'
 
@@ -153,6 +155,9 @@ const props = withDefaults(
     // 审阅时页头那一行（桌面）：任务名、第几版、退回 / 采纳、打开任务，决定在页头上做，
     // 底部那一条只在写退回理由时出现。不给（手机，页头在顶栏里）时决定在底部那一条上。
     reviewHead?: { heading: string; version: number | null; state?: TaskState | null } | null
+    // 审阅时页头那一行画到别处：频道页上这件任务那一格的标题栏里（排在「返回」后面）。null 是
+    // 那个落点还没有，先不画；不给就画在这一栏顶上。
+    headTarget?: HTMLElement | null
     // 审阅的那件任务又交了一版（页面在频道里看到了那一行）：变一下，这一栏的卡重读。
     reviewReload?: number
     // 主线上按了「退回」：每按一次是一个新的记号，这一栏打开写退回理由的那一块（和页头上的
@@ -186,6 +191,7 @@ const props = withDefaults(
     activity: () => [],
     review: false,
     reviewHead: null,
+    headTarget: undefined,
     reviewReload: 0,
     askReturn: null,
     deliveries: () => [],
@@ -310,6 +316,9 @@ const DELIVERY_PREFIX = 'delivery:'
 const deliveryKey = (id: string) => DELIVERY_PREFIX + id
 const isDelivery = (key: string | undefined) => !!key?.startsWith(DELIVERY_PREFIX)
 const deliveryOrigin = ref<string | null>(null)
+
+// 频道页上一次显示一格、每一格带自己的标题栏（`WorkLayout.single`）。
+const single = computed(() => !!props.layout?.single)
 
 const active = ref<string>(defaultTab.value)
 /** The URL's answer, if it names a tab that exists (or one that used to). */
@@ -790,6 +799,30 @@ function closeTab(key: string) {
   else if (key.startsWith(TERMINAL_KEY)) closeTerminal(key)
   else if (key.startsWith(FILE_TAB)) void closeFile(key.slice(FILE_TAB.length))
 }
+/** 频道页上标题栏里的「返回」：和关掉那一格同一件事，回到打开它的那一格。 */
+function goBack(key: string) {
+  closeTab(key)
+}
+/** 频道页上每一格标题栏里面板那一段：名字，从别处打开的那几格前面带「返回」。 */
+const paneHeads = computed<{ key: string; title?: string; back: boolean }[]>(() =>
+  single.value
+    ? [
+        ...fixedMeta.value.map((meta) => ({ key: meta.key, title: meta.title, back: false })),
+        // 打开的任务：名字那一段由它自己的页头填（`headTarget`）。
+        ...props.deliveries.map((d) => ({ key: deliveryKey(d.id), back: true })),
+        ...fileMeta.value.map((meta) => ({ key: meta.key, title: meta.title, back: true })),
+      ]
+    : []
+)
+/** 各格标题栏里名字那一段的落点（打开的任务把它的页头放进去）。 */
+const headOutlets = reactive<Record<string, HTMLElement | null>>({})
+function headOutlet(key: string, element: HTMLElement | null) {
+  if (headOutlets[key] !== element) headOutlets[key] = element
+}
+/** 交给 `#delivery` 插槽的落点：频道页上是它那一格标题栏里的一段，别处不给。 */
+function deliveryHead(key: string): HTMLElement | null | undefined {
+  return single.value ? headOutlets[key] ?? null : undefined
+}
 /** 自由区那一格被双击：留下来。 */
 function keepTab(key: string) {
   if (key.startsWith(FILE_TAB)) pinFile(key.slice(FILE_TAB.length))
@@ -952,6 +985,17 @@ function placeFile(
     ...(skill ? { skill } : {}),
   }
   const temp = next.findIndex((f) => !f.pinned)
+  if (single.value) {
+    // 一次只显示一格：新开的这一份换掉开着的那几份，不在看不见的地方攒着。
+    const gone = next.map((f) => fileKey(f.path))
+    if (gone.some((key) => mounted.value.has(key))) {
+      const kept = new Set(mounted.value)
+      for (const key of gone) kept.delete(key)
+      mounted.value = kept
+    }
+    setFiles([tab])
+    return
+  }
   if (temp >= 0) next.splice(temp, 1, tab)
   else next.push(tab)
   setFiles(next)
@@ -1041,9 +1085,11 @@ async function closeFile(path: string) {
     setTab(fileKey(neighbour.path))
     return
   }
-  // 来处可能已经不在了（这件任务还没有分支、换过房间），那就还是落到兜底那一格。
+  // 来处可能已经不在了（这件任务还没有分支、换过房间），那就还是落到兜底那一格。频道页上
+  // 「返回」也回到在频道里打开的那件任务（从它的对话里点开的文件）。
   const origin = fileOrigin.value
-  setTab(origin && tabs.value.some((t) => t.key === origin) ? origin : defaultTab.value)
+  const back = single.value ? !!origin && keyExists(origin) : tabs.value.some((t) => t.key === origin)
+  setTab(origin && back ? origin : defaultTab.value)
 }
 
 // 自由区文档「⋯」里的分享、移动、删除：和资料库那一页同一套框和动作。
@@ -1095,6 +1141,7 @@ defineExpose({
   siteBlock,
   previewShown,
   activeTab: () => active.value,
+  select: (key: string) => void setTab(key),
   fixedMeta,
   fileMeta,
   terminalMeta,
@@ -1118,12 +1165,32 @@ defineExpose({
       <!-- 这条栏是 `PanelTabs` 画的：产品页和文档里的动态演示共用同一个组件，演示
            的四格于是永远和这里长得一样。信号（谁在干活、有几个文件改了）和「哪一
            格此刻没东西」都由这里算好交给它。 -->
-      <DeliveryReviewHead
-        v-if="review && reviewHead"
-        :heading="reviewHead.heading"
-        :state="reviewHead.state ?? null"
-        :version="reviewHead.version"
-        @open-task="taskId && emit('open-card', taskId)"
+      <template v-if="review && reviewHead">
+        <Teleport v-if="headTarget" :to="headTarget">
+          <DeliveryReviewHead
+            embedded
+            :heading="reviewHead.heading"
+            :state="reviewHead.state ?? null"
+            :version="reviewHead.version"
+            @open-task="taskId && emit('open-card', taskId)"
+          />
+        </Teleport>
+        <DeliveryReviewHead
+          v-else-if="headTarget === undefined"
+          :heading="reviewHead.heading"
+          :state="reviewHead.state ?? null"
+          :version="reviewHead.version"
+          @open-task="taskId && emit('open-card', taskId)"
+        />
+      </template>
+      <WorkPaneHead
+        v-for="head in paneHeads"
+        :key="head.key"
+        :target="layout?.head(head.key)"
+        :back="head.back"
+        :title="head.title"
+        @back="goBack(head.key)"
+        @outlet="headOutlet(head.key, $event)"
       />
       <PanelTabs
         v-if="!layout"
@@ -1186,7 +1253,7 @@ defineExpose({
               :shown="shown(deliveryKey(d.id))"
               :pane-class="enterClass(deliveryKey(d.id))"
             >
-              <slot :id="d.id" name="delivery" />
+              <slot :id="d.id" name="delivery" :head="deliveryHead(deliveryKey(d.id))" />
             </WorkPane>
           </template>
           <WorkPane

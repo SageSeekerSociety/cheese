@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // 频道里打开一件任务时的页头：任务名、状态词和在等谁、第几版、「退回」「采纳」，再是「打开任务」。审阅人
 // 已经决定了的，按钮的位置写决定的结果（已采纳 / 已退回）。有人保存过、还没交进去的修改时
-// 写「有未提交的修改」，给「提交审阅」；一版在等审阅时是「再提交一版」，那一版不给采纳。桌面上画在交付那一格顶上；
+// 写「有未提交的修改」，给「提交审阅」；一版在等审阅时是「再提交一版」，那一版不给采纳。桌面上画在交付那一格的
+// 标题栏里（`embedded`，排在「返回」后面）；
 // 手机上那是一整页，这一行交给顶栏（TopicView 用 useScreenHeader），只有任务名和「打开
 // 任务」，决定在页面底部那一条上。
 import type { HandInAction } from '@/lib/handIn'
@@ -33,6 +34,8 @@ withDefaults(
     busy?: boolean
     /** 画在手机顶栏里：顶栏自己有高度和底线，这一行不再带。 */
     bar?: boolean
+    /** 画在桌面一格的标题栏里：一行，高度、底线和左右边距都是标题栏的。 */
+    embedded?: boolean
     /** 有不在最近那一版里的修改。 */
     unhanded?: boolean
     /** 给哪颗提交按钮；null 不给。 */
@@ -47,6 +50,7 @@ withDefaults(
     blockedTitle: null,
     busy: false,
     bar: false,
+    embedded: false,
     unhanded: false,
     handIn: null,
   }
@@ -61,7 +65,7 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <header class="delivery-head" :class="{ 'delivery-head--bar': bar }">
+  <header class="delivery-head" :class="{ 'delivery-head--bar': bar, 'delivery-head--embedded': embedded }">
     <div class="delivery-head__text">
       <h2 class="delivery-head__title t-title" :title="heading">{{ heading }}</h2>
       <span class="delivery-head__meta">
@@ -130,6 +134,30 @@ const emit = defineEmits<{
   min-height: 0;
   padding: 0 4px 0 0;
   border-bottom: 0;
+}
+/* 标题栏里：一行，高度、底线是标题栏的；右边紧挨着标题栏的放大和 ✕。 */
+.delivery-head--embedded {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  min-height: 0;
+  padding: 0 8px 0 4px;
+  border-bottom: 0;
+}
+.delivery-head--embedded .delivery-head__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+/* 放不下时先收后面那几样（在等谁、第几版），任务名最后才截。 */
+.delivery-head--embedded .delivery-head__meta {
+  display: flex;
+  flex: 0 1000 auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
 }
 .delivery-head__text,
 .delivery-head__meta {
