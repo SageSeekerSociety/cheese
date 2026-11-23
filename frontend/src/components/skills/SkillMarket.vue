@@ -141,7 +141,7 @@ const cards = computed(() => {
           }}</span>
         </article>
       </div>
-      <p v-if="market.notes.length" class="market__note t-meta-read">{{ market.notes.join('；') }}</p>
+      <p v-for="note in market.notes" :key="note" class="market__note t-meta-read">{{ note }}</p>
     </template>
   </section>
 </template>

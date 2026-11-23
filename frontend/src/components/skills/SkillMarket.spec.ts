@@ -86,6 +86,12 @@ describe('技能市场（共享）', () => {
     expect(screen.queryByText('pdf')).toBeNull()
   })
 
+  it('几处来源读不到时，各自的原因原样各占一行，页面不往里添字', () => {
+    const notes = ['skills: no answer', 'mcp: answered 500']
+    mount({ market: { ...MARKET, notes } })
+    for (const note of notes) expect(screen.getByText(note)).toBeTruthy()
+  })
+
   it('卡片上的 + 把地址和 kind 原样往上发', async () => {
     const view = mount({ deviceId: 'dev1' })
 
