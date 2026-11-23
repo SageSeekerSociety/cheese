@@ -8,6 +8,10 @@
 // 看整个项目的。看哪一份记在地址上（`?file=`），刷新、把链接发给别人都回到这一份；
 // 桌面上没点哪一份时右边是 README。手机上树和文件各占一页，← 从文件回到树。
 //
+// 桌面上是只读的编辑器：打开过的几份排成一排页签（这一次来的时候打开的，不记下），页头的
+// 「编辑」开一件任务来改翻到的那一份（`editProjectFile`），进那件任务的编辑器，打开着的几份
+// 带过去、翻到的还是这一份。
+//
 // 以 `.` 开头的文件和文件夹（`.gitignore`、`.github/`）不列：那是仓库自己的配置，不是
 // 项目里的东西。
 import type { ProjectChange, WorkspaceFile } from '@/cx_types'
@@ -16,13 +20,23 @@ import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 
-import { downloadFile, listFiles, listProjectChanges, projectFileBytes, workspaceFileRawUrl } from '@/api'
+import { openTaskFilesOn } from '@/composables/useTaskFiles'
+
+import {
+  downloadFile,
+  editProjectFile,
+  listFiles,
+  listProjectChanges,
+  projectFileBytes,
+  workspaceFileRawUrl,
+} from '@/api'
 import { newTask } from '@/commands/topicActions'
 import { useTopBarBack } from '@/components/common/topBarBack'
 import { t } from '@/i18n'
 import { usePageTitleStore } from '@/stores/title'
 import { useWorkspaceStore } from '@/stores/workspace'
 import ProjectFilesView from '@/views/library/ProjectFilesView.vue'
+import { chooseTaskForm } from '@/views/workspace/topicView/editorForm'
 
 const props = defineProps<{ projectId: string }>()
 
@@ -64,12 +78,58 @@ void load()
 
 const filePath = computed(() => (typeof route.query.file === 'string' ? route.query.file : ''))
 const readme = computed(() => files.value.find((f) => /^readme(\.[^/]*)?$/i.test(f.path)) ?? null)
+/** 桌面上读者关掉过一份：之后什么都没开着就是什么都没开着，README 不再自己回来。 */
+const closedOne = ref(false)
 const viewing = computed<WorkspaceFile | null>(
-  () => files.value.find((f) => f.path === filePath.value) ?? (mdAndUp.value ? readme.value : null)
+  () => files.value.find((f) => f.path === filePath.value) ?? (mdAndUp.value && !closedOne.value ? readme.value : null)
 )
 
 function select(path: string) {
   void router.push({ query: { ...route.query, file: path } })
+}
+
+// ---- 桌面上打开着的几份 --------------------------------------------------------
+
+const open = ref<string[]>([])
+watch(
+  () => (mdAndUp.value ? viewing.value?.path : undefined),
+  (path) => {
+    if (path && !open.value.includes(path)) open.value = [...open.value, path]
+  },
+  { immediate: true }
+)
+/** 关掉一份：翻着它时翻到它右边那一份，没有就左边那一份。 */
+function closeTab(path: string) {
+  closedOne.value = true
+  const at = open.value.indexOf(path)
+  const rest = open.value.filter((one) => one !== path)
+  open.value = rest
+  if (viewing.value?.path !== path) return
+  const next = rest[at] ?? rest[at - 1]
+  if (next) select(next)
+  else closeFile()
+}
+
+// ---- 编辑 ----------------------------------------------------------------------
+
+const editing = ref(false)
+async function edit() {
+  const path = viewing.value?.path
+  if (!path || editing.value) return
+  editing.value = true
+  try {
+    const task = await editProjectFile(props.projectId, path)
+    openTaskFilesOn(task.id, open.value.length ? open.value : [path], path)
+    chooseTaskForm(task.id, 'editor')
+    void router.push({
+      name: 'workspace-task',
+      params: { projectId: props.projectId, topicId: task.room_id, taskId: task.id },
+    })
+  } catch (e) {
+    workspace.reportError(e, t('work.room.menu.newTaskFailed'))
+  } finally {
+    editing.value = false
+  }
 }
 function closeFile() {
   const next = { ...route.query }
@@ -208,6 +268,8 @@ watch(
     :latest="latest"
     :collapsed-dirs="collapsedDirs"
     :viewing="viewing"
+    :open="open"
+    :editing="editing"
     :change="change"
     :read="read"
     :wide="mdAndUp"
@@ -223,6 +285,8 @@ watch(
     @download="download"
     @open-task="openTask"
     @new-task="startTask"
+    @close="closeTab"
+    @edit="edit"
     @close-history="historyOf = null"
     @retry-history="loadHistory"
   />

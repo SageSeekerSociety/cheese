@@ -3,13 +3,13 @@
 // column of its own (the 编辑器 form) are the same tree, so a folder opened in one
 // is open in the other. Opening a file opens the folders it sits in and asks the
 // tree to scroll it into view (`revealTick`).
-import type { TaskFilesBundle } from './useTaskFiles'
+import type { FileTreeSource } from './useTaskFiles'
 
 import { ref, watch } from 'vue'
 
 import { foldersOf } from '../lib/taskFileTree'
 
-export function useTaskFileTree(files: Pick<TaskFilesBundle, 'openPath'>) {
+export function useTaskFileTree(files: Pick<FileTreeSource, 'openPath'>) {
   const open = ref<Set<string>>(new Set())
   /** Bumped when the file opened should be scrolled into view. */
   const revealTick = ref(0)

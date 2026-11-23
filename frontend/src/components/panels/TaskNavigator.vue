@@ -10,8 +10,9 @@
 //
 // It draws what the page holds — the task's files (`useTaskFiles`), which folders
 // are open (`useTaskFileTree`), the search (`useTaskSearch`), the changed files and
-// their diffs — and fetches nothing.
-import type { TaskFilesBundle } from '../../composables/useTaskFiles'
+// their diffs — and fetches nothing. The library's 项目文件 draws the same column over
+// the project's current version, read-only, with only the views it has (`views`).
+import type { FileTreeSource } from '../../composables/useTaskFiles'
 import type { TaskFileTreeState } from '../../composables/useTaskFileTree'
 import type { TaskSearchBundle } from '../../composables/useTaskSearch'
 import type { FileSource, RoomTask } from '../../cx_types'
@@ -36,11 +37,15 @@ export type NavigatorView = 'files' | 'search' | 'changes'
 
 const props = withDefaults(
   defineProps<{
-    files: TaskFilesBundle
+    files: FileTreeSource
     tree: TaskFileTreeState
-    /** The search of the task's files (the 搜索 view). */
-    search: TaskSearchBundle
+    /** The search of the task's files (the 搜索 view); none, and there is no 搜索. */
+    search?: TaskSearchBundle | null
     view: NavigatorView
+    /** The views offered, in this order. */
+    views?: NavigatorView[]
+    /** A file can be opened in a cell of its own beside the centre. */
+    canSplit?: boolean
     /** Bumped when the page asks for the 搜索 box (its shortcut): the box takes the focus. */
     searchFocusTick?: number
     /** Files this task changed (the work summary's list). */
@@ -54,7 +59,17 @@ const props = withDefaults(
     /** Which version of the changes is shown, as the 改动 panel has it: its ⋯ in the row. */
     version?: { currentTask: RoomTask | undefined; fileSource: FileSource; refreshing: boolean } | null
   }>(),
-  { changed: () => [], diffs: () => [], activeChange: null, readOnly: false, searchFocusTick: 0, version: null }
+  {
+    search: null,
+    views: () => ['files', 'search', 'changes'],
+    canSplit: true,
+    changed: () => [],
+    diffs: () => [],
+    activeChange: null,
+    readOnly: false,
+    searchFocusTick: 0,
+    version: null,
+  }
 )
 
 const emit = defineEmits<{
@@ -72,7 +87,7 @@ const emit = defineEmits<{
 }>()
 
 const changesTab = roomTabs({ withChat: false, review: false, task: true }).find((tab) => tab.key === 'changes')!
-const VIEWS = computed(() => [
+const ALL_VIEWS = computed(() => [
   { key: 'files' as const, label: CODE_TAB.label, title: CODE_TAB.label, icon: CODE_TAB.icon, count: 0 },
   {
     key: 'search' as const,
@@ -89,12 +104,16 @@ const VIEWS = computed(() => [
     count: props.changed.length,
   },
 ])
+const VIEWS = computed(() =>
+  ALL_VIEWS.value.filter((v) => props.views.includes(v.key) && (v.key !== 'search' || props.search))
+)
 
 // ---- the 搜索 box takes the focus when the person asked for it ----
 // Asked before this column was first drawn (the shortcut also brings the column up): asked all the same.
 const searchFocus = ref(props.view === 'search' && props.searchFocusTick > 0)
 /** The task's environment, as the search waiting for it shows it. */
 const searchEnvironment = computed(() => {
+  if (!props.search) return null
   const env = props.search.environment
   const state = env.state.value
   if (state !== 'preparing' && state !== 'failed' && state !== 'unanswered') return null
@@ -226,12 +245,13 @@ function pickFound(path: string) {
       :changed="props.changed"
       :editable="!props.readOnly"
       :head="false"
+      :can-split="props.canSplit"
       @select="emit('open-file', $event)"
       @open-beside="emit('open-beside', $event)"
       @find="finding = true"
     />
     <TaskFileSearch
-      v-else-if="props.view === 'search'"
+      v-else-if="props.view === 'search' && props.search"
       class="task-nav__body"
       :query="props.search.query.value"
       :state="props.search.state.value"
@@ -241,9 +261,9 @@ function pickFound(path: string) {
       :environment="searchEnvironment"
       :focus="searchFocus"
       :opened="opened"
-      @update:query="props.search.setQuery"
-      @submit="props.search.searchNow()"
-      @retry="props.search.searchNow()"
+      @update:query="(q: string) => props.search?.setQuery(q)"
+      @submit="props.search?.searchNow()"
+      @retry="props.search?.searchNow()"
       @open="openLine"
       @focused="searchFocus = false"
     />

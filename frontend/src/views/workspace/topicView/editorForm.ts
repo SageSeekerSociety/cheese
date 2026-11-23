@@ -18,6 +18,12 @@ export type TaskForm = 'chat' | 'editor'
 
 const KEY = 'cheesex.taskForm.'
 
+/** 这件任务下一次打开时摆成这一种（从别处进来，已经知道读者要哪一种）。 */
+export function chooseTaskForm(taskId: string, form: TaskForm) {
+  if (form === 'editor') storageSet(KEY + taskId, form)
+  else storageRemove(KEY + taskId)
+}
+
 export function useTaskForm(opts: {
   taskId: () => string | null | undefined
   /** 这一刻有得选：桌面上，页面的几块由外壳并排摆开。 */
@@ -40,9 +46,7 @@ export function useTaskForm(opts: {
   function choose(form: TaskForm) {
     chosen.value = form
     const id = opts.taskId()
-    if (!id) return
-    if (form === 'editor') storageSet(KEY + id, form)
-    else storageRemove(KEY + id)
+    if (id) chooseTaskForm(id, form)
   }
 
   const onScreen = ref(true)
