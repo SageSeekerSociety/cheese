@@ -1,14 +1,24 @@
 <script setup lang="ts">
-// The wiring shell of a task's「文件」panel: it holds the panel's data
-// (`composables/useTaskFiles`) and hands it to the scene, which only draws
+// The wiring shell of a task's「文件」panel: it hands the panel's data
+// (`composables/useTaskFiles`) to the scene, which only draws
 // (`panels/PanelTaskFiles.vue`). It stands outside `components/panels/` for
-// the reason `PanelChangesHost` gives. Given a `path`, it is a cell holding that
-// one file, opened beside the 文件 panel. The task's language servers
-// (`composables/useTaskLanguage`) are reached from here too, shared by every cell
-// of the task.
+// the reason `PanelChangesHost` gives.
+//
+// On the task page the files are the page's, held once by the work panel and
+// given here (`files`, `tree`, `language`): the 编辑器 form draws the same tree
+// in a column of its own, and a file open in one form is the same open file in
+// the other. Given no `files` (a cell holding one file, opened beside the 文件
+// panel, with its `path`; a panel mounted on its own) it holds its own, and the
+// task's language servers (`composables/useTaskLanguage`, shared by every cell of
+// the task) are reached from here.
+import type { TaskFilesBundle } from '../../composables/useTaskFiles'
+import type { TaskFileTreeState } from '../../composables/useTaskFileTree'
+import type { LanguageLink } from '../../lib/lsp/link'
+
 import { watch } from 'vue'
 
 import { useTaskFiles } from '../../composables/useTaskFiles'
+import { useTaskFileTree } from '../../composables/useTaskFileTree'
 import { useTaskLanguage } from '../../composables/useTaskLanguage'
 import PanelTaskFiles from '../panels/PanelTaskFiles.vue'
 
@@ -27,28 +37,51 @@ const props = withDefaults(
     agentName?: string
     /** The one file of a cell opened beside the 文件 panel. */
     path?: string | null
+    /** The task's files, held by the page; without them this holds its own. */
+    files?: TaskFilesBundle | null
+    /** With `files`: which folders of the tree are open, or null when the tree is drawn elsewhere. */
+    tree?: TaskFileTreeState | null
+    /** With `files`: the task's language servers. */
+    language?: LanguageLink | null
   }>(),
-  { readOnly: false, active: false, refreshTick: 0, changed: () => [], phone: false, agentName: '', path: null }
+  {
+    readOnly: false,
+    active: false,
+    refreshTick: 0,
+    changed: () => [],
+    phone: false,
+    agentName: '',
+    path: null,
+    files: null,
+    tree: null,
+    language: null,
+  }
 )
 
 const emit = defineEmits<{ 'open-beside': [path: string] }>()
 
-const files = useTaskFiles({
-  projectId: () => props.projectId,
-  taskId: () => props.taskId,
-  readOnly: () => props.readOnly,
-  active: () => props.active,
-  refreshTick: () => props.refreshTick,
-  // A cell holding one file keeps no tabs.
-  tabs: () => !props.path,
-})
-
+// Whether the files are given or held here is decided once, when the cell is made.
+const given = props.files
+const files =
+  given ??
+  useTaskFiles({
+    projectId: () => props.projectId,
+    taskId: () => props.taskId,
+    readOnly: () => props.readOnly,
+    active: () => props.active,
+    refreshTick: () => props.refreshTick,
+    // A cell holding one file keeps no tabs.
+    tabs: () => !props.path,
+  })
+const ownTree = given || props.path ? null : useTaskFileTree(files)
 // Go to definition in another file of the checkout opens it in this cell, at that line.
-const { link: language } = useTaskLanguage({
-  taskId: () => props.taskId,
-  machine: () => files.machine.value,
-  open: (path, line) => void files.open(path, { start: line, end: line }),
-})
+const ownLanguage = given
+  ? null
+  : useTaskLanguage({
+      taskId: () => props.taskId,
+      machine: () => files.machine.value,
+      open: (path, line) => void files.open(path, { start: line, end: line }),
+    }).link
 
 watch(
   () => props.path,
@@ -73,7 +106,8 @@ defineExpose({
     :phone="props.phone"
     :agent-name="props.agentName"
     :single="!!props.path"
-    :language="language"
+    :tree="given ? props.tree : ownTree"
+    :language="given ? props.language : ownLanguage?.value ?? null"
     @open-beside="emit('open-beside', $event)"
   />
 </template>

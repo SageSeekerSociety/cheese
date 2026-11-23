@@ -3,6 +3,9 @@
 // 左边是「# 房间 / 任务名」和任务此刻的状态；右边是负责人和协作者（点开看谁在做、
 // 在哪台电脑上做，负责人在这里增减协作者），以及 ⋯（重命名、关闭归负责人和协作者，
 // 转交只归负责人；关了的任务，角色有「新建任务和审阅」的人都能重新打开）。
+//
+// 桌面上页面几块并排摆开时，还有「对话 / 编辑器」两种摆法的开关（`form`）。编辑器那一种里，
+// 「概览」那颗面板开关换成三颗：左栏、终端、对话，各自藏起或摆回那一块（`editorParts`）。
 import type { MenuCommand } from '@/commands'
 import type { RoomTask, Topic, TopicMemberRow } from '@/cx_types'
 import type { HandInAction } from '@/lib/handIn'
@@ -19,6 +22,7 @@ import { takesPartInTask, taskActions } from '@/commands/taskActions'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ConfirmDialog from '@/components/base/ConfirmDialog.vue'
 import PageSidebarToggle from '@/components/common/Navigation/PageSidebarToggle.vue'
+import SegmentedControl from '@/components/common/SegmentedControl.vue'
 import UserAvatar from '@/components/common/UserAvatar.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import EnvironmentMenu from '@/components/EnvironmentMenu.vue'
@@ -68,16 +72,58 @@ const props = withDefaults(
     resetLayout?: () => void
     /** 「概览」开合的那几块的 id（见 PanelToggle）。 */
     panelControls?: string
+    /** 此刻摆的是哪一种（对话 / 编辑器）；没得选（手机、平板横放）时 null，不摆开关。 */
+    form?: 'chat' | 'editor' | null
+    /** 编辑器里左栏、终端、对话三块各自在不在屏幕上；终端是 null 时这件任务开不了终端，不摆那一颗。 */
+    editorParts?: { left: boolean; terminal: boolean | null; conversation: boolean }
   }>(),
   // 不给就是连着的：Vue 会把没传的布尔 prop 当成 false，那样每个页头都会写「未连接」。
-  { connected: true, handIn: null, resetLayout: undefined, panelControls: undefined }
+  {
+    connected: true,
+    handIn: null,
+    resetLayout: undefined,
+    panelControls: undefined,
+    form: null,
+    editorParts: undefined,
+  }
 )
 
 const emit = defineEmits<{
   (e: 'open-room'): void
   (e: 'toggle-panel'): void
   (e: 'hand-in'): void
+  (e: 'form', form: 'chat' | 'editor'): void
+  (e: 'toggle-part', part: 'left' | 'terminal' | 'conversation'): void
 }>()
+
+const formOptions = computed(() => [
+  { value: 'chat' as const, label: t('work.task.form.chat') },
+  { value: 'editor' as const, label: t('work.task.form.editor') },
+])
+/** 编辑器里页头右边那几颗：左栏、终端、对话。 */
+const partButtons = computed(() => {
+  const parts = props.editorParts
+  if (props.form !== 'editor' || !parts) return []
+  return [
+    { part: 'left' as const, icon: 'mdi-dock-left', label: t('work.task.form.left'), on: parts.left },
+    ...(parts.terminal === null
+      ? []
+      : [
+          {
+            part: 'terminal' as const,
+            icon: 'mdi-dock-bottom',
+            label: t('work.task.form.terminal'),
+            on: parts.terminal,
+          },
+        ]),
+    {
+      part: 'conversation' as const,
+      icon: 'mdi-dock-right',
+      label: t('work.task.form.conversation'),
+      on: parts.conversation,
+    },
+  ]
+})
 
 const { mdAndUp } = useDisplay()
 const ME = myHandle()
@@ -320,6 +366,17 @@ function actionTestId(id: string): string | undefined {
       </span>
     </div>
 
+    <SegmentedControl
+      v-if="mdAndUp && form"
+      class="task-header__form"
+      size="md"
+      :model-value="form"
+      :options="formOptions"
+      :label="t('work.task.form.label')"
+      data-testid="task-form"
+      @update:model-value="(value: 'chat' | 'editor') => value !== form && emit('form', value)"
+    />
+
     <v-menu v-if="task?.owner_handle" v-model="detailsOpen" location="bottom end" :close-on-content-click="false">
       <template #activator="{ props: menuProps }">
         <button
@@ -489,7 +546,22 @@ function actionTestId(id: string): string | undefined {
     <BaseButton v-if="handIn" kind="primary" size="sm" data-testid="task-hand-in" @click="emit('hand-in')">
       {{ handIn === 'resubmit' ? t('work.room.accept.handIn.resubmit') : t('work.room.accept.handIn.submit') }}
     </BaseButton>
-    <PanelToggle v-if="mdAndUp" :open="!!panelOpen" :controls="panelControls" @toggle="emit('toggle-panel')" />
+    <div v-if="mdAndUp && partButtons.length" class="task-header__parts" data-testid="task-parts">
+      <BaseButton
+        v-for="button in partButtons"
+        :key="button.part"
+        kind="ghost"
+        size="sm"
+        class="task-header__part"
+        :class="{ 'task-header__part--on': button.on }"
+        :icon="button.icon"
+        :aria-label="button.label"
+        :title="button.label"
+        :aria-pressed="button.on ? 'true' : 'false'"
+        @click="emit('toggle-part', button.part)"
+      />
+    </div>
+    <PanelToggle v-else-if="mdAndUp" :open="!!panelOpen" :controls="panelControls" @toggle="emit('toggle-panel')" />
     <v-menu v-if="task && showsMenu" location="bottom end">
       <template #activator="{ props: menuProps }">
         <BaseButton
@@ -683,6 +755,20 @@ function actionTestId(id: string): string | undefined {
   flex: 0 0 auto;
   color: var(--muted);
   font-size: 12px;
+}
+/* 两种摆法的开关和编辑器里那三颗：和别的按钮一样不伸缩。 */
+.task-header__form {
+  flex: none;
+}
+.task-header__parts {
+  display: inline-flex;
+  flex: none;
+  gap: 2px;
+}
+/* 按下的样子和「概览」开着时一样（PanelToggle）。 */
+.task-header__part--on {
+  background: var(--fill-2);
+  color: var(--ink);
 }
 .task-header__owner {
   display: inline-flex;

@@ -1,0 +1,5 @@
+{
+  "views": "左栏内容",
+  "added": "增加 {count} 行",
+  "removed": "删除 {count} 行"
+}

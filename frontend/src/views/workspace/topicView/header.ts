@@ -11,6 +11,7 @@ import type { ComputedRef, Ref } from 'vue'
 import type { WorkTabMeta } from '@/components/work/workLayout'
 import type { HandInState } from '@/composables/acceptCard/handIn'
 import type { RoomTask, Topic, TopicMemberRow } from '@/cx_types'
+import type { TaskForm } from './editorForm'
 import type { TopicPlace } from './shared'
 
 import { computed, onUnmounted, watch } from 'vue'
@@ -52,6 +53,12 @@ export function useTopicHeader<TaskHalf extends Record<string, unknown>>(opts: {
   panelShown: () => string | null
   /** 点了其中一样：开在它上面，或收起。 */
   togglePlace: (key: string) => void
+  /** 任务页：此刻摆的是哪一种（对话 / 编辑器）；没得选时 null，页头不摆那个开关。 */
+  form?: () => TaskForm | null
+  chooseForm?: (form: TaskForm) => void
+  /** 编辑器里页头右边那三颗按下没有（终端那一颗是 null 时不摆）。 */
+  editorParts?: () => { left: boolean; terminal: boolean | null; conversation: boolean }
+  toggleEditorPart?: (part: 'left' | 'terminal' | 'conversation') => void
 }) {
   const store = useWorkspaceStore()
 
@@ -90,9 +97,13 @@ export function useTopicHeader<TaskHalf extends Record<string, unknown>>(opts: {
       handIn: opts.handIn.action.value,
       resetLayout: opts.resetLayout() ?? undefined,
       panelControls: opts.panelControls(),
+      form: opts.form?.() ?? null,
+      editorParts: opts.editorParts?.(),
       'onOpen-room': opts.backToRoom,
       'onHand-in': opts.handIn.openPanel,
       'onToggle-panel': opts.togglePanel,
+      onForm: opts.chooseForm,
+      'onToggle-part': opts.toggleEditorPart,
     }
   })
   const topicHeaderBinding = computed(() => {

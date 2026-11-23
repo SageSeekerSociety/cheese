@@ -291,17 +291,56 @@ export function placeBeside(arrangement: LayoutArrangement, panelId: string, nea
 }
 
 /**
+ * Places a panel in a new cell of its own directly below the cell holding `nearPanelId`:
+ * under it in that column, or in a new column with it. With that panel not placed, the
+ * panel goes where any newly placed panel goes.
+ */
+export function placeBelow(arrangement: LayoutArrangement, panelId: string, nearPanelId: string): LayoutArrangement {
+  if (placedPanels(arrangement).includes(panelId)) return arrangement
+  const near = cellOfPanel(arrangement, nearPanelId)
+  if (!near || !arrangement.root) return placePanel(arrangement, panelId)
+  const fresh: LayoutCell = { panels: [panelId], active: panelId }
+  const visit = (node: LayoutNode): LayoutNode => {
+    if (!isSplit(node)) return node === near ? { direction: 'column', children: [node, fresh], size: node.size } : node
+    const at = node.children.indexOf(near)
+    if (at >= 0 && node.direction === 'column') {
+      const children = [...node.children]
+      children.splice(at + 1, 0, fresh)
+      return { ...node, children }
+    }
+    return { ...node, children: node.children.map(visit) }
+  }
+  return { root: visit(arrangement.root) }
+}
+
+/**
+ * Where a transient panel goes when it appears: beside the panel it names; in its group's
+ * home cell; when the group has no cell yet, below the panel it names; otherwise where any
+ * newly placed panel goes.
+ */
+export function placeTransient(
+  arrangement: LayoutArrangement,
+  panel: { id: string; group?: string; beside?: string; below?: string },
+  groupOf: (id: string) => string | undefined
+): LayoutArrangement {
+  if (panel.beside) return placeBeside(arrangement, panel.id, panel.beside)
+  if (panel.below && !homeCell(arrangement, panel.group, groupOf)) return placeBelow(arrangement, panel.id, panel.below)
+  return placeInGroup(arrangement, panel.id, groupOf)
+}
+
+/**
  * The cell a panel opened for a spawning panel lands in, by id: beside the panel it names,
  * in its group's home cell, or where a newly placed panel goes when the group has none.
- * Undefined when that is a cell that does not exist yet.
+ * Undefined when that is a cell that does not exist yet (beside a panel, or below one).
  */
 export function spawnLanding(
   arrangement: LayoutArrangement,
-  spawner: { id: string; group?: string; beside?: string },
+  spawner: { id: string; group?: string; beside?: string; below?: string },
   groupOf: (id: string) => string | undefined
 ): string | undefined {
   if (spawner.beside) return cellOfPanel(arrangement, spawner.beside)?.id
   const home = homeCell(arrangement, spawner.group, groupOf)
+  if (spawner.below) return home?.id
   return (home ?? cellOfPanel(placePanel(arrangement, spawner.id), spawner.id))?.id
 }
 

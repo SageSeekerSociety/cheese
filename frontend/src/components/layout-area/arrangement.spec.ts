@@ -5,14 +5,17 @@ import { describe, expect, it } from 'vitest'
 import {
   acceptsDrop,
   canCollapse,
+  cellOfPanel,
   cellsOf,
   defaultWeights,
   hidesTabs,
   homeCell,
+  placeBelow,
   placeBeside,
   placedPanels,
   placeInGroup,
   placePanel,
+  placeTransient,
   reconcile,
   resetSizes,
   restoreArrangement,
@@ -484,5 +487,49 @@ describe('a panel that spawns others', () => {
 
   it("opening beside a panel, is offered on that panel's cell", () => {
     expect(spawnLanding(DEFAULT, { id: 'shell', beside: 'chat' }, work)).toBe('middle')
+  })
+
+  it("opening below a panel, is offered on its group's cell, and nowhere while there is none", () => {
+    const terms = (id: string) => (id.startsWith('term') ? 'terms' : undefined)
+    const editor: LayoutArrangement = {
+      root: {
+        direction: 'row',
+        children: [
+          { id: 'mid', panels: ['code'] },
+          { id: 'side', panels: ['chat'] },
+        ],
+      },
+    }
+    expect(spawnLanding(editor, { id: 'shell', group: 'terms', below: 'code' }, terms)).toBeUndefined()
+    const withTerm = placeBelow(withCellIds(editor), 'term:1', 'code')
+    const cell = cellOfPanel(withCellIds(withTerm), 'term:1')!
+    expect(spawnLanding(withCellIds(withTerm), { id: 'shell', group: 'terms', below: 'code' }, terms)).toBe(cell.id)
+  })
+})
+
+describe('a panel opened below another', () => {
+  const terms = (id: string) => (id.startsWith('term') ? 'terms' : undefined)
+  const EDITOR: LayoutArrangement = {
+    root: { direction: 'row', children: [{ panels: ['tree'] }, { panels: ['code'] }, { panels: ['chat'] }] },
+  }
+
+  it('gets a cell of its own under that panel, the row around it unchanged', () => {
+    const next = placeBelow(EDITOR, 'term:1', 'code')
+    const row = next.root && 'children' in next.root ? next.root : null
+    expect(row?.direction).toBe('row')
+    const middle = row?.children[1]
+    expect(middle && 'children' in middle ? middle.direction : null).toBe('column')
+    expect(cellsOf(next).map((c) => c.panels)).toEqual([['tree'], ['code'], ['term:1'], ['chat']])
+  })
+
+  it('the next panel of its group joins that cell instead of opening another', () => {
+    const one = placeTransient(EDITOR, { id: 'term:1', group: 'terms', below: 'code' }, terms)
+    const two = placeTransient(one, { id: 'term:2', group: 'terms', below: 'code' }, terms)
+    expect(cellsOf(two).map((c) => c.panels)).toEqual([['tree'], ['code'], ['term:1', 'term:2'], ['chat']])
+  })
+
+  it('goes where any panel would when the other panel is not placed', () => {
+    const start: LayoutArrangement = { root: { panels: ['chat'] } }
+    expect(placedPanels(placeBelow(start, 'term:1', 'code'))).toEqual(['chat', 'term:1'])
   })
 })

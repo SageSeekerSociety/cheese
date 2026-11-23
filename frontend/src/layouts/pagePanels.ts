@@ -35,8 +35,11 @@ import {
   watch,
 } from 'vue'
 
-/** A page's panel, as the layer takes it (titles, signals, closing, groups…), less what the shell owns. */
-export type PagePanel = Omit<LayoutPanel, 'component' | 'props' | 'width' | 'fitHeight' | 'foldKey' | 'pinned'>
+/**
+ * A page's panel, as the layer takes it (titles, signals, closing, groups, a width of its
+ * own…), less what the shell owns.
+ */
+export type PagePanel = Omit<LayoutPanel, 'component' | 'props' | 'fitHeight' | 'foldKey' | 'pinned'>
 
 export interface PagePanels {
   /** Pages under the same key share the arrangement the reader dragged into shape. */
