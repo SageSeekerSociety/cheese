@@ -76,7 +76,8 @@ export function useCompactDesktop(): ComputedRef<boolean> {
  * 话题页右侧面板按**主区**宽度（窗口减去侧栏，`.panes` 那一块）分三档：
  *
  * - 至少 `PANEL_OPEN_MIN`：和对话并排，默认开着；
- * - `PANEL_DOCK_MIN` 到它之间：并排，默认收着，点「概览」在右边打开、对话变窄；
+ * - `PANEL_DOCK_MIN` 到它之间：并排，默认收着，点「概览」在右边打开、对话变窄。频道页不在此列：
+ *   它的概览是一栏窄的目录，主区放得下对话加这一栏就开着（`useTopicPanel` 的 `openMin`）；
  * - 更窄：放不下两栏，面板浮在对话上方，默认收着。
  *
  * 并排时对话至少留 480、面板至少 360，两档的分界就是这么来的。前两档里这个人自己
@@ -92,7 +93,7 @@ export function panelMode(mainWidth: number): PanelMode {
   return mainWidth > 0 && mainWidth < PANEL_DOCK_MIN ? 'float' : 'docked'
 }
 
-/** 并排时没人选过，面板开不开。 */
-export function panelOpenByDefault(mainWidth: number): boolean {
-  return mainWidth === 0 || mainWidth >= PANEL_OPEN_MIN
+/** 并排时没人选过，面板开不开：主区至少 `openMin` 宽就开着（任务页是 `PANEL_OPEN_MIN`）。 */
+export function panelOpenByDefault(mainWidth: number, openMin = PANEL_OPEN_MIN): boolean {
+  return mainWidth === 0 || mainWidth >= openMin
 }

@@ -28,8 +28,10 @@ const props = withDefaults(
     editable?: boolean
     /** Not a phone: the head row, and opening a file in a cell beside. */
     canSplit?: boolean
+    /** Draw the tree's head row; the 编辑器 form's left column carries its actions in its own row. */
+    head?: boolean
   }>(),
-  { changed: () => [], editable: false, canSplit: true }
+  { changed: () => [], editable: false, canSplit: true, head: true }
 )
 
 const emit = defineEmits<{
@@ -85,6 +87,9 @@ async function submitName() {
   if (ok) namingOpen.value = false
 }
 
+// The left column's own row asks for a new file or folder at the top.
+defineExpose({ askCreate })
+
 const removing = ref<string | null>(null)
 const removeOpen = ref(false)
 function askRemove(path: string) {
@@ -112,6 +117,7 @@ async function confirmRemove() {
       :editable="props.editable"
       :reveal-tick="props.tree.revealTick.value"
       :can-split="props.canSplit"
+      :head="props.head"
       @select="emit('select', $event)"
       @open-beside="emit('open-beside', $event)"
       @toggle="props.tree.toggle"

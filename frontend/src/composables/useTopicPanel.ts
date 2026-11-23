@@ -12,7 +12,8 @@
 // 不是「上次看过的那一格」。
 //
 // 频道页和任务页「对话」那一种摆法（`scope` 给了）不记这个选择：每进一个频道、一件任务，
-// 都照主区的宽度来（够宽就开着，概览在）；在这一页上开或关，只算到离开这一页为止。
+// 都照主区的宽度来（够宽就开着，概览在）；在这一页上开或关，只算到离开这一页为止。多宽算够宽
+// 由页面说（`openMin`）：频道页的概览是一栏窄的目录，放得下对话加这一栏就开着。
 import type { Ref } from 'vue'
 
 import { computed, ref, watch } from 'vue'
@@ -40,6 +41,8 @@ export function useTopicPanel(opts: {
    * （或给的是 null）时照这个人记下的选择。
    */
   scope?: () => string | null
+  /** 主区至少多宽，并排时没人选过面板就开着。不给是 `PANEL_OPEN_MIN`。 */
+  openMin?: () => number
 }) {
   const store = useWorkspaceStore()
   const { width } = useElementSize(opts.panes)
@@ -54,8 +57,9 @@ export function useTopicPanel(opts: {
   const open = computed(() => {
     if (!opts.desktop.value || opts.thread.value || opts.tab.value) return true
     if (float.value) return false
-    if (scoped()) return chosenHere.value ?? panelOpenByDefault(width.value)
-    return store.panelPref ?? panelOpenByDefault(width.value)
+    const fits = panelOpenByDefault(width.value, opts.openMin?.())
+    if (scoped()) return chosenHere.value ?? fits
+    return store.panelPref ?? fits
   })
 
   // 并排换成浮层的那一下（主区变窄：助手面板打开、窗口缩小）：原来并排开着的那一格

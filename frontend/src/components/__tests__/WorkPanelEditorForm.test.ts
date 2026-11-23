@@ -57,6 +57,19 @@ vi.mock('@/api', async () => {
     listTaskTerminals: vi.fn(async () => ({ terminals: [] })),
     getAgentControl: vi.fn(async () => ({ id: null, connected: false, tasks: {} })),
     getPreview: vi.fn(async () => null),
+    // 搜索: the lines of the task's files holding the text, case ignored.
+    searchTaskFiles: vi.fn(async (_p: string, _t: string, q: string) => ({
+      files: Object.entries(FILES).flatMap(([path, text]) => {
+        const matches = text.split('\n').flatMap((line, i) => {
+          const at = line.toLowerCase().indexOf(q.toLowerCase())
+          return at < 0
+            ? []
+            : [{ line: i + 1, text: line, columns: [[at, at + q.length]], cut_before: false, cut_after: false }]
+        })
+        return matches.length ? [{ path, matches }] : []
+      }),
+      truncated: false,
+    })),
     readPreviewFile: vi.fn(async () => {
       throw new Error('file not found')
     }),
@@ -69,11 +82,13 @@ vi.mock('../CodeEditor.vue', () => ({
     props: ['modelValue', 'filename', 'readonly', 'lines', 'language', 'keep'],
     emits: ['update:modelValue', 'save', 'quick-open'],
     template:
-      '<textarea data-testid="editor" :data-file="filename" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+      '<textarea data-testid="editor" :data-file="filename" :data-lines="lines ? `${lines.start}-${lines.end}` : undefined" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
   },
 }))
 
 import WorkPanel from '../WorkPanel.vue'
+
+import { searchTaskFiles } from '@/api'
 
 const room = { id: 'topic-A', project_id: 'p1', title: '综合', status: 'active' } as Topic
 
@@ -84,6 +99,16 @@ beforeAll(() => {
       unobserve() {}
       disconnect() {}
     }
+  }
+  // Vuetify's menus place themselves against it; happy-dom has none.
+  if (!('visualViewport' in globalThis)) {
+    ;(globalThis as unknown as { visualViewport: unknown }).visualViewport = Object.assign(new EventTarget(), {
+      width: 1280,
+      height: 800,
+      offsetLeft: 0,
+      offsetTop: 0,
+      scale: 1,
+    })
   }
 })
 beforeEach(() => {
@@ -97,7 +122,7 @@ function mountTask() {
   // What each cell has in front: in the 对话 form the work panel's cell; in the 编辑器 form the
   // left column, the centre, and nothing else here.
   const front = ref<Set<string>>(new Set(['code']))
-  const panel = ref<{ openFile: (path: string) => Promise<void> } | null>(null)
+  const panel = ref<{ openFile: (path: string) => Promise<void>; searchFiles: () => void } | null>(null)
   const Host = defineComponent(() => () => {
     const layout: WorkLayout = {
       outlet: () => undefined,
@@ -187,5 +212,140 @@ describe('the same task in both forms', () => {
     await fireEvent.click(row)
     await waitFor(() => expect(visible(screen.queryByText('改动：src/stack.c'))).toBe(true))
     expect([...front.value]).toContain('changes')
+  })
+})
+
+describe('搜索 in the 编辑器 form', () => {
+  async function openSearch() {
+    const mounted = mountTask()
+    mounted.toEditor()
+    await fireEvent.click(await screen.findByRole('button', { name: '搜索' }))
+    const box = await screen.findByRole('searchbox', { name: '搜索' })
+    return { ...mounted, box }
+  }
+  const results = () => within(screen.getByRole('list', { name: '搜索' }))
+
+  it('lists the matching lines by file, with how many, and a line opens its file at that line', async () => {
+    const { box } = await openSearch()
+    await fireEvent.update(box, 'INT')
+
+    const list = await screen.findByRole('list', { name: '搜索' }, { timeout: 2000 })
+    expect(screen.getByText('2 处匹配')).toBeTruthy()
+    expect(screen.getByText('2 个文件')).toBeTruthy()
+    const queue = within(list).getByRole('button', { name: /queue\.c/ })
+    expect(within(queue).getByLabelText('1 处匹配')).toBeTruthy()
+    // The matched text is marked within its line.
+    const line = within(list).getByRole('button', { name: 'int queue(void) { return 0; }' })
+    expect(line.querySelector('mark')?.textContent).toBe('int')
+
+    await fireEvent.click(within(list).getByRole('button', { name: 'int pop(void) { return 1; }' }))
+    await waitFor(() => expect(shownEditor()?.dataset.file).toBe('src/stack.c'))
+    expect(shownEditor()?.dataset.lines).toBe('1-1')
+  })
+
+  it('a file row opens that file at its first match', async () => {
+    const { box } = await openSearch()
+    await fireEvent.update(box, 'return')
+    await screen.findByRole('list', { name: '搜索' }, { timeout: 2000 })
+    await fireEvent.click(results().getByRole('button', { name: /queue\.c/ }))
+    await waitFor(() => expect(shownEditor()?.dataset.file).toBe('src/queue.c'))
+    expect(shownEditor()?.dataset.lines).toBe('1-1')
+  })
+
+  it('says 暂无匹配 when nothing holds the text', async () => {
+    const { box } = await openSearch()
+    await fireEvent.update(box, 'nowhere')
+    expect(await screen.findByText('暂无匹配', {}, { timeout: 2000 })).toBeTruthy()
+  })
+
+  it('says the search failed, and 重试 searches again', async () => {
+    vi.mocked(searchTaskFiles).mockRejectedValueOnce(new Error('环境暂时无法响应'))
+    const { box } = await openSearch()
+    await fireEvent.update(box, 'pop')
+    expect(await screen.findByText('搜索失败', {}, { timeout: 2000 })).toBeTruthy()
+
+    await fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    await screen.findByRole('list', { name: '搜索' }, { timeout: 2000 })
+    expect(screen.queryByText('搜索失败')).toBeNull()
+    expect(results().getByRole('button', { name: /stack\.c/ })).toBeTruthy()
+  })
+
+  it('an answer to an older text that arrives late does not replace the newer one', async () => {
+    let answerOld: (value: Awaited<ReturnType<typeof searchTaskFiles>>) => void = () => {}
+    vi.mocked(searchTaskFiles).mockImplementationOnce(() => new Promise((resolve) => (answerOld = resolve)))
+    const { box } = await openSearch()
+    await fireEvent.update(box, 'queue')
+    await waitFor(() => expect(searchTaskFiles).toHaveBeenLastCalledWith('p1', 'task-1', 'queue', expect.anything()))
+    // Enter searches at once.
+    await fireEvent.update(box, 'pop')
+    await fireEvent.keyDown(box, { key: 'Enter' })
+    await screen.findByRole('list', { name: '搜索' }, { timeout: 2000 })
+
+    answerOld({
+      files: [
+        {
+          path: 'src/queue.c',
+          matches: [{ line: 1, text: 'queue', columns: [[0, 5]], cut_before: false, cut_after: false }],
+        },
+      ],
+      truncated: false,
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(results().getByRole('button', { name: /stack\.c/ })).toBeTruthy()
+    expect(results().queryByRole('button', { name: /queue\.c/ })).toBeNull()
+  })
+
+  it('asking for the search from the page shows the 搜索 view with its box focused', async () => {
+    const { panel, toEditor } = mountTask()
+    toEditor()
+    await screen.findByRole('button', { name: '新建文件' })
+    panel.value!.searchFiles()
+    const box = await screen.findByRole('searchbox', { name: '搜索' })
+    await waitFor(() => expect(document.activeElement).toBe(box))
+  })
+})
+
+describe("the left column's one row in the 文件 view", () => {
+  it('reaches every action of the tree: new file, new folder, find by name, fold all', async () => {
+    const { toEditor } = mountTask()
+    toEditor()
+    const pane = await waitFor(() => {
+      const el = document.getElementById('work-pane-navigator')
+      expect(el).not.toBeNull()
+      return el!
+    })
+    const column = within(pane)
+
+    /** The dialog asking for a name, by the action its button will take. */
+    const naming = async (action: string) => {
+      const field = await screen.findByRole('textbox', { name: '名称' })
+      const dialog = field.closest('.v-overlay__content') as HTMLElement
+      expect(within(dialog).getByRole('button', { name: action })).toBeTruthy()
+      await fireEvent.click(within(dialog).getByRole('button', { name: '取消' }))
+      await waitFor(() => expect(screen.queryByRole('textbox', { name: '名称' })).toBeNull(), { timeout: 3000 })
+    }
+
+    await fireEvent.click(await column.findByRole('button', { name: '新建文件' }))
+    await naming('新建文件')
+
+    const more = () => column.getByRole('button', { name: '更多操作' })
+    await fireEvent.click(more())
+    await fireEvent.click(await screen.findByRole('menuitem', { name: '新建文件夹' }))
+    await naming('新建文件夹')
+
+    await fireEvent.click(more())
+    await fireEvent.click(await screen.findByRole('menuitem', { name: '按名称找文件' }))
+    const finder = await screen.findByRole('textbox', { name: '搜索文件' })
+    await fireEvent.click(
+      within(finder.closest('.v-overlay__content') as HTMLElement).getByRole('button', { name: '取消' })
+    )
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: '搜索文件' })).toBeNull(), { timeout: 3000 })
+
+    const folder = await column.findByRole('button', { name: 'src', expanded: false })
+    await fireEvent.click(folder)
+    await waitFor(() => expect(column.getByRole('button', { name: 'src' }).getAttribute('aria-expanded')).toBe('true'))
+    await fireEvent.click(more())
+    await fireEvent.click(await screen.findByRole('menuitem', { name: '全部收起' }))
+    await waitFor(() => expect(column.getByRole('button', { name: 'src' }).getAttribute('aria-expanded')).toBe('false'))
   })
 })

@@ -90,6 +90,39 @@ export function listFiles(
   )
 }
 
+/** One line of a task's file that holds the searched text. */
+export interface FileSearchLine {
+  line: number
+  /** The line, or a window of a long one around its first match. */
+  text: string
+  /** Where each match is in `text`: `[start, end)`, as string indices. */
+  columns: [number, number][]
+  /** The window leaves out the start or the end of the line. */
+  cut_before: boolean
+  cut_after: boolean
+}
+
+export interface FileSearchResult {
+  files: { path: string; matches: FileSearchLine[] }[]
+  /** Some matches were left out: too many, or the search ran too long. */
+  truncated: boolean
+}
+
+/** The longest text the task's files can be searched for (the backend's bound). */
+export const FILE_SEARCH_MAX = 200
+
+// 编辑器 form's 搜索: the lines of a task's files holding `query` as typed, case
+// ignored, grouped by file. Only a copy on a machine is searched.
+export function searchTaskFiles(
+  projectId: string,
+  taskId: string,
+  query: string,
+  signal?: AbortSignal
+): Promise<FileSearchResult> {
+  const q = new URLSearchParams({ q: query, task: taskId, source: 'live' })
+  return request<FileSearchResult>(`/projects/${encodeURIComponent(projectId)}/files/search?${q}`, { signal })
+}
+
 // <img src=…> URL for a workspace file (binary raw endpoint) — the 文件 panel
 // shows images as images instead of Monaco-mangled bytes.
 export function workspaceFileRawUrl(

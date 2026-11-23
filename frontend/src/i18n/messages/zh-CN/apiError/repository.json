@@ -30,6 +30,8 @@
   "taskNothingCommitted": "这个任务还没有提交文件",
   "taskRequired": "请选择任务",
   "taskSandboxReleased": "任务的环境空闲后已释放；可以查看已提交版本",
+  "taskSearchNeedsEnvironment": "这个任务的文件不在环境里，无法搜索",
+  "taskSearchFailed": "无法搜索这个任务的文件，稍后重试",
   "taskSandboxReleasedKept": "任务的环境空闲后已释放。没提交的改动已经保存，环境重新准备好后会放回；现在可以查看已提交版本",
   "taskSandboxReleasedKeptBranchMoved": "任务的环境空闲后已释放。没提交的改动已经保存，但保存时所在的提交已不是任务分支的最新提交，不会自动放回；现在可以查看已提交版本",
   "taskWithoutRepository": "这个项目没有代码仓库，任务没有工作目录",

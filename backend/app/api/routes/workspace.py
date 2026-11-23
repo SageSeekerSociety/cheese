@@ -38,7 +38,7 @@ from app.domain.machine.preview_wake import wake_for_files
 from app.domain.machine.task_machine import prepare_for_write
 from app.domain.project.services import ProjectService
 from app.domain.project_permissions import Permission
-from app.domain.repository.forge_files import ProjectFiles
+from app.domain.repository.forge_files import SEARCH_QUERY_MAX, ProjectFiles
 from app.domain.repository.ports import WakeWorkingCopy
 from app.domain.review import forge_clients
 from app.domain.review.landed import tasks_that_landed
@@ -192,6 +192,58 @@ async def read_file(
             executor=execution.call,
             wake=wake,
         ).text(path, source)
+    )
+
+
+class FileSearchLineOut(BaseModel):
+    line: int
+    #: The line, or a window of a long one around its first match.
+    text: str
+    #: Where in ``text`` each match is, as ``[start, end)`` in UTF-16 code
+    #: units (how the browser indexes a string).
+    columns: list[tuple[int, int]]
+    #: The window leaves out the start or the end of the line.
+    cut_before: bool
+    cut_after: bool
+
+
+class FileSearchFileOut(BaseModel):
+    path: str
+    matches: list[FileSearchLineOut]
+
+
+class FileSearchOut(BaseModel):
+    files: list[FileSearchFileOut]
+    #: Some matches were left out: too many of them, or the search ran too long.
+    truncated: bool
+
+
+@router.get(
+    "/{project_id}/files/search",
+    dependencies=[Depends(require_place_access)],
+    **typed_response(FileSearchOut),
+)
+async def search_files(
+    project_id: uuid.UUID,
+    db: DbSession,
+    wake: Wake,
+    q: Annotated[str, Query(min_length=1, max_length=SEARCH_QUERY_MAX)],
+    topic: uuid.UUID | None = None,
+    task: uuid.UUID | None = None,
+    source: Literal["live", "committed"] = "live",
+) -> dict:
+    """Search the text of a task's files for the 编辑器 form's 搜索: the lines
+    holding ``q`` as typed, case ignored, grouped by file."""
+    await ProjectService(db).get_or_404(project_id)
+    return ok(
+        await ProjectFiles(
+            db,
+            project_id,
+            task,
+            release_session=True,
+            executor=execution.call,
+            wake=wake,
+        ).search(q, source)
     )
 
 
