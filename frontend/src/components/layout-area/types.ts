@@ -54,6 +54,11 @@ export interface LayoutPanel {
   transient?: boolean
   /** A transient panel that appears in a cell of its own, beside the cell of this panel. */
   beside?: string
+  /**
+   * A transient panel of a group with no cell yet appears in a cell of its own below the
+   * cell of this panel; once that cell exists, the group's next panels join it.
+   */
+  below?: string
   /** The cell's folded state is the same wherever the panel is placed, remembered under this key. */
   foldKey?: string
   /** What to render. Without it the layer renders the area's `panel` slot with `{ id }`. */
@@ -69,7 +74,7 @@ export interface LayoutPanel {
   closable?: boolean
   /**
    * A kind of panel the reader may open any number of: listed under "+" where the panels it
-   * spawns would land, and never placed itself. Its `group` and `beside` say where that is,
+   * spawns would land, and never placed itself. Its `group`, `beside` and `below` say where that is,
    * as they say it for a transient panel. Picking it asks the page for a new one (`spawn`),
    * which the page then declares as a transient panel of that group.
    */

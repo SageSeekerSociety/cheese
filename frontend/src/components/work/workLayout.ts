@@ -16,7 +16,16 @@ export interface WorkLayout {
   single: boolean
   /** 这一格标题栏里面板那一段的落点（`single` 时才有）：返回、名字写在这里。 */
   head: (key: string) => HTMLElement | undefined
+  /**
+   * 任务页的「编辑器」那一种摆法：文件是主角。任务的文件树是左边单独的一栏（`NAVIGATOR`），
+   * 「文件」那一格只剩打开的文件；概览、现场、改动、预览不常摆着，打开时才进中间，所以进任务
+   * 时不替读者挑一格打开。
+   */
+  editor?: boolean
 }
+
+/** 编辑器那一种摆法里左边那一栏（文件 / 改动）。 */
+export const NAVIGATOR = 'navigator'
 
 /** 工作面板一格内容的元素 id：页头「概览」那颗开关用它说自己管着哪几块。 */
 export function workPaneId(key: string): string {
@@ -40,4 +49,6 @@ export interface WorkTabMeta {
   beside?: string
   /** 能开好几格的一种（终端）：总列在「+」里，选它是要页面新开一格，它自己不摆出来。 */
   spawns?: boolean
+  /** 一格终端，或开终端的那一种：编辑器那一种摆法里它们同在中间下面那一格。 */
+  terminal?: boolean
 }
