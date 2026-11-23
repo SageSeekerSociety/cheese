@@ -728,7 +728,7 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
             recorded = await session.get(Task, task.id)
             recorded.pr_number = draft["number"]
             await session.commit()
-            diff = await ProjectFiles(session, binding.project_id, task.id).diff(
+            diff, _ = await ProjectFiles(session, binding.project_id, task.id).diff(
                 "committed"
             )
             assert "diff --git a/report.md b/report.md" in diff
@@ -873,7 +873,7 @@ async def test_project_proposal_lifecycle_and_credential_cache_cleanup(
                 )
                 == raw
             )
-            assert "+appendix" in await files.diff("committed")
+            assert "+appendix" in (await files.diff("committed"))[0]
             assert any(row["hash"] == merged_sha[:12] for row in await files.history())
         # Its teammate judged what landed to be the whole task, and closed it
         # (`review.task_landing`: a merge alone leaves the task open). The
