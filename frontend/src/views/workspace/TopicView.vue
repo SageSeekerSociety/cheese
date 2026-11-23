@@ -281,7 +281,7 @@ const { taskHeaderBinding, topicHeaderBinding } = useTopicHeader({
   resetLayout: () => (room.panels.rearranged.value ? room.panels.reset : null),
   panelControls: () => room.panelControls.value,
   panelThings: () => fixedTabs(),
-  panelShown: () => (panelOpen.value ? panelRef.value?.activeTab() ?? null : null),
+  panelShown: () => (panelOpen.value ? panelRef.value?.activeTab?.() ?? null : null),
   togglePlace,
 })
 /**
@@ -290,7 +290,7 @@ const { taskHeaderBinding, topicHeaderBinding } = useTopicHeader({
  */
 function togglePlace(key: string) {
   const panel = panelRef.value
-  const showing = panel?.activeTab()
+  const showing = panel?.activeTab?.()
   if (panelOpen.value && showing === key) return closePanel()
   if (!panelOpen.value) panelShow()
   if (showing !== key) panel?.select?.(key)
