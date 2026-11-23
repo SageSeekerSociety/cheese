@@ -897,7 +897,8 @@ function actionTestId(id: string): string | undefined {
    让的是这一句。 */
 .task-header__meta {
   display: flex;
-  flex: 0 1 auto;
+  /* 放不下时先收这一段（在等谁、有没提交的修改），任务名最后才截。 */
+  flex: 0 1000 auto;
   align-items: center;
   gap: 8px;
   min-width: 0;
