@@ -8,6 +8,7 @@ import {
   cellOfPanel,
   cellsOf,
   defaultWeights,
+  defaultWeightsAmong,
   hidesTabs,
   homeCell,
   placeBelow,
@@ -373,6 +374,25 @@ describe('a double-clicked divider gives its split the default sizes back', () =
   it('has nothing to give back for a split the default never had', () => {
     expect(defaultWeights(PAGE_DEFAULT, [['files'], ['chat']])).toBeNull()
     expect(defaultWeights(PAGE_DEFAULT, [['chat'], ['nav']])).toBeNull()
+  })
+
+  it('the default shares of the cells in sight, when others of the split are hidden', () => {
+    const ROW = withCellIds({
+      root: {
+        direction: 'row',
+        children: [
+          { panels: ['chat'], size: 50 },
+          { panels: ['overview'] },
+          { panels: ['threads'], size: 50 },
+          { panels: ['files', 'routines'], size: 40 },
+        ],
+      },
+    })
+    expect(defaultWeightsAmong(ROW, [['chat'], ['threads']])).toEqual([50, 50])
+    // A cell holding more than its default (an opened file beside the list) still counts as that cell.
+    expect(defaultWeightsAmong(ROW, [['chat'], ['threads'], ['routines', 'file:a.md']])).toEqual([50, 50, 40])
+    // Out of the default's order: the reader arranged them some other way.
+    expect(defaultWeightsAmong(ROW, [['threads'], ['chat']])).toBeNull()
   })
 
   it('the cells share the space they fill now by their default weights', () => {

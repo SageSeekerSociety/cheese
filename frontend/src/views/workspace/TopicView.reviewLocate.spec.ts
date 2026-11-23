@@ -68,6 +68,14 @@ vi.mock('@/api', async (importOriginal) => ({
   listRoomTasks: vi.fn(async () => ({ data: [], total: 0 })),
   getAcceptCards: vi.fn(async () => ({ data: [], total: 0 })),
   getHandInStanding: vi.fn(async () => ({ unhanded: false, waiting: false })),
+  listRoomAttachments: vi.fn(async () => ({ data: [], total: 0 })),
+  listRoomFiles: vi.fn(async () => ({ data: [], total: 0, truncated: false })),
+  listRoomOutputs: vi.fn(async () => ({ data: [], total: 0 })),
+  listRoomDocuments: vi.fn(async () => ({ data: [], total: 0 })),
+}))
+vi.mock('@/api/routines', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/routines')>()),
+  listProjectRoutines: vi.fn(async () => ({ data: [], total: 0 })),
 }))
 vi.mock('@/api/reviewComments', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/reviewComments')>()),

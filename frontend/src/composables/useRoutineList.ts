@@ -25,6 +25,8 @@ import {
 import { routineRoomTarget } from '../lib/routine'
 
 import { t } from '@/i18n'
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
 
 export interface RoutineListOptions {
   projectId: string
@@ -49,6 +51,14 @@ export function useRoutineList(options: RoutineListOptions) {
     error.value = e instanceof Error ? e.message : fallback
   }
 
+  /** 读回来过一次：之前那个空数组不是这个房间的名单。 */
+  let read = false
+  // 频道概览里也列着这个房间的例行事务（`query/room` 的 `routinesQuery`）：这里新建、改、删了，
+  // 那一份跟着变，不等下一次重读。
+  watch(routines, (rows) => {
+    if (read && options.topicId) queryClient.setQueryData(keys.roomRoutines(options.topicId), rows)
+  })
+
   async function reload() {
     // 房间面板是工作面板的一部分，而工作面板在「话题还没选定」的那一帧也在：此刻
     // 没有项目可问，问了只会拿到一个 404。等话题到了，上面那次 watch 会重来一遍。
@@ -58,6 +68,7 @@ export function useRoutineList(options: RoutineListOptions) {
     try {
       const listed = await listProjectRoutines(options.projectId, options.topicId)
       routines.value = listed.data
+      read = true
     } catch (e) {
       fail(e, t('routines.loadFailed'))
     } finally {

@@ -12,8 +12,10 @@ import { authHeaders, BASE, downloadBytes, ensureFreshToken, request } from './h
 
 // ---- 这个房间里摆出来的东西 (#1085 结论四) ----
 
-export function listRoomOutputs(topicId: string): Promise<ListPayload<RoomOutput>> {
-  return request<ListPayload<RoomOutput>>(`/topics/${encodeURIComponent(topicId)}/shown`)
+/** `within`：问的是频道或私聊时，连同它的任务和讨论串里摆出来的一起列（「文件」那一格用）。 */
+export function listRoomOutputs(topicId: string, opts: { within?: boolean } = {}): Promise<ListPayload<RoomOutput>> {
+  const query = opts.within ? '?within=true' : ''
+  return request<ListPayload<RoomOutput>>(`/topics/${encodeURIComponent(topicId)}/shown${query}`)
 }
 
 /** 把房间里的这一份留进资料库：按原名，撞名加 `(2)`，所有房间都引用得到。 */

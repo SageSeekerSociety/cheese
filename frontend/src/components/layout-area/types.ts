@@ -126,6 +126,13 @@ export interface LayoutPanel {
    */
   hidden?: boolean
   /**
+   * When the cell is shown or hidden, the cells in sight in its split go back to the shares
+   * the page's default gives them (a cell with a width of its own keeps the width it has), as
+   * double-clicking a divider does: blocks that come and go beside a conversation never leave
+   * one squeezed and another wide. A drag between them lasts until the next one comes or goes.
+   */
+  evensOut?: boolean
+  /**
    * Keep the panel's DOM laid out even while its tab is hidden (dockview's
    * `renderer: 'always'`): iframes and terminals reload when they are detached.
    */

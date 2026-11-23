@@ -25,6 +25,10 @@ export interface WorkPanelHandle {
   activeTab: () => string
   /** 换到这一格（页头上点了它那一颗）：和读者点它的页签同一件事，地址跟着走。 */
   select?: (key: string) => void
+  /** 打开「例行事务」那一格，开出新建一条的那一页。 */
+  newRoutine?: () => Promise<void>
+  /** 关掉一格（布局区里它那一块的 ✕，或它那一处换了别的）。 */
+  closeTab?: (key: string) => void
 }
 
 /** 对话栏往回够的那几处。它自己的输入框就是这一页用的那个，这一页只是要个把手。 */

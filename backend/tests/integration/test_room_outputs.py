@@ -209,3 +209,34 @@ def test_saving_from_a_thread_is_said_in_that_thread_and_waits_on_nobody(client)
     assert len(in_thread) == 1
     assert in_thread[0]["meta"]["who"] != "human"
     assert notices(room_id) == []
+
+
+def test_a_channel_asked_for_everything_within_lists_what_its_tasks_showed(client):
+    """频道的「文件」那一格列的是整个频道的：点名要「连同里面的」时，任务交出来的东西也列。
+    不点名时只有频道自己的；问一件任务时总是只有它自己摆出来的。"""
+    from tests.integration.conftest import open_task
+
+    alice = session_auth_headers("alice")
+    project_id = post_project(client, json={"name": "P"}, owner="alice").json()["data"][
+        "id"
+    ]
+    room_id = client.post(
+        "/topics", json={"project_id": project_id, "title": "频道"}, headers=alice
+    ).json()["data"]["id"]
+    task_id = open_task(client, room_id, "改报名表")["id"]
+
+    assert _show(client, project_id, room_id, "channel.html").status_code == 200
+    assert _show(client, project_id, task_id, "task.html").status_code == 200
+
+    def listed(place: str, within: bool = False) -> list[str]:
+        r = client.get(
+            f"/topics/{place}/shown",
+            params={"within": "true"} if within else None,
+            headers=alice,
+        )
+        assert r.status_code == 200, r.text
+        return [row["path"] for row in r.json()["data"]["data"]]
+
+    assert listed(room_id, within=True) == ["task.html", "channel.html"]
+    assert listed(room_id) == ["channel.html"]
+    assert listed(task_id, within=True) == ["task.html"]

@@ -46,6 +46,7 @@ import {
   cellOfPanel,
   cellsOf,
   defaultWeights,
+  defaultWeightsAmong,
   hasPlacementFault,
   hidesTabs,
   homeCell,
@@ -333,6 +334,8 @@ function applyPolicies() {
       // Shown again at the size it had when hidden: its own width may have changed since.
       held.delete(id)
       reshaped = true
+      const split = splitOf(group)
+      if (split && panels.some((panel) => panel.evensOut)) evenSplits.add(split)
     }
     // A width (or height) of its own changed elsewhere (another place showing the same
     // panel): follow it, once per new value, never in the middle of a drag.
@@ -355,6 +358,16 @@ function applyPolicies() {
   // while the page still showed more cells than the window holds). With the room back, it
   // returns to the width the reader gave it.
   if (reshaped && !dragging) restoreHeldWidths(dock)
+  // A cell that evens out its split came or went: the cells in sight there go back to their shares.
+  if (!dragging) for (const split of evenSplits) evenOut(split, false)
+  evenSplits.clear()
+}
+
+/** Splits whose cells go back to their default shares once this pass has shown and hidden cells. */
+const evenSplits = new Set<Element>()
+/** The split container a cell sits in. */
+function splitOf(group: DockviewGroupPanel): Element | null {
+  return group.element.closest('.dv-view')?.parentElement?.parentElement ?? null
 }
 
 function restoreHeldWidths(dock: DockviewApi) {
@@ -666,10 +679,20 @@ function endDrag() {
  * rest by their default weights. A split the default has no counterpart for stays as is.
  */
 function onDoubleClick(event: MouseEvent) {
-  const dock = api.value
   const sash = event.target instanceof Element ? event.target.closest('.dv-sash') : null
   const container = sash?.closest('.dv-split-view-container')
-  if (!dock || !container || maximizedGroup.value) return
+  if (container) evenOut(container, true)
+}
+
+/**
+ * Gives a split's cells in sight the sizes the page's default gives them: the others share
+ * what the cells with a width of their own leave by their default weights. On a double-click
+ * (`initial`) those cells go back to their initial width too; when cells come and go they
+ * keep the width they have.
+ */
+function evenOut(container: Element, initial: boolean) {
+  const dock = api.value
+  if (!dock || maximizedGroup.value) return
   const horizontal = container.classList.contains('dv-horizontal')
   const children = [...container.querySelectorAll(':scope > .dv-view-container > .dv-view')]
     .filter((view) => view.classList.contains('visible'))
@@ -678,25 +701,32 @@ function onDoubleClick(event: MouseEvent) {
       return { view, groups, panels: groups.flatMap((group) => group.panels.map((panel) => panel.id)) }
     })
   if (children.length < 2 || children.some((child) => !child.groups.length)) return
-  const weights = defaultWeights(
-    props.defaultArrangement,
-    children.map((child) => child.panels)
-  )
+  const weights = initial
+    ? defaultWeights(
+        props.defaultArrangement,
+        children.map((child) => child.panels)
+      )
+    : defaultWeightsAmong(
+        props.defaultArrangement,
+        children.map((child) => child.panels)
+      )
   if (!weights) return
   const axis = horizontal ? 'width' : 'height'
   const fixedOf = (panels: string[]) => panels.map((id) => info.value.get(id)?.[axis]).find((extent) => extent)
-  const fixed = children.map((child) => {
-    const width = child.groups.length === 1 ? fixedOf(child.panels) : undefined
-    return width ? clampWidth(width, width.initial) : undefined
-  })
   const extent = (view: Element) =>
     horizontal ? view.getBoundingClientRect().width : view.getBoundingClientRect().height
+  const fixed = children.map((child) => {
+    const width = child.groups.length === 1 ? fixedOf(child.panels) : undefined
+    if (!width) return undefined
+    return initial ? clampWidth(width, width.initial) : extent(child.view)
+  })
   const total = children.reduce((sum, child) => sum + extent(child.view), 0)
   const sizes = resetSizes(total, weights, fixed)
   // dockview gives each change to the last cell of the split: set all but that one, in order.
   children.slice(0, -1).forEach((child, i) => {
     child.groups[0].api.setSize(horizontal ? { width: sizes[i] } : { height: sizes[i] })
   })
+  if (!initial) return
   children.forEach((child) => {
     const own = fixedOf(child.panels)
     if (own) emit('resized', child.panels.find((id) => info.value.get(id)?.[axis])!, clampWidth(own, own.initial), axis)

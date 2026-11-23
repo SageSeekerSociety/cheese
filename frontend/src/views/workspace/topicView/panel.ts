@@ -26,6 +26,8 @@ export function useTopicPanelState(opts: {
   showing: () => string | undefined
   /** 支线页上收起面板等于离开支线，回频道。 */
   backToRoom: () => void
+  /** 开没开只算这一页的时候，此刻在哪一页（见 `useTopicPanel` 的 `scope`）。 */
+  scope?: () => string | null
 }) {
   const panel = useTopicPanel({
     panes: opts.panes,
@@ -34,6 +36,7 @@ export function useTopicPanelState(opts: {
     thread: opts.thread,
     setTab: opts.setTab,
     showing: opts.showing,
+    scope: opts.scope,
   })
   const open = panel.open
   const float = panel.float

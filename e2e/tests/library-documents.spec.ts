@@ -57,7 +57,7 @@ test('新建文档直接打开，起了名、写了字，回到资料库就在�
     id: string;
   };
   await page.goto(`/projects/${projectId}/topics/${room.id}?tab=file:doc:${docId}`);
-  // 桌面上频道旁边那一处一次显示一样，它的标题栏写着这份文档的名字。
+  // 桌面上它开在频道的「文件」那一块里，标题栏写着这份文档的名字。
   await expect(page.locator(`[data-layout-head="file:doc:${docId}"]`, { hasText: title })).toBeVisible({ timeout: 30_000 });
   await expect(page.locator('.work-pane .doc-prose').last()).toContainText('三家都有年付折扣', { timeout: 30_000 });
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/library-doc-beside-chat.png` });

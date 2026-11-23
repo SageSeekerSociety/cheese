@@ -20,5 +20,8 @@
   "save": "Save",
   "waiting": "Waiting on you",
   "writeProject": "Write project goals",
-  "closedByNeglect": "Closed automatically: nobody attended to it"
+  "closedByNeglect": "Closed automatically: nobody attended to it",
+  "add": "Add to {name}",
+  "none": "{name}: none yet",
+  "all": "All {count}"
 }

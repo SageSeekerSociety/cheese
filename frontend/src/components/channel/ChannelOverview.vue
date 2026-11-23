@@ -1,11 +1,15 @@
 <script setup lang="ts">
-// 频道的概览：一整列，自然往下滚。从上到下是等你处理的任务（有才出现）、频道说明（综合
-// 是项目目标）、置顶、进行中的任务（各带最后说的一句）、最近关闭。频道没有自己的实况文档：要一起看的
-// 东西钉在置顶里，要做成的事是任务。
+// 频道的概览：频道的目录，一栏窄的，自然往下滚，各段之间一条细线。从上到下是等你处理的任务
+// （有才出现）、频道说明（综合是项目目标）、置顶、进行中的任务、最近关闭，然后是支线、文件、
+// 例行事务各列最要紧的几行。一行一件，放不下的名字截断。点一行在它那一块里打开它；各段最后
+// 那一行「全部 N 项」打开那一块的列表。频道没有自己的实况文档：要一起看的东西钉在置顶里，要
+// 做成的事是任务。
+import type { ConversationFile } from '@/composables/useConversationFiles'
 import type { PanelDocument } from '@/composables/usePanelDoc'
 import type { RoomTask, Topic } from '@/cx_types'
 import type { TaskState } from '@/lib/taskState'
 import type { ChannelPin } from '@/types/channels'
+import type { ThreadRow } from '@/types/threads'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
@@ -14,8 +18,9 @@ import ChannelOverviewPins from '@/components/channel/ChannelOverviewPins.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
 import TaskStateMark from '@/components/task/TaskStateMark.vue'
 import { t } from '@/i18n'
-import { replySnippet } from '@/lib/blockDisplay'
+import { replyBlock, replySnippet, threadHeading } from '@/lib/blockDisplay'
 import { RECENT_DONE } from '@/lib/channelTasks'
+import { KIND_ICONS, kindOf } from '@/lib/libraryKinds'
 import { relTime } from '@/lib/relTime'
 import { taskState } from '@/lib/taskState'
 import { taskTitle } from '@/lib/topicState'
@@ -38,6 +43,14 @@ const props = defineProps<{
   memberNames: Record<string, string>
   agentName: string
   saveDescription: (text: string) => Promise<boolean>
+  /** 这个频道的支线（没读过的在前那几行列出来）。 */
+  threads?: ThreadRow[]
+  /** 能不能在这个频道里开支线：支线那一段带一颗「+」。 */
+  canCreateThread?: boolean
+  /** 这个频道里的文件，新的在前。 */
+  files?: ConversationFile[]
+  /** 这个频道的例行事务：名字和什么时候跑。 */
+  routines?: { id: string; title: string; when: string }[]
 }>()
 
 const emit = defineEmits<{
@@ -49,7 +62,17 @@ const emit = defineEmits<{
   (e: 'open-all'): void
   (e: 'mention-click', handle: string): void
   (e: 'edit-overview', documentId: string): void
+  (e: 'open-thread', threadId: string): void
+  (e: 'new-thread'): void
+  (e: 'open-file', row: ConversationFile): void
+  (e: 'open-routine', routineId: string): void
+  (e: 'new-routine'): void
+  /** 「全部 N 项」：打开那一块的列表。 */
+  (e: 'show', key: 'threads' | 'files' | 'routines'): void
 }>()
+
+/** 支线、文件、例行事务各列几行：最要紧的那几行，其余在它那一块里。 */
+const FEW = 3
 
 /** 进行中只列最近这么多天里有动静的，最多这么多件：其余在「全部任务」里。概览答的是
  *  「这个频道现在在忙什么」，一长串很久没人碰的任务会把真在动的淹掉。 */
@@ -97,6 +120,44 @@ const recentDone = computed(() =>
     .sort((a, b) => (b.closed_at ?? '').localeCompare(a.closed_at ?? ''))
     .slice(0, RECENT_DONE)
 )
+
+// 支线：没读过的在前，其余照原来的次序（最近有回复的在前）。
+const threadRows = computed(() => {
+  const rows = props.threads ?? []
+  return [...rows.filter((row) => row.unread), ...rows.filter((row) => !row.unread)].slice(0, FEW)
+})
+function threadName(row: ThreadRow): string {
+  return row.root ? threadHeading(replyBlock(row.root), refs.value) : t('work.room.thread.title')
+}
+const fileRows = computed(() => (props.files ?? []).slice(0, FEW))
+function fileIcon(row: ConversationFile): string {
+  return row.kind === 'document' ? 'mdi-file-document-outline' : KIND_ICONS[kindOf(row.name)]
+}
+const routineRows = computed(() => (props.routines ?? []).slice(0, FEW))
+/** 支线、文件、例行事务三段：名字、有几项、带不带「+」。 */
+const lists = computed(() => [
+  {
+    key: 'threads' as const,
+    label: t('work.room.tabs.threads'),
+    count: props.threads?.length ?? 0,
+    add: !!props.canCreateThread,
+  },
+  { key: 'files' as const, label: t('work.room.tabs.files'), count: props.files?.length ?? 0, add: false },
+  { key: 'routines' as const, label: t('work.room.tabs.routines'), count: props.routines?.length ?? 0, add: true },
+])
+function add(key: 'threads' | 'files' | 'routines') {
+  if (key === 'threads') emit('new-thread')
+  else if (key === 'routines') emit('new-routine')
+}
+/** 一件进行中的任务那一行只有一行：最后说的一句和谁负责在悬停里。 */
+function taskHint(task: RoomTask): string {
+  const owner = t('work.channel.overview.owner', {
+    name: nameOf(task.owner_handle ?? ''),
+    when: relTime(movedAt(task)),
+  })
+  const second = secondOf(task)
+  return [taskTitle(task), second, owner].filter(Boolean).join('\n')
+}
 
 // 状态那一格和频道里的卡是同一个记号（`lib/taskState.ts`）；它下面那一行有话要说时写它，
 // 没有时写这件任务里最后说的一句。
@@ -282,21 +343,13 @@ async function save() {
         v-for="task in lively"
         :key="task.id"
         type="button"
-        class="co-task"
+        class="co-row"
         data-testid="channel-task"
+        :title="taskHint(task)"
         @click="emit('open-task', task.id)"
       >
-        <span class="co-task__head">
-          <span class="co-task__title t-body">{{ taskTitle(task) }}</span>
-          <TaskStateMark class="co-task__state t-meta" :state="stateOf(task)" />
-        </span>
-        <span v-if="secondOf(task)" class="co-task__latest t-meta">{{ secondOf(task) }}</span>
-        <span class="co-task__meta t-meta c-faint">{{
-          t('work.channel.overview.owner', {
-            name: nameOf(task.owner_handle ?? ''),
-            when: relTime(movedAt(task)),
-          })
-        }}</span>
+        <span class="co-row__name t-body">{{ taskTitle(task) }}</span>
+        <TaskStateMark class="co-row__end t-meta" :state="stateOf(task)" />
       </button>
       <button
         v-if="running.length > lively.length"
@@ -340,6 +393,78 @@ async function save() {
         <span class="t-meta c-faint">{{ relTime(task.closed_at ?? task.created_at) }}</span>
       </button>
     </section>
+
+    <section v-for="list in lists" :key="list.key" class="co-section" :data-testid="`channel-${list.key}`">
+      <div class="co-head">
+        <h3 class="co-title">{{ list.label }}</h3>
+        <BaseButton
+          v-if="list.add"
+          kind="ghost"
+          size="sm"
+          icon="mdi-plus"
+          class="co-add"
+          :title="t('work.channel.overview.add', { name: list.label })"
+          :aria-label="t('work.channel.overview.add', { name: list.label })"
+          @click="add(list.key)"
+        />
+      </div>
+      <p v-if="!list.count" class="t-meta c-muted co-none">
+        {{ t('work.channel.overview.none', { name: list.label }) }}
+      </p>
+      <template v-if="list.key === 'threads'">
+        <button
+          v-for="row in threadRows"
+          :key="row.id"
+          type="button"
+          class="co-row"
+          :title="threadName(row)"
+          @click="emit('open-thread', row.id)"
+        >
+          <span
+            class="co-row__unread"
+            :class="{ 'co-row__unread--on': row.unread }"
+            :aria-label="row.unread ? t('work.room.thread.unread') : undefined"
+          />
+          <span class="co-row__name t-body">{{ threadName(row) }}</span>
+          <span class="co-row__end t-meta c-muted">{{ row.reply_count }}</span>
+        </button>
+      </template>
+      <template v-else-if="list.key === 'files'">
+        <button
+          v-for="row in fileRows"
+          :key="`${row.kind}:${row.id}`"
+          type="button"
+          class="co-row"
+          :title="row.folder ? `${row.folder}/${row.name}` : row.name"
+          @click="emit('open-file', row)"
+        >
+          <v-icon size="16" class="co-row__icon" :icon="fileIcon(row)" />
+          <span class="co-row__name t-body">{{ row.name }}</span>
+        </button>
+      </template>
+      <template v-else>
+        <button
+          v-for="row in routineRows"
+          :key="row.id"
+          type="button"
+          class="co-row"
+          :title="row.title"
+          @click="emit('open-routine', row.id)"
+        >
+          <span class="co-row__name t-body">{{ row.title }}</span>
+          <span class="co-row__end t-meta c-muted">{{ row.when }}</span>
+        </button>
+      </template>
+      <button
+        v-if="list.count"
+        type="button"
+        class="co-all t-meta"
+        :data-testid="`channel-${list.key}-all`"
+        @click="emit('show', list.key)"
+      >
+        {{ t('work.channel.overview.all', { count: list.count }) }}
+      </button>
+    </section>
   </div>
 </template>
 
@@ -348,16 +473,22 @@ async function save() {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
-  gap: 24px;
   min-width: 0;
   min-height: 0;
-  padding: 16px 16px 32px;
+  padding: 4px 16px 24px;
   overflow-y: auto;
+}
+/* 各段之间一条细线；置顶那一段是它自己的组件，同样算一段。 */
+.channel-overview > * {
+  padding: 14px 0 12px;
+}
+.channel-overview > * + * {
+  border-top: 1px solid var(--line);
 }
 .co-section {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
 }
 .co-head {
@@ -365,12 +496,91 @@ async function save() {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  min-height: 26px;
 }
+/* 段名是目录的标签：小一号的分量、次要的颜色，不和下面的一行一行抢。 */
 .co-title {
   margin: 0;
   font-size: 13px;
   line-height: var(--lh-13);
-  font-weight: 600;
+  font-weight: 500;
+  color: var(--muted);
+}
+.co-add {
+  flex: none;
+  color: var(--muted);
+}
+.co-none {
+  margin: 0;
+}
+/* 一行一件：名字占满，放不下截断，右边是它的状态、回复数或什么时候跑。 */
+.co-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 30px;
+  margin: 0 -8px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--dur-quick) var(--ease-standard);
+}
+.co-row:hover {
+  background: var(--fill);
+}
+.co-row__name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.co-row__end {
+  flex: 0 1 auto;
+  max-width: 50%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.co-row__icon {
+  flex: none;
+  color: var(--muted);
+}
+/* 没读过的回复：名字前一颗琥珀点；读过的不占位。 */
+.co-row__unread {
+  display: none;
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+.co-row__unread--on {
+  display: inline-block;
+}
+.co-all {
+  align-self: flex-start;
+  height: 28px;
+  margin: 0 -8px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-md);
+  background: none;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-quick) var(--ease-standard),
+    color var(--dur-quick) var(--ease-standard);
+}
+.co-all:hover {
+  background: var(--fill);
   color: var(--ink);
 }
 .co-note {
@@ -393,8 +603,10 @@ async function save() {
   gap: 8px;
 }
 .co-link {
+  flex: none;
   padding: 0;
   border: 0;
+  white-space: nowrap;
   background: none;
   font-size: 12px;
   line-height: var(--lh-12);

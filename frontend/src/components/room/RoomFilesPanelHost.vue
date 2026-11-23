@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 工作面板「文件」那一格：取这段对话的附件和文档，保存到资料库。只有这段对话里的人看得
 // 到的（私密频道、私聊），保存之前先说清保存后谁会看到。
-import type { ConversationFile } from '@/composables/useConversationFiles'
+import type { ConversationFile, ConversationFiles } from '@/composables/useConversationFiles'
 
 import { computed, getCurrentInstance, ref, toRef } from 'vue'
 
@@ -20,6 +20,8 @@ const props = defineProps<{
   topicId: string | null
   /** 只有这段对话里的人看得到：私密频道或私聊。 */
   seatsOnly: boolean
+  /** 页面已经在读的那一份（频道概览里也列着）；不给就自己读。 */
+  files?: ConversationFiles | null
 }>()
 
 const emit = defineEmits<{
@@ -27,7 +29,9 @@ const emit = defineEmits<{
   open: [row: ConversationFile]
 }>()
 
-const { rows, truncated, loading, error, keeping, load, keep } = useConversationFiles(toRef(props, 'topicId'))
+// 给了就用页面那一份；它在这一格的一生里不换（页面按频道换一整页）。
+const { rows, truncated, loading, error, keeping, load, keep } =
+  props.files ?? useConversationFiles(toRef(props, 'topicId'))
 
 const app = getCurrentInstance()?.appContext.config.globalProperties
 const workspace = app?.$pinia ? useWorkspaceStore() : null

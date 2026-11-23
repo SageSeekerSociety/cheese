@@ -50,6 +50,8 @@ const props = defineProps<{
   /** 一条消息转为任务：页头那颗是支线挂着的那条（这条支线原地转），支线里的一条回复
    *  是另开一件。转完（成没成）它才返回，按钮的忙碌跟着它。 */
   toTask: (blockId: string) => Promise<unknown>
+  /** 桌面上它那一块标题栏里名字那一段：页头那一行画在那里（返回在最左）。null 是那个落点还没有。 */
+  headTarget?: HTMLElement | null
 }>()
 
 const emit = defineEmits<{
@@ -156,8 +158,11 @@ useScreenHeader(() =>
 
 <template>
   <section class="thread-pane" :aria-label="t('work.room.thread.title')" data-testid="thread-pane">
-    <!-- Desktop: the head row tops this column. Phone: it is the top bar's content (useScreenHeader). -->
-    <ThreadHead v-if="!page" v-bind="headBinding" />
+    <!-- Desktop: the head row goes into its block's title bar, or tops this column. Phone: it is the top bar's content (useScreenHeader). -->
+    <Teleport v-if="headTarget" :to="headTarget">
+      <ThreadHead v-bind="headBinding" bar />
+    </Teleport>
+    <ThreadHead v-else-if="!page && headTarget === undefined" v-bind="headBinding" />
 
     <p v-if="error" class="thread-pane__error t-meta" role="alert">{{ error }}</p>
     <template v-else>

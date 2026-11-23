@@ -14,6 +14,7 @@ import { useQuery } from '@tanstack/vue-query'
 
 import { provideAcceptCard } from '@/composables/useAcceptCard'
 import { useChapters } from '@/composables/useChapters'
+import { useConversationFiles } from '@/composables/useConversationFiles'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { useScreenHeader } from '@/composables/useScreenHeader'
 
@@ -131,7 +132,11 @@ const reviewChat = useReviewChat()
 const taskOverviewRef = ref<TaskOverviewHandle | null>(null)
 
 // ---- 右侧面板的收 / 开（三档见 useTopicPanel）----
+// 频道页和任务页「对话」那一种摆法（一块一块的）里，开没开只算这一页的：每进一个频道、一件任务
+// 旁边都是概览（布局区那一份下面才建，建好后由它说这一页是不是那一种）。
+const blockForm = ref(false)
 const panelState = useTopicPanelState({
+  scope: () => (blockForm.value ? props.taskId ?? 'channel' : null),
   panes: panesRef,
   tab: panelTab,
   desktop: mdAndUp,
@@ -289,9 +294,8 @@ const { taskHeaderBinding, topicHeaderBinding } = useTopicHeader({
   // 布局区那一份在下面才建（它要读打开的交付）；页头渲染时早已有了。
   resetLayout: () => (room.panels.rearranged.value ? room.panels.reset : null),
   panelControls: () => room.panelControls.value,
-  panelThings: () => fixedTabs(),
-  panelShown: () => (panelOpen.value ? panelRef.value?.activeTab?.() ?? null : null),
-  togglePlace,
+  channelBlocks: () => channelBlocks.value,
+  toggleChannelBlock: (key) => toggleChannelBlock(key),
   form: () => (room.workLayout.value && props.taskId && !panelFloat.value ? taskForm.chosen.value : null),
   chooseForm: taskForm.choose,
   editorParts: () => editorParts.value,
@@ -300,8 +304,8 @@ const { taskHeaderBinding, topicHeaderBinding } = useTopicHeader({
   toggleBlock,
 })
 /**
- * 页头上那几颗按钮（频道页）：点的那一样正显示着就收起这一处；否则把这一处打开在它上面。打开
- * 时它就是正显示着的那一样的话只打开，不再写一遍地址（收起前在看什么，打开还是什么）。
+ * 页头上那几颗按钮，面板是浮层（或没交给外壳）时：点的那一样正显示着就收起面板；否则把面板打开
+ * 在它上面。打开时它就是正显示着的那一样的话只打开，不再写一遍地址（收起前在看什么，打开还是什么）。
  */
 function togglePlace(key: string) {
   const panel = panelRef.value
@@ -312,8 +316,8 @@ function togglePlace(key: string) {
 }
 // ---- 在频道里审阅的那件交付、右栏开着哪一格（见 topicView/delivery.ts）----
 const reviewReload = ref(0)
-/** 布局区那一份（下面才建）：右栏是不是一次只显示一格。建好之前不是。 */
-let roomLayoutHandle: { workLayout: { value: { single: boolean } | null } } | null = null
+/** 布局区那一份（下面才建）：频道页右边是不是一块一块的。建好之前不是。 */
+let roomLayoutHandle: { workLayout: { value: { blocks?: boolean } | null } } | null = null
 const delivery = useDeliveryTab({
   place: here,
   desktop: mdAndUp,
@@ -335,7 +339,7 @@ const delivery = useDeliveryTab({
     reviewReload.value += 1
     void queryClient.invalidateQueries({ queryKey: keys.roomTask(taskId) })
   },
-  single: () => roomLayoutHandle?.workLayout.value?.single === true,
+  blocks: () => !props.taskId && roomLayoutHandle?.workLayout.value?.blocks === true,
 })
 const {
   tabs: deliveryTabs,
@@ -385,8 +389,9 @@ function tabTask(taskId: string): RoomTask | null {
 function taskFor(taskId: string): RoomTask | null {
   return taskId === deliveryTaskId.value ? reviewTask.value : tabTask(taskId)
 }
+// 只在频道页上：任务页上没有在频道里打开的任务这回事。
 const deliveryTabsBinding = computed(() =>
-  mdAndUp.value
+  mdAndUp.value && !props.taskId
     ? deliveryTabs.value.map((tab) => {
         const task = taskFor(tab.taskId)
         return { id: tab.taskId, title: task ? taskTitle(task) : '', dot: tab.dot }
@@ -441,12 +446,105 @@ const room = useRoomLayout(usePagePanels, {
   floating: () => panelFloat.value,
   hide: { label: () => closeLabel.value, run: () => closePanel() },
   onActivated: (key) => (panelRef.value as { activated?: (key: string) => void } | null)?.activated?.(key),
-  onClose: (key) => (panelRef.value as { closeTab?: (key: string) => void } | null)?.closeTab?.(key),
+  onClose: (key) => {
+    panelRef.value?.closeTab?.(key)
+    leavePlaceOf(key)
+  },
+  onDrop: (key) => panelRef.value?.closeTab?.(key),
   onKeep: (key) => (panelRef.value as { keepTab?: (key: string) => void } | null)?.keepTab?.(key),
   onSpawn: (key) => void (panelRef.value as { spawnTab?: (key: string) => void } | null)?.spawnTab?.(key),
   scope: () => props.taskId,
 })
 roomLayoutHandle = room
+watch(
+  () => !!room.workLayout.value?.blocks,
+  (blocks) => (blockForm.value = blocks),
+  { immediate: true }
+)
+/**
+ * 频道页上关掉了地址指着的那一块（一条支线、在频道里打开的那件任务）：地址回到频道，别的那几块
+ * 照样开着。
+ */
+function leavePlaceOf(key: string) {
+  if (props.taskId) return
+  const named =
+    (key === 'threads' && props.threadId) || (props.reviewTaskId && key === `delivery:${props.reviewTaskId}`)
+  if (named)
+    void router.push({ name: 'workspace-topic', params: { projectId: props.projectId, topicId: props.topicId } })
+}
+/** 打开的一条支线、一件任务换了（点了「N 条回复」、在频道里打开一件任务）：它那一块打开在它上面。 */
+watch(
+  () => [props.threadId, props.reviewTaskId],
+  ([thread, review]) => {
+    if (!room.workLayout.value?.blocks || props.taskId || !(thread || review)) return
+    panelShow()
+    const key = shownTab.value
+    if (key) panelRef.value?.select?.(key)
+  }
+)
+/**
+ * 频道页页头右边那一组：概览、支线、文件，例行事务收在 ⋯ 里。一块一块的那一种里开着的那几颗是
+ * 按下的样子（「文件」那一块显示一份文件时也算开着）；浮层和没交给外壳时，按下的是正显示的那一样。
+ */
+const channelBlocks = computed<TaskBlockButton[]>(() => {
+  if (props.taskId) return []
+  const meta = new Map(fixedTabs().map((tab) => [tab.key, tab]))
+  const shown = room.chatBlocks.value
+  const showing = panelOpen.value ? panelRef.value?.activeTab?.() ?? null : null
+  const inBlocks = !!room.workLayout.value?.blocks
+  const on = (key: string) => (inBlocks ? openBlockOf(key, shown) !== null : showing === key)
+  const button = (key: string, more = false): TaskBlockButton[] => {
+    const tab = meta.get(key)
+    if (!tab) return []
+    return [
+      { key, label: tab.title, hint: tab.hint, icon: tab.icon, on: on(key), more, dot: tab.signal?.kind === 'dot' },
+    ]
+  }
+  return [...button('overview'), ...button('threads'), ...button('files'), ...button('routines', true)]
+})
+/** 页头上的一颗管着的那一块此刻开着的是哪一样（「文件」那一颗管着打开的文件）；没开着是 null。 */
+function openBlockOf(key: string, shown: { overview: boolean; open: readonly string[] }): string | null {
+  if (key === 'overview') return shown.overview ? 'overview' : null
+  if (key === 'files') return shown.open.find((one) => one === 'files' || one.startsWith('file:')) ?? null
+  return shown.open.includes(key) ? key : null
+}
+/** 页头那一组里点了一颗：开着的那一块关掉；关着的打开（概览让开）。浮层里照旧一次一样。 */
+function toggleChannelBlock(key: string) {
+  if (!room.workLayout.value?.blocks) return togglePlace(key)
+  const open = openBlockOf(key, room.chatBlocks.value)
+  if (open) return room.closeBlock(open)
+  if (!panelOpen.value) panelShow()
+  panelRef.value?.select?.(key)
+}
+/** 概览里「全部 N 项」：打开那一块的列表（「支线」那一块正显示一条支线时回到列表）。 */
+function showList(key: 'threads' | 'files' | 'routines') {
+  if (key === 'threads' && props.threadId) return backToThreads()
+  panelRef.value?.select?.(key)
+}
+/** 概览里点了一条例行事务：「例行事务」那一块打开，选中它。 */
+function openRoutine(id: string) {
+  void router.replace({ query: { ...route.query, routine: id } })
+  panelRef.value?.select?.('routines')
+}
+/**
+ * 桌面上概览里点了一件任务：在频道里打开它（「支线」那一处）。地址指着一条支线时也一样：概览是
+ * 频道的，不是那条支线的。
+ */
+function openFromOverview(taskId: string) {
+  reviewView.value = null
+  returnAsk.value = null
+  void router.push({
+    name: 'workspace-review',
+    params: { projectId: props.projectId, topicId: props.topicId, reviewTaskId: taskId },
+  })
+}
+/** 概览里点了一份文件：在「文件」那一块里打开它。 */
+function openOverviewFile(row: { kind: 'file' | 'document'; id: string; name: string }) {
+  if (row.kind === 'document') void panelRef.value?.openDocument?.({ id: row.id, title: row.name })
+  else panelRef.value?.openFile?.(row.id)
+}
+// 这个频道里的文件：概览里列着最近几份，「文件」那一块读的也是这一份。
+const roomFiles = useConversationFiles(computed(() => (props.taskId ? null : props.topicId)))
 /**
  * 「对话」那一种摆法里页头右边那一组：概览、改动（带改过几个文件）、文件、终端（能开终端时），
  * 现场和预览收在 ⋯ 里（预览只在有东西可看、或它那一块开着时）。
@@ -885,6 +983,8 @@ void openPlace()
               :member-names="memberNames"
               :threads-new="channelThreads.hasNew.value"
               :layout="room.workLayout.value"
+              :thread-open="!!threadId && mdAndUp"
+              :room-files="taskId ? null : roomFiles"
               @open-topic="openTopic"
               @open-card="openTaskPage"
               @mention-click="handleMentionClick"
@@ -963,19 +1063,29 @@ void openPlace()
                   :member-names="memberNames"
                   :agent-name="store.agentName"
                   :save-description="(text: string) => store.describe(topicId, text)"
+                  :threads="channelThreads.rows.value"
+                  :can-create-thread="canOpenThread"
+                  :files="roomFiles.rows.value"
+                  :routines="channelOverview.routines.value"
                   @unpin="channelOverview.unpin"
                   @edit-overview="
                     (id: string) => panelRef?.openDocument?.({ id, title: t('work.channel.overview.project') })
                   "
                   @jump="jumpTo"
-                  @open-task="openTaskPage"
-                  @open-delivery="openTask"
+                  @open-task="(id: string) => (mdAndUp ? openFromOverview(id) : openTaskPage(id))"
+                  @open-delivery="(id: string) => (mdAndUp ? openFromOverview(id) : openTask(id))"
                   @open-all="router.push({ name: 'project-tasks', params: { projectId }, query: { channel: topicId } })"
                   @mention-click="handleMentionClick"
+                  @open-thread="showThread"
+                  @new-thread="newThreadOpen = true"
+                  @open-file="openOverviewFile"
+                  @open-routine="openRoutine"
+                  @new-routine="panelRef?.newRoutine?.()"
+                  @show="showList"
                 />
               </template>
-              <!-- Desktop: the delivery under review, in a place of its own; beside the conversation its
-                   head goes into that place's title bar (head), after the back button. -->
+              <!-- Desktop: the delivery under review, in a block of its own; beside the conversation its
+                   head goes into that block's title bar (head). -->
               <template v-if="mdAndUp" #delivery="{ id, head }">
                 <WorkPanel
                   :key="id"
@@ -1019,11 +1129,12 @@ void openPlace()
                   </template>
                 </WorkPanel>
               </template>
-              <template v-if="!taskId" #threads>
-                <!-- Desktop: an open thread stays in the 支线 tab, with a back to the list. -->
+              <template v-if="!taskId" #threads="{ head }">
+                <!-- Desktop: an open thread stays in the 支线 block, its head (with a back to the list) in the block's title bar. -->
                 <ThreadPane
                   v-if="threadId && mdAndUp"
                   class="tab-fill"
+                  :head-target="head"
                   :room="selectedTopic"
                   :thread-id="threadId"
                   :focus-block="threadFocusBlock"

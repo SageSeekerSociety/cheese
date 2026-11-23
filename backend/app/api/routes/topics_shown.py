@@ -72,6 +72,7 @@ from app.domain.agent.announce import announce
 from app.domain.agent.preview_hub import preview_hub
 from app.domain.agent.preview_owner import inspect_owner
 from app.domain.block.shown import add_shown_block, repeat_of_latest_shown
+from app.domain.library import in_room
 from app.domain.library import records as library_records
 from app.domain.library import service as library
 from app.domain.preview import office
@@ -376,14 +377,22 @@ async def list_shown(
     topic_id: uuid.UUID,
     db: DbSession,
     resolver: ActorResolverDep,
+    within: bool = False,
 ) -> dict:
     """这个房间里摆出来过的东西 (#1085 结论四)。
 
     一个房间常有好几样值得看的东西，而「当前预览」只说得出最后那一样 —— 这里是全
-    部，新的在前。它们仍然只属于这个房间；要成为项目的产物得有人按一下。"""
+    部，新的在前。它们仍然只属于这个房间；要成为项目的产物得有人按一下。
+
+    默认只列这段对话自己摆出来的：一件任务的预览是它自己的，不是频道的。``within`` 为真、
+    问的又是频道或私聊时，连同它的任务和讨论串里摆出来的一起列（「文件」那一格列的是整个
+    频道文件区里的东西）。"""
     place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
-    shown = await BlockRepository(db).shown_in_room(place.conversation_id)
+    if within and place.task is None and place.thread is None:
+        shown = await in_room.shown(db, place.room_id)
+    else:
+        shown = await BlockRepository(db).shown_in_room(place.conversation_id)
     items = [
         {
             "path": block.content,

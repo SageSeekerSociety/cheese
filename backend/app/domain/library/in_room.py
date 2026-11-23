@@ -1,4 +1,4 @@
-"""这段对话里发过的附件，给频道和私聊的「文件」那一格列 (#3828)。
+"""这段对话里发过的附件和摆出来过的东西，给频道和私聊的「文件」那一格列 (#3828)。
 
 发进对话的文件跟着对话，不进资料库：它们只在消息里，这里把一个频道或私聊（连同它
 的任务和支线）里的附件块收成一份清单，每份一行，新的在前。一份在不在资料库里：从
@@ -47,6 +47,31 @@ async def attachments(session: AsyncSession, room_id: uuid.UUID) -> list[dict]:
                 "in_library": service.library_name(path) is not None or path in kept,
             }
         )
+        if len(rows) >= LIMIT:
+            break
+    return rows
+
+
+async def shown(session: AsyncSession, room_id: uuid.UUID) -> list[Block]:
+    """这个频道或私聊（连同它的任务和支线）里摆出来过的东西，每样一次，新的在前。
+
+    同一份被重新摆过几次只算一样（`BlockRepository.shown_in_room` 同一个口径），哪段对话
+    里摆的都算：任务交出来的东西也在频道的文件区里。"""
+    blocks = await session.scalars(
+        select(Block)
+        .where(
+            of_rooms(Block.conversation_id, [room_id]),
+            Block.kind == BlockKind.artifact,
+        )
+        .order_by(Block.created_at.desc())
+    )
+    seen: set[str] = set()
+    rows: list[Block] = []
+    for block in blocks:
+        if block.content in seen:
+            continue
+        seen.add(block.content)
+        rows.append(block)
         if len(rows) >= LIMIT:
             break
     return rows
