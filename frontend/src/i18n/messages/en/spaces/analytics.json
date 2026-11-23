@@ -404,7 +404,7 @@
     },
     "learning": {
       "title": "How members are doing",
-      "lede": "From the learning analysis's judgments on {people} members across {points} knowledge points.",
+      "subline": "{people} members · {points} knowledge points · {judged} judgments",
       "offTitle": "No picture of member work yet",
       "offDesc": "Once a manager turns learning analysis on in Settings › Learning analysis, what members say in tasks is judged by knowledge point and the class picture appears here.",
       "tooFew": "No knowledge point has enough people yet (each needs {n} so nobody is singled out).",

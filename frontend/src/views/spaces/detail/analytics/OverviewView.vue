@@ -28,11 +28,17 @@
       <!-- 成员学得怎么样：最靠前的一句。管理员进数据页先看到它，不必切到「学情分析」页签。 -->
       <section class="an-card learning-now" data-testid="overview-learning">
         <div class="learning-now__head">
-          <h3 class="an-card__title">{{ t('spaces.analytics.overview.learning.title') }}</h3>
+          <div class="learning-now__heading">
+            <h3 class="an-card__title learning-now__title">{{ t('spaces.analytics.overview.learning.title') }}</h3>
+            <p v-if="masterySubline" class="learning-now__sub" data-testid="overview-learning-sub">
+              {{ masterySubline }}
+            </p>
+          </div>
           <BaseButton
             v-if="learning?.enabled && (learning.mastery?.reported ?? 0) > 0"
-            kind="ghost"
+            kind="secondary"
             size="sm"
+            data-testid="overview-learning-open"
             @click="emit('openLearning')"
           >
             {{ t('spaces.analytics.overview.learning.open') }}
@@ -40,17 +46,34 @@
         </div>
         <v-progress-linear v-if="learningLoading" indeterminate color="primary" />
         <template v-else-if="learning && mastery">
-          <AnalyticsStatStrip>
-            <AnalyticsMetricCard
+          <div
+            v-if="mastery.judged > 0"
+            class="learning-now__bar"
+            role="img"
+            :aria-label="masteryBarLabel"
+            data-testid="overview-learning-bar"
+          >
+            <span
               v-for="item in masteryCards"
               :key="item.key"
-              :label="item.label"
-              :value="item.value"
-              :description="item.description"
+              :class="['learning-now__seg', `learning-now__seg--${item.key}`]"
+              :style="{ flexGrow: item.value }"
             />
-          </AnalyticsStatStrip>
-          <p class="an-note">{{ masteryLede }}</p>
-          <h4 class="an-card__title learning-now__sub">{{ t('spaces.analytics.overview.learning.weakTitle') }}</h4>
+          </div>
+          <dl class="learning-now__levels">
+            <div
+              v-for="item in masteryCards"
+              :key="item.key"
+              :class="['learning-now__level', `learning-now__level--${item.key}`]"
+            >
+              <dt>{{ item.label }}</dt>
+              <dd>
+                <strong>{{ item.value }}</strong>
+                <span>{{ item.description }}</span>
+              </dd>
+            </div>
+          </dl>
+          <h4 class="learning-now__weak-title">{{ t('spaces.analytics.overview.learning.weakTitle') }}</h4>
           <p v-if="!learning.focus.length" class="an-note">
             {{
               mastery.reported === 0
@@ -58,25 +81,25 @@
                 : t('spaces.analytics.overview.learning.weakEmpty')
             }}
           </p>
-          <div v-else class="learning-now__points">
-            <button
-              v-for="point in learning.focus"
-              :key="point.knowledgePointId"
-              type="button"
-              class="learning-now__point"
-              @click="emit('openLearningPoint', point.knowledgePointId)"
-            >
-              <span class="learning-now__name">{{ point.name }}</span>
-              <span class="learning-now__stuck">
-                {{
-                  t('spaces.analytics.overview.learning.weakStuck', {
-                    stuck: point.stuck,
-                    involved: point.involved,
-                  })
-                }}
-              </span>
-            </button>
-          </div>
+          <ul v-else class="learning-now__points">
+            <li v-for="point in learning.focus" :key="point.knowledgePointId">
+              <button
+                type="button"
+                class="learning-now__point"
+                @click="emit('openLearningPoint', point.knowledgePointId)"
+              >
+                <span class="learning-now__name">{{ point.name }}</span>
+                <span class="learning-now__stuck">
+                  {{
+                    t('spaces.analytics.overview.learning.weakStuck', {
+                      stuck: point.stuck,
+                      involved: point.involved,
+                    })
+                  }}
+                </span>
+              </button>
+            </li>
+          </ul>
         </template>
         <BaseEmptyState
           v-else
@@ -204,15 +227,21 @@ const masteryCards = computed(() => {
   }))
 })
 
-/** 这一条按谁画的：几个成员、几个知识点，以及一共多少条判断。 */
-const masteryLede = computed(() => {
+/** 标题下一行小字：按几个成员、几个知识点、多少条判断画的。 */
+const masterySubline = computed(() => {
   const m = mastery.value
   if (!m) return ''
-  return [
-    t('spaces.analytics.overview.learning.lede', { people: m.peopleJudged, points: m.reported }),
-    t('spaces.analytics.overview.learning.judged', { n: m.judged }),
-  ].join(' ')
+  return t('spaces.analytics.overview.learning.subline', {
+    people: m.peopleJudged,
+    points: m.reported,
+    judged: m.judged,
+  })
 })
+
+/** 比例条给读屏用的一句：三档各多少人。 */
+const masteryBarLabel = computed(() =>
+  masteryCards.value.map((item) => `${item.label} ${item.value}（${item.description}）`).join('，')
+)
 
 const metricCards = computed(() => {
   const o = props.overview
@@ -269,3 +298,158 @@ const completionDistribution = computed(() =>
 </script>
 
 <style scoped src="./analytics.css"></style>
+<style scoped>
+.learning-now {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.learning-now__head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.learning-now__title {
+  margin: 0;
+}
+
+.learning-now__sub {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: var(--lh-13);
+}
+
+.learning-now__bar {
+  display: flex;
+  gap: 2px;
+  height: 10px;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+}
+
+.learning-now__seg {
+  flex-basis: 0;
+  min-width: 0;
+}
+
+.learning-now__seg--mastered {
+  background: var(--ok);
+}
+
+.learning-now__seg--shaky {
+  background: var(--warn);
+}
+
+.learning-now__seg--weak {
+  background: var(--danger);
+}
+
+.learning-now__levels {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+
+.learning-now__level dt {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: var(--lh-13);
+}
+
+.learning-now__level dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  margin: 2px 0 0;
+}
+
+.learning-now__level strong {
+  color: var(--ink);
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.learning-now__level dd span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.learning-now__level--mastered dt {
+  color: var(--ok-ink);
+}
+
+.learning-now__level--shaky dt {
+  color: var(--warn-ink);
+}
+
+.learning-now__level--weak dt {
+  color: var(--danger-ink);
+}
+
+.learning-now__weak-title {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.learning-now__points {
+  margin: -8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.learning-now__points li + li {
+  border-top: 1px solid var(--line);
+}
+
+.learning-now__point {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 0;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.learning-now__point:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.learning-now__name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.learning-now__stuck {
+  flex: none;
+  color: var(--danger-ink);
+  font-size: 13px;
+}
+
+@media (max-width: 600px) {
+  .learning-now__head {
+    flex-direction: column;
+  }
+
+  .learning-now__point {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+  }
+}
+</style>
