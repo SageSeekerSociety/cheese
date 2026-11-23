@@ -205,7 +205,7 @@ def test_turn_deducts_credits_from_grant(client, tmp_path):
     project_id = _mk_project(client, from_task=task_id)
 
     room = _mk_topic(client, project_id)
-    # 芝士 answers in a 支线; the proxy logs the channel it works in.
+    # 芝士 answers in a 讨论串; the proxy logs the channel it works in.
     topic_id = in_thread(client, room, "u1")
     log = tmp_path / "usage.jsonl"
     frames = _run_turn(
@@ -228,7 +228,7 @@ def test_deduction_drains_oldest_grant_first(client, tmp_path):
     _add_grant(client, project_id, 1, task_b)
 
     room = _mk_topic(client, project_id)
-    # 芝士 answers in a 支线; the proxy logs the channel it works in.
+    # 芝士 answers in a 讨论串; the proxy logs the channel it works in.
     topic_id = in_thread(client, room, "u1")
     log = tmp_path / "usage.jsonl"
     _run_turn(client, topic_id, lambda: _metered(client, project_id, room, log))
@@ -248,7 +248,7 @@ def test_exhausted_credits_refuse_next_turn(client, tmp_path):
     project_id = _mk_project(client, from_task=task_id)
 
     room = _mk_topic(client, project_id)
-    # 芝士 answers in a 支线; the proxy logs the channel it works in.
+    # 芝士 answers in a 讨论串; the proxy logs the channel it works in.
     topic_id = in_thread(client, room, "u1")
     log = tmp_path / "usage.jsonl"
 

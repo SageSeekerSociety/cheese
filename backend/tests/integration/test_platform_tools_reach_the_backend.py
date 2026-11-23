@@ -371,8 +371,8 @@ def test_a_library_document_is_made_listed_and_changed_from_a_room(client, room)
 
 
 def test_a_document_made_in_a_thread_is_shown_in_that_thread(client, room):
-    """芝士 answering in a 支线 makes a library document: the line with the
-    document on it is in the 支线 it was made in, not in the channel's main
+    """芝士 answering in a 讨论串 makes a library document: the line with the
+    document on it is in the 讨论串 it was made in, not in the channel's main
     line."""
     project, topic = room
     said = client.post(

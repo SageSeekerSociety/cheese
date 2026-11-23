@@ -259,7 +259,7 @@ def _turn_frames(client, tmp_path, channel: StubChannel) -> list[dict]:
     )
     app.dependency_overrides[get_chat_service] = lambda: service
     _, room = _room(client)
-    # 芝士 answers in a 支线 of the room: that is where the turn shows.
+    # 芝士 answers in a 讨论串 of the room: that is where the turn shows.
     topic_id = in_thread(client, room, "alice")
     seen: list[dict] = []
     with room_socket(client, topic_id, "alice") as ws:

@@ -240,7 +240,7 @@ def test_the_question_that_credential_asks_is_not_an_input_it_must_read(
     project = _project(client, "Project credential asks")
     room = _room(client, project, title="不是根房间")
     token, _ = _project_credential(client, project)
-    # 芝士在支线里回答，题也在那里问。
+    # 芝士在讨论串里回答，题也在那里问。
     room = {**room, "id": in_thread(client, room["id"], "alice")}
 
     # 题在一轮里问出口（那一轮的发起人就是「这道题在等谁」），用的仍是那张项目

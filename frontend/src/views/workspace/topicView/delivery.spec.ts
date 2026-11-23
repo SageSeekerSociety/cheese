@@ -1,5 +1,5 @@
 // 交付到了、等的是我：右栏停在「概览」时直接打开它那一格；带页签的右栏在别的页签时加进那一排、
-// 不选中、带一个点；右栏收着、或者等的不是我时什么都不做。右栏里换页签时，交付和支线回到频道的
+// 不选中、带一个点；右栏收着、或者等的不是我时什么都不做。右栏里换页签时，交付和讨论串回到频道的
 // 地址。一次只显示一格的右栏（频道页并排）没有那一排：打开另一件任务换掉这一件。
 import type { RoomTask } from '@/cx_types'
 import type { TopicPlace } from './shared'
@@ -108,7 +108,7 @@ describe('右栏里换页签', () => {
     expect(tabs).toEqual([])
   })
 
-  it('在支线里点「支线」：留在这条支线上', () => {
+  it('在讨论串里点「讨论串」：留在这条讨论串上', () => {
     const { delivery, channelTabs, tabs } = setup({ place: { projectId: 'p1', topicId: 'c1', threadId: 'th1' } })
     expect(delivery.shownTab.value).toBe('threads')
     delivery.select('threads')

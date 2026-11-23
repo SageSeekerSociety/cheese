@@ -1,4 +1,4 @@
-/** 打开一条支线就算读过它；页头一行写它说的事，「转为任务」把这条支线原地转成任务。读回来
+/** 打开一条讨论串就算读过它；页头一行写它说的事，「转为任务」把这条讨论串原地转成任务。读回来
  *  是一件任务时不在这里画，交给外面换成任务页。从这里另开的几件任务列在挂着的那条消息下面。 */
 import type { Component } from 'vue'
 import type { Block, RoomTask, Topic } from '@/cx_types'
@@ -15,7 +15,7 @@ const markRead = vi.fn()
 vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => ({ markRead }) }))
 const getThread = vi.fn()
 vi.mock('@/api/threads', () => ({ getThread: (id: string) => getThread(id) }))
-// 频道里的任务（后端那份）：支线面板只问它挂着的那条消息带着的（`blocks`）。
+// 频道里的任务（后端那份）：讨论串面板只问它挂着的那条消息带着的（`blocks`）。
 const roomTasks = ref<RoomTask[]>([])
 vi.mock('@/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api')>()),
@@ -92,7 +92,7 @@ function task(id: string, origin: string, title = '一件任务'): RoomTask {
   } as RoomTask
 }
 
-/** 主线上一块带着自己那条支线的消息（`GET /topics/{频道}/blocks` 就是这样的）。 */
+/** 主线上一块带着自己那条讨论串的消息（`GET /topics/{频道}/blocks` 就是这样的）。 */
 function summary(): ThreadSummary {
   return {
     id: 'th1',
@@ -106,7 +106,7 @@ function summary(): ThreadSummary {
   }
 }
 
-// 对话那一栏的替身：支线页头那条消息要从它自己的滚动区里进去（真身上是 ChatTimeline 的
+// 对话那一栏的替身：讨论串页头那条消息要从它自己的滚动区里进去（真身上是 ChatTimeline 的
 // #timeline-start，落在 `.messages` 那一格里），所以替身也把两个槽摆出来。槽摆出来，
 // 页脚那张反馈卡就跟着挂了上来（真卡片要 pinia 和两个仓库），照下面那条用例的做法换成替身。
 const CHAT_PANEL_STUB = {
@@ -145,14 +145,14 @@ beforeEach(() => {
   roomTasks.value = []
 })
 
-describe('支线', () => {
+describe('讨论串', () => {
   it('打开就记成读过', async () => {
     getThread.mockResolvedValue({ id: 'th1', room_id: 'r1', root_block_id: 'b1', reply_count: 2, root: root() })
     mount()
     await waitFor(() => expect(markRead).toHaveBeenCalledWith('th1'))
   })
 
-  it('原消息一起发出去的图片和文件，也画在支线这条消息下面', async () => {
+  it('原消息一起发出去的图片和文件，也画在讨论串这条消息下面', async () => {
     getThread.mockResolvedValue({
       id: 'th1',
       room_id: 'r1',
@@ -167,7 +167,7 @@ describe('支线', () => {
     expect(await findByText('spec.pdf')).toBeTruthy()
   })
 
-  it('只发了图片、没有字的那条消息，支线里画的也是那张图', async () => {
+  it('只发了图片、没有字的那条消息，讨论串里画的也是那张图', async () => {
     getThread.mockResolvedValue({
       id: 'th1',
       room_id: 'r1',
@@ -180,7 +180,7 @@ describe('支线', () => {
     expect(image.getAttribute('data-path')).toBe('uploads/shot.png')
   })
 
-  it('「转为任务」转的是它挂着的那条消息：这条支线原地转', async () => {
+  it('「转为任务」转的是它挂着的那条消息：这条讨论串原地转', async () => {
     getThread.mockResolvedValue({ id: 'th1', room_id: 'r1', root_block_id: 'b1', reply_count: 2, root: root() })
     roomTasks.value = [task('task9', 'b1')]
     const { findByTestId } = mount()
@@ -232,7 +232,7 @@ describe('支线', () => {
     await waitFor(() => expect(emitted()['as-task']).toEqual([['th1']]))
   })
 
-  it('支线的输入框上方没有审阅那一条', async () => {
+  it('讨论串的输入框上方没有审阅那一条', async () => {
     getThread.mockResolvedValue({ id: 'th1', room_id: 'r1', root_block_id: 'b1', reply_count: 2, root: root() })
     const { container, findByTestId } = mount()
     await findByTestId('thread-to-task')
@@ -313,8 +313,8 @@ describe('支线', () => {
     await waitFor(() => expect(container.querySelector('[data-testid="chat-scroll"] .thread-root')).not.toBeNull())
   })
 
-  it('手上已经有它挂着的那条消息时，页头不等支线读回来就在', async () => {
-    // 打开一条支线时页头那条「开局消息」不该空着等 `GET /topics/{支线}/thread`：点它的
+  it('手上已经有它挂着的那条消息时，页头不等讨论串读回来就在', async () => {
+    // 打开一条讨论串时页头那条「开局消息」不该空着等 `GET /topics/{讨论串}/thread`：点它的
     // 那条消息本来就在频道的对话窗口里。这里让那次读永远不回来，页头照样要在。
     queryClient.setQueryData(keys.roomNewestBlocks('r1'), {
       blocks: [{ ...root(), thread: summary() }],
@@ -325,8 +325,8 @@ describe('支线', () => {
     expect(await findByText('李安')).toBeTruthy()
   })
 
-  it('窗口里没有那条消息、支线列表里那一行带着完整的开局消息时，页头也不等', async () => {
-    // 从频道概览的支线列表点开一条老支线：它挂着的那条消息早已翻出最新那一段。列表那一行
+  it('窗口里没有那条消息、讨论串列表里那一行带着完整的开局消息时，页头也不等', async () => {
+    // 从频道概览的讨论串列表点开一条老讨论串：它挂着的那条消息早已翻出最新那一段。列表那一行
     // 带着那条消息（没截过），先拿它画上。
     queryClient.clear()
     queryClient.setQueryData(keys.roomThreads('r1'), [
@@ -370,7 +370,7 @@ describe('支线', () => {
     expect(container.querySelector('.thread-root')).toBeNull()
   })
 
-  it('反馈卡接在支线的对话后面', async () => {
+  it('反馈卡接在讨论串的对话后面', async () => {
     getThread.mockResolvedValue({ id: 'th1', room_id: 'r1', root_block_id: 'b1', reply_count: 2, root: root() })
     const { container } = render(ThreadPane as Component, {
       props: { room: ROOM, threadId: 'th1', members: [], topicList: [], memberNames: { alice: '李安' } },
@@ -386,7 +386,7 @@ describe('支线', () => {
     await waitFor(() => expect(container.querySelector('.feedback-probe')?.textContent).toBe('th1'))
   })
 
-  it('「查看过程」里回去的那一颗写着「返回支线」，不是一颗没有名字的箭头', async () => {
+  it('「查看过程」里回去的那一颗写着「返回讨论串」，不是一颗没有名字的箭头', async () => {
     // 这颗曾经写成 `icon`（纯图标按钮），插槽里的四个字被吞掉，页面上只剩一个箭头。
     getThread.mockResolvedValue({ id: 'th1', room_id: 'r1', root_block_id: 'b1', reply_count: 2, root: root() })
     const { findByTestId } = render(ThreadPane as Component, {
@@ -406,10 +406,10 @@ describe('支线', () => {
     })
     await fireEvent.click(await findByTestId('probe-open-process'))
     const back = await findByTestId('thread-process-back')
-    expect(back.textContent).toContain('返回支线')
+    expect(back.textContent).toContain('返回讨论串')
   })
 
-  it('输入框说给这条支线正在和它说话的那位队友，不是频道默认那位', async () => {
+  it('输入框说给这条讨论串正在和它说话的那位队友，不是频道默认那位', async () => {
     getThread.mockResolvedValue({
       id: 'th-mate',
       room_id: 'r1',

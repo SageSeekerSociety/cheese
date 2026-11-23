@@ -693,7 +693,7 @@ async def _search_from(
             if not inner
             else f"任务 #{number}"
             if number is not None
-            else f"{channel}的一条支线"
+            else f"{channel}的一条讨论串"
         )
         kind = _RECORD_NAMES.get(record["kind"], "文档段落")
         name, handle = record.get("author_name"), record["author"]

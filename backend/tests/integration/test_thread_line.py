@@ -1,17 +1,17 @@
-"""The line under a main-line message that has a 支线: what someone reading the
+"""The line under a main-line message that has a 讨论串: what someone reading the
 main line is told without opening it.
 
 - who took part, the message's author first;
-- once the 支线 became a task, the same line: it is the same conversation,
+- once the 讨论串 became a task, the same line: it is the same conversation,
   now with an owner, and what is said there goes on counting;
-- a message whose 支线 has nothing in it yet and nobody answering has no line;
-- a 支线 where the AI teammate's turn failed before anyone replied still has a
-  line, saying the reply failed: the reason is in the 支线, and without the line
+- a message whose 讨论串 has nothing in it yet and nobody answering has no line;
+- a 讨论串 where the AI teammate's turn failed before anyone replied still has a
+  line, saying the reply failed: the reason is in the 讨论串, and without the line
   nobody could find it;
-- a page of 支线 reads the messages they hang under once, however many there
+- a page of 讨论串 reads the messages they hang under once, however many there
   are: who took part comes from the same rows as what the message said;
-- a room's header asks three questions about its 支线 — the page's own list,
-  回复了我, 还在当支线用 — and none of them is asked twice.
+- a room's header asks three questions about its 讨论串 — the page's own list,
+  回复了我, 还在当讨论串用 — and none of them is asked twice.
 """
 
 import re
@@ -163,10 +163,10 @@ def test_a_reply_after_the_failure_clears_it(client):
 
 
 def test_a_checklist_posted_in_a_thread_tells_the_channel(client, monkeypatch):
-    """A checklist posted into a 支线 is one of its replies (the line under the
-    message counts it), so the channel is told the 支线 grew, as it is for a
+    """A checklist posted into a 讨论串 is one of its replies (the line under the
+    message counts it), so the channel is told the 讨论串 grew, as it is for a
     plain reply. Without that the line under the message keeps the count it
-    was read with: it said 2 条回复 while the 支线 itself held 3."""
+    was read with: it said 2 条回复 while the 讨论串 itself held 3."""
     import app.domain.agent.staleness as staleness
 
     heard: list[tuple[str, str]] = []
@@ -212,7 +212,7 @@ def test_a_thread_the_credits_refused_says_so_on_the_main_line(client):
 
 
 def _said(client, thread_id, author, content, meta):
-    """A message written straight into a 支线, the way an older version of the
+    """A message written straight into a 讨论串, the way an older version of the
     platform wrote it."""
 
     async def _write() -> None:
@@ -251,7 +251,7 @@ def test_an_old_checklist_reply_is_still_known_as_a_checklist(client):
 
 
 def test_a_listed_thread_says_whether_its_message_was_cut(client):
-    """The list of a channel's 支线 carries a preview of each opening message.
+    """The list of a channel's 讨论串 carries a preview of each opening message.
     Whoever draws the message itself from it must know when the preview is
     not all of it."""
     tid = _channel(client)
@@ -311,7 +311,7 @@ def _channel_with_threads(client, n):
 
 
 def _listed_threads(listed) -> list[dict]:
-    """这一格画出来的那些支线。
+    """这一格画出来的那些讨论串。
 
     `GET /topics/{id}/threads` 现在分两栏（`thread/reads.in_room`：开着的和收起来的），
     这里要的是开着的那些；`data` 那一层是早先形状的回退，读同一个接口的老测试还在。
@@ -335,7 +335,7 @@ def test_a_page_of_threads_reads_their_messages_once(client, n):
     reads = _roots_read_while(client, lambda: rows.extend(_list_threads(client, tid)))
     assert len(rows) == n
     assert all(r["participants"] == ["alice", "bob"] for r in rows)
-    assert reads == 1, f"{n} 条支线读了 {reads} 遍根消息"
+    assert reads == 1, f"{n} 条讨论串读了 {reads} 遍根消息"
 
 
 def test_the_people_in_a_thread_still_read_its_message_alone(client):
@@ -351,9 +351,9 @@ def test_the_people_in_a_thread_still_read_its_message_alone(client):
     assert client.portal.call(_people) == ["alice", "bob"]
 
 
-#: Any read of a room's 支线 read straight from the table, whichever question it
-#: answers — the page's own list, 回复了我, 还在当支线用 — and however many rows
-#: it takes. A 支线 read by its id is a different question and not counted.
+#: Any read of a room's 讨论串 read straight from the table, whichever question it
+#: answers — the page's own list, 回复了我, 还在当讨论串用 — and however many rows
+#: it takes. A 讨论串 read by its id is a different question and not counted.
 _THREADS_OF_A_ROOM = re.compile(
     r"^\s*SELECT threads\.[^;]*?\bFROM threads\s+WHERE threads\.room_id",
     re.IGNORECASE,
@@ -368,11 +368,11 @@ def _room_header(client, tid):
 
 @pytest.mark.parametrize("n", [3, 12])
 def test_a_rooms_header_reads_its_threads_no_more_than_three_times(client, n):
-    """A room's header asks three separate questions about its 支线 — the page's
-    own list, 回复了我, 还在当支线用 — and asks each once, however many 支线 the
+    """A room's header asks three separate questions about its 讨论串 — the page's
+    own list, 回复了我, 还在当讨论串用 — and asks each once, however many 讨论串 the
     room has.
 
-    This is one route's whole budget: a new question of the header that reads the room's 支线 itself is meant to
+    This is one route's whole budget: a new question of the header that reads the room's 讨论串 itself is meant to
     be shared with the rest, and this ceiling is where that gets noticed. A
     ceiling rather than the exact three, so merging two of the remaining
     questions into one query reads as the improvement it is."""
@@ -386,4 +386,4 @@ def test_a_rooms_header_reads_its_threads_no_more_than_three_times(client, n):
     # as zero and pass the ceiling. The floor only catches that total silence —
     # a read rewritten in a spelling the pattern skips still hides an extra
     # read without making the count reach zero.
-    assert 1 <= reads <= 3, f"{n} 条支线时这个房间的头读了 {reads} 遍支线表"
+    assert 1 <= reads <= 3, f"{n} 条讨论串时这个房间的头读了 {reads} 遍讨论串表"

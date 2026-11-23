@@ -46,7 +46,7 @@ def _room(client) -> tuple[str, StubChannel, ChatService]:
         compute=stub_compute(channel, sessions=client.test_request_factory),
     )
     app.dependency_overrides[get_chat_service] = lambda: service
-    # 芝士 answers in a 支线: that is where these messages are said.
+    # 芝士 answers in a 讨论串: that is where these messages are said.
     return in_thread(client, room, "alice"), channel, service
 
 
@@ -224,7 +224,7 @@ def test_a_message_queued_behind_other_turns_is_answered_by_the_next_backend(
         compute=stub_compute(channel, sessions=client.test_request_factory),
     )
     app.dependency_overrides[get_chat_service] = lambda: service
-    # 芝士 answers in a 支线 of each channel; the machine is the channel's.
+    # 芝士 answers in a 讨论串 of each channel; the machine is the channel's.
     busy, waiting = (
         in_thread(client, busy, "alice"),
         in_thread(client, waiting, "alice"),

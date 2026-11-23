@@ -54,13 +54,13 @@ describe('例行任务的一次执行', () => {
     expect(ui.queryByTestId('routine-run-files')).toBeNull()
   })
 
-  it('没有支线那一行时，能去看这次执行', async () => {
+  it('没有讨论串那一行时，能去看这次执行', async () => {
     const ui = mount({ status: 'succeeded' })
     await fireEvent.click(ui.getByRole('button', { name: '查看这次运行' }))
     expect(ui.emitted().open).toHaveLength(1)
   })
 
-  it('支线那一行已经在了，就不重复给入口', () => {
+  it('讨论串那一行已经在了，就不重复给入口', () => {
     const ui = mount({ status: 'succeeded' }, true)
     expect(ui.queryByRole('button', { name: '查看这次运行' })).toBeNull()
   })

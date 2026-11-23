@@ -22,7 +22,7 @@ from tests.integration.conftest import (
 
 
 def _project_and_topic(client, owner: str = "user-1") -> str:
-    """A 支线 in a channel: the conversation 芝士 answers in."""
+    """A 讨论串 in a channel: the conversation 芝士 answers in."""
     p = post_project(client, json={"name": "P"}, owner=owner).json()["data"]
     t = client.post(
         "/topics",
@@ -138,7 +138,7 @@ def test_summon_after_someone_else_already_asked_starts_nothing(client, stub_hoo
 def _a_room_with_two_teammates(client) -> tuple[str, str]:
     """A room with the project's default 芝士 and one more AI teammate in it.
 
-    Returns a 支线 of the room and the second teammate's seat. The default seat is read
+    Returns a 讨论串 of the room and the second teammate's seat. The default seat is read
     BEFORE the second one joins: `room_agent_seat` answers only for a room that
     hosts exactly one agent, which is the point of asking it here.
     """

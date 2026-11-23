@@ -96,7 +96,7 @@ agent 的对话进程跑在一边，真正干活的机器在另一边：这一�
 | 机器上的目录名 | `namespace` / `namespace_of` | 项目编号，同项目的沙箱共用包缓存 | 对话编号，什么都不共用 |
 | 会话凭据签给的是不是它 | `signed_for` | 凭据里的项目和频道代数与现在一致 | 凭据里的主人和对话与现在一致 |
 
-一台沙箱的行（`sandbox_homes.topic_id`）和它的计时（`compute_runs.topic_id`）都指向对话总表 `conversations`，不指向某一种对话的表。频道里每条会话、每个任务和支线的沙箱都算频道的；个人芝士对话在总表里登记为 `personal`，`project_id` 为空，它的沙箱和计时的 `project_id` 也为空。别人的电脑和不进沙箱直接用只有频道的环境会选到，项目以外的归属方只走平台机器上的标准沙箱。
+一台沙箱的行（`sandbox_homes.topic_id`）和它的计时（`compute_runs.topic_id`）都指向对话总表 `conversations`，不指向某一种对话的表。频道里每条会话、每个任务和讨论串的沙箱都算频道的；个人芝士对话在总表里登记为 `personal`，`project_id` 为空，它的沙箱和计时的 `project_id` 也为空。别人的电脑和不进沙箱直接用只有频道的环境会选到，项目以外的归属方只走平台机器上的标准沙箱。
 
 ### 个人芝士对话的沙箱 {#personal-sandbox}
 

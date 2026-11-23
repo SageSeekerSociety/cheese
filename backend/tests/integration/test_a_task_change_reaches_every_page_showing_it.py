@@ -1,6 +1,6 @@
 """A task is shown in two places at once: its own page, which listens on the
 task's conversation, and its channel, where its card hangs under a message and
-in the 支线 pane. Whatever changes what the task reads as reaches both without
+in the 讨论串 pane. Whatever changes what the task reads as reaches both without
 a reload, whichever path made the change.
 """
 
@@ -59,7 +59,7 @@ def _drain(ws) -> None:
 
 
 def _channel_card(client, room: str, task: str) -> dict:
-    """The task as its channel's 支线 pane reads it."""
+    """The task as its channel's 讨论串 pane reads it."""
     r = client.get(
         f"/topics/{room}/tasks",
         params={"limit": 0},

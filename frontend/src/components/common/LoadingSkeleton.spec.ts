@@ -96,7 +96,7 @@ describe('每一行长得像它替代的那一行', () => {
   })
 
   it('条目行上面还有一条分组小标 —— 少了它，行到齐时整段会被顶下去', () => {
-    // 支线进度真正长出来的是「施工中 3」这样一条小标带着它那一组的行。骨架不画
+    // 讨论串进度真正长出来的是「施工中 3」这样一条小标带着它那一组的行。骨架不画
     // 小标，那 28px 就要在内容到达的那一刻凭空插进来。
     const container = draw({ variant: 'entry', rows: 1 })
     expect(container.querySelector('.skel__ehead')).not.toBeNull()

@@ -1,5 +1,5 @@
-// 在支线里把一份文件存进资料库，请求发给支线，不发给频道：后端按这个 id 决定「已存
-// 进资料库」那句话说在哪儿。发给频道，那句话就落到主线上，和支线里的事对不上。
+// 在讨论串里把一份文件存进资料库，请求发给讨论串，不发给频道：后端按这个 id 决定「已存
+// 进资料库」那句话说在哪儿。发给频道，那句话就落到主线上，和讨论串里的事对不上。
 import type { Component } from 'vue'
 import type { Topic } from '@/cx_types'
 
@@ -98,8 +98,8 @@ beforeEach(() => {
   )
 })
 
-describe('支线里存进资料库', () => {
-  it('请求发给支线，不发给频道', async () => {
+describe('讨论串里存进资料库', () => {
+  it('请求发给讨论串，不发给频道', async () => {
     const view = render(Panel, {
       props: { topic: channel(), conversationId: 'thread-1', hideHeader: true },
       global: { plugins: [createVuetify({ components, directives }), i18n] },

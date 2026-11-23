@@ -1,6 +1,6 @@
-"""A 支线 is a conversation with the teammate who was called into it.
+"""A 讨论串 is a conversation with the teammate who was called into it.
 
-Once a person has called an AI teammate into a 支线, everything a person says
+Once a person has called an AI teammate into a 讨论串, everything a person says
 there is said to that teammate, as in a task: while it is working the message
 joins that turn, and while it is idle the message starts its next one. A
 message that @-s only people is said to them, and the teammate does not pick
@@ -92,7 +92,7 @@ async def _until(cond, timeout: float = 5.0) -> None:
 
 
 class _Channel:
-    """A channel with one AI teammate, a 支线 under one of its messages, and
+    """A channel with one AI teammate, a 讨论串 under one of its messages, and
     ``u`` who talks there. ``bob`` is in the project too: with a second person
     in it, the main line is people talking to each other."""
 
@@ -146,7 +146,7 @@ class _Channel:
         )
 
     async def called_and_answered(self) -> None:
-        """``u`` calls the teammate in the 支线 and it finishes that turn."""
+        """``u`` calls the teammate in the 讨论串 and it finishes that turn."""
         await self.say("@芝士 先看一下这段说明")
         await _until(lambda: len(self.screen.prompts) == 1)
         assert len(self.screen.prompts) == 1
@@ -179,7 +179,7 @@ async def test_a_follow_up_without_an_at_wakes_the_idle_teammate(
 async def test_someone_else_in_the_channel_wakes_the_teammate_too(
     business_db_factory, tmp_path
 ):
-    """A 支线 has no owner: whoever speaks there speaks to its teammate."""
+    """A 讨论串 has no owner: whoever speaks there speaks to its teammate."""
     channel = await _Channel(business_db_factory, tmp_path).open()
     await channel.called_and_answered()
 
@@ -306,7 +306,7 @@ def _wait_for_prompt(stub_hooks, needle: str) -> None:
 
 
 def test_a_follow_up_reaches_the_teammate_called_there(client, stub_hooks):
-    """Not the channel's default: the teammate called into this 支线."""
+    """Not the channel's default: the teammate called into this 讨论串."""
     room, teammate, _ = _room_with_two_teammates(client)
     thread = in_thread(client, room, "alice")
     _say(client, thread, f"<@{teammate}> 这段说明读一下")
@@ -320,8 +320,8 @@ def test_a_follow_up_reaches_the_teammate_called_there(client, stub_hooks):
 
 
 def test_a_follow_up_reaches_the_teammate_called_in_the_main_line(client, stub_hooks):
-    """Called from the channel's main line, the teammate answers in the 支线
-    under that message: the 支线 is a conversation with it from the start."""
+    """Called from the channel's main line, the teammate answers in the 讨论串
+    under that message: the 讨论串 is a conversation with it from the start."""
     room, teammate, _ = _room_with_two_teammates(client)
     with room_socket(client, room, "alice"):
         called = post_message(
@@ -341,7 +341,7 @@ def test_a_follow_up_reaches_the_teammate_called_in_the_main_line(client, stub_h
 
 
 def test_a_teammates_own_message_calls_nobody(client, stub_hooks):
-    """Two teammates in a 支线 would otherwise wake each other without end."""
+    """Two teammates in a 讨论串 would otherwise wake each other without end."""
     room, teammate, other = _room_with_two_teammates(client)
     thread = in_thread(client, room, "alice")
     _say(client, thread, f"<@{teammate}> 这段说明读一下")

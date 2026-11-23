@@ -576,8 +576,8 @@ def teammate_task(
     summary: str = "把它记下来，回头做",
     said_by: str = "alice",
 ) -> dict:
-    """A task the room's AI teammate made from a 支线 on someone's word
-    (``cheese_task(action=open)``): a new task under the message the 支线 hangs under."""
+    """A task the room's AI teammate made from a 讨论串 on someone's word
+    (``cheese_task(action=open)``): a new task under the message the 讨论串 hangs under."""
     project_id = client.get(f"/topics/{room_id}").json()["data"]["project_id"]
     thread = in_thread(client, room_id, said_by)
     token = mint_scoped_token(
@@ -681,13 +681,13 @@ def room_socket(
 
 
 def in_thread(client, room_id: str, handle: str) -> str:
-    """A 支线 in the channel ``room_id``, opened by ``handle`` under a message
+    """A 讨论串 in the channel ``room_id``, opened by ``handle`` under a message
     of theirs: where 芝士 answers once it is called. Its id works wherever a
     room's did — `/messages`, `/blocks`, the chat socket.
 
     The message is stored as it stands in the main line rather than sent: said
     by the only person in a project, a send would hand it to the AI teammate
-    there, and what is being set up here is the 支线."""
+    there, and what is being set up here is the 讨论串."""
     from app.domain.block.repositories import BlockRepository
     from app.domain.event_author import AuthorType
     from app.domain.topic.models import Topic
@@ -701,7 +701,7 @@ def in_thread(client, room_id: str, handle: str) -> str:
                 conversation_id=room.id,
                 author=handle,
                 author_type=AuthorType.participant,
-                content="这件事在支线里说",
+                content="这件事在讨论串里说",
             )
             await session.commit()
             return str(block.id)

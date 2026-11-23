@@ -1,9 +1,9 @@
 import { test, expect, type Page } from '@playwright/test';
 import { api, apiLogin } from './helpers';
 
-// 支线：主线上叫芝士，回答落在主线上；支线由人在一条消息下面开。组件测试钉住了每一块
+// 讨论串：主线上叫芝士，回答落在主线上；讨论串由人在一条消息下面开。组件测试钉住了每一块
 // 自己的规矩（悬停条上的那颗、打开就记已读、输入框先带上 @），这里钉的是接缝：主线上
-// 叫芝士不长出支线那一行，点「在支线中回复」真的开出这条消息的支线。
+// 叫芝士不长出讨论串那一行，点「在讨论串中回复」真的开出这条消息的讨论串。
 
 async function openChannel(page: Page) {
   const projects = (await api(page, 'get', '/projects')).data as { id: string }[];
@@ -11,7 +11,7 @@ async function openChannel(page: Page) {
   expect(project, 'alice 名下没有项目').toBeTruthy();
   const room = (await api(page, 'post', '/topics', {
     project_id: project.id,
-    title: `支线 ${Date.now()}`,
+    title: `讨论串 ${Date.now()}`,
   })) as { id: string };
   await page.goto(`/projects/${project.id}/topics/${room.id}`);
   const composer = page.locator('.composer-input .ProseMirror').first();
@@ -19,12 +19,12 @@ async function openChannel(page: Page) {
   return composer;
 }
 
-test.describe('支线', () => {
+test.describe('讨论串', () => {
   test.beforeEach(async ({ page }) => {
     await apiLogin(page);
   });
 
-  test('主线上叫芝士：它在主线上回答，消息下面不长出支线', async ({ page }) => {
+  test('主线上叫芝士：它在主线上回答，消息下面不长出讨论串', async ({ page }) => {
     const composer = await openChannel(page);
     const button = page.locator('.summon__btn');
     await expect(button).toBeEnabled({ timeout: 15_000 });
@@ -46,7 +46,7 @@ test.describe('支线', () => {
     ).toHaveCount(0);
   });
 
-  test('悬停一条消息「在支线中回复」，回复挂在它下面', async ({ page }) => {
+  test('悬停一条消息「在讨论串中回复」，回复挂在它下面', async ({ page }) => {
     const composer = await openChannel(page);
     const text = `e2e thread root ${Date.now()}`;
     await composer.fill(text);

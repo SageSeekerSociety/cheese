@@ -136,7 +136,7 @@ def room(client):
         "/topics",
         json={"project_id": project["id"], "title": "Work"},
     ).json()["data"]
-    # 芝士 answers in a 支线 of the channel: its tools act there.
+    # 芝士 answers in a 讨论串 of the channel: its tools act there.
     return project["id"], in_thread(client, topic["id"], "alice")
 
 

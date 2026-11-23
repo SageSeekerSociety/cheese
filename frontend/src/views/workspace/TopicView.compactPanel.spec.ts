@@ -1,6 +1,6 @@
 /** 右侧面板放在哪、开不开，看的是主区（对话加面板）有多宽，不是整个窗口：
  *
- * - 主区窄于 840px：两栏放不下，面板是一只浮在对话上的浮层。页头上点哪一样（概览、支线……）
+ * - 主区窄于 840px：两栏放不下，面板是一只浮在对话上的浮层。页头上点哪一样（概览、讨论串……）
  *   浮层就开在哪一样上；再点正显示的那一样收起，把地址里那一格清掉。浮层不记这个人的选择。
  * - 840px 起：面板和对话并排。1000px 起默认开着，840–1000 默认收着；页头上的开合记下
  *   这个人自己的选择，下次照它来。
@@ -73,7 +73,7 @@ vi.mock('@/stores/workspace', async () => {
   return { useWorkspaceStore: () => store }
 })
 vi.mock('@/me', () => ({ myHandle: () => 'alice' }))
-// 频道的支线清单：这几条测试不看它。
+// 频道的讨论串清单：这几条测试不看它。
 vi.mock('@/api/threads', () => ({ listThreads: async () => [], openThread: async () => ({ id: 'th' }) }))
 // 频道概览的置顶：这几条测试不看它。
 vi.mock('@/api/pins', () => ({ listPins: async () => [], pinBlock: vi.fn(), unpinBlock: vi.fn() }))
@@ -90,7 +90,7 @@ vi.mock('@/composables/usePageTitle', () => ({
   usePageTitle: () => ({ setDynamicTitle: vi.fn(), clearDynamicTitle: vi.fn() }),
 }))
 
-// 页头只留「概览」「支线」两颗按钮——打开、换、收起都由它们走，按下的那颗说着面板此刻显示的是哪一样。
+// 页头只留「概览」「讨论串」两颗按钮——打开、换、收起都由它们走，按下的那颗说着面板此刻显示的是哪一样。
 vi.mock('@/components/TopicHeader.vue', () => ({
   default: {
     name: 'TopicHeader',
@@ -98,7 +98,7 @@ vi.mock('@/components/TopicHeader.vue', () => ({
     emits: ['toggle-panel'],
     template: `<div>
       <button :aria-pressed="String(panelShown === 'overview')" @click="$emit('toggle-panel', 'overview')">概览</button>
-      <button :aria-pressed="String(panelShown === 'threads')" @click="$emit('toggle-panel', 'threads')">支线</button>
+      <button :aria-pressed="String(panelShown === 'threads')" @click="$emit('toggle-panel', 'threads')">讨论串</button>
     </div>`,
   },
 }))
@@ -166,10 +166,10 @@ describe('主区窄于 840px：面板是浮层', () => {
     expect(query.value.tab).toBeUndefined()
     expect(pressed(getByText)).toBe(false)
 
-    await fireEvent.click(getByText('支线'))
+    await fireEvent.click(getByText('讨论串'))
 
     await waitFor(() => expect(getByTestId('panel').getAttribute('data-tab')).toBe('threads'))
-    expect(pressed(getByText, '支线')).toBe(true)
+    expect(pressed(getByText, '讨论串')).toBe(true)
     expect(pressed(getByText, '概览')).toBe(false)
     // 浮在对话上面：背后有一层点了就收起的遮罩。
     expect(document.querySelector('.panel-scrim')).toBeTruthy()
@@ -193,10 +193,10 @@ describe('主区窄于 840px：面板是浮层', () => {
 
     await fireEvent.click(getByText('概览'))
     await waitFor(() => expect(pressed(getByText, '概览')).toBe(true))
-    await fireEvent.click(getByText('支线'))
+    await fireEvent.click(getByText('讨论串'))
 
     await waitFor(() => expect(getByTestId('panel').getAttribute('data-tab')).toBe('threads'))
-    expect(pressed(getByText, '支线')).toBe(true)
+    expect(pressed(getByText, '讨论串')).toBe(true)
     expect(pressed(getByText, '概览')).toBe(false)
   })
 })

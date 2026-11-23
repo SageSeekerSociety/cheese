@@ -8,7 +8,7 @@ The rules, as a person would state them:
   a hand-in still naming the card it filed and which version.
 - It stays where it was in the conversation, and nobody's place in it moves.
 - The line saying how the task ended is the teammate's own words and stays one.
-- A 支线 counts as its replies only the messages in it.
+- A 讨论串 counts as its replies only the messages in it.
 """
 
 import json

@@ -55,12 +55,12 @@ QUESTION = {
 }
 
 
-#: The channel each test's 支线 hangs in, for what only a channel answers (its roster).
+#: The channel each test's 讨论串 hangs in, for what only a channel answers (its roster).
 _CHANNEL: dict[str, str] = {}
 
 
 def _room(client) -> tuple[str, str]:
-    """A project and a 支线 of its channel: where 芝士 answers once it is called,
+    """A project and a 讨论串 of its channel: where 芝士 answers once it is called,
     and so where it asks."""
     seed_user(client, "alice")
     data = post_project(client, {"name": "Ask"}, owner="alice").json()["data"]

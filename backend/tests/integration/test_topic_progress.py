@@ -34,7 +34,7 @@ PLAN = [
 
 
 def _room(client) -> tuple[str, dict]:
-    """A 支线 in a channel — where 芝士 answers — and the credentials its
+    """A 讨论串 in a channel — where 芝士 answers — and the credentials its
     session writes with."""
     p = post_project(client, json={"name": "P"}, owner="user-1").json()["data"]
     t = client.post(

@@ -343,7 +343,7 @@ def test_a_question_waits_on_whoever_summoned_the_agent(
     """
     pid = _project(client)
     tid = _topic(client, pid, "问答", created_by="alice")
-    # 芝士在支线里回答，题也在那里问。
+    # 芝士在讨论串里回答，题也在那里问。
     thread = in_thread(client, tid, "alice")
     with active_ask(client, stub_hooks, monkeypatch, thread, actor="bob") as headers:
         r = client.post(
@@ -392,7 +392,7 @@ def test_a_question_awaits_only_whoever_started_the_turn(
     """
     pid = _project(client)
     tid = _topic(client, pid, "问答", created_by="alice")
-    # 芝士在支线里回答，题也在那里问。
+    # 芝士在讨论串里回答，题也在那里问。
     thread = in_thread(client, tid, "alice")
     with active_ask(client, stub_hooks, monkeypatch, thread, actor="bob") as headers:
         r = client.post(

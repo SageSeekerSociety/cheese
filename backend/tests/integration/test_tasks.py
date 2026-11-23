@@ -166,7 +166,7 @@ def test_an_ai_teammate_cannot_create_a_task(client):
 
 
 def _teammate_in(client, room_id: str, thread_id: str) -> dict[str, str]:
-    """The credential the room's AI teammate answers with in that 支线."""
+    """The credential the room's AI teammate answers with in that 讨论串."""
     project_id = client.get(f"/topics/{room_id}").json()["data"]["project_id"]
     token = mint_scoped_token(
         project_id=project_id,
@@ -237,7 +237,7 @@ def test_one_message_becomes_several_tasks_under_it(client):
     for title in ("表单字段精简", "学号格式校验"):
         r = client.post(
             f"/topics/{thread}/teammate-tasks",
-            json={"title": title, "summary": "按支线里定的做"},
+            json={"title": title, "summary": "按讨论串里定的做"},
             headers=agent,
         )
         assert r.status_code == 200, r.text

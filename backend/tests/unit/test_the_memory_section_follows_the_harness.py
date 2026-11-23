@@ -70,7 +70,7 @@ def test_an_empty_index_is_not_a_section():
 
 
 def test_each_kind_of_place_reads_the_memory_rules_of_its_own():
-    """私聊读带整份 private 的那套规矩；频道主线、任务、支线读多人那套：在那里
+    """私聊读带整份 private 的那套规矩；频道主线、任务、讨论串读多人那套：在那里
     private 只有这一轮答复的成员的 communication 一类。两套不混着读。"""
     facts = Facts(memory_synced=True)
     private = render_system(Kind.private, facts, skill=lambda _name: "")

@@ -1,4 +1,4 @@
-"""A task made from a discussion — one of several laid out in a 支线 — starts
+"""A task made from a discussion — one of several laid out in a 讨论串 — starts
 with its AI teammate setting to work from it. While the task's document is
 still empty, whoever opens the task is told where that first instruction is,
 and when it failed they can have it tried again.

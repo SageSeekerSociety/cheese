@@ -49,7 +49,7 @@ QUESTION = {
 
 
 def _room(client) -> tuple[str, str, str]:
-    """A project, a 支线 of its channel, and alice's token."""
+    """A project, a 讨论串 of its channel, and alice's token."""
     token = seed_user(client, "alice")
     data = post_project(client, {"name": "Ask"}, owner="alice").json()["data"]
     return data["id"], in_thread(client, data["root_topic_id"], "alice"), token

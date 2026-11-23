@@ -66,7 +66,7 @@ _FONT: Final = (
 _HEADLINES: Final[dict[str, str]] = {
     "MENTION": "有人在讨论中提到了你",
     "REPLY": "有人回复了你的评论",
-    "THREAD_REPLY": "你参与的支线有新回复",
+    "THREAD_REPLY": "你参与的讨论串有新回复",
     "REACTION": "有人对你的内容做出了反应",
     "PROJECT_INVITE": "你收到了项目邀请",
     "PROJECT_TRANSFER": "你收到了项目转让",
@@ -202,11 +202,11 @@ def letter_for(item: dict[str, Any], names: dict[str, str] | None = None) -> Let
         headline = (
             f"{who} 在「{room}」提到了你"
             if type_ == "MENTION"
-            else f"{who} 在「{room}」的支线里回复了"
+            else f"{who} 在「{room}」的讨论串里回复了"
         )
         return Letter(
             subject=headline,
-            eyebrow="有人提到了你" if type_ == "MENTION" else "支线回复",
+            eyebrow="有人提到了你" if type_ == "MENTION" else "讨论串回复",
             headline=headline,
             quote=_clip(_text(payload, "content"), _QUOTE_LIMIT),
             details=tuple((k, v) for k, v in (("项目", project), ("频道", room)) if v),

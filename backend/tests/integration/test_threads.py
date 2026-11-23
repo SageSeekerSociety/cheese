@@ -1,8 +1,8 @@
-"""支线: the replies under a message in a channel.
+"""讨论串: the replies under a message in a channel.
 
 A person calling 芝士 in a channel's main line is answered in the main line,
-and no 支线 opens for it. Anyone can reply under any message, and the 支线 they
-open is the message's one 支线, where 芝士 answers when called there. Only the people who took part are
+and no 讨论串 opens for it. Anyone can reply under any message, and the 讨论串 they
+open is the message's one 讨论串, where 芝士 answers when called there. Only the people who took part are
 told of new replies, and only of what people said there.
 """
 
@@ -21,7 +21,7 @@ from tests.support.session_records import assistant_texts, records, wait_for_rec
 
 
 def _channel(client, owner: str = "alice") -> tuple[str, str]:
-    project = post_project(client, json={"name": "支线"}, owner=owner).json()["data"]
+    project = post_project(client, json={"name": "讨论串"}, owner=owner).json()["data"]
     room = client.post(
         "/topics",
         json={"project_id": project["id"], "title": "前端"},
@@ -61,7 +61,7 @@ def test_calling_cheese_in_the_main_line_runs_in_the_main_line(client):
             return str(turn.reply_to)
 
     assert asyncio.run(replied_to()) == asked["id"]
-    # No 支线 opened under the question.
+    # No 讨论串 opened under the question.
     under = next(b for b in _blocks(client, room) if b["id"] == asked["id"])
     assert not under.get("thread")
 
@@ -75,7 +75,7 @@ def _until(ws, predicate) -> dict:
 
 
 def test_the_main_line_is_told_who_is_answering_in_a_thread(client):
-    """在一条支线里 @ 芝士：主线会收到「有人在这条支线里答」，答在哪儿也说得准。
+    """在一条讨论串里 @ 芝士：主线会收到「有人在这条讨论串里答」，答在哪儿也说得准。
 
     从一次真的发出（`receive_message` 解析出点名的是哪个席位）走到主线那一帧，
     整条线在这儿锁住 —— 席位解析错了，这一帧就永远不来。
@@ -86,7 +86,7 @@ def test_the_main_line_is_told_who_is_answering_in_a_thread(client):
     with room_socket(client, room, "alice") as ws:
         post_message(client, thread["id"], "alice", {"content": "@芝士 你看看"})
         heard = _until(ws, lambda f: f["type"] == "thread_activity" and f["active"])
-    # 谁在答：芝士坐的那个席位。答在哪儿：这条支线。
+    # 谁在答：芝士坐的那个席位。答在哪儿：这条讨论串。
     assert heard["member"]
     assert heard["thread_id"] == thread["id"]
 
@@ -173,7 +173,7 @@ def test_new_replies_are_news_only_to_the_people_who_took_part(client):
         assert row["reply_count"] == 1
         return row["unread"]
 
-    # bob wrote the message the 支线 hangs under: alice's reply is news to him.
+    # bob wrote the message the 讨论串 hangs under: alice's reply is news to him.
     assert unread_for("bob") is True
     # alice said it herself, and carol never took part.
     assert unread_for("alice") is False

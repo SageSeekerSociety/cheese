@@ -369,8 +369,8 @@ const TASK_ENTRIES: CatalogEntry[] = [
     },
     states: [
       {
-        name: '从支线里的一句话来',
-        note: '引原话：谁说的、在哪个频道的支线里、什么时候；@ 过的人读成名字。',
+        name: '从讨论串里的一句话来',
+        note: '引原话：谁说的、在哪个频道的讨论串里、什么时候；@ 过的人读成名字。',
         props: {
           source: {
             block_id: 'demo-block',
@@ -383,7 +383,7 @@ const TASK_ENTRIES: CatalogEntry[] = [
             title: '前端',
           },
         },
-        expect: '来自 #前端 的一条支线',
+        expect: '来自 #前端 的一条讨论串',
       },
       {
         name: '自己新建的',
@@ -433,8 +433,8 @@ const TASK_ENTRIES: CatalogEntry[] = [
         expect: '正在写校验那一个',
       },
       {
-        name: '支线顶上',
-        note: '支线转成任务后，画在支线那一块顶上：只有任务名、负责人和状态，回复数和最后一句在下面的支线那几行里。',
+        name: '讨论串顶上',
+        note: '讨论串转成任务后，画在讨论串那一块顶上：只有任务名、负责人和状态，回复数和最后一句在下面的讨论串那几行里。',
         props: {
           task: taskLine({ latest: '这一句不画', state: catalogTaskState('running', { session_running: true }) }),
           ownerName: '王一鸣',
@@ -473,7 +473,7 @@ const TASK_ENTRIES: CatalogEntry[] = [
   {
     id: 'room-thread-root',
     title: 'ThreadRoot',
-    about: '一条支线挂着的那条主线消息，画在这段对话最上面：支线的右半边和支线转成的任务页开头都是它。',
+    about: '一条讨论串挂着的那条主线消息，画在这段对话最上面：讨论串的右半边和讨论串转成的任务页开头都是它。',
     file: 'src/components/room/ThreadRoot.vue',
     component: ThreadRoot,
     needs: UI_T,
@@ -502,7 +502,7 @@ const TASK_ENTRIES: CatalogEntry[] = [
   {
     id: 'room-thread-head',
     title: 'ThreadHead',
-    about: '支线的页头一行：它挂着的那条消息说的事和「转为任务」。桌面上在支线那一栏顶上，手机上是顶栏的内容。',
+    about: '讨论串的页头一行：它挂着的那条消息说的事和「转为任务」。桌面上在讨论串那一栏顶上，手机上是顶栏的内容。',
     file: 'src/components/room/ThreadHead.vue',
     component: ThreadHead,
     needs: UI_T,
@@ -510,7 +510,7 @@ const TASK_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '桌面那一栏',
-        note: '左边返回支线列表，写挂着的那条消息说的事，右边「转为任务」。',
+        note: '左边返回讨论串列表，写挂着的那条消息说的事，右边「转为任务」。',
         props: { heading: '登录要不要加手机验证码？', back: true },
         expect: '登录要不要加手机验证码',
       },

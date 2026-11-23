@@ -1,12 +1,12 @@
-"""A 支线 that has become one piece of work turns into a task where it is.
+"""A 讨论串 that has become one piece of work turns into a task where it is.
 
-The rules a person can state without the code: turning a 支线 into a task keeps
+The rules a person can state without the code: turning a 讨论串 into a task keeps
 the conversation — the same id, everything said in it, the AI teammate's
 session — and from then on that session's work is kept. Turning it twice
 makes one task. The message it hangs under shows the same conversation, now
 with an owner. Anyone in the project speaks in it, and what its AI teammate
 acts on unasked is its owner's word; once it is closed, it is talked in as a
-支线 is.
+讨论串 is.
 """
 
 import uuid
@@ -37,7 +37,7 @@ def _channel(client) -> tuple[str, str]:
 
 
 def _thread_with_a_turn(client, room: str) -> tuple[dict, str, str]:
-    """A message in the main line, and its 支线 with the teammate answering
+    """A message in the main line, and its 讨论串 with the teammate answering
     once in it."""
     seat = room_agent_seat(client, room)
     root = post_message(client, room, "alice", {"content": "登录要不要加手机验证码？"})
@@ -94,7 +94,7 @@ def test_turning_a_thread_keeps_its_conversation_and_session(client, stub_hooks)
             return sessions, place, kind
 
     sessions, place, kind = client.portal.call(read)
-    assert sessions, "the teammate's session in the 支线 is gone"
+    assert sessions, "the teammate's session in the 讨论串 is gone"
     assert kind == "task"
     assert place is not None and place.task is not None
     assert place.keeps_work
@@ -223,7 +223,7 @@ def test_its_teammate_turns_the_thread_on_someones_word(client, stub_hooks):
 def test_asking_to_open_here_inside_a_task_hands_that_task_back(client, stub_hooks):
     """已经在任务里，队友又说「就在这儿开」：不是「这儿不能开」，是「你要的
     地方就是这里」。回 200 而不是 422，并把这条任务交回去——2026-10-21，那句
-    「只有支线可以原地转为任务」被读成「这里没有任务」，于是同一件事被另开成
+    「只有讨论串可以原地转为任务」被读成「这里没有任务」，于是同一件事被另开成
     一条任务、两个 AI 各做了一份。"""
     project, room = _channel(client)
     root, thread, seat = _thread_with_a_turn(client, room)
@@ -254,7 +254,7 @@ def test_asking_to_open_here_inside_a_task_hands_that_task_back(client, stub_hoo
 
 def test_a_closed_task_is_still_talked_in_and_keeps_nothing(client, stub_hooks):
     """After a task closes, people can still ask about it there; its teammate
-    answers when named, as in a 支线, and nothing it does reaches the project
+    answers when named, as in a 讨论串, and nothing it does reaches the project
     until the task is reopened."""
     _, room = _channel(client)
     root, thread, seat = _thread_with_a_turn(client, room)
@@ -282,9 +282,9 @@ def test_a_closed_task_is_still_talked_in_and_keeps_nothing(client, stub_hooks):
 def test_a_task_made_from_a_reply_shows_under_the_reply_and_the_message(
     client, stub_hooks
 ):
-    """A task split off from something said in a 支线 is found both where it
-    was said and under the main-line message the 支线 hangs on, and opens
-    beside the channel as a 支线 does, quoting what it was made from."""
+    """A task split off from something said in a 讨论串 is found both where it
+    was said and under the main-line message the 讨论串 hangs on, and opens
+    beside the channel as a 讨论串 does, quoting what it was made from."""
     _, room = _channel(client)
     root, thread, _ = _thread_with_a_turn(client, room)
     alice = session_auth_headers("alice")
@@ -308,7 +308,7 @@ def test_a_task_made_from_a_reply_shows_under_the_reply_and_the_message(
 
 
 def test_turning_it_starts_its_teammate_at_once(client, stub_hooks):
-    """A person turning a 支线 does not leave it waiting for someone to speak:
+    """A person turning a 讨论串 does not leave it waiting for someone to speak:
     its AI teammate is handed the work at once (to put the discussion in the
     task's document first)."""
     from app.domain.delivery.models import Delivery

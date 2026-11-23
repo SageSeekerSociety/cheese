@@ -68,6 +68,11 @@ export const OPENED_GROUP = 'opened'
 const SIDE_PREFIX = 'side:'
 /** 有两处的那几样：别的块开着时在窄栏里，没有时自己占对话右边那一栏。 */
 const SIDE_KINDS = ['changes', 'site']
+/**
+ * 窄栏的宽度是它自己的：拖过就记住，不和对话、对话右边那一栏按比例分。按比例分的话，它藏着的时候
+ * 记下的那一份宽度会算在比例里，每刷新一次对话右边那一栏就窄一点。
+ */
+const SIDE_WIDTH = { initial: 340, min: 300, max: 560, storageKey: 'cheesex.taskSideWidth' }
 /** 终端那一块的高度：拖过就记住。 */
 const TERMINAL_HEIGHT = { initial: 220, min: 120, max: 640, storageKey: 'cheesex.taskTerminalHeight' }
 /** 占对话右边那一栏的几样（另一栏只放改动、现场）。 */
@@ -325,7 +330,7 @@ export function useRoomLayout(
       if (SIDE_KINDS.includes(tab.key)) {
         return [
           block(tab, tab.key, !(inSight(tab.key) && !mainOpen.value)),
-          block(tab, SIDE_PREFIX + tab.key, !(inSight(tab.key) && mainOpen.value)),
+          { ...block(tab, SIDE_PREFIX + tab.key, !(inSight(tab.key) && mainOpen.value)), width: SIDE_WIDTH },
         ]
       }
       return [block(tab, tab.key, !inSight(tab.key))]
@@ -369,7 +374,7 @@ export function useRoomLayout(
           },
           // 改动、现场在右边各占一格、并排，不叠成一栏：新开一格时 dockview 重新摆一遍，碰上一整栏都藏着的
           // 一栏会摆乱（页面宽度对不上）。
-          ...SIDE_KINDS.map((key) => ({ panels: [SIDE_PREFIX + key], size: 33 })),
+          ...SIDE_KINDS.map((key) => ({ panels: [SIDE_PREFIX + key] })),
         ],
       },
       onActivated: () => {},

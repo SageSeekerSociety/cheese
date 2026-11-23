@@ -1,5 +1,5 @@
 // 工作面板的 tab 栏：那几格永远都在，打开任务时挑哪一格由任务所处的阶段说，但只挑
-// 有东西可看的那一格。频道是人说话的地方，只有概览、支线、例行事务。
+// 有东西可看的那一格。频道是人说话的地方，只有概览、讨论串、例行事务。
 //
 // 这一份钉的是两件以前出过错的事：一格时有时无，同一个房间两次打开 tab 栏不一样
 // 长；和待验收的房间没有改动文件时（项目还没接仓库），一进来就落在「改动」那一格
@@ -96,10 +96,10 @@ function selected(container: Element): string {
 }
 
 describe('tab 栏', () => {
-  it('频道只有概览、支线、文件、例行事务：没有电脑在它名下干活', async () => {
+  it('频道只有概览、讨论串、文件、例行事务：没有电脑在它名下干活', async () => {
     const { findAllByRole } = mount()
     const labels = (await findAllByRole('tab')).map((t) => t.textContent?.trim() ?? '')
-    expect(labels).toEqual(['概览', '支线', '文件', '例行事务'])
+    expect(labels).toEqual(['概览', '讨论串', '文件', '例行事务'])
   })
 
   it('一个还没跑过的任务也是这几格，顺序不变', async () => {
@@ -108,10 +108,10 @@ describe('tab 栏', () => {
     expect(labels).toEqual(['概览', '现场', '改动', '预览', '文件'])
   })
 
-  it('任务里没有支线这一格：支线只挂在频道主线的消息下面', async () => {
+  it('任务里没有讨论串这一格：讨论串只挂在频道主线的消息下面', async () => {
     const { findAllByRole } = mount({ taskId: 'task1' })
     const labels = (await findAllByRole('tab')).map((t) => t.textContent?.trim() ?? '')
-    expect(labels).not.toContain('支线')
+    expect(labels).not.toContain('讨论串')
   })
 
   // 「例行事务」永远有得看：没有规则时那一格是「还没有例行事务，点新建」，不是一个
@@ -210,12 +210,12 @@ describe('任务页签', () => {
   it('固定的几格都还在，几件任务各一格排在它们右边', async () => {
     const { findAllByRole } = mount({ deliveries: [K1, K2] })
     const labels = (await findAllByRole('tab')).map((t) => t.textContent?.trim() ?? '')
-    expect(labels).toEqual(['概览', '支线', '文件', '例行事务', '报名表改短', '更新 README'])
+    expect(labels).toEqual(['概览', '讨论串', '文件', '例行事务', '报名表改短', '更新 README'])
   })
 
-  it('从「支线」打开一件任务，关掉它回到「支线」', async () => {
+  it('从「讨论串」打开一件任务，关掉它回到「讨论串」', async () => {
     const { container, emitted, getByTestId, rerender } = mount({ tab: 'threads', deliveries: [K1] })
-    await waitFor(() => expect(selected(container)).toBe('支线'))
+    await waitFor(() => expect(selected(container)).toBe('讨论串'))
     await rerender({ tab: 'delivery:k1', deliveries: [K1] })
     await waitFor(() => expect(selected(container)).toBe('报名表改短'))
     getByTestId('panel-tab-close').click()

@@ -103,7 +103,7 @@ def _project_and_topic(client) -> str:
             "title": "重放",
         },
     )
-    # 芝士 answers in a 支线 of the channel: that is where its turns run.
+    # 芝士 answers in a 讨论串 of the channel: that is where its turns run.
     return in_thread(client, tr.json()["data"]["id"], "user-1")
 
 
@@ -159,7 +159,7 @@ def _replay_notices(client, topic_id: str) -> list[str]:
 
 
 def _opened_by(client, text: str) -> str:
-    """A channel where ``text`` calls 芝士 in the main line; returns the 支线
+    """A channel where ``text`` calls 芝士 in the main line; returns the 讨论串
     it is answered in, once that first turn has finished."""
     pr = post_project(client, json={"name": "Replay"}, owner="user-1")
     room = client.post(

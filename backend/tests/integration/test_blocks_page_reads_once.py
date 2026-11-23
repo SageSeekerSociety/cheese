@@ -1,14 +1,14 @@
 """`GET /topics/{id}/blocks` counts the timeline only when the page does not
-already hold all of it, and asks which 支线 have a turn running only for the
-支线 under the page.
+already hold all of it, and asks which 讨论串 have a turn running only for the
+讨论串 under the page.
 
 `total` is how many blocks the narrowed timeline holds. A read with no `limit`
 is the whole timeline, and the newest page with nothing older is too: their
 length is the answer, and a `COUNT(*)` over the conversation repeats it. A page
 with more beyond it still counts.
 
-Who is answering in a 支线 is read from `session_states`. It used to read every
-session running on the platform for every page; now it reads the 支线 the page
+Who is answering in a 讨论串 is read from `session_states`. It used to read every
+session running on the platform for every page; now it reads the 讨论串 the page
 draws, and nothing when the page has none.
 """
 
@@ -74,7 +74,7 @@ def test_a_page_holding_the_whole_timeline_is_not_counted_again(client):
     assert older["total"] == whole["total"]
     assert _count(statements, _COUNT) == 1, statements
 
-    # No 支线 under any of these messages: nobody is asked who is answering.
+    # No 讨论串 under any of these messages: nobody is asked who is answering.
     assert _count(statements, _RUNNING) == 0, statements
 
 

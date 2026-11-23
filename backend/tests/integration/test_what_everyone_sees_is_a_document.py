@@ -41,7 +41,7 @@ def _project_and_room(client) -> tuple[str, str]:
 
 
 def _say(client, topic_id: str, text: str = "@芝士 现在什么状态") -> None:
-    """在这个房间的一条支线里叫芝士说一句，等它跑完——人叫芝士，芝士在支线里
+    """在这个房间的一条讨论串里叫芝士说一句，等它跑完——人叫芝士，芝士在讨论串里
     答。提示词落在 `stub_hooks` 上。"""
     thread = in_thread(client, topic_id, "user-1")
     with room_socket(client, thread, "user-1") as ws:

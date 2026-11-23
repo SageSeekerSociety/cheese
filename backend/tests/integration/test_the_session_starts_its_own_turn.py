@@ -37,7 +37,7 @@ def _room(client) -> tuple[str, str]:
         json={"project_id": project["id"], "title": "房间"},
         headers=session_auth_headers("u"),
     ).json()["data"]
-    # 芝士 answers in a 支线 of the channel: that is where its session works.
+    # 芝士 answers in a 讨论串 of the channel: that is where its session works.
     return project["id"], in_thread(client, topic["id"], "u")
 
 
@@ -196,7 +196,7 @@ def test_a_teammates_own_turn_stays_the_teammates(client, stub_hooks):
         headers=session_auth_headers("alice"),
     )
     assert seated.status_code == 200, seated.text
-    # Seated in the channel, the teammate answers in a 支线 of it.
+    # Seated in the channel, the teammate answers in a 讨论串 of it.
     room_id = in_thread(client, room_id, "alice")
 
     def say(content: str) -> None:

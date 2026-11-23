@@ -50,7 +50,7 @@ def test_the_platforms_running_moves_and_the_conversation_keeps_the_rest(client)
         "storm": ("turn_queued", "项目同时运行的轮次已满，本轮正在排队", now, {}),
         "old": ("sandbox_asleep", "沙箱已休眠", now - timedelta(days=40), {}),
         "for_agent": ("memory_changed", "记忆被盖回", now, {"agent_notice": "重读"}),
-        "rooted": ("api_retry", "有人在它下面开了支线", now, {}),
+        "rooted": ("api_retry", "有人在它下面开了讨论串", now, {}),
         "delivered": ("accept_done", "PR 已合并", now, {}),
     }
     stormy = datetime(2026, 10, 6, 2, tzinfo=UTC)

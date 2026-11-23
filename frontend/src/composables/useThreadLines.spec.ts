@@ -1,4 +1,4 @@
-/** 支线那几条规矩：主线上什么时候写「正在回复」。 */
+/** 讨论串那几条规矩：主线上什么时候写「正在回复」。 */
 import type { Block } from '../cx_types'
 
 import { ref } from 'vue'
@@ -52,7 +52,7 @@ describe('主线上「正在回复」', () => {
     }
   }
 
-  it('队友此刻在支线里答，就写它正在回复，支线里已经有回复也写', () => {
+  it('队友此刻在讨论串里答，就写它正在回复，讨论串里已经有回复也写', () => {
     expect(lines(true).replyingFor(underThread(['cheese'], 3))).toBe('芝士')
   })
 
@@ -75,7 +75,7 @@ describe('主线上「正在回复」', () => {
   })
 })
 
-describe('主线上写队友在支线里等什么', () => {
+describe('主线上写队友在讨论串里等什么', () => {
   setLocale('zh-CN')
   const asked = (): Block => ({
     ...message(ME, true),
@@ -137,8 +137,8 @@ describe('主线上写队友在支线里等什么', () => {
   })
 })
 
-describe('一轮出错、还没有回复的支线', () => {
-  it('队友停下时支线里还没有回复：再读一次，那条消息下面那一行就说回复失败', async () => {
+describe('一轮出错、还没有回复的讨论串', () => {
+  it('队友停下时讨论串里还没有回复：再读一次，那条消息下面那一行就说回复失败', async () => {
     const asked: Block = {
       ...message(ME, true),
       id: 'root',

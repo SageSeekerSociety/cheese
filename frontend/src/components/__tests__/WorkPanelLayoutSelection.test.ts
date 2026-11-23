@@ -75,7 +75,7 @@ function mountChannel() {
       },
       {
         overview: () => h('p', '概览的内容'),
-        threads: () => h('p', '支线的内容'),
+        threads: () => h('p', '讨论串的内容'),
         delivery: ({ id }: { id: string }) => h('p', `任务 ${id} 的内容`),
       }
     )
@@ -95,7 +95,7 @@ describe('asking for a cell of the work panel brings it forward', () => {
     const { tab } = mountChannel()
     await waitFor(() => expect(visible('概览的内容')).toBe(true))
     tab.value = 'threads'
-    await waitFor(() => expect(visible('支线的内容')).toBe(true))
+    await waitFor(() => expect(visible('讨论串的内容')).toBe(true))
     expect(visible('概览的内容')).toBe(false)
   })
 
@@ -111,12 +111,12 @@ describe('asking for a cell of the work panel brings it forward', () => {
   it('closing the task being looked at brings back the tab it was opened from', async () => {
     const { tab, deliveries } = mountChannel()
     tab.value = 'threads'
-    await waitFor(() => expect(visible('支线的内容')).toBe(true))
+    await waitFor(() => expect(visible('讨论串的内容')).toBe(true))
     deliveries.value = [{ id: 't1', title: '开放日流程页' }]
     tab.value = 'delivery:t1'
     await waitFor(() => expect(visible('任务 t1 的内容')).toBe(true))
     deliveries.value = []
-    await waitFor(() => expect(visible('支线的内容')).toBe(true))
+    await waitFor(() => expect(visible('讨论串的内容')).toBe(true))
   })
 
   it('a routine named by the address brings the routines cell forward', async () => {
@@ -160,7 +160,7 @@ function mountPlace() {
       { ref: panel, topic: room, activityTick: 0, tab: tab.value, deliveries: deliveries.value, layout },
       {
         overview: () => h('p', '概览的内容'),
-        threads: () => h('p', '支线的内容'),
+        threads: () => h('p', '讨论串的内容'),
         delivery: ({ id }: { id: string }) => h('p', `任务 ${id} 的内容`),
         skill: ({ id }: { id: string }) => h('p', `技能 ${id} 的内容`),
       }
@@ -176,12 +176,12 @@ describe('beside the conversation, one thing at a time', () => {
   it('back on something opened from a pane returns to that pane', async () => {
     const { tab, panel, bar } = mountPlace()
     tab.value = 'threads'
-    await waitFor(() => expect(visible('支线的内容')).toBe(true))
+    await waitFor(() => expect(visible('讨论串的内容')).toBe(true))
     await panel.value!.openSkill({ id: 's1', title: '写周报' })
     await waitFor(() => expect(visible('技能 s1 的内容')).toBe(true))
     const back = within(bar('file:skill:s1')).getByRole('button', { name: i18n.global.t('global.back') })
     await fireEvent.click(back)
-    await waitFor(() => expect(visible('支线的内容')).toBe(true))
+    await waitFor(() => expect(visible('讨论串的内容')).toBe(true))
     expect(screen.queryByText('技能 s1 的内容')).toBeNull()
   })
 

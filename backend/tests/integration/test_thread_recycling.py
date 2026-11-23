@@ -1,14 +1,14 @@
-"""一条没人回来的支线：满三天收进「已回收」，以及放回来的两条路。
+"""一条没人回来的讨论串：满三天收进「已回收」，以及放回来的两条路。
 
-一条支线里报错，而没人回头修，它就一直把整间频道点红 —— `block.waits` 只认恢复、
+一条讨论串里报错，而没人回头修，它就一直把整间频道点红 —— `block.waits` 只认恢复、
 不认时间。所以满了 `FAILURE_GIVES_UP_AFTER`（三天）之后：
 
-- 这条支线被收起来（`thread/recycle.py`）：不再算进频道那一行的红灯，也从概览的支线
+- 这条讨论串被收起来（`thread/recycle.py`）：不再算进频道那一行的红灯，也从概览的讨论串
   列表里挪到「已回收」一栏；
-- 频道自己那条线的红灯同样过了三天就不再亮 —— 它没有支线可收，只有这一条路；
+- 频道自己那条线的红灯同样过了三天就不再亮 —— 它没有讨论串可收，只有这一条路；
 - 里面的一切照旧：块一条不删，翻得到、点得进去读，说一句话就回到默认那一栏；
-- 收起来的支线谁看得到频道谁就读得到，「恢复」只给开这条支线的人和频道管理员；
-- 正跑着的支线不是死掉的，只是慢：这一趟不收它。
+- 收起来的讨论串谁看得到频道谁就读得到，「恢复」只给开这条讨论串的人和频道管理员；
+- 正跑着的讨论串不是死掉的，只是慢：这一趟不收它。
 
 Depends on real HTTP, PostgreSQL and the room's runner; the session is the
 scripted stub.
@@ -153,7 +153,7 @@ def _recycled_at(client, thread_id: str) -> datetime | None:
 
 
 def _join(client, room_id: str, handle: str) -> None:
-    """这个人加入这个频道。别人的「恢复」被拒是因为这条支线不是他开的，而不是因为
+    """这个人加入这个频道。别人的「恢复」被拒是因为这条讨论串不是他开的，而不是因为
     他还没加入 —— 没加入的会被另一条判据（`channelJoinToPost`）先拦下。"""
     r = client.post(f"/topics/{room_id}/join", headers=session_auth_headers(handle))
     assert r.status_code == 200, r.text
@@ -172,7 +172,7 @@ def test_a_branch_nobody_came_back_to_is_recycled_and_the_room_stops_glowing(cli
     thread = in_thread(client, room, "alice")
     _broke(client, project, thread, ago=LONG_AGO)
 
-    # 灯早就灭了（三天一到就不亮，独立于收没收）；收是把这条支线从列表里挪开。
+    # 灯早就灭了（三天一到就不亮，独立于收没收）；收是把这条讨论串从列表里挪开。
     assert _incomplete(_room_row(client, project, room)) is None
     assert _recycled_at(client, thread) is None
 
@@ -201,7 +201,7 @@ def test_a_failure_inside_the_window_still_lights_the_row(client):
 
 
 def test_the_rooms_own_line_gives_up_after_the_same_three_days(client):
-    """频道自己那条线的红灯同样满三天不再亮 —— 它没有支线可收。"""
+    """频道自己那条线的红灯同样满三天不再亮 —— 它没有讨论串可收。"""
     project = _project(client)
     room = _room(client, project)
     _broke(client, project, room, ago=LONG_AGO)
@@ -210,7 +210,7 @@ def test_the_rooms_own_line_gives_up_after_the_same_three_days(client):
 
 
 def test_a_branch_whose_session_is_running_is_not_recycled(client):
-    """正跑着的支线不是死掉的，只是慢：这一趟不收它。"""
+    """正跑着的讨论串不是死掉的，只是慢：这一趟不收它。"""
     project = _project(client)
     room = _room(client, project)
     thread = in_thread(client, room, "alice")
@@ -269,11 +269,11 @@ def test_reading_a_recycled_branch_still_works_and_saying_something_brings_it_ba
 
 
 def test_who_may_restore_it(client):
-    """开这条支线的人和频道管理员能点「恢复」，别人不能。"""
+    """开这条讨论串的人和频道管理员能点「恢复」，别人不能。"""
     project = _project(client)
     room = _room(client, project, "管理员的房")
     _join(client, room, "carol")
-    # 支线由 alice 开（她也是频道的管理员）。
+    # 讨论串由 alice 开（她也是频道的管理员）。
     thread = in_thread(client, room, "alice")
     _broke(client, project, thread, ago=LONG_AGO)
     assert _sweep(client) == 1
@@ -287,7 +287,7 @@ def test_who_may_restore_it(client):
 
 
 def test_the_person_who_ran_it_can_restore_it_in_a_room_they_do_not_manage(client):
-    """不是管理员的那个开的人也能放回来：这条支线是他开的。"""
+    """不是管理员的那个开的人也能放回来：这条讨论串是他开的。"""
     project = _project(client)
     room = _room(client, project)
     _join(client, room, "bob")
@@ -313,15 +313,15 @@ def test_restoring_it_does_not_put_the_room_back_red(client):
     assert _restore(client, thread).status_code == 200
 
     assert _incomplete(_room_row(client, project, room)) is None
-    # 但这条支线还在默认那一栏里。
+    # 但这条讨论串还在默认那一栏里。
     assert [t["id"] for t in _rows(client, room)["open"]] == [thread]
     assert _rows(client, room)["recycled"] == []
 
 
 def test_a_recycled_branch_is_out_of_the_rooms_units_until_it_comes_back(client):
-    """收起来的那条支线整个出了频道那一行：里面再报错也不再点亮它，直到它回来。
+    """收起来的那条讨论串整个出了频道那一行：里面再报错也不再点亮它，直到它回来。
 
-    这是「收起来」的意思 —— 一条没人接手的支线不再参与任何一行的判断。要它重新算数，
+    这是「收起来」的意思 —— 一条没人接手的讨论串不再参与任何一行的判断。要它重新算数，
     先把它放回来；那之后又有一次没人恢复的失败，是新的一个钟。
     """
     project = _project(client)

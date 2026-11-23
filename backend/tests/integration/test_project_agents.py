@@ -524,7 +524,7 @@ def test_each_agent_keeps_its_own_thread_in_one_room(client, stub_hooks):
     room = _topic(client, pid, "two threads")
     reviewer = _add_agent(client, pid, handle="reviewer")
     seat = _seat(client, room, reviewer)
-    # Both answer in one 支线 of the room.
+    # Both answer in one 讨论串 of the room.
     thread = in_thread(client, room, "u")
 
     _turn(client, thread, "你好")

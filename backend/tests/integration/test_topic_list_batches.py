@@ -1,12 +1,12 @@
 """`GET /topics?project_id=` batches its per-project reads once across the page.
 
 The topic list renders every channel's row together with its sidebar signals
-(last activity, relevance, live cards, waits, unanswered questions, 支线,
+(last activity, relevance, live cards, waits, unanswered questions, 讨论串,
 replied-to-me, unresolved failures, and `my_tasks` — both the caller's own
 underway tasks and the borrowed `filling_in` rows). Several of those helpers
 ask the same underlying question:
 
-- which 支线 belong to these rooms (`threads_of_rooms`, `replied_to_me`,
+- which 讨论串 belong to these rooms (`threads_of_rooms`, `replied_to_me`,
   `threads_still_threads`);
 - which underway tasks belong to these rooms and when each last spoke
   (`tasks_of_rooms` twice, `underway_counts`, `underway_with`,
@@ -262,7 +262,7 @@ def _count(statements: list[str], pattern: re.Pattern[str]) -> int:
 
 
 def _seed_populated_project(client) -> tuple[str, list[str]]:
-    """A project with four channels, each holding 支线, own tasks, others'
+    """A project with four channels, each holding 讨论串, own tasks, others'
     tasks, acceptance cards, and open questions."""
     pid = post_project(client, json={"name": "Batched list"}, owner="alice").json()[
         "data"
@@ -881,7 +881,7 @@ def test_room_blocks_deduplicates_root_messages_and_routine_runs(client):
     assert _count(seen, _ROUTINE_RUNS_SELECT) == 1, [
         s for s in seen if _ROUTINE_RUNS_SELECT.search(s)
     ]
-    # 14 since the page reads who is answering in each 支线 from session_states
+    # 14 since the page reads who is answering in each 讨论串 from session_states
     # (one read of the running sessions) instead of the realtime process's
     # broker, so any backend process can serve it (`core/process_role.py`).
     assert len(seen) <= 14, f"expected <= 14 SQL statements, got {len(seen)}: {seen}"

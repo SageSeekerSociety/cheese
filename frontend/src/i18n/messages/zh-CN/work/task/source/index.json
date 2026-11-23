@@ -5,6 +5,6 @@
   "channel": "来自 #{title} 的一条消息",
   "quote": "{name}：{text}",
   "task": "来自任务「{title}」",
-  "thread": "来自 #{title} 的一条支线",
+  "thread": "来自 #{title} 的一条讨论串",
   "unknown": "没有记下这个任务是从哪来的"
 }

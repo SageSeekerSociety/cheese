@@ -12,7 +12,7 @@ The rules, as stated before the migration was written:
 - a channel made and archived after the conversion stays a channel;
 - no channel or private chat keeps a living document: a written one becomes a
   document of the project's own under its name, an empty one goes;
-- on a deployment where nothing has been used as a channel yet (no 支线 was
+- on a deployment where nothing has been used as a channel yet (no 讨论串 was
   ever opened), every archived room is one the conversion left.
 """
 

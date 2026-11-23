@@ -149,7 +149,7 @@ def _newest_block(client, room_id: str) -> str:
 
 
 def _thread(client, project_id: str, room_id: str, root_id: str) -> str:
-    """A 支线 under a message of the room, the way the browser opens one."""
+    """A 讨论串 under a message of the room, the way the browser opens one."""
     ids: list[str] = []
 
     async def _add() -> None:
@@ -186,7 +186,7 @@ def _another_room(client, project_id: str) -> str:
 
 
 def _say_in(client, project_id: str, conversation_id: str, author: str, *, ago):
-    """Someone said something in a conversation of the room — a 支线, a task."""
+    """Someone said something in a conversation of the room — a 讨论串, a task."""
     at = datetime.now(UTC) - ago
 
     async def _add() -> None:
@@ -209,9 +209,9 @@ def _say_in(client, project_id: str, conversation_id: str, author: str, *, ago):
 
 
 def test_an_agent_reply_in_a_thread_ends_the_rooms_wait(client):
-    """芝士答一条主线上的消息，是在那条消息的**支线**里说的：这条频道没有芝士
-    自己那条线。所以支线里的那句就是这间房被答了 —— 只认主线的话，@ 完芝士再去
-    支线里回一句，侧栏那颗红点七天都不会灭。"""
+    """芝士答一条主线上的消息，是在那条消息的**讨论串**里说的：这条频道没有芝士
+    自己那条线。所以讨论串里的那句就是这间房被答了 —— 只认主线的话，@ 完芝士再去
+    讨论串里回一句，侧栏那颗红点七天都不会灭。"""
     pid, rid = _room(client)
     _say(client, pid, rid, "alice", ago=timedelta(minutes=9), summons=True)
     said = _thread(client, pid, rid, _newest_block(client, rid))
@@ -221,7 +221,7 @@ def test_an_agent_reply_in_a_thread_ends_the_rooms_wait(client):
 
 
 def test_a_reply_in_another_rooms_thread_does_not_end_this_rooms_wait(client):
-    """只算这间房自己的支线：隔壁那间房里的支线，跟这间房的等不等没关系。"""
+    """只算这间房自己的讨论串：隔壁那间房里的讨论串，跟这间房的等不等没关系。"""
     pid, rid = _room(client)
     other = _another_room(client, pid)
     _say(client, pid, other, "alice", ago=timedelta(minutes=9), summons=True)
