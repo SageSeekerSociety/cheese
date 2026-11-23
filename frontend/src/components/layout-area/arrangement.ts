@@ -432,6 +432,34 @@ export function defaultWeights(defaults: LayoutArrangement, children: readonly (
 }
 
 /**
+ * The weights the page's default gives some of a split's children — the ones in sight,
+ * the others hidden — in order: each list of panels names the default child it shares a
+ * panel with. Null when no split of the default holds them all, each in a child of its own.
+ */
+export function defaultWeightsAmong(
+  defaults: LayoutArrangement,
+  children: readonly (readonly string[])[]
+): number[] | null {
+  const walk = (node: LayoutNode): number[] | null => {
+    if (!isSplit(node)) return null
+    const at = children.map((panels) =>
+      node.children.findIndex((child) => panelsUnder(child).some((id) => panels.includes(id)))
+    )
+    const ordered = at.every((i, k) => i >= 0 && (k === 0 || i > at[k - 1]))
+    if (ordered && children.length > 0) {
+      const all = weights(node.children)
+      return at.map((i) => all[i])
+    }
+    for (const child of node.children) {
+      const inner = walk(child)
+      if (inner) return inner
+    }
+    return null
+  }
+  return defaults.root ? walk(defaults.root) : null
+}
+
+/**
  * The sizes a split's children go back to, in px out of the `total` they fill now: a
  * child with a size of its own gets it (never more than the total leaves room for), the
  * others share the rest by their default weights.

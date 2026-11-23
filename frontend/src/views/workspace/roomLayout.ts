@@ -425,13 +425,14 @@ export function useRoomLayout(
         signal: tab.signal,
         alwaysRender: tab.alwaysRender,
         hidden: !inSight(tab.key),
+        // 一块来了、走了，对话和开着的那几块回到默认的份额（概览留着读者拖出来的宽度）。
+        evensOut: true,
       }
       if (tab.key === 'overview') return { ...base, bare: true, width: OVERVIEW_WIDTH }
       const place = placeOf(tab.key)
       return { ...base, titled: true, minWidth: 320, transient: tab.transient, group: place ?? undefined }
     })
-    // 没拖过的人：对话和右边一处对半分，宽屏（≥ 1440px）把多出来的那块给右边；两处都开着时三份。
-    const wide = window.innerWidth >= 1440
+    // 一处开着时它和对话对半分（文件那一处窄一些），两处都开着时三份；一块来了、走了都回到这几份。
     const declared = new Set(work.map((panel) => panel.id))
     const cell = (ids: string[], size?: number): LayoutNode[] => {
       const here = ids.filter((id) => declared.has(id))
@@ -453,10 +454,10 @@ export function useRoomLayout(
       arrangement: {
         direction: 'row',
         children: [
-          { panels: [CONVERSATION], size: wide ? 45 : 50 },
+          { panels: [CONVERSATION], size: 50 },
           ...cell(['overview']),
-          ...cell(['threads'], wide ? 55 : 50),
-          ...cell(['files', 'routines'], wide ? 55 : 50),
+          ...cell(['threads'], 50),
+          ...cell(['files', 'routines'], 40),
         ],
       },
       onActivated: () => {},

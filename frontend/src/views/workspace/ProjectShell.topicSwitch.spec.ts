@@ -71,6 +71,11 @@ vi.mock('@/api', async (importOriginal) => ({
   getAcceptCards: vi.fn(async () => ({ data: [], has_more: false })),
   // 频道概览里的任务：这里没有。
   listRoomTasks: vi.fn(async () => ({ data: [], total: 0 })),
+  // 频道的文件：概览里列着，这里没有。
+  listRoomAttachments: vi.fn(async () => ({ data: [], total: 0 })),
+  listRoomFiles: vi.fn(async () => ({ data: [], total: 0, truncated: false })),
+  listRoomOutputs: vi.fn(async () => ({ data: [], total: 0 })),
+  listRoomDocuments: vi.fn(async () => ({ data: [], total: 0 })),
   listTopicMembers: vi.fn((topicId: string) =>
     topicId === 'topic-a'
       ? Promise.resolve({ data: [member('old-member', 'Old Roster Person')], total: 1 })
@@ -79,6 +84,10 @@ vi.mock('@/api', async (importOriginal) => ({
   listFeedbackProposals: vi.fn((topicId: string) =>
     topicId === 'topic-a' ? Promise.resolve([proposal('b-a', 'Topic A proposal')]) : pendingB.proposals!.promise
   ),
+}))
+vi.mock('@/api/routines', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/api/routines')>()),
+  listProjectRoutines: vi.fn(async () => ({ data: [], total: 0 })),
 }))
 
 const store = vi.hoisted(() => ({ value: null as unknown }))

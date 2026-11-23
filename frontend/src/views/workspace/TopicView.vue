@@ -526,6 +526,18 @@ function openRoutine(id: string) {
   void router.replace({ query: { ...route.query, routine: id } })
   panelRef.value?.select?.('routines')
 }
+/**
+ * 桌面上概览里点了一件任务：在频道里打开它（「支线」那一处）。地址指着一条支线时也一样：概览是
+ * 频道的，不是那条支线的。
+ */
+function openFromOverview(taskId: string) {
+  reviewView.value = null
+  returnAsk.value = null
+  void router.push({
+    name: 'workspace-review',
+    params: { projectId: props.projectId, topicId: props.topicId, reviewTaskId: taskId },
+  })
+}
 /** 概览里点了一份文件：在「文件」那一块里打开它。 */
 function openOverviewFile(row: { kind: 'file' | 'document'; id: string; name: string }) {
   if (row.kind === 'document') void panelRef.value?.openDocument?.({ id: row.id, title: row.name })
@@ -1060,8 +1072,8 @@ void openPlace()
                     (id: string) => panelRef?.openDocument?.({ id, title: t('work.channel.overview.project') })
                   "
                   @jump="jumpTo"
-                  @open-task="(id: string) => (mdAndUp ? openTaskChat(id) : openTaskPage(id))"
-                  @open-delivery="openTask"
+                  @open-task="(id: string) => (mdAndUp ? openFromOverview(id) : openTaskPage(id))"
+                  @open-delivery="(id: string) => (mdAndUp ? openFromOverview(id) : openTask(id))"
                   @open-all="router.push({ name: 'project-tasks', params: { projectId }, query: { channel: topicId } })"
                   @mention-click="handleMentionClick"
                   @open-thread="showThread"

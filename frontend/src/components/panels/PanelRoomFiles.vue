@@ -159,13 +159,19 @@ function who(row: ConversationFile): string {
   display: flex;
   gap: 12px;
   min-width: 0;
+  white-space: nowrap;
 }
 
+/* 文件夹是次要的一句：窄的时候先截它，谁和什么时候照常一行。 */
 .room-files-panel__folder {
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.room-files-panel__meta > :not(.room-files-panel__folder) {
+  flex: none;
 }
 
 .room-files-panel__kept {
