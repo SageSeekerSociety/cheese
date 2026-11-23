@@ -301,7 +301,18 @@ export function placeBelow(arrangement: LayoutArrangement, panelId: string, near
   if (!near || !arrangement.root) return placePanel(arrangement, panelId)
   const fresh: LayoutCell = { panels: [panelId], active: panelId }
   const visit = (node: LayoutNode): LayoutNode => {
-    if (!isSplit(node)) return node === near ? { direction: 'column', children: [node, fresh], size: node.size } : node
+    // The panel it lands under keeps the larger share: what opens below is the helper.
+    if (!isSplit(node)) {
+      if (node !== near) return node
+      return {
+        direction: 'column',
+        children: [
+          { ...node, size: 70 },
+          { ...fresh, size: 30 },
+        ],
+        size: node.size,
+      }
+    }
     const at = node.children.indexOf(near)
     if (at >= 0 && node.direction === 'column') {
       const children = [...node.children]

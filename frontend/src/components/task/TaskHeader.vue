@@ -760,10 +760,21 @@ function actionTestId(id: string): string | undefined {
 .task-header__form {
   flex: none;
 }
+/* 框在一起的一组小图标按钮，和频道页头上那一组同一个样子。 */
 .task-header__parts {
   display: inline-flex;
   flex: none;
   gap: 2px;
+  align-items: center;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+.task-header__parts .task-header__part {
+  width: 30px;
+  min-width: 0;
+  height: 30px;
+  --v-icon-size-multiplier: 0.85;
 }
 /* 按下的样子和「概览」开着时一样（PanelToggle）。 */
 .task-header__part--on {
