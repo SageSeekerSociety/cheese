@@ -276,29 +276,6 @@ useCommands(roomCommands)
       @set="(level, until) => store.setNotifyLevel(topic.id, level, until)"
     />
 
-    <!-- The fixed things that can sit beside the conversation, one button each: opens the place
-         on it, or closes the place when it is the one shown. Phones show them as tabs instead.
-         Focus returns to the first one (data-panel-toggle) when the floating panel closes. -->
-    <div v-if="mdAndUp && panelThings?.length" class="topic-header__things">
-      <span v-for="(thing, i) in panelThings" :key="thing.key" class="topic-header__thing">
-        <BaseButton
-          kind="ghost"
-          size="sm"
-          class="topic-header__thing-button"
-          :class="{ 'topic-header__thing-button--on': panelShown === thing.key }"
-          :icon="thing.icon"
-          :data-panel-toggle="i === 0 ? '' : undefined"
-          :data-panel-thing="thing.key"
-          :aria-pressed="panelShown === thing.key ? 'true' : 'false'"
-          :aria-controls="panelControls"
-          :aria-label="thing.hint ?? thing.title"
-          :title="thing.hint ?? thing.title"
-          @click="emit('toggle-panel', thing.key)"
-        />
-        <span v-if="thing.signal?.kind === 'dot'" class="topic-header__thing-dot" aria-hidden="true" />
-      </span>
-    </div>
-
     <!-- 这一行常驻的只有标题、状态、成员。其余的都是偶尔才用的，按「做一件事 /
          看一个数」分成两段：专注模式、用量，编号垫在最底下。工作电脑在成员名册里。
          连接状态不在这里：连着是常态不用说，断了页头上自己会写「未连接」。 -->
@@ -339,6 +316,30 @@ useCommands(roomCommands)
         />
       </template>
     </AdaptiveMenu>
+
+    <!-- The fixed things that can sit beside the conversation, one button each: opens the place
+         on it, or closes the place when it is the one shown. Last in the row, above the place it
+         controls; what is about the channel itself (roster, notifications, the menu) sits before it. Phones show them as tabs instead.
+         Focus returns to the first one (data-panel-toggle) when the floating panel closes. -->
+    <div v-if="mdAndUp && panelThings?.length" class="topic-header__things">
+      <span v-for="(thing, i) in panelThings" :key="thing.key" class="topic-header__thing">
+        <BaseButton
+          kind="ghost"
+          size="sm"
+          class="topic-header__thing-button"
+          :class="{ 'topic-header__thing-button--on': panelShown === thing.key }"
+          :icon="thing.icon"
+          :data-panel-toggle="i === 0 ? '' : undefined"
+          :data-panel-thing="thing.key"
+          :aria-pressed="panelShown === thing.key ? 'true' : 'false'"
+          :aria-controls="panelControls"
+          :aria-label="thing.hint ?? thing.title"
+          :title="thing.hint ?? thing.title"
+          @click="emit('toggle-panel', thing.key)"
+        />
+        <span v-if="thing.signal?.kind === 'dot'" class="topic-header__thing-dot" aria-hidden="true" />
+      </span>
+    </div>
     <!-- 改名、删除两张表单两端共用一份，不能待在手机那一支里：桌面版也得够得着。 -->
     <AdaptiveDialog
       v-model="renaming"
@@ -489,6 +490,7 @@ useCommands(roomCommands)
   gap: 2px;
   align-items: center;
   padding: 2px;
+  margin-left: 8px;
   border: 1px solid var(--line);
   border-radius: var(--radius-md);
 }
