@@ -83,8 +83,9 @@ test.describe('平板横放（960–1180）', () => {
     await expect.poll(() => besideConversation(page)).toBe(true);
     await expect(page.locator('.panel-scrim')).toHaveCount(0);
 
-    // 只算这一页：刷新（再进来）又照宽度来，收着。
-    await page.reload();
+    // 只算这一页：再进这个频道又照宽度来，收着。按地址进，不是刷新：点「概览」时地址记下了
+    // 它（`?tab=overview`），带着这个地址刷新是地址点名要它开着。
+    await page.goto(new URL(page.url()).pathname);
     await expect(page.locator('[data-panel-toggle]')).toHaveAttribute('aria-pressed', 'false');
     await expect.poll(() => panelShown(page)).toBe(false);
 
