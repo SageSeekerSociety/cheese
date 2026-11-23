@@ -89,7 +89,7 @@ def test_a_check_in_read_before_the_backend_changed_ends_with_that_work(client):
         json={"project_id": project["id"], "title": "交接"},
         headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
-    # 芝士 answers in a 支线: that is the conversation its session works in.
+    # 芝士 answers in a 讨论串: that is the conversation its session works in.
     room = in_thread(client, room, "alice")
     topic = uuid.UUID(room)
 
@@ -190,7 +190,7 @@ def test_a_check_in_read_inside_the_sessions_work_leaves_nothing_running(client)
         json={"project_id": project["id"], "title": "中途"},
         headers=session_auth_headers("alice"),
     ).json()["data"]["id"]
-    # 芝士 answers in a 支线: that is the conversation its session works in.
+    # 芝士 answers in a 讨论串: that is the conversation its session works in.
     room = in_thread(client, room, "alice")
     topic = uuid.UUID(room)
     channel = FirstPromptOnly()

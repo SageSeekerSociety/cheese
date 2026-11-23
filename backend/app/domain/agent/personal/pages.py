@@ -242,7 +242,7 @@ async def named_place(reader: Reader, place) -> tuple[str, str, str]:
         reader, address.Numbered.channel, place.room.id, place.project_id
     )
     if place.thread is not None:
-        label = f"支线「{place.thread.title}」"
+        label = f"讨论串「{place.thread.title}」"
         return f"{label}（在频道「{place.room.title}」（{here}）里）", here, label
     label = f"频道「{place.room.title}」"
     return f"{label}（{here}）", here, label

@@ -72,7 +72,7 @@ def test_upgrade_block_to_topic(client, stub_hooks):
     # Whoever upgraded the message owns the task it became.
     assert new_topic["owner_handle"] == "owner"
 
-    # The message's 支线 became the task: its conversation hangs under it.
+    # The message's 讨论串 became the task: its conversation hangs under it.
     thread = client.get(
         f"/topics/{new_topic['id']}/thread", headers=session_auth_headers("owner")
     ).json()["data"]

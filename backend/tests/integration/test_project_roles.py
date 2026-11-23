@@ -14,7 +14,7 @@ The rules, stated before they were written:
 - a role someone holds is deleted only once they are moved to another;
 - a project has one mentor role, made the first time it is asked for;
 - a channel that lets only some roles speak refuses the others in its main
-  line, and lets everyone answer in a 支线 only while 支线 are left open.
+  line, and lets everyone answer in a 讨论串 only while 讨论串 are left open.
 """
 
 from tests.integration.conftest import (

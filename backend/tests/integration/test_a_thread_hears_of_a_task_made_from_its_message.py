@@ -1,8 +1,8 @@
-"""A 支线's teammate hears of a task made from the 支线's message while its
+"""A 讨论串's teammate hears of a task made from the 讨论串's message while its
 session is open.
 
-On dev a teammate answered in a 支线, then a person turned the message into a
-task, then asked the teammate in the same 支线 to do the work: it made a second
+On dev a teammate answered in a 讨论串, then a person turned the message into a
+task, then asked the teammate in the same 讨论串 to do the work: it made a second
 task under the same message. The channel's open tasks were said once, when the
 session opened, and never again. Only the session transport is stubbed: the
 routes, the turn and what its session is sent are the real ones.
@@ -37,10 +37,10 @@ def test_a_task_made_from_the_message_reaches_the_open_session(client, stub_hook
     thread = opened.json()["data"]["id"]
 
     _ask(client, thread, f"<@{seat}> 先看一眼")
-    assert "从这条支线的消息建的" not in stub_hooks.told
+    assert "从这条讨论串的消息建的" not in stub_hooks.told
 
     made = client.post(f"/blocks/{root['id']}/upgrade", json={}, headers=alice)
     assert made.status_code == 200, made.text
 
     _ask(client, thread, f"<@{seat}> 动手改吧")
-    assert "从这条支线的消息建的" in stub_hooks.last_prompt
+    assert "从这条讨论串的消息建的" in stub_hooks.last_prompt

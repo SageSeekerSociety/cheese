@@ -4,8 +4,8 @@
 房间 1317 条活。两条规矩，都是在人切页面时省下这一趟：
 
 1. 清单没变时服务端只回一行 header，不再把整份 body 传一遍；
-2. 画 rail、画概览的调用方一个块都不看，所以 `limit=0` 只带回支线本身 —— 并且带的
-   是**每一条**支线，不是「说过话的那几条」。
+2. 画 rail、画概览的调用方一个块都不看，所以 `limit=0` 只带回讨论串本身 —— 并且带的
+   是**每一条**讨论串，不是「说过话的那几条」。
 """
 
 from tests.integration.conftest import (
@@ -116,8 +116,8 @@ def test_the_room_task_list_serves_an_etag_and_304(client):
 
 
 def test_limit_zero_returns_every_thread_without_its_conversation(client):
-    """rails 只要支线本身。`limit=0` 是「每条最新零个块」，不是「把说过话的筛掉」：
-    没人说过话的那条照样要在清单里，否则房间的支线数会随「有没有人开口」变。"""
+    """rails 只要讨论串本身。`limit=0` 是「每条最新零个块」，不是「把说过话的筛掉」：
+    没人说过话的那条照样要在清单里，否则房间的讨论串数会随「有没有人开口」变。"""
     pid = _project(client)
     room = _room(client, pid, "运维")
     spoken = open_task(client, room, "说过话的")
@@ -132,7 +132,7 @@ def test_limit_zero_returns_every_thread_without_its_conversation(client):
         assert row["blocks"] == [], "调用方不看块，就别让它下载"
 
     # 不传 limit 仍然是「整份历史」：agent 读历史不能被悄悄截断。比块的总数，不比某
-    # 一条有没有块 —— 没人说过话的支线也有平台自己写的块（开任务那一条），按条断言会
+    # 一条有没有块 —— 没人说过话的讨论串也有平台自己写的块（开任务那一条），按条断言会
     # 把「平台写了块」误判成「短路没生效」。
     whole = client.get(f"/topics/{room}/tasks").json()["data"]["data"]
     assert sum(len(row["blocks"]) for row in whole) > 0, "不传 limit 时要带回对话"

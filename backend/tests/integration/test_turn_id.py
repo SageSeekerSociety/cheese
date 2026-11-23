@@ -21,7 +21,7 @@ def _topic(client) -> str:
 
 
 def test_turn_blocks_share_one_turn_id(client):
-    # 芝士 answers in a 支线, so that is where the turn's blocks are.
+    # 芝士 answers in a 讨论串, so that is where the turn's blocks are.
     tid = in_thread(client, _topic(client), "user-1")
     with room_socket(client, tid, "user-1") as ws:
         post_message(client, tid, "user-1", {"content": "@芝士 hi"})

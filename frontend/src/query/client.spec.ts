@@ -9,7 +9,7 @@ async function flush() {
   for (let i = 0; i < 10; i += 1) await new Promise((r) => setTimeout(r, 0))
 }
 
-// 频道推来「支线变了」：概览那一格标过期重读，对话栏同一刻也要这份去更新消息下面那一行。
+// 频道推来「讨论串变了」：概览那一格标过期重读，对话栏同一刻也要这份去更新消息下面那一行。
 // 两个都得拿到答案，不能一个把另一个作废掉。
 it('a refresh does not cancel a read someone else starts right after it', async () => {
   let reads = 0

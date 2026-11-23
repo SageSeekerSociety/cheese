@@ -56,7 +56,7 @@ def _service(client, channel: StubChannel) -> ChatService:
 
 
 def _room_with_a_teammate(client) -> str:
-    """A 支线 in a channel holding the project's own agent and a second one,
+    """A 讨论串 in a channel holding the project's own agent and a second one,
     "Second"."""
     project = post_project(client, {"name": "Handover"}, owner="alice")
     data = project.json()["data"]
@@ -75,7 +75,7 @@ def _room_with_a_teammate(client) -> str:
             await session.commit()
 
     asyncio.run(seat())
-    # The teammates answer in a 支线 of the channel they are seated in.
+    # The teammates answer in a 讨论串 of the channel they are seated in.
     return in_thread(client, data["root_topic_id"], "alice")
 
 

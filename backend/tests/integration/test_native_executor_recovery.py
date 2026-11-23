@@ -46,7 +46,7 @@ def test_native_original_executor_survives_full_service_recovery_and_busy_input(
         client, {"name": "Native executor recovery"}, owner="alice"
     ).json()["data"]
     project_id = uuid.UUID(project["id"])
-    # 芝士 answers in a 支线 of the channel.
+    # 芝士 answers in a 讨论串 of the channel.
     topic = uuid.UUID(in_thread(client, project["root_topic_id"], "alice"))
     runner = None
     operations = []

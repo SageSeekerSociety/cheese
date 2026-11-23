@@ -452,7 +452,7 @@ def test_an_unconnected_server_is_a_capability_line_and_one_room_notice(
 
     pid = _project(client, upstream)
     tid = _topic(client, pid)
-    # 芝士 answers in a 支线: the notice is said there, to the people talking
+    # 芝士 answers in a 讨论串: the notice is said there, to the people talking
     # with it, once per server; the channel's main line hears nothing of it.
     thread = in_thread(client, tid, "alice")
 

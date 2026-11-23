@@ -35,9 +35,9 @@ covers:
 | 有人改了房间里 agent 读过的一条消息 | `message_edited` | 现场；agent 读的是同一句旁边那条隐藏提示（`block/editing.py`） |
 | 定时投递到点 | `timed_delivery` | 现场；记录的 id 就是那条定时投递的 id，账本的事件指着它 |
 | 后端报错、前端报错 | `backend_error`、`frontend_error` | 只在管理后台；不属于任何对话，发生在哪个对话写在 `meta.conversation` |
-| 2026-10-07 之前支线以外没跑完的轮次（迁移 `52fee3dd7773` 搬过来的） | `turn_failed`、`platform_error`、`turn_timeout` | 现场；管理后台算在「报错」里 |
+| 2026-10-07 之前讨论串以外没跑完的轮次（迁移 `52fee3dd7773` 搬过来的） | `turn_failed`、`platform_error`、`turn_timeout` | 现场；管理后台算在「报错」里 |
 
-额度用完环境被释放、环境不再响应被换掉、一轮最终没答上这些要人动手的事仍然说在对话里。在支线里叫芝士，没答上的那一行落在支线里，主线那条消息下面写「没能回复，点开看原因」。
+额度用完环境被释放、环境不再响应被换掉、一轮最终没答上这些要人动手的事仍然说在对话里。在讨论串里叫芝士，没答上的那一行落在讨论串里，主线那条消息下面写「没能回复，点开看原因」。
 
 ## 一轮一行：分母 {#turns}
 
@@ -57,7 +57,7 @@ covers:
 
 `run_record.service.record` 在调用方的事务里写一行；`agent.run_records.record_now` 自己开事务、提交后推一帧 `run_record` 到对话的通道上。帧里那一份长得和一条事件块一样（`as_payload`，带 `run_record: true`），现场按块的样子排它，聊天区不收。重试到第几次、整理完没有、机器连上没有这几种会原地改写同一条（`restate_now`），前端按 id 换掉旧的那一份。
 
-支线里的记录同时推一份 `thread_status` 帧到频道主线（`agent.run_records.publish`）：主线那条消息下面那一行据此写芝士在排队、重试、整理上下文还是等环境。这一帧只实时推，不进断线重放的缓冲。
+讨论串里的记录同时推一份 `thread_status` 帧到频道（`agent.run_records.publish`）：主线那条消息下面那一行据此写芝士在排队、重试、整理上下文还是等环境。这一帧只实时推，不进断线重放的缓冲。
 
 `GET /topics/{id}/transcript` 把这一页时间范围里的会话原始记录（[原始记录](/dev/session-records)）、上线前轮次的那一行说明和运行记录合在一起按时间排好返回。侧栏的「在等机器」、消息有没有开始处理、孤儿轮次判断，都同时读块和运行记录。
 

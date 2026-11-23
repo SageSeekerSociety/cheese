@@ -86,7 +86,7 @@
       "taskPlaceholder": "填地址栏里的那个（如 ml-course/tasks/12）；留空就是我提的任务",
       "blankHint": "不填的项由芝士照目标补上，补完就开始。",
       "when": {
-        "mention": "有人 {'@'} 我或回复我的支线",
+        "mention": "有人 {'@'} 我或回复我的讨论串",
         "review": "有审阅等我处理",
         "filed": "任务提交审阅",
         "decided": "任务的审阅有结果",

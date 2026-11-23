@@ -1,4 +1,4 @@
-"""What a teammate answering in a 支线 is waiting for reaches the channel's main
+"""What a teammate answering in a 讨论串 is waiting for reaches the channel's main
 line: the line under the message says it is queued or retrying, not only that
 it is answering. A record of the channel itself is not told twice."""
 
@@ -33,12 +33,12 @@ def test_a_threads_queue_reaches_the_main_line(client):
 
     with room_socket(client, room, "alice") as ws:
         keep(room, "主线自己的")
-        keep(thread, "支线里的")
+        keep(thread, "讨论串里的")
         said = _until(
             ws,
             lambda f: (
                 f["type"] in ("thread_status", "run_record")
-                and f["record"]["content"] == "支线里的"
+                and f["record"]["content"] == "讨论串里的"
             ),
         )
     assert said["type"] == "thread_status"

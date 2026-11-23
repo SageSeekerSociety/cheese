@@ -1,12 +1,12 @@
-/** 交给过 AI 队友的支线里，发送键旁那颗头像。
+/** 交给过 AI 队友的讨论串里，发送键旁那颗头像。
  *
  * 规矩（没读过代码的人也能判断）：
- * - 支线里交给过队友之后，每句都交给它：头像一打开就睁着眼，是规则不是开关，点它不往正文里
+ * - 讨论串里交给过队友之后，每句都交给它：头像一打开就睁着眼，是规则不是开关，点它不往正文里
  *   写 @；不 @ 任何人就发出去，交给的是它。
  * - 只 @ 了人、没 @ AI 队友的一句只给那几个人：头像闭眼，发出去不交给队友。
  *
- * - 输入框空着时，提示语写「回复芝士…」，说清这里的话交给谁；还没交给过任何队友的支线照旧写
- *   「在支线中回复」。
+ * - 输入框空着时，提示语写「回复芝士…」，说清这里的话交给谁；还没交给过任何队友的讨论串照旧写
+ *   「在讨论串中回复」。
  *
  * 交给谁由后端答（`/messages/addressing` 的 `reason: 'thread'`，规矩本身由后端的测试钉着）。
  * 这里的替身按那几条规矩答，钉的是头像画的是它的回答。
@@ -22,7 +22,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const CHEESE = { handle: 'cheese-topica', label: '芝士' }
 
-/** 这条支线交给过队友没有（后端 `thread_teammate` 空不空）。 */
+/** 这条讨论串交给过队友没有（后端 `thread_teammate` 空不空）。 */
 const backend = vi.hoisted(() => ({ handed: true }))
 
 vi.mock('../../api/messages', async () => {
@@ -67,7 +67,7 @@ function mount() {
         agentSeat: CHEESE,
         agentName: CHEESE.label,
         alwaysSummon: false,
-        hint: '在支线中回复',
+        hint: '在讨论串中回复',
         atts: [],
         attsUploading: false,
         place: 'thread-1',
@@ -98,7 +98,7 @@ beforeEach(() => {
   backend.handed = true
 })
 
-describe('交给过队友的支线里', () => {
+describe('交给过队友的讨论串里', () => {
   it('一打开头像就睁着眼，是规则：点它不往正文里写 @', async () => {
     const { draft, avatar } = mount()
     await settle()
@@ -133,8 +133,8 @@ describe('交给过队友的支线里', () => {
   })
 })
 
-describe('支线输入框空着时的提示语', () => {
-  it('交给过队友的支线：写「回复芝士…」', async () => {
+describe('讨论串输入框空着时的提示语', () => {
+  it('交给过队友的讨论串：写「回复芝士…」', async () => {
     const { placeholder, shows } = mount()
     await settle()
     expect(shows('回复芝士…')).toBe(true)
@@ -151,12 +151,12 @@ describe('支线输入框空着时的提示语', () => {
     expect(shows('回复芝士…')).toBe(true)
   })
 
-  it('还没交给过任何队友的支线：照旧写「在支线中回复」', async () => {
+  it('还没交给过任何队友的讨论串：照旧写「在讨论串中回复」', async () => {
     backend.handed = false
     const { placeholder, shows } = mount()
     await settle()
-    expect(shows('在支线中回复')).toBe(true)
-    expect(placeholder()).toBe('在支线中回复')
+    expect(shows('在讨论串中回复')).toBe(true)
+    expect(placeholder()).toBe('在讨论串中回复')
   })
 
   it('英文界面：Reply to 芝士…', async () => {

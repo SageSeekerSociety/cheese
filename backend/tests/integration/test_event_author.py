@@ -36,14 +36,14 @@ PNG_1PX = bytes.fromhex(
 
 
 def _room(client, owner: str = "user-1") -> tuple[str, str, dict]:
-    """一条支线，外加芝士在这条支线里的凭据。"""
+    """一条讨论串，外加芝士在这条讨论串里的凭据。"""
     project = post_project(client, json={"name": "P"}, owner=owner).json()["data"]
     topic = client.post(
         "/topics",
         json={"project_id": project["id"], "title": "T"},
         headers=session_auth_headers(owner),
     ).json()["data"]
-    # 芝士 answers in a 支线, so that is where this file's conversation is.
+    # 芝士 answers in a 讨论串, so that is where this file's conversation is.
     thread = in_thread(client, topic["id"], owner)
     token = mint_scoped_token(project_id=project["id"], topic_id=thread)
     return project["id"], thread, {"Authorization": f"Bearer {token}"}

@@ -182,7 +182,7 @@ def test_the_room_is_told_what_was_saved(client):
 
 
 def test_saving_from_a_thread_is_said_in_that_thread_and_waits_on_nobody(client):
-    """在支线里按的保存，那句话说在支线里，不落到主线上；存好了就是办完了，
+    """在讨论串里按的保存，那句话说在讨论串里，不落到主线上；存好了就是办完了，
     不是「等人处理」。"""
     project_id = _project(client)
     room_id = _room(client, project_id)

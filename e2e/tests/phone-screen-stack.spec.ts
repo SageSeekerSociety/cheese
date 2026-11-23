@@ -22,7 +22,7 @@ test("手机上走一遍页面栈：根上没有 ←，每一层的顶栏写的�
   await expect(page.locator(".topic-row").first()).toBeVisible();
   await expect(backArrow(page)).toHaveCount(0);
 
-  // 现开一个频道和它下面的一条支线。
+  // 现开一个频道和它下面的一条讨论串。
   const stamp = Date.now();
   const channel = `页面栈 ${stamp}`;
   const topic = `组会前整理实验二的数据 ${stamp}`;
@@ -42,7 +42,7 @@ test("手机上走一遍页面栈：根上没有 ←，每一层的顶栏写的�
   await expect(bar(page)).toContainText(channel);
   await expect(backArrow(page)).toHaveCount(1);
 
-  // 再进它的那条支线（通知点进来也是这条路）：顶栏写这条支线说的事，「转为任务」也在
+  // 再进它的那条讨论串（通知点进来也是这条路）：顶栏写这条讨论串说的事，「转为任务」也在
   // 顶栏上；页里不再有第二行标题。
   const threadPath = `${new URL(page.url()).pathname}/threads/${thread.id}`;
   await page.evaluate((to) => {

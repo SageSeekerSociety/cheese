@@ -216,7 +216,7 @@ def test_a_retired_teammate_is_not_offered_as_someone_to_hand_work_to(
     _teammate(client, project_id, "reviewer", "评审")
     retired = _teammate(client, project_id, "old-hand", "退休")
     _retire(client, project_id, retired["id"])
-    # 芝士 answers in a 支线 of the channel.
+    # 芝士 answers in a 讨论串 of the channel.
     room = in_thread(client, _room(client, project_id), OWNER)
     answering = next(row for row in _agents(client, project_id) if row["is_default"])
 

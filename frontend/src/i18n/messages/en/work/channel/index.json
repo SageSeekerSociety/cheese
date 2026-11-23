@@ -6,10 +6,10 @@
   "joinFailed": "Couldn't join the channel",
   "leave": "Leave channel",
   "leaveFailed": "Couldn't leave the channel",
-  "notJoined": "You haven't joined this channel. Join to post in the main line, or reply in a message's thread.",
+  "notJoined": "You haven't joined this channel. Join to post in it, or reply in a message's thread.",
   "privateTip": "Private channel",
   "speakersFailed": "Couldn't save who can post",
   "speakersOnly": "Only {roles} can post in this channel",
-  "speakersOnlyMain": "Only {roles} can post in the main line. You can reply in threads",
+  "speakersOnlyMain": "Only {roles} can post in the channel itself. You can reply in threads",
   "visibilityFailed": "Couldn't change who can see the channel"
 }

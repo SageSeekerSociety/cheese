@@ -2,7 +2,7 @@
 // keyboard user has to be able to reach it and press it. Inside a document being
 // edited it stays out of the Tab order: there the caret walks the text.
 //
-// A `<#id>` names a channel, a task, a 支线 or a document. One that names none of
+// A `<#id>` names a channel, a task, a 讨论串 or a document. One that names none of
 // them says so: it never shows a borrowed name and never opens a channel that is not
 // there. A document the reader may not read says only that: no title (#3827).
 import type { ConversationRef } from '../types/conversationRef'
@@ -139,8 +139,8 @@ describe('a reference to what is not there', () => {
   })
 })
 
-describe('a reference to a 支线', () => {
-  it('reads as that 支线 and opens it in its channel', async () => {
+describe('a reference to a 讨论串', () => {
+  it('reads as that 讨论串 and opens it in its channel', async () => {
     const { chip, opened } = await settled(THREAD)
     expect(chip.textContent).toContain('截图在这里')
     chip.click()

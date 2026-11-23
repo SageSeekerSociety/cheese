@@ -1,5 +1,5 @@
 // 叫芝士的那条消息在哪儿被回答，「芝士在这儿干活」就在哪儿亮：消息在哪儿说的，就在哪儿
-// 回答 —— 频道主线、支线、任务、私聊都一样，发出去的那一刻那里就说它在干活。
+// 回答 —— 频道主线、讨论串、任务、私聊都一样，发出去的那一刻那里就说它在干活。
 import type { Component } from 'vue'
 import type { Topic } from '@/cx_types'
 
@@ -119,13 +119,13 @@ describe('叫芝士之后，哪里说它在干活', () => {
     expect(saidWorking(view)).toBe(true)
   })
 
-  it('在支线或任务里叫它，那里马上说它在干活', async () => {
+  it('在讨论串或任务里叫它，那里马上说它在干活', async () => {
     const view = await summonFrom({ topic: channel('room-of-a-task'), conversationId: 'task-conversation' })
 
     expect(saidWorking(view)).toBe(true)
   })
 
-  it('私聊里叫它，私聊里马上说它在干活 —— 私聊没有支线', async () => {
+  it('私聊里叫它，私聊里马上说它在干活 —— 私聊没有讨论串', async () => {
     const view = await summonFrom({ topic: channel('a-private-chat'), noUpgrade: true })
 
     expect(saidWorking(view)).toBe(true)

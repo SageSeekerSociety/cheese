@@ -37,7 +37,7 @@ def room(client):
         json={"project_id": project["id"], "title": "Work"},
         headers=session_auth_headers("alice"),
     ).json()["data"]
-    # 芝士 answers in a 支线 of the channel: that is where it publishes.
+    # 芝士 answers in a 讨论串 of the channel: that is where it publishes.
     thread = in_thread(client, topic["id"], "alice")
     token = mint_scoped_token(project_id=project["id"], topic_id=thread)
     return thread, {"Authorization": f"Bearer {token}"}

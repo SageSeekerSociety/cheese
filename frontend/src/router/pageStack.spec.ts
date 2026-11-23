@@ -104,8 +104,8 @@ describe('冷开落在页面栈中间', () => {
     expect(router.currentRoute.value.fullPath).toBe('/projects/p')
   })
 
-  // 支线是两层栈：支线 → 频道 → 频道列表。垫的也是这两层，一层一层退得回去。
-  it('支线页身后垫着频道和项目首页', async () => {
+  // 讨论串是两层栈：讨论串 → 频道 → 频道列表。垫的也是这两层，一层一层退得回去。
+  it('讨论串页身后垫着频道和项目首页', async () => {
     const router = makeRouter()
     await router.push('/projects/p/channels/t9/threads/x1')
 

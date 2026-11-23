@@ -46,7 +46,7 @@ def _platform_tool_names() -> set[str]:
 
 
 def _room(client) -> str:
-    """A 支线 of a channel: where 芝士 answers, in a session of its own."""
+    """A 讨论串 of a channel: where 芝士 answers, in a session of its own."""
     p = post_project(client, json={"name": "P"}, owner="user-1").json()["data"]
     room = client.post(
         "/topics",

@@ -22,7 +22,7 @@ covers:
 
 ```text
 cheese worktree <任务 id>      准备任务工作目录并输出路径；--prepare 依赖没变也重装
-cheese checkout                准备项目默认分支的代码并输出路径（支线）
+cheese checkout                准备项目默认分支的代码并输出路径（讨论串）
 cheese sync                    把任务的提交推上去
 cheese push-fix                把任务的新提交同步到它的 PR
 cheese serve <端口> "说明"      把跑在本机端口上的应用设为当前预览

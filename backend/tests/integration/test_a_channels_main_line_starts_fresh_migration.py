@@ -1,13 +1,13 @@
 """5a8c1e3f7b20: the first call to 芝士 in an old channel's main line reads
 only what was said after the release.
 
-Before the release, a call in a channel's main line was answered in a 支线
+Before the release, a call in a channel's main line was answered in a 讨论串
 opened under it; the main line had no session of its own. A teammate's read
 position there, and any session it had there, date from before that. The rules,
 as a person would state them:
 
 - The first turn in an old channel's main line is handed only what was said
-  after the release: not the questions it already answered in their 支线.
+  after the release: not the questions it already answered in their 讨论串.
 - That first turn opens a new conversation: nothing it resumes from October.
 - A private chat is not a channel; it keeps where it was and what it resumes.
 """

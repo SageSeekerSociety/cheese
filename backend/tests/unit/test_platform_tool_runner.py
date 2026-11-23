@@ -366,7 +366,7 @@ def test_a_write_back_says_what_does_not_read_like_state():
 def test_a_read_says_what_the_document_points_at_that_is_not_there():
     """A reference that names nothing is said when the document is read, not
     only when it was written: whoever reads it next is about to write it."""
-    warning = "`<#9f8e>` 指不到这个项目里的任何频道、任务或支线。"
+    warning = "`<#9f8e>` 指不到这个项目里的任何频道、任务或讨论串。"
     host = _doc_host(envelope={"warnings": [warning]})
 
     said = run("cheese_doc", {"action": "get"}, host)
@@ -588,7 +588,7 @@ def test_an_agent_changes_only_its_own_sessions_environment():
 
 
 def test_a_session_that_keeps_nothing_is_told_moving_does_not_change_it():
-    """A 支线's session, or an unstarted task's, that moves is told that its
+    """A 讨论串's session, or an unstarted task's, that moves is told that its
     work is still not kept and that a task is how to change the project, so it
     does not move again looking for a push."""
     assert "创建一个任务" in _moved(True)[1]

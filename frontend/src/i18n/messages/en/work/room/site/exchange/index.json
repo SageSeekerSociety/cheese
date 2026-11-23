@@ -1,6 +1,6 @@
 {
-  "asked": "{name} asked the main line",
-  "blocked": "{name} told the main line it cannot go on",
-  "done": "{name} told the main line it is done",
-  "told": "{name} passed this on from the main line"
+  "asked": "{name} asked the channel",
+  "blocked": "{name} told the channel it cannot go on",
+  "done": "{name} told the channel it is done",
+  "told": "{name} passed this on from the channel"
 }

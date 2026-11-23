@@ -237,7 +237,7 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.review.services._shared", "app.domain.project.repositories"),
         ("app.domain.review.services._shared", "app.domain.topic.repositories"),
         # --- room_task ---
-        # 任务是一条从房间里长出来的活，它落户时房间里要说的那两句（开一条支线的
+        # 任务是一条从房间里长出来的活，它落户时房间里要说的那两句（开一条讨论串的
         # 标题、这里开了一条活）由本包写。`block` 没有 service 层，只有 repository，
         # 和上面 thread 那条同形。2026-10-16 这批函数从 `topic.services` 搬来时
         # 发起方换了名字，被摸的 module 一个没多 —— 同一笔债挪了发起方。挪过来
@@ -261,7 +261,7 @@ _EXEMPT: frozenset[tuple[str, str]] = frozenset(
         ("app.domain.task.services", "app.domain.user.repositories"),
         ("app.domain.task.visibility_service", "app.domain.space.repositories"),
         ("app.domain.task.visibility_service", "app.domain.user.repositories"),
-        # --- thread --- 支线摘要要每条支线最后说的那一句：一次查询读一批块，
+        # --- thread --- 讨论串摘要要每条讨论串最后说的那一句：一次查询读一批块，
         # block 领域没有 service 层。
         ("app.domain.thread.reads", "app.domain.block.repositories"),
         # --- topic / topic_membership ---

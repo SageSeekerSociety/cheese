@@ -144,7 +144,7 @@ messages → coalesceSplitFencedCodeBlocks → collapseNotices → 渲染
 
 `WorkPanel.vue` 只负责两件事：**哪一页签在屏幕上、到底有哪几页签**；以及那些「必须一直对、不随页签切走」的信号。一页签渲染和取的东西都属于它自己那个 SFC。唯一的跨页签线是 `open-file`：文档里（或聊天里）一个 `<&path>` chip 打开那个文件 —— 房间文件里能画的走自己的页签；在频道里，其余的开一格只读的文件页签（`ProjectFileTab` → `useProjectFile` → `panels/ProjectFileView`），读项目当前版本（项目没有仓库、或仓库里没有这一份时，读频道自己的那一份），带行号就滚到那几行；在任务里走「改动」，读这件任务的版本。「改动」只看这一件任务：别的任务在它们自己的页面上，不在改动里的文件从「打开其他文件」按名字找。
 
-固定页签按页面分（`WorkPanel.vue` 的 `CHANNEL_TABS`）：频道是 `overview`（概览）、`threads`（支线）、`routines`（例行事务）；任务是 `overview`、`site`（现场）、`changes`（改动）、`preview`（预览）。手机上两种页面的第一格都是 `chat`（对话）。旧地址里的 `?tab=doc` / `?tab=tasks` 都并进概览了。另有一类**文件页签**，键是 `file:<路径>`，一份文件一个，「你看一下这个文件」因此也是一条能发的链接。
+固定页签按页面分（`WorkPanel.vue` 的 `CHANNEL_TABS`）：频道是 `overview`（概览）、`threads`（讨论串）、`routines`（例行事务）；任务是 `overview`、`site`（现场）、`changes`（改动）、`preview`（预览）。手机上两种页面的第一格都是 `chat`（对话）。旧地址里的 `?tab=doc` / `?tab=tasks` 都并进概览了。另有一类**文件页签**，键是 `file:<路径>`，一份文件一个，「你看一下这个文件」因此也是一条能发的链接。
 
 桌面频道页上这些不画成页签：对话旁边一次只显示一样（`WorkLayout.single`），每一样带布局层画的标题栏（`titled` 面板），面板往里放「返回」和名字（`work/WorkPaneHead.vue`），打开的一件任务把它的页头放进同一条标题栏；新打开的一份文件换掉上一份，「返回」回到打开它的那一样。切换靠页头那四颗按钮（`TopicHeader` 的 `panelThings`）。任务页、私聊页、手机和浮层照旧画页签。
 

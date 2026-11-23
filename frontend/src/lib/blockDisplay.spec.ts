@@ -181,7 +181,7 @@ describe('步骤清单在摘要里说什么', () => {
   })
 })
 
-describe('支线摘要里那条最后回复', () => {
+describe('讨论串摘要里那条最后回复', () => {
   it('后端随它带上清单结构时，摘要念的是清单正在做的那一步', () => {
     const message = listBlock([
       { subject: '读 main 源码', status: 'completed' },
@@ -199,7 +199,7 @@ describe('支线摘要里那条最后回复', () => {
   it('迁移前的清单（后端带来 `true`）也只念一步', () => {
     const reply = {
       author: 'cheese',
-      content: '✓ 取一份主干代码\n✓ 定位中间分割线\n✱ 查回复树的加载路径\n○ 在支线里回结论',
+      content: '✓ 取一份主干代码\n✓ 定位中间分割线\n✱ 查回复树的加载路径\n○ 在讨论串里回结论',
       created_at: '2026-10-12T00:00:00Z',
       checklist: true as const,
     }

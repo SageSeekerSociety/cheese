@@ -29,9 +29,9 @@ covers:
 | 实例 | `agent_instances` | 它在这个项目里是谁、在这里学到了什么 |
 | 会话 | `agent_sessions` | 一段对话（频道或任务）里的会话，可以随时丢掉 |
 
-`agent_sessions` 的唯一索引是 `(conversation_id, agent_handle, harness)`（`uq_agent_sessions_conversation`），所以一间房可以同时坐几个队友、各留各的对话，每条任务也有自己的会话。`conversation_id` 指向登记表 `conversations(id, project_id, kind)`：`kind` 是 `room`、`task` 或 `thread`，id 就是频道、任务或支线自己的 id，由数据库触发器在它们插入和删除时维护，应用不写它。支线原地转成任务时任务沿用支线的 id，这一行只把 `kind` 改成 `task`，会话照旧挂在它上面（见[任务与工作目录](/dev/tasks)）。房间范围的问题（房间的机器、换机、清理）问的是房间自己和它所有任务的会话：`conversation/services.of_room`。`agent_handle` 取的是 `ResolvedAgent.handle`——和这个 agent 的记忆池同名，不是实例的 uuid，也不是署名的 handle（`cheese-<频道十六进制>`）：后者答「谁做了这件事」，它答「这是谁的对话」。一个从没配过 agent 的项目根本没有实例行，而 `NULL` 在唯一索引里不等于 `NULL`。把频道交给另一个队友不丢东西：新队友查一个不存在的键、从头开始，交回来时旧行还在。
+`agent_sessions` 的唯一索引是 `(conversation_id, agent_handle, harness)`（`uq_agent_sessions_conversation`），所以一间房可以同时坐几个队友、各留各的对话，每条任务也有自己的会话。`conversation_id` 指向登记表 `conversations(id, project_id, kind)`：`kind` 是 `room`、`task` 或 `thread`，id 就是频道、任务或讨论串自己的 id，由数据库触发器在它们插入和删除时维护，应用不写它。讨论串原地转成任务时任务沿用讨论串的 id，这一行只把 `kind` 改成 `task`，会话照旧挂在它上面（见[任务与工作目录](/dev/tasks)）。房间范围的问题（房间的机器、换机、清理）问的是房间自己和它所有任务的会话：`conversation/services.of_room`。`agent_handle` 取的是 `ResolvedAgent.handle`——和这个 agent 的记忆池同名，不是实例的 uuid，也不是署名的 handle（`cheese-<频道十六进制>`）：后者答「谁做了这件事」，它答「这是谁的对话」。一个从没配过 agent 的项目根本没有实例行，而 `NULL` 在唯一索引里不等于 `NULL`。把频道交给另一个队友不丢东西：新队友查一个不存在的键、从头开始，交回来时旧行还在。
 
-任务的会话和同一位队友在房间里的会话分开：状态目录按 `<队友>@<任务 id>` 取（`room/sessions/`），会话凭证带 `k` = 任务 id，只能对这条任务动手（`core/sandbox_auth.py`）；频道主线和支线的会话凭证带 `scratch`：改动留不下（见[频道里的会话](#scratch)），启动环境里是 `CHEESE_KEEPS_NOTHING`；支线转成任务后，空闲的会话带着改动留得下的凭证重开，接着同一段对话。broker 上任务的频道就是任务 id。
+任务的会话和同一位队友在房间里的会话分开：状态目录按 `<队友>@<任务 id>` 取（`room/sessions/`），会话凭证带 `k` = 任务 id，只能对这条任务动手（`core/sandbox_auth.py`）；频道和讨论串的会话凭证带 `scratch`：改动留不下（见[频道里的会话](#scratch)），启动环境里是 `CHEESE_KEEPS_NOTHING`；讨论串转成任务后，空闲的会话带着改动留得下的凭证重开，接着同一段对话。broker 上任务的频道就是任务 id。
 
 ## 一轮是一个区间 {#turn}
 
@@ -52,14 +52,14 @@ covers:
 
 ### 频道里的会话 {#scratch}
 
-频道主线和支线的会话改动留不下：判断在 `Place.keeps_work`（`room_task/place.py`），只有开着的任务留得下，支线里例行任务执行的那一轮除外。主线上叫到芝士，答在主线，由频道自己那条会话答（`agent_sessions` 的键是频道 id）；它的开场和支线一样说明在哪、主线上之前说了什么、频道里还在进行的任务（`room/thread_context.py` 的 `channel_context`），只少了支线挂着的那条消息。这时一轮的执行凭证带 `scratch`（`core/sandbox_auth.py`），执行路由（`api/routes/execution.py`）按机器分两种：
+频道和讨论串的会话改动留不下：判断在 `Place.keeps_work`（`room_task/place.py`），只有开着的任务留得下，讨论串里例行任务执行的那一轮除外。频道里叫到芝士，答在主线，由频道自己那条会话答（`agent_sessions` 的键是频道 id）；它的开场和讨论串一样说明在哪、频道里之前说了什么、频道里还在进行的任务（`room/thread_context.py` 的 `channel_context`），只少了讨论串挂着的那条消息。这时一轮的执行凭证带 `scratch`（`core/sandbox_auth.py`），执行路由（`api/routes/execution.py`）按机器分两种：
 
 - 机器是这条会话独占的（它自己的沙箱，租约上 `own` 为真）：读、跑命令、改文件都照常，只拒绝把改动带出机器的调用——同步检查点和项目的 MCP 服务。
 - 不在自己的沙箱里（直接跑在一台人自己的电脑上）：只能读，和文档芝士借房间机器时一样，外加 Claude Code 自己的 `Read`。
 
 执行路由由设备连接的属主服务，发布应用时属主留在旧镜像上；所以这张凭证同时带 `ro`，认不得 `scratch` 的旧属主照只读处理，换成新属主后才按上面两种走。
 
-这类会话的代码从 `cheese checkout` 来：会话的工作目录不是仓库，任务的工作目录要等任务开始，所以它在 `~/.cheese/checkout` 检出项目的默认分支。仓库凭证不在执行路由上管：机器上的 git、`gh`、`fj` 取凭证时，`/sandbox/forge-token` 按凭证里的会话问 `session_keeps_work`，留不下的拿到只读令牌（GitHub 是只要读权限的安装令牌外加 `actions: write`，Forgejo 是带 `read:*` 范围的令牌，见[令牌](/dev/forge#tokens)），能读代码、PR 和 issue，推送和写都被托管方拒绝；GitHub 中转也不替它推送。支线里例行任务执行的那一轮同样只读仓库，但在 GitHub 上能重跑、取消 CI，所以值守部署的例行任务遇到偶发失败可以自己重跑；`actions: write` 也让它能手动触发（`workflow_dispatch`）仓库里任何一条声明了这个触发方式的 workflow，那一次运行走仓库自己的流水线和闸门。它留得下的是交回的结果和房间里的文件，改代码要提议任务。
+这类会话的代码从 `cheese checkout` 来：会话的工作目录不是仓库，任务的工作目录要等任务开始，所以它在 `~/.cheese/checkout` 检出项目的默认分支。仓库凭证不在执行路由上管：机器上的 git、`gh`、`fj` 取凭证时，`/sandbox/forge-token` 按凭证里的会话问 `session_keeps_work`，留不下的拿到只读令牌（GitHub 是只要读权限的安装令牌外加 `actions: write`，Forgejo 是带 `read:*` 范围的令牌，见[令牌](/dev/forge#tokens)），能读代码、PR 和 issue，推送和写都被托管方拒绝；GitHub 中转也不替它推送。讨论串里例行任务执行的那一轮同样只读仓库，但在 GitHub 上能重跑、取消 CI，所以值守部署的例行任务遇到偶发失败可以自己重跑；`actions: write` 也让它能手动触发（`workflow_dispatch`）仓库里任何一条声明了这个触发方式的 workflow，那一次运行走仓库自己的流水线和闸门。它留得下的是交回的结果和房间里的文件，改代码要提议任务。
 
 ## 后台的 runner 与 broker {#background}
 

@@ -4,9 +4,9 @@ The rules, stated before the code:
 
 - a task turned from a message quotes that message, and names the
   conversation it is in, so the page can open it there: the main line, or the
-  支线 when it was a reply in one;
+  讨论串 when it was a reply in one;
 - a task an AI teammate creates quotes the person's message that asked for it:
-  in a 支线, the latest thing a person said there; in the main line, the latest
+  in a 讨论串, the latest thing a person said there; in the main line, the latest
   message addressed to that teammate, never someone talking to someone else;
 - a task nobody made from a message quotes nothing.
 
@@ -200,7 +200,7 @@ def test_the_asking_message_is_found_with_one_identity_question_per_window(clien
     most twice: the handles once, and which of them carry a binding once.
     """
     project, channel, seat = _channel(client)
-    # With someone else in the project, the message the 支线 hangs under calls
+    # With someone else in the project, the message the 讨论串 hangs under calls
     # nobody: no turn runs alongside the read this test counts.
     join_project_team(client, project, "bob")
     root = post_message(client, channel, "alice", {"content": "对话栏有问题"})

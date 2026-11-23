@@ -96,7 +96,7 @@ async def _a_topic(factory) -> uuid.UUID:
         room = await TopicService(session).create(
             project_id=project.id, title="讨论", created_by="u"
         )
-        # 芝士 answers in a 支线 of the channel.
+        # 芝士 answers in a 讨论串 of the channel.
         topic_id = await thread_in(session, room, "u")
         await session.commit()
     return topic_id

@@ -107,7 +107,7 @@ def _planted(
 def _converted_thread(
     client, project_id: str, room_id: str, *, status=TaskStatus.open, closing=False
 ) -> str:
-    """一条支线原地转成了活：`threads` 行留着（它挂住那条消息），活拿了它的 id，
+    """一条讨论串原地转成了活：`threads` 行留着（它挂住那条消息），活拿了它的 id，
     登记表里这条对话是 `task`。
 
     `closing` 是「最后一步交付已经落地、芝士正在收尾」——仍然 `open`，但已经不在
@@ -123,7 +123,7 @@ def _converted_thread(
                     id=uuid.UUID(thread),
                     project_id=uuid.UUID(project_id),
                     room_id=uuid.UUID(room_id),
-                    title="从支线转出来的活",
+                    title="从讨论串转出来的活",
                     owner_handle="alice",
                     created_by="alice",
                     status=status,
@@ -166,7 +166,7 @@ def _open(client, handle: str, topic_id: str) -> None:
 
 def _join(client, room_id: str, handle: str) -> None:
     """这个人加入这个频道（浏览器里点「加入」那一步）。主线发言要先加入；
-    答在支线里不用（`channelJoinToPost`）。"""
+    答在讨论串里不用（`channelJoinToPost`）。"""
     r = client.post(f"/topics/{room_id}/join", headers=session_auth_headers(handle))
     assert r.status_code == 200, r.text
 
@@ -276,10 +276,10 @@ def _said(client, topic_id: str, handle: str, content: str, **extra) -> dict:
 def _answered_in_a_thread(
     client, project: str, *, opened_first: bool = False
 ) -> tuple[str, str]:
-    """alice 在频道里开了条支线、在里面问了一句，芝士在支线里答了她。
+    """alice 在频道里开了条讨论串、在里面问了一句，芝士在讨论串里答了她。
 
-    返回 (频道 id, 支线 id)。这是真实的那一幕：芝士答一条主线上的消息，答在**那条
-    消息的支线里**，不在主线。`opened_first` 让 alice 在这一切之前先打开一次频道。
+    返回 (频道 id, 讨论串 id)。这是真实的那一幕：芝士答一条主线上的消息，答在**那条
+    消息的讨论串里**，不在主线。`opened_first` 让 alice 在这一切之前先打开一次频道。
     """
     room = _room(client, project)
     if opened_first:
@@ -351,9 +351,9 @@ def test_opening_the_channel_puts_it_out_for_that_person_only(client):
 
 
 def test_a_teammates_answer_in_a_thread_lights_the_channel_row(client):
-    """芝士在我那条消息的支线里答我：亮的是那间频道那一行。
+    """芝士在我那条消息的讨论串里答我：亮的是那间频道那一行。
 
-    侧栏上那一行是频道，而芝士答一条主线上的消息从来答在支线里（`_answering_in`）：
+    侧栏上那一行是频道，而芝士答一条主线上的消息从来答在讨论串里（`_answering_in`）：
     只认主线的话，这件事在侧栏上无处可亮。
     """
     project = _project(client)
@@ -363,7 +363,7 @@ def test_a_teammates_answer_in_a_thread_lights_the_channel_row(client):
 
 
 def test_opening_the_channel_puts_out_an_answer_that_landed_in_a_thread(client):
-    """打开频道就灭，答在支线里的也一样。"""
+    """打开频道就灭，答在讨论串里的也一样。"""
     project = _project(client)
     room, _thread = _answered_in_a_thread(client, project)
     assert _room_row(client, project, room, "alice")["replied_to_me"] is True
@@ -385,9 +385,9 @@ def test_opening_the_channel_before_an_answer_lands_does_not_count(client):
 
 
 def test_reading_that_thread_itself_also_counts_as_having_handled_it(client):
-    """在那条支线里读过了也算处理了，不必再回频道点一次。
+    """在那条讨论串里读过了也算处理了，不必再回频道点一次。
 
-    支线和频道各有一条已读位（`thread.reads` 的规矩），读的是哪一条都算看过这条回复
+    讨论串和频道各有一条已读位（`thread.reads` 的规矩），读的是哪一条都算看过这条回复
     —— 只有两处都还没读过，它才继续亮着。
     """
     project = _project(client)
@@ -589,7 +589,7 @@ def _incomplete(row: dict) -> datetime | None:
 def test_a_failed_turn_lights_the_task_row_and_the_room_above_it(client):
     """一件活停下来报错：它自己那一行亮，上面那间房也跟着亮。
 
-    频道那一格认的是它名下的活（`_unresolved_failures` 把频道自己那条线、支线和名下
+    频道那一格认的是它名下的活（`_unresolved_failures` 把频道自己那条线、讨论串和名下
     的活合起来取最早的一条）—— 名下一件活报错停下，人得在侧栏上看得见。
     """
     project = _project(client)
@@ -632,7 +632,7 @@ def test_the_room_own_line_breaking_lights_the_room_row_alone(client):
 
 
 def test_a_failure_in_a_thread_belongs_to_the_room(client):
-    """答在支线里的一条坏掉的轮次，亮的还是那间频道 —— 支线是房间自己在说话。"""
+    """答在讨论串里的一条坏掉的轮次，亮的还是那间频道 —— 讨论串是房间自己在说话。"""
     project = _project(client)
     room = _room(client, project)
     thread = in_thread(client, room, "alice")
@@ -799,7 +799,7 @@ def test_only_an_input_the_session_read_clears_it(client):
 
 
 def test_a_closed_task_that_was_a_thread_does_not_light_the_channel(client):
-    """支线原地转成的那件活已经关了：`threads` 行还留着，但关了的活不点亮任何一行。
+    """讨论串原地转成的那件活已经关了：`threads` 行还留着，但关了的活不点亮任何一行。
 
     它没在「还有事的活」里，也不能因为那行 `threads` 又折回频道 —— 那会把一件
     已经关掉的工作的旧错误重新挂到频道上。
@@ -818,7 +818,7 @@ def test_a_closed_task_that_was_a_thread_does_not_light_the_channel(client):
 
 
 def test_a_closing_task_that_was_a_thread_does_not_light_the_channel(client):
-    """收尾窗口里的活（最后一步已落地、正在写总结）也不是频道自己的支线。"""
+    """收尾窗口里的活（最后一步已落地、正在写总结）也不是频道自己的讨论串。"""
     project = _project(client)
     room = _room(client, project)
     task = _converted_thread(client, project, room, closing=True)

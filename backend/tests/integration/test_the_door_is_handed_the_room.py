@@ -38,7 +38,7 @@ from tests.integration.conftest import (
     session_token,
 )
 
-#: ``room_of``: the union over a room's tasks and 支线, aliased ``inside``. The
+#: ``room_of``: the union over a room's tasks and 讨论串, aliased ``inside``. The
 #: two arms are adjacent in it, so the pattern is the seam between them — a
 #: notification read that correlates on both tables is not this lookup.
 # Which room a conversation is in: asked on its own (`conversations.room_of`)

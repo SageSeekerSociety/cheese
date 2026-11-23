@@ -231,7 +231,7 @@ async function mountThread(threadId: string, block: Block, start?: RouteLocation
   return { ...view, router, threadFullPath }
 }
 
-describe('支线里的资料库文档那一行', () => {
+describe('讨论串里的资料库文档那一行', () => {
   it.each([DESKTOP, PHONE])('%i 宽度点那一行进入对应文档页', async (width) => {
     widthIs(width)
     const threadId = `document-thread-${sequence}`
@@ -281,7 +281,7 @@ describe('支线里的资料库文档那一行', () => {
     expect(host.reviewEdits).toHaveLength(0)
   })
 
-  it('手机上顶栏的 ← 回的是来时的支线，不是资料库列表', async () => {
+  it('手机上顶栏的 ← 回的是来时的讨论串，不是资料库列表', async () => {
     widthIs(PHONE)
     const threadId = `back-thread-${sequence}`
     const view = await mountThread(threadId, documentCardBlock(threadId, ++sequence, [{ old: 'a', new: 'b' }]))
@@ -289,14 +289,14 @@ describe('支线里的资料库文档那一行', () => {
     await fireEvent.click(await view.findByRole('button', { name: /查看改动/ }))
     await waitFor(() => expect(view.router.currentRoute.value.name).toBe('project-document'))
 
-    // 顶上那颗 ← 由文档页接管，说法是「返回支线」（不是「返回资料库」）。
-    await waitFor(() => expect(topBarBack.value?.label).toBe('返回支线'))
+    // 顶上那颗 ← 由文档页接管，说法是「返回讨论串」（不是「返回资料库」）。
+    await waitFor(() => expect(topBarBack.value?.label).toBe('返回讨论串'))
 
     const go = vi.spyOn(window.history, 'go')
     const replace = vi.spyOn(view.router, 'replace')
     topBarBack.value!.onBack()
 
-    // 真正走的是 closeDoc：身后那一格正是来时的支线，退一格就到它。
+    // 真正走的是 closeDoc：身后那一格正是来时的讨论串，退一格就到它。
     expect(go).toHaveBeenCalledWith(-1)
     expect(view.router.options.history.state?.back).toBe(view.threadFullPath)
     // 不是把「返回资料库」那一页 replace 上来。
@@ -327,7 +327,7 @@ describe('支线里的资料库文档那一行', () => {
     expect(host.reviewEdits).toHaveLength(0)
 
     await waitFor(() => expect(topBarBack.value?.label).toBe('返回资料库'))
-    // 身后那一格正是资料库列表：退一格就到它（不是退回来时的支线）。
+    // 身后那一格正是资料库列表：退一格就到它（不是退回来时的讨论串）。
     const go = vi.spyOn(window.history, 'go')
     const replace = vi.spyOn(view.router, 'replace')
     topBarBack.value!.onBack()
@@ -351,7 +351,7 @@ describe('支线里的资料库文档那一行', () => {
     await waitFor(() => expect(view.router.currentRoute.value.fullPath).toBe(`/projects/${SLUG}/library`))
   })
 
-  it('从支线打开的那一份 review，不会跟到另一份文档上', async () => {
+  it('从讨论串打开的那一份 review，不会跟到另一份文档上', async () => {
     const threadId = `leak-thread-${sequence}`
     const view = await mountThread(threadId, documentCardBlock(threadId, ++sequence, [{ old: 'a', new: 'b' }]))
 

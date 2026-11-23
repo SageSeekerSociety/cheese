@@ -112,7 +112,7 @@ def test_an_unanswered_question_puts_the_room_in_the_waiting_column(
 ):
     seed_user(client, "alice")
     pid, room = _room(client)
-    # 芝士在支线里回答，题也在那里问。
+    # 芝士在讨论串里回答，题也在那里问。
     thread = in_thread(client, room, "alice")
 
     with active_ask(client, stub_hooks, monkeypatch, thread, actor="alice") as headers:
@@ -127,7 +127,7 @@ def test_answering_it_takes_the_room_back_out(client, stub_hooks, monkeypatch):
     """已回答的问题不应让房间长期停留在待回答 —— 判据是**最近一条**。"""
     seed_user(client, "alice")
     pid, room = _room(client)
-    # 芝士在支线里回答，题也在那里问。
+    # 芝士在讨论串里回答，题也在那里问。
     thread = in_thread(client, room, "alice")
     with active_ask(client, stub_hooks, monkeypatch, thread, actor="alice") as headers:
         data = _ask(client, thread, headers)
@@ -146,7 +146,7 @@ def test_a_second_question_after_an_answered_one_still_counts(
     """一组答完不等于房间没题在等 —— 后面新问的那组还没答，仍然停在待回答。"""
     seed_user(client, "alice")
     pid, room = _room(client)
-    # 芝士在支线里回答，题也在那里问。
+    # 芝士在讨论串里回答，题也在那里问。
     thread = in_thread(client, room, "alice")
     with active_ask(client, stub_hooks, monkeypatch, thread, actor="alice") as headers:
         data = _ask(client, thread, headers)
@@ -204,7 +204,7 @@ def test_the_person_who_started_the_turn_hears_the_question(
     alice = seed_user(client, "alice")
     bob = seed_user(client, "bob")
     pid, room = _room(client)
-    # 芝士在支线里回答，题也在那里问。
+    # 芝士在讨论串里回答，题也在那里问。
     thread = in_thread(client, room, "alice")
     join_project_team(client, pid, "bob")
 
@@ -215,7 +215,7 @@ def test_the_person_who_started_the_turn_hears_the_question(
     assert row["contextMetadata"]["question"] == "预算按哪个口径统计"
     assert row["contextMetadata"]["topicId"] == room
     assert row["contextMetadata"]["topicTitle"] == "预算复核"
-    # 题问在支线里：通知记的也是那条支线，点开才落得到那条消息上（频道主线上没有它）。
+    # 题问在讨论串里：通知记的也是那条讨论串，点开才落得到那条消息上（频道主线上没有它）。
     assert row["contextMetadata"]["threadId"] == thread
     assert row["read"] is False
     assert _questions(client, alice) == []  # 未发起这一轮的人不接收
@@ -249,7 +249,7 @@ def test_a_question_in_a_turn_the_platform_started_reaches_nobody(
 ):
     """平台发起的轮次（resume、各类提醒）作者是 system。
 
-    频道和支线里没有「这条活的人」，所以这种轮次里的提问指不到具体的人，也就谁也不
+    频道和讨论串里没有「这条活的人」，所以这种轮次里的提问指不到具体的人，也就谁也不
     通知：把一条多数人不需要处理的通知发给整个名册，代价是他们此后关闭这个渠道。
     题照样挂在房间里等回答 —— 等的只是没有名字。问在一条活里的题不在这一条上：那
     里等它的人有名字（下面那条）。
@@ -257,7 +257,7 @@ def test_a_question_in_a_turn_the_platform_started_reaches_nobody(
     alice = seed_user(client, "alice")
     bob = seed_user(client, "bob")
     pid, room = _room(client)
-    # 芝士在支线里回答，题也在那里问。
+    # 芝士在讨论串里回答，题也在那里问。
     thread = in_thread(client, room, "alice")
     join_project_team(client, pid, "bob")
 
@@ -338,7 +338,7 @@ def test_answering_the_question_settles_its_notification(
     """
     alice = seed_user(client, "alice")
     _pid, room = _room(client)
-    # 芝士在支线里回答，题也在那里问。
+    # 芝士在讨论串里回答，题也在那里问。
     thread = in_thread(client, room, "alice")
     with active_ask(client, stub_hooks, monkeypatch, thread, actor="alice") as headers:
         data = _ask(client, thread, headers)

@@ -71,7 +71,7 @@ def landing(
         case EventAbout.thread:
             if thread_id is None:
                 # i18n-exempt: developer declaration check, never shown to a user
-                raise ValueError("支线的事要有支线：thread_id 不能空")
+                raise ValueError("讨论串的事要有讨论串：thread_id 不能空")
             return Landing(project_id=project_id, conversation_id=thread_id)
         case EventAbout.room:
             if room_id is None:

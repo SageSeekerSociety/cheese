@@ -1,17 +1,17 @@
-"""A 支线's reading reaches the message it hangs under.
+"""A 讨论串's reading reaches the message it hangs under.
 
 That message stays in the channel's main line, and the platform still counts it
-as the 支线's own first input: a session there is held to answer it. Reading the
-支线 — which is what the agent's chat tools do, through this endpoint — has to
+as the 讨论串's own first input: a session there is held to answer it. Reading the
+讨论串 — which is what the agent's chat tools do, through this endpoint — has to
 return it, or the one message the teammate is being asked about is nowhere to
 be read.
 
-- the newest page puts it in front of the 支线's own blocks, and the files sent
+- the newest page puts it in front of the 讨论串's own blocks, and the files sent
   with it come along;
-- it reads by id from the 支线 as well;
+- it reads by id from the 讨论串 as well;
 - paging back reaches it once, and no page serves it twice;
 - the channel's main line is unchanged: the message is its own, and read once;
-- a neighbouring 支线's message is not reachable from this one.
+- a neighbouring 讨论串's message is not reachable from this one.
 """
 
 import asyncio

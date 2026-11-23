@@ -201,7 +201,7 @@ def _private_room(client) -> tuple[str, str, str]:
 
 
 def _shared_room(client) -> tuple[str, str, str]:
-    """A 支线 of a shared channel: where a message calling 芝士 is answered."""
+    """A 讨论串 of a shared channel: where a message calling 芝士 is answered."""
     room, project = _room(client)
     return in_thread(client, room, "alice"), project, "alice"
 
@@ -315,9 +315,9 @@ def test_an_edit_in_a_task_wakes_the_teammate_it_newly_names(client, stub_hooks)
 
 
 def _two_teammates(client) -> dict:
-    """A channel of alice's with two AI seats on it, and a 支线 of that channel.
+    """A channel of alice's with two AI seats on it, and a 讨论串 of that channel.
 
-    `place` is the 支线 — where a person talks when they call a teammate;
+    `place` is the 讨论串 — where a person talks when they call a teammate;
     `channel` is the main line, where a message is answered too. bob is in the
     project, so a message there that names nobody calls nobody.
     `own` is the seat the channel falls back to, `other` the one it does not.
@@ -420,7 +420,7 @@ def test_an_edit_does_not_wake_a_teammate_the_message_already_named(client, stub
 def test_an_edit_to_a_main_line_message_hands_the_teammate_the_main_line(
     client, stub_hooks
 ):
-    """主线上那条消息被编辑后点到的队友，就在主线上开这一轮，不开支线。"""
+    """主线上那条消息被编辑后点到的队友，就在主线上开这一轮，不开讨论串。"""
     room = _two_teammates(client)
     channel, other = room["channel"], room["other"]
     said = _say(client, channel, "alice", "接口先别动")

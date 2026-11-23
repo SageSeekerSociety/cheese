@@ -137,7 +137,7 @@ def test_an_agent_turn_is_that_agent_working_in_that_room_only(client, stub_hook
 
     stub_hooks.emit_turn = turn
     seat = room_agent_seat(client, room)
-    # 芝士 is called in a 支线 of the room and works there.
+    # 芝士 is called in a 讨论串 of the room and works there.
     thread = in_thread(client, room, "alice")
     with room_socket(client, thread, "alice") as ws:
         post_message(client, thread, "alice", {"content": "@芝士 跑一下测试"})
@@ -197,8 +197,8 @@ def _mentioned(client, project_id: str, room: str, handle: str, seat: str) -> No
 
 
 def test_a_teammate_working_in_the_rooms_thread_is_not_waited_on(client, stub_hooks):
-    """在支线里跑的轮次就是这间房在干活：芝士在这条频道没有自己那条线，人 @ 它、
-    它答话都在支线里。只认主线的话，一条跑过五分钟的支线轮次会让它上面那间房显示成
+    """在讨论串里跑的轮次就是这间房在干活：芝士在这条频道没有自己那条线，人 @ 它、
+    它答话都在讨论串里。只认主线的话，一条跑过五分钟的讨论串轮次会让它上面那间房显示成
     「没人管」，侧栏那一格就红起来 —— 这就是「停一会就弹一个红点头像」。
 
     `activity` 照旧只放主线（那一格画的是这间房自己那条线），去重只作用在 `waits` 上。
@@ -220,7 +220,7 @@ def test_a_teammate_working_in_the_rooms_thread_is_not_waited_on(client, stub_ho
         post_message(client, thread, "alice", {"content": "@芝士 跑一下测试"})
         _until(ws, lambda f: _activity(f) and f["kind"] == "working")
 
-        # 轮次在这间房的支线里跑着 = 它在管这间房，房间不再等它。
+        # 轮次在这间房的讨论串里跑着 = 它在管这间房，房间不再等它。
         assert _waits(client, project_id, room) == []
         # 可它没在这间房的主线上干活，那一格画的东西照旧。
         assert _listed(client, project_id, room) == []
@@ -228,9 +228,9 @@ def test_a_teammate_working_in_the_rooms_thread_is_not_waited_on(client, stub_ho
 
         stub_hooks.stops(uuid.UUID(thread), "好了")
         _until(ws, lambda f: _activity(f) and f["kind"] == "working")
-    # 轮次结束，房间不再当它在忙；可上一句「好了」写在支线里 —— 支线里的那句话
+    # 轮次结束，房间不再当它在忙；可上一句「好了」写在讨论串里 —— 讨论串里的那句话
     # 就是这间房的回答（`test_an_agent_reply_in_a_thread_ends_the_rooms_wait`），
-    # 这支线轮次从头到尾都没让房间重新等它。
+    # 这讨论串轮次从头到尾都没让房间重新等它。
     _said(
         client,
         project_id,
