@@ -51,6 +51,8 @@ const props = defineProps<{
   viewer?: string
   /** 手机上对话和「改动」是两个页签：这一条只放「审阅」，决定在「改动」页底部。 */
   reviewButton?: boolean
+  /** 任务页的编辑器那一种：待审阅时「审阅」一颗摆在「退回 / 采纳」前面。 */
+  reviewAlongside?: boolean
 }>()
 const emit = defineEmits<{
   (e: 'phase', phase: CardPhase): void
@@ -189,6 +191,7 @@ defineExpose({ reload: card.reload })
             :blocked-title="acceptBlockedTitle"
             :busy="acceptBusy"
             :review-button="!!pendingCard && !gateCard && reviewButton"
+            :review-alongside="!!pendingCard && !gateCard && reviewAlongside"
             :revoke="!pendingCard && !gateCard && !deliveringCard && !!acceptedCard"
             :expandable="!!(gateCard || deliveringCard)"
             :expanded="expanded"

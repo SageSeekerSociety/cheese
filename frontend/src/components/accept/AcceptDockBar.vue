@@ -31,6 +31,8 @@ const props = withDefaults(
     busy?: boolean
     /** 手机上对话和「改动」是两个页签：这里只放一颗「审阅」，决定在「改动」页底部。 */
     reviewButton?: boolean
+    /** 任务页的编辑器那一种：「审阅」一颗摆在「退回 / 采纳」前面（点了在中间打开改动）。 */
+    reviewAlongside?: boolean
     /** 已采纳的卡：给反悔留一个「撤回采纳」。 */
     revoke?: boolean
     /** 历史卡：点这一条在上面展开它当年的那张卡。 */
@@ -46,6 +48,7 @@ const props = withDefaults(
     blockedTitle: null,
     busy: false,
     reviewButton: false,
+    reviewAlongside: false,
     revoke: false,
     expandable: false,
     expanded: false,
@@ -68,7 +71,7 @@ function onStatus() {
 
 /** 待审阅的卡点状态那半句是去「改动」：右边跟一颗向右的箭头，让人先看得出这里能点。
  *  手机上有独立的「审阅」按钮，历史卡有自己的上下箭头，都不再跟这一颗。 */
-const goToChanges = computed(() => !props.expandable && !props.revoke && !props.reviewButton)
+const goToChanges = computed(() => !props.expandable && !props.revoke && !props.reviewButton && !props.reviewAlongside)
 </script>
 
 <template>
@@ -103,7 +106,10 @@ const goToChanges = computed(() => !props.expandable && !props.revoke && !props.
     <BaseButton v-if="reviewButton" kind="primary" size="sm" @click="emit('review')">
       {{ t('work.room.accept.review') }}
     </BaseButton>
-    <template v-else-if="decide">
+    <BaseButton v-else-if="reviewAlongside" kind="secondary" size="sm" @click="emit('review')">
+      {{ t('work.room.accept.review') }}
+    </BaseButton>
+    <template v-if="decide && !reviewButton">
       <BaseButton kind="secondary" size="sm" prepend-icon="mdi-undo" :disabled="busy" @click="emit('reject')">
         {{ t('work.room.accept.sendBack') }}
       </BaseButton>
@@ -121,7 +127,14 @@ const goToChanges = computed(() => !props.expandable && !props.revoke && !props.
         </BaseButton>
       </span>
     </template>
-    <BaseButton v-else-if="revoke" kind="ghost" size="sm" :loading="busy" :disabled="busy" @click="emit('revoke')">
+    <BaseButton
+      v-else-if="revoke && !reviewButton && !reviewAlongside"
+      kind="ghost"
+      size="sm"
+      :loading="busy"
+      :disabled="busy"
+      @click="emit('revoke')"
+    >
       {{ t('work.room.accept.revoke') }}
     </BaseButton>
   </div>
