@@ -70,6 +70,7 @@ from app.domain.review.schemas import (
     VoidDecision,
 )
 from app.domain.review.services import ReviewerAdmission
+from app.domain.room_task import dispatch as task_dispatch
 from app.domain.room_task import heard, naming
 from app.domain.room_task.models import Task, TaskStatus
 from app.domain.room_task.place import Place, place_or_404
@@ -403,6 +404,11 @@ async def hand_in_route(
     forge and the project's rules let it, as it merges any armed version;
     ``adopting`` says whether it was armed."""
     actor, task = _handing_in(at)
+    # A version handed in is a change of a task opened to edit a file
+    # (`UnsaidTask`): its channel is told it was opened, first, in a
+    # transaction of its own (`conversation.numbering`).
+    if await task_dispatch.say_opened(db, task):
+        await db.commit()
     svc = accept_service(db)
     handed = await hand_in.hand_in(
         db,

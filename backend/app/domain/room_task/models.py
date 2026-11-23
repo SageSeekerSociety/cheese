@@ -390,3 +390,28 @@ class Task(UuidPk, Timestamps, Base):
     def people(self) -> tuple[str, ...]:
         """This task's people — see :func:`people_of`, which is the same list."""
         return people_of(self.owner_handle, self.contributor_handles)
+
+
+class UnsaidTask(Base):
+    """A task a person opened to edit one of the project's files (「编辑」 in
+    the library's 项目文件) that has not changed anything yet.
+
+    Nothing about it is said or shown until it does: its channel is not told
+    it was opened, and no list of tasks shows it (`TaskRepository.said`). Its
+    first change — a person's save or arrangement of its files, or a message
+    in it — says it in the channel the way any new task is said and removes
+    this row (`dispatch.say_opened`). One left unchanged is the one its
+    owner's next 「编辑」 in the project opens again, so it is never a second
+    empty task beside it.
+    """
+
+    __tablename__ = "unsaid_tasks"
+    task_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey(
+            "tasks.id", ondelete="CASCADE", name="fk_unsaid_tasks_task_id_tasks"
+        ),
+        primary_key=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("now()")
+    )

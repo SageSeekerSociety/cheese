@@ -14,7 +14,7 @@
 
 import uuid
 
-from sqlalchemy import Uuid, column, select, table
+from sqlalchemy import Uuid, column, delete, select, table
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import (
@@ -37,7 +37,9 @@ from app.domain.room_task import heard
 from app.domain.room_task.models import (
     PLACEHOLDER_TITLE,
     Task,
+    TaskStatus,
     TaskTitleSource,
+    UnsaidTask,
 )
 from app.domain.room_task.place import PlaceResolver
 from app.domain.room_task.services import TaskService, said_title
@@ -208,9 +210,16 @@ async def create_task(
     seat_project: SeatProject,
     team: ProjectTeam,
     by_assistant: bool = False,
+    opened_to_edit: str | None = None,
 ) -> Task:
     """Open a task in a room: a conversation of its own, owned by one person,
     with an empty living document for its agent to write.
+
+    ``opened_to_edit`` is the project file a person opened the task to edit
+    (「编辑」 in 项目文件): the task is named after the file, as the platform
+    names a task, until something better is known of it, and it is not said
+    in the room nor listed until its first change (`UnsaidTask`,
+    `say_opened`).
 
     ``by_assistant``: ``created_by``'s own 芝士 opens it for them
     (`Actor.by_assistant`); the task and the line announcing it say so.
@@ -305,6 +314,9 @@ async def create_task(
     )
     tasks = TaskService(session)
     named = (title or "").strip()[:300]
+    if opened_to_edit is not None:
+        named = file_title(opened_to_edit)
+        named_by_teammate = False
     assigned_agent: str | None = None
     if (
         teammate
@@ -330,7 +342,7 @@ async def create_task(
         title_source=TaskTitleSource.placeholder
         if not named
         else TaskTitleSource.auto
-        if named_by_teammate
+        if named_by_teammate or opened_to_edit is not None
         else TaskTitleSource.human,
         owner_handle=owner,
         created_by=created_by,
@@ -348,10 +360,83 @@ async def create_task(
     if named and named_by_teammate:
         tasks.record_title(task, reason="teammate", by=teammate)
     await tasks.ensure_document(task)
-    if origin_block_id is None:
+    if opened_to_edit is not None:
+        session.add(UnsaidTask(task_id=task.id))
+    elif origin_block_id is None:
         await _card_block(session, room, task, actor=created_by or "system")
     await session.flush()
     return task
+
+
+def file_title(path: str) -> str:
+    """What a task opened to edit ``path`` is called: the file's name."""
+    return path.rstrip("/").rsplit("/", 1)[-1][:300]
+
+
+async def open_to_edit(
+    session: AsyncSession,
+    *,
+    project_id: uuid.UUID,
+    room_id: uuid.UUID,
+    person: str,
+    path: str,
+    seat_project: SeatProject,
+    team: ProjectTeam,
+) -> Task:
+    """The task ``person`` edits the project file ``path`` in (「编辑」 in
+    项目文件), opened in ``room_id``: their task opened this way that has
+    changed nothing yet, now named after this file, or a new one."""
+    task = await _unsaid_task_of(session, project_id, person)
+    if task is None:
+        return await create_task(
+            session,
+            room_id=room_id,
+            created_by=person,
+            opened_to_edit=path,
+            seat_project=seat_project,
+            team=team,
+        )
+    if task.title_source != TaskTitleSource.human:
+        task.title = file_title(path)
+        task.title_version = task.title_version + 1
+        await session.flush()
+    return task
+
+
+async def _unsaid_task_of(
+    session: AsyncSession, project_id: uuid.UUID, owner: str
+) -> Task | None:
+    """``owner``'s task in this project that was opened to edit a file and
+    has changed nothing yet."""
+    return await session.scalar(
+        select(Task)
+        .join(UnsaidTask, UnsaidTask.task_id == Task.id)
+        .where(
+            Task.project_id == project_id,
+            Task.owner_handle == owner,
+            Task.status == TaskStatus.open,
+        )
+        .order_by(Task.created_at.desc())
+        .limit(1)
+    )
+
+
+async def say_opened(session: AsyncSession, task: Task) -> bool:
+    """``task`` changed something: if it was opened to edit a file and not
+    said yet, its room is told now, the way a new task is, once. Whether it
+    was said here."""
+    gone = await session.scalar(
+        delete(UnsaidTask)
+        .where(UnsaidTask.task_id == task.id)
+        .returning(UnsaidTask.task_id)
+    )
+    if gone is None:
+        return False
+    room = await session.get(Topic, task.room_id)
+    if room is not None:
+        await _card_block(session, room, task, actor=task.created_by or "system")
+    await session.flush()
+    return True
 
 
 async def give_task_teammate(
