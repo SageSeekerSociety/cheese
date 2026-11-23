@@ -614,12 +614,14 @@ export function defaultWeightsAmong(
 /**
  * The sizes a split's children go back to, in px out of the `total` they fill now: a
  * child with a size of its own gets it (never more than the total leaves room for), the
- * others share the rest by their default weights.
+ * others share the rest by their weights. A child whose share is below its `minimums` entry
+ * gets that minimum, and the others share what is left.
  */
 export function resetSizes(
   total: number,
   weights: readonly number[],
-  fixed: readonly (number | undefined)[]
+  fixed: readonly (number | undefined)[],
+  minimums: readonly number[] = []
 ): number[] {
   let free = total
   const out = weights.map((_, i) => {
@@ -629,8 +631,44 @@ export function resetSizes(
     free -= size
     return size
   })
-  const shared = weights.reduce((sum, w, i) => sum + (fixed[i] === undefined ? w : 0), 0)
-  return out.map((size, i) => (fixed[i] === undefined && shared > 0 ? Math.round((weights[i] / shared) * free) : size))
+  const sharing = new Set(weights.flatMap((_, i) => (fixed[i] === undefined ? [i] : [])))
+  for (;;) {
+    const shared = [...sharing].reduce((sum, i) => sum + weights[i], 0)
+    if (shared <= 0) break
+    const short = [...sharing].filter((i) => (weights[i] / shared) * free < (minimums[i] ?? 0))
+    if (!short.length) {
+      sharing.forEach((i) => (out[i] = Math.round((weights[i] / shared) * free)))
+      break
+    }
+    for (const i of short) {
+      out[i] = minimums[i]
+      free -= minimums[i]
+      sharing.delete(i)
+    }
+  }
+  return out
+}
+
+/**
+ * `read` with the weights of `before` wherever the two have the same splits and cells (by cell
+ * id), as they are when nothing but the space they have changed; `read` itself when its splits
+ * differ (the reader moved a cell).
+ */
+export function keepWeights(read: LayoutArrangement, before: LayoutArrangement): LayoutArrangement {
+  const same = (a: LayoutNode, b: LayoutNode): boolean =>
+    isSplit(a) && isSplit(b)
+      ? a.direction === b.direction &&
+        a.children.length === b.children.length &&
+        a.children.every((child, i) => same(child, b.children[i]))
+      : !isSplit(a) && !isSplit(b) && a.id !== undefined && a.id === b.id
+  if (!read.root || !before.root || !same(read.root, before.root)) return read
+  const carry = (node: LayoutNode, from: LayoutNode): LayoutNode => {
+    const sized = { ...node, size: from.size }
+    if (from.size === undefined) delete sized.size
+    if (!isSplit(sized) || !isSplit(from)) return sized
+    return { ...sized, children: sized.children.map((child, i) => carry(child, from.children[i])) }
+  }
+  return withRoot(read, carry(read.root, before.root))
 }
 
 // ---------------------------------------------------------------- persistence

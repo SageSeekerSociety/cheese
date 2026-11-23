@@ -22,10 +22,13 @@
  * reloads the layout with the panels kept (`reuseExistingPanels`), the panel in the place the
  * area gives it (`homeOf`).
  *
- * Space is not shared in proportion when the area resizes (`proportional-layout` off): a
- * cell with a width of its own (or, in a column, a height) is a low-priority view in
- * dockview's terms and keeps it, and the other cells absorb the change, as a code editor's
- * side bar and terminal do.
+ * Space is not shared by dockview's proportions (`proportional-layout` off): a cell with a
+ * width of its own (or, in a column, a height) keeps it in px, as a code editor's side bar and
+ * terminal do, and the other cells share what those leave by the weights in the arrangement
+ * (`keepShares`). Those weights change only when the reader drags a divider, a split is evened
+ * out or the cells are moved; the area resizing, a cell coming or going, a cell held to its own
+ * width or squeezed to its minimum leave them as they were, so the split comes back as it was
+ * once the room does, and a reload lays out the same split.
  */
 import 'dockview-vue/dist/styles/dockview.css'
 
@@ -40,7 +43,7 @@ import type {
   IDockviewPanelHeaderProps,
   IDockviewPanelProps,
 } from 'dockview-vue'
-import type { LayoutArrangement, LayoutCell, SplitDirection } from './arrangement'
+import type { LayoutArrangement, LayoutCell, LayoutNode, LayoutSplit, SplitDirection } from './arrangement'
 import type { CellSizing, FloatBox } from './dockviewJson'
 import type { LayoutPanelInfo } from './types'
 
@@ -59,6 +62,8 @@ import {
   hasPlacementFault,
   hidesTabs,
   homeCell,
+  isSplit,
+  keepWeights,
   parentDirection,
   placedPanels,
   placePanel,
@@ -69,7 +74,7 @@ import {
   withCellIds,
   withoutFloating,
 } from './arrangement'
-import { fitFloat, floatBoxes, fromDockview, STRIP_SIZE, toDockview } from './dockviewJson'
+import { fitFloat, floatBoxes, fromDockview, STRIP_SIZE, toDockview, weight } from './dockviewJson'
 import LayoutAddMenu from './LayoutAddMenu.vue'
 import LayoutSignal from './LayoutSignal.vue'
 import { clampWidth } from './widths'
@@ -208,9 +213,9 @@ function load(arrangement: LayoutArrangement, keepPanels = false) {
   const dock = api.value
   if (!dock) return
   loading = true
+  const next = withCellIds(reconcile(arrangement, declared.value))
   try {
     exitMaximize()
-    const next = withCellIds(reconcile(arrangement, declared.value))
     stripped.clear()
     constrained.clear()
     fitted.clear()
@@ -244,6 +249,9 @@ function load(arrangement: LayoutArrangement, keepPanels = false) {
     loading = false
   }
   dock.panels.forEach(watchVisibility)
+  // Its weights are the ones laid out: what dockview reads back is them squeezed to the area.
+  model.value = next
+  adoptSizes = false
   sync()
   if (props.maximized) maximize(props.maximized)
   for (const group of dock.groups) if (group.activePanel) revealTab(group.activePanel.id)
@@ -269,7 +277,11 @@ function sync() {
     load(derived)
     return
   }
-  const next = reconcile(derived, declared.value)
+  const read = reconcile(derived, declared.value)
+  // The px dockview shows are the weights only when the reader set them; otherwise they are
+  // the weights as the room now allows, and the weights stay.
+  const next = adoptSizes || dragging ? read : keepWeights(read, model.value)
+  adoptSizes = false
   collapsed = new Set(
     cellsOf(next)
       .filter((cell) => cell.collapsed)
@@ -277,9 +289,103 @@ function sync() {
   )
   model.value = next
   applyPolicies()
+  if (!dragging && !adoptSizes) keepShares(dock)
   refreshActives()
   refreshFloats()
   emit('change', next)
+}
+
+/**
+ * The px of the cells sharing a split are their weights only when the reader dragged a divider
+ * or a split was evened out: the next pass reads them back as the weights.
+ */
+let adoptSizes = false
+function adoptNow() {
+  adoptSizes = true
+  schedule()
+}
+
+/** What `keepShares` asked of each split in its last pass: an ask that did not take is not repeated in a loop. */
+let sharesAsked = new Set<string>()
+/**
+ * Gives the cells of each split in sight the shares their weights give them of what the cells
+ * keeping a size of their own (a width, a height, a strip, their content's height) leave, as
+ * the weights say and whatever dockview did to the px since: the area resizing gives or takes
+ * from whichever cell it reaches first, a cell shown takes its room from its neighbour. A cell
+ * is given at least its minimum, the others share the rest. Outer splits first: their sizes are
+ * the room the inner ones share.
+ */
+function keepShares(dock: DockviewApi) {
+  const root = model.value.root
+  if (!root || !isSplit(root) || maximizedGroup.value) return
+  const asked = new Set<string>()
+  const inSight = (node: LayoutNode): DockviewGroupPanel[] =>
+    gridCellsOf({ root: node })
+      .map((cell) => (cell.id ? (dock.getGroup(cell.id) as DockviewGroupPanel | undefined) : undefined))
+      .filter((group): group is DockviewGroupPanel => !!group && group.api.isVisible && !isFloatingGroup(group))
+  const minimum = (node: LayoutNode, axis: 'width' | 'height'): number => {
+    if (!isSplit(node)) {
+      const group = node.id ? dock.getGroup(node.id) : undefined
+      if (!group?.api.isVisible) return 0
+      return axis === 'width' ? group.minimumWidth : group.minimumHeight
+    }
+    const mins = node.children.map((child) => minimum(child, axis))
+    return (node.direction === 'row') === (axis === 'width') ? mins.reduce((a, b) => a + b, 0) : Math.max(0, ...mins)
+  }
+  const keepsOwn = (group: DockviewGroupPanel, axis: 'width' | 'height') =>
+    collapsed.has(group.id) ||
+    heldSize(group)?.axis === axis ||
+    (axis === 'width' ? group.minimumWidth === group.maximumWidth : group.minimumHeight === group.maximumHeight)
+  // The view a child of the split takes: the outermost `.dv-view` around its cells that holds
+  // none of its siblings' cells.
+  const viewOf = (own: DockviewGroupPanel[], others: DockviewGroupPanel[]) => {
+    let view: Element | null = null
+    for (let at = own[0].element.closest('.dv-view'); at; at = at.parentElement?.closest('.dv-view') ?? null) {
+      if (others.some((group) => at!.contains(group.element))) break
+      view = at
+    }
+    return view && own.every((group) => view!.contains(group.element)) ? view : null
+  }
+  const walk = (split: LayoutSplit) => {
+    const axis = split.direction === 'row' ? 'width' : 'height'
+    const children = split.children
+      .map((node) => ({ node, groups: inSight(node) }))
+      .filter((child) => child.groups.length > 0)
+    const views = children.map((child) =>
+      viewOf(
+        child.groups,
+        children.flatMap((other) => (other === child ? [] : other.groups))
+      )
+    )
+    const parent = views[0]?.parentElement
+    const matches = views.every((view) => view && view.parentElement === parent)
+    if (children.length > 1 && matches) {
+      const extent = (view: Element) => view.getBoundingClientRect()[axis]
+      const fixed = children.map((child, i) =>
+        !isSplit(child.node) && keepsOwn(child.groups[0], axis) ? extent(views[i]!) : undefined
+      )
+      const sizes = resetSizes(
+        views.reduce((sum, view) => sum + extent(view!), 0),
+        children.map((child) => weight(child.node)),
+        fixed,
+        children.map((child) => minimum(child.node, axis))
+      )
+      // dockview takes a cell's change out of the others in its own order, which knows nothing
+      // of the weights (the last cell first, whatever it is): set every cell but the last in
+      // order, and again while one was pushed off its size by a later one.
+      const off = () => children.some((_, i) => Math.abs(extent(views[i]!) - sizes[i]) > 1)
+      const ask = `${children.map((child) => child.groups[0].id)}:${sizes}:${views.map((view) => Math.round(extent(view!)))}`
+      if (off()) asked.add(ask)
+      for (let round = 0; round < 3 && off() && !sharesAsked.has(ask); round += 1) {
+        children.slice(0, -1).forEach((child, i) => {
+          if (Math.abs(extent(views[i]!) - sizes[i]) > 1) child.groups[0].api.setSize(sizeOf(axis, sizes[i]))
+        })
+      }
+    }
+    for (const child of children) if (isSplit(child.node)) walk(child.node)
+  }
+  walk(root)
+  sharesAsked = asked
 }
 
 // ---------------------------------------------------------------- floating windows
@@ -710,8 +816,23 @@ function onReady(event: DockviewReadyEvent) {
     dock.onDidLayoutChange(schedule)
   )
   load(props.arrangement)
+  if (root.value) resizes?.observe(root.value)
   void nextTick(() => emit('ready'))
 }
+
+// The area resized: dockview lays itself out a frame later, giving the change to whichever cell
+// it reaches first, and says nothing. Laid out here, at once, the cells get their shares back in
+// the same frame.
+const resizes =
+  typeof ResizeObserver === 'undefined'
+    ? null
+    : new ResizeObserver(() => {
+        const dock = api.value
+        if (!dock || !root.value?.offsetParent) return
+        const { width, height } = box()
+        dock.layout(width, height)
+        schedule()
+      })
 
 watch(
   () => props.loadKey,
@@ -803,6 +924,8 @@ function endDrag() {
   window.removeEventListener('pointercancel', endDrag)
   if (!dragging) return
   dragging = false
+  // What the reader dragged the cells to are the split's weights from now on.
+  adoptNow()
   const dock = api.value
   if (!dock) return
   for (const group of dock.groups) {
@@ -866,6 +989,8 @@ function evenOut(container: Element, initial: boolean) {
   children.slice(0, -1).forEach((child, i) => {
     child.groups[0].api.setSize(horizontal ? { width: sizes[i] } : { height: sizes[i] })
   })
+  // The sizes it gave are the split's weights from now on.
+  adoptNow()
   if (!initial) return
   children.forEach((child) => {
     const own = fixedOf(child.panels)
@@ -874,6 +999,7 @@ function evenOut(container: Element, initial: boolean) {
 }
 
 onBeforeUnmount(() => {
+  resizes?.disconnect()
   endDrag()
   disposables.forEach((d) => d.dispose())
   visibility.forEach((d) => d.dispose())

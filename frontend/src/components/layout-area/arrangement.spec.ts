@@ -11,6 +11,7 @@ import {
   defaultWeightsAmong,
   hidesTabs,
   homeCell,
+  keepWeights,
   placeAsInDefault,
   placeBelow,
   placeBeside,
@@ -478,6 +479,63 @@ describe('cells with a width of their own, and hidden cells', () => {
     const shown = toDockview({ root: ROOM.root! }, box, panelState, fixedNav)
     const hidden = toDockview({ root: ROOM.root! }, box, panelState, hiddenFiles)
     expect(ratio(hidden)).toBeCloseTo(ratio(shown), 2)
+  })
+})
+
+describe('the shares of the cells that split the room', () => {
+  const panelState = (id: string) => ({ id, contentComponent: 'host', title: id })
+  const TASK: LayoutArrangement = withCellIds({
+    root: {
+      direction: 'row',
+      children: [
+        { id: 'chat', panels: ['chat'], size: 45 },
+        { id: 'work', panels: ['work'], size: 55 },
+        { id: 'side', panels: ['side'] },
+      ],
+    },
+  })
+  const sideShown = (cell: LayoutCell) => (cell.id === 'side' ? { fixed: 340 } : {})
+  const sideHidden = (cell: LayoutCell) => (cell.id === 'side' ? { fixed: 340, hidden: true } : {})
+  const widths = (arrangement: LayoutArrangement, sizing: typeof sideShown) =>
+    (
+      toDockview({ root: arrangement.root! }, { width: 1200, height: 800 }, panelState, sizing).layout.grid.root
+        .data as {
+        size: number
+      }[]
+    ).map((leaf) => leaf.size)
+  /** The layout as dockview reads it back with the side cell shown and its room taken from one neighbour. */
+  function squeezed() {
+    const load = toDockview({ root: TASK.root! }, { width: 1200, height: 800 }, panelState, sideShown)
+    const [chat, work, side] = load.layout.grid.root.data as { size: number }[]
+    chat.size = 540
+    work.size = 320
+    side.size = 340
+    return reconcile(fromDockview(load.layout, new Set(), new Map()), ['chat', 'work', 'side'])
+  }
+
+  it('a cell with a width of its own coming and going leaves the split of the others as it was on the next load', () => {
+    const before = widths(TASK, sideHidden)
+    const after = keepWeights(squeezed(), TASK)
+    expect(widths(after, sideHidden)).toEqual(before)
+    expect(widths(after, sideShown).slice(0, 2)).toEqual([387, 473])
+  })
+
+  it('once the reader has moved a cell, the sizes read back are the new split', () => {
+    const moved: LayoutArrangement = withCellIds({
+      root: {
+        direction: 'row',
+        children: [
+          { id: 'work', panels: ['work'], size: 300 },
+          { id: 'chat', panels: ['chat'], size: 900 },
+        ],
+      },
+    })
+    expect(keepWeights(moved, TASK)).toEqual(moved)
+  })
+
+  it('a cell whose share is below its minimum gets the minimum, and the others share the rest by weight', () => {
+    expect(resetSizes(1000, [1, 1, 2], [undefined, undefined, undefined], [400, 0, 0])).toEqual([400, 200, 400])
+    expect(resetSizes(1000, [45, 55], [undefined, undefined], [340, 360])).toEqual([450, 550])
   })
 })
 
