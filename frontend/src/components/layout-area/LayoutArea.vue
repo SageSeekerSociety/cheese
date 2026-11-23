@@ -41,6 +41,7 @@ import {
   unplacedPanels,
   withCellIds,
 } from './arrangement'
+import { cellSizing } from './dockviewJson'
 import { keepScroll } from './keepScroll'
 import LayoutStack from './LayoutStack.vue'
 import LayoutStatic from './LayoutStatic.vue'
@@ -212,16 +213,24 @@ const unplacedInfos = computed(() => [
 
 // ---------------------------------------------------------------- sizes
 
-/** The width each panel with a width of its own keeps, live and shared under its key. */
-function widthOf(panel: LayoutPanel): number {
-  return rememberedWidth(panel.width!).value
+/** The width (or height) each panel with one of its own keeps, live and shared under its key. */
+function extentOf(id: string, axis: 'width' | 'height'): number {
+  const spec = byId.value.get(id)?.[axis]
+  return spec ? rememberedWidth(spec).value : 0
 }
 const fixedWidths = computed<Record<string, number>>(() =>
-  Object.fromEntries(placeable.value.filter((panel) => panel.width).map((panel) => [panel.id, widthOf(panel)]))
+  Object.fromEntries(
+    placeable.value.filter((panel) => panel.width).map((panel) => [panel.id, extentOf(panel.id, 'width')])
+  )
 )
-function onResized(id: string, width: number) {
-  const spec = byId.value.get(id)?.width
-  if (spec) rememberWidth(spec, width)
+const fixedHeights = computed<Record<string, number>>(() =>
+  Object.fromEntries(
+    placeable.value.filter((panel) => panel.height).map((panel) => [panel.id, extentOf(panel.id, 'height')])
+  )
+)
+function onResized(id: string, size: number, axis: 'width' | 'height') {
+  const spec = byId.value.get(id)?.[axis]
+  if (spec) rememberWidth(spec, size)
 }
 
 /** The content height of each `fitHeight` panel, as it is laid out now. */
@@ -241,13 +250,7 @@ const fitObserver =
 
 function sizing(cell: LayoutCell, along: SplitDirection): CellSizing {
   const panels = cell.panels.map((id) => byId.value.get(id)).filter((p): p is LayoutPanel => !!p)
-  const out: CellSizing = {}
-  const sized = panels.find((panel) => panel.width)
-  if (along === 'row' && sized) out.fixed = widthOf(sized)
-  const fit = panels.find((panel) => panel.fitHeight)
-  if (along === 'column' && fit) out.fixed = fitHeights[fit.id] ?? 0
-  if (panels.length && panels.every((panel) => panel.hidden)) out.hidden = true
-  return out
+  return cellSizing(panels, along, extentOf, fitHeights)
 }
 
 // ---------------------------------------------------------------- instances
@@ -486,6 +489,7 @@ defineExpose({ reset, open, fold, rearranged })
           :sizing="sizing"
           :fit-heights="fitHeights"
           :fixed-widths="fixedWidths"
+          :fixed-heights="fixedHeights"
           :default-arrangement="defaultArrangement"
           :maximized="maximizedNow"
           :request="request"

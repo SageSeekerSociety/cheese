@@ -8,6 +8,7 @@
 // 拼好：任务那一半（这件任务和能对它做的事）来自任务页那一份，另一半——在哪个房间、
 // 谁在场、面板开没开——是这一页的。
 import type { ComputedRef, Ref } from 'vue'
+import type { TaskBlockButton } from '@/components/task/taskBlocks'
 import type { WorkTabMeta } from '@/components/work/workLayout'
 import type { HandInState } from '@/composables/acceptCard/handIn'
 import type { RoomTask, Topic, TopicMemberRow } from '@/cx_types'
@@ -59,6 +60,9 @@ export function useTopicHeader<TaskHalf extends Record<string, unknown>>(opts: {
   /** 编辑器里页头右边那三颗按下没有（终端那一颗是 null 时不摆）。 */
   editorParts?: () => { left: boolean; terminal: boolean | null; conversation: boolean }
   toggleEditorPart?: (part: 'left' | 'terminal' | 'conversation') => void
+  /** 对话那一种摆法里页头右边那一组按钮，和点了其中一颗。 */
+  blocks?: () => TaskBlockButton[]
+  toggleBlock?: (key: string) => void
 }) {
   const store = useWorkspaceStore()
 
@@ -99,11 +103,13 @@ export function useTopicHeader<TaskHalf extends Record<string, unknown>>(opts: {
       panelControls: opts.panelControls(),
       form: opts.form?.() ?? null,
       editorParts: opts.editorParts?.(),
+      blocks: opts.blocks?.() ?? [],
       'onOpen-room': opts.backToRoom,
       'onHand-in': opts.handIn.openPanel,
       'onToggle-panel': opts.togglePanel,
       onForm: opts.chooseForm,
       'onToggle-part': opts.toggleEditorPart,
+      'onToggle-block': opts.toggleBlock,
     }
   })
   const topicHeaderBinding = computed(() => {

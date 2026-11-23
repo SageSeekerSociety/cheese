@@ -4,5 +4,8 @@
   "editor": "编辑器",
   "left": "左栏",
   "terminal": "终端",
-  "conversation": "对话"
+  "conversation": "对话",
+  "openInEditor": "在编辑器里打开",
+  "blocks": "对话旁边",
+  "moreBlocks": "更多"
 }

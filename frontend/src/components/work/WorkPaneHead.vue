@@ -4,6 +4,10 @@
 //
 // 不给 `title` 时名字那一段留成一个落点（`outlet`）：在频道里打开的一件任务把它自己的页头
 // （任务名、状态、退回 / 采纳、打开任务）放进来，和「返回」同一行、排在它后面。
+//
+// 任务页「对话」那一种摆法里一块的标题栏也是它画的：名字那一段可以换成别的（`title` 插槽，「文件」
+// 那一块是路径），名字后面紧跟着的（`after-title`，终端那一块换终端），这一块自己的按钮靠右
+// （默认插槽），再往右是布局层的放大、✕。
 import { onBeforeUnmount, ref, watch } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -24,6 +28,15 @@ const emit = defineEmits<{
   (e: 'outlet', element: HTMLElement | null): void
 }>()
 
+const slots = defineSlots<{
+  /** 代替名字的那一段。 */
+  title?: () => unknown
+  /** 紧跟在名字后面的。 */
+  'after-title'?: () => unknown
+  /** 这一格自己的按钮，靠右。 */
+  default?: () => unknown
+}>()
+
 const outlet = ref<HTMLElement | null>(null)
 watch(outlet, (element) => emit('outlet', element), { flush: 'post' })
 onBeforeUnmount(() => emit('outlet', null))
@@ -41,8 +54,11 @@ onBeforeUnmount(() => emit('outlet', null))
       data-pane-back
       @click="emit('back')"
     />
-    <span v-if="title !== undefined" class="work-pane-head__title" :title="title">{{ title }}</span>
+    <slot v-if="slots.title" name="title" />
+    <span v-else-if="title !== undefined" class="work-pane-head__title" :title="title">{{ title }}</span>
     <span v-else ref="outlet" class="work-pane-head__outlet" />
+    <slot name="after-title" />
+    <span v-if="slots.default" class="work-pane-head__tools"><slot /></span>
   </Teleport>
 </template>
 
@@ -56,6 +72,14 @@ onBeforeUnmount(() => emit('outlet', null))
   color: var(--ink);
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.work-pane-head__tools {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  align-items: center;
+  margin-left: auto;
 }
 
 .work-pane-head__outlet {

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import type { TaskBlockButton } from '@/components/task/taskBlocks'
 import type { WorkTabMeta } from '@/components/work/workLayout'
 import type { RoomTask } from '@/cx_types'
 import type { PreviewLocate } from '@/lib/previewQuestion'
@@ -6,7 +7,7 @@ import type { TaskSource } from '@/types/taskOrigin'
 import type { TaskOverviewHandle } from './topicView/actions'
 import type { ChatColumnHandle, WorkPanelHandle } from './topicView/shared'
 
-import { computed, defineAsyncComponent, onMounted, onUnmounted, provide, ref, toRef, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, provide, ref, toRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDisplay } from 'vuetify'
 import { useQuery } from '@tanstack/vue-query'
@@ -41,6 +42,7 @@ import TaskHeader from '@/components/task/TaskHeader.vue'
 import TaskOverview from '@/components/task/TaskOverview.vue'
 import TopicAcceptCard from '@/components/TopicAcceptCard.vue'
 import TopicHeader from '@/components/TopicHeader.vue'
+import { TERMINAL_BLOCK } from '@/components/work/workLayout'
 import WorkPanel from '@/components/WorkPanel.vue'
 import { t } from '@/i18n'
 import { usePagePanels } from '@/layouts/pagePanels'
@@ -294,6 +296,8 @@ const { taskHeaderBinding, topicHeaderBinding } = useTopicHeader({
   chooseForm: taskForm.choose,
   editorParts: () => editorParts.value,
   toggleEditorPart,
+  blocks: () => taskBlocks.value,
+  toggleBlock,
 })
 /**
  * 页头上那几颗按钮（频道页）：点的那一样正显示着就收起这一处；否则把这一处打开在它上面。打开
@@ -440,8 +444,54 @@ const room = useRoomLayout(usePagePanels, {
   onClose: (key) => (panelRef.value as { closeTab?: (key: string) => void } | null)?.closeTab?.(key),
   onKeep: (key) => (panelRef.value as { keepTab?: (key: string) => void } | null)?.keepTab?.(key),
   onSpawn: (key) => void (panelRef.value as { spawnTab?: (key: string) => void } | null)?.spawnTab?.(key),
+  scope: () => props.taskId,
 })
 roomLayoutHandle = room
+/**
+ * 「对话」那一种摆法里页头右边那一组：概览、改动（带改过几个文件）、文件、终端（能开终端时），
+ * 现场和预览收在 ⋯ 里（预览只在有东西可看、或它那一块开着时）。
+ */
+const taskBlocks = computed<TaskBlockButton[]>(() => {
+  if (!props.taskId || taskForm.editor.value) return []
+  const shown = room.chatBlocks.value
+  const on = (key: string) => (key === 'overview' ? shown.overview : shown.open.includes(key))
+  const meta = new Map(fixedTabs().map((tab) => [tab.key, tab]))
+  const button = (key: string, more = false): TaskBlockButton[] => {
+    const tab = meta.get(key)
+    if (!tab) return []
+    const count = key === 'changes' && tab.signal?.kind === 'count' ? tab.signal.count : 0
+    return [{ key, label: tab.title, hint: tab.hint, icon: tab.icon, on: on(key), count, more }]
+  }
+  const terminals = workTabs().some((tab) => tab.terminal)
+  const preview = meta.get('preview')
+  return [
+    ...button('overview'),
+    ...button('changes'),
+    ...button('code'),
+    ...(terminals
+      ? [{ key: TERMINAL_BLOCK, label: t('work.room.tabs.terminal'), icon: 'mdi-console', on: on(TERMINAL_BLOCK) }]
+      : []),
+    ...button('site', true),
+    ...(preview && (!preview.faint || on('preview')) ? button('preview', true) : []),
+  ]
+})
+/** 页头上那一组里点了一颗：开着的那一块关掉；关着的打开（工作面板那一侧收着时先打开它）。 */
+function toggleBlock(key: string) {
+  const shown = room.chatBlocks.value
+  if (key === 'overview' ? shown.overview : shown.open.includes(key)) return room.closeBlock(key)
+  if (!panelOpen.value) panelShow()
+  panelRef.value?.select?.(key)
+}
+/** 一块标题栏上的「在编辑器里打开」：换到编辑器，翻到那一格（那份文件、那个终端）。 */
+async function openInEditor(key?: string) {
+  taskForm.choose('editor')
+  if (!key) return
+  if (key.startsWith('terminal:') && !room.editorParts.terminal) room.toggleEditorPart('terminal')
+  // 编辑器那一种摆法要先交给外壳、摆出来，才翻得到。
+  await nextTick()
+  await nextTick()
+  panelRef.value?.select?.(key)
+}
 /** 编辑器里页头右边那三颗按下没有；没得开终端（只读、任务关了）时终端那一颗是 null，不摆。 */
 const editorParts = computed(() => {
   const parts = room.editorParts
@@ -843,6 +893,7 @@ void openPlace()
               @viewing="viewingPath = $event"
               @locate="onLocate"
               @navigate="router.push($event)"
+              @open-editor="openInEditor"
             >
               <!-- 对话看不见时，采纳那一条贴在读者在看的那一格底下：要做的决定不能跟着消失。 -->
               <template v-if="mdAndUp && acceptElsewhere && selectedTopic" #dock>
