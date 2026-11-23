@@ -68,6 +68,17 @@ class Completion:
     usage: Usage
     #: The gateway's price for the call; 0.0 when it named none.
     cost_usd: float = 0.0
+    #: The provider's ``finish_reason`` for the first choice (``"stop"``,
+    #: ``"length"`` …); empty when the gateway named none. ``"length"`` means
+    #: the answer was cut at ``max_tokens`` and a JSON one is very likely
+    #: unparseable (see ``looks_cut_short``).
+    finish_reason: str = ""
+
+    @property
+    def cut_at_length(self) -> bool:
+        """The answer stopped because it ran into ``max_tokens``, not because
+        the model was done."""
+        return self.finish_reason == "length"
 
 
 def response_cost(response: httpx.Response) -> float:
@@ -78,6 +89,39 @@ def response_cost(response: httpx.Response) -> float:
     except ValueError:
         return 0.0
     return cost if math.isfinite(cost) and cost > 0 else 0.0
+
+
+def looks_cut_short(content: str) -> bool:
+    """The answer looks like a JSON object cut off before it closed.
+
+    A ``{`` was opened and never matched, or the text ends inside a string
+    (odd number of ``"``): the shape a call stopped at ``max_tokens`` leaves.
+    A genuinely malformed but complete answer does not look like this — it
+    closes its braces — so this separates "ran out of room" from "the model
+    wrote nonsense", which are different problems worth different logs.
+    """
+    body = content.strip()
+    if not body:
+        return False
+    if body.count("{") > body.count("}"):
+        return True
+    return body.count('"') % 2 == 1
+
+
+def unreadable_note(completion: Completion) -> str:
+    """Why an answer could not be read as JSON: cut off, or malformed.
+
+    ``finish_reason`` is the provider saying outright it hit ``max_tokens``;
+    failing that, a brace left open or a string left unterminated is the shape
+    a cut-off JSON leaves. Callers put this in the log so a truncated answer
+    reads as ``cut at max_tokens`` and not as a vague "unreadable", which is
+    what made this bug hard to see the first time.
+    """
+    if completion.cut_at_length:
+        return "cut at max_tokens"
+    if looks_cut_short(completion.content):
+        return "looks cut off mid-JSON"
+    return "malformed"
 
 
 class GatewayCallError(Exception):
@@ -186,8 +230,14 @@ class GatewayChat:
             raise GatewayCallError(say("gatewayReturnedStatus", status=r.status_code))
         payload = r.json()
         choices = payload.get("choices") or [{}]
-        content = (choices[0].get("message") or {}).get("content") or ""
-        return Completion(content, Usage.of(payload.get("usage")), response_cost(r))
+        first = choices[0]
+        content = (first.get("message") or {}).get("content") or ""
+        return Completion(
+            content,
+            Usage.of(payload.get("usage")),
+            response_cost(r),
+            str(first.get("finish_reason") or ""),
+        )
 
     @staticmethod
     def _user_content(prompt: str, images: Sequence[bytes] | None) -> str | list[dict]:

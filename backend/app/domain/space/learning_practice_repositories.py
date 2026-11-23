@@ -451,6 +451,26 @@ class LearningPracticeRepository:
             )
         )
 
+    async def refund_call(self, *, space_id: int, user_id: int, day: date) -> None:
+        """给这一次调用退一格每人每天的额度。
+
+        一次他要的调用没出成东西（模型没答、答案读不出来）时退回去：不让学生为一次
+        白花的调用扣掉当天的一格。地板是零，退不成负数。整块板的 ``count_board_call``
+        不退 —— 那块刹车算的是真花出去的调用，调用确实发生了。
+        """
+        await self._session.execute(
+            update(SpaceLearningMemberDay)
+            .where(
+                SpaceLearningMemberDay.space_id == space_id,
+                SpaceLearningMemberDay.user_id == user_id,
+                SpaceLearningMemberDay.day == day,
+                SpaceLearningMemberDay.calls > 0,
+            )
+            .values(
+                calls=SpaceLearningMemberDay.calls - 1, updated_at=datetime.now(UTC)
+            )
+        )
+
     async def count_board_call(self, run_id: int) -> None:
         """One more call against the board's day (``SpaceLearningRun.calls``),
         as one statement: the nightly pass may be counting on the same row."""

@@ -380,6 +380,29 @@ class TestPractice:
         # 没出成的那一组不留着，原来那组也已经换掉了：没有半成品。
         assert _mine(api_client, board, ann)["open"] == []
 
+    def test_a_failed_set_does_not_spend_the_member_s_daily_slot(
+        self, user_client, api_client, _portal, db_session, gateway, monkeypatch
+    ):
+        """一次没出成东西的调用不扣学生当天的一格。
+
+        模型答了一半（截断）解析不出来时，学生按了一次按钮、什么也没拿到；这一次不该
+        占掉他的每日额度。上限设成 1：不退还的话，第二次就被自己的上限挡在门外。
+        """
+        monkeypatch.setattr(learning_practice_analysis, "DAILY_CALLS_PER_MEMBER", 1)
+        board = _board(user_client, api_client)
+        ann = _member(user_client, api_client, board)
+        _judged(_portal, db_session, board, ann, "weak")
+        # 第一问：JSON 被截在中间，读不出来。
+        gateway["answers"].append('{"questions": [{"stem": "内层怎么引用外层那一行')
+        broken = _start(api_client, board, ann)
+        assert broken.status_code == 503, broken.text
+        assert len(gateway["asked"]) == 1
+        # 额度退还了：同一上限下还能再试，这次出满 3 道。
+        gateway["answers"].append(_questions())
+        again = _start(api_client, board, ann, fresh=True)
+        assert again.status_code == 200, again.text
+        assert len(again.json()["data"]["questions"]) == 3
+
     def test_the_explanation_is_read_from_its_cache_while_the_judgment_holds(
         self, user_client, api_client, _portal, db_session, gateway
     ):
