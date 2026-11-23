@@ -1,5 +1,16 @@
 {
   "views": "左栏内容",
   "added": "增加 {count} 行",
-  "removed": "删除 {count} 行"
+  "removed": "删除 {count} 行",
+  "more": "更多操作",
+  "search": {
+    "label": "搜索",
+    "title": "搜索（Ctrl+Shift+F）",
+    "placeholder": "搜内容",
+    "matches": "{count} 处匹配",
+    "files": "{count} 个文件",
+    "empty": "暂无匹配",
+    "failed": "搜索失败",
+    "truncated": "结果较多，只列出前一部分"
+  }
 }

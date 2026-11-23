@@ -82,3 +82,23 @@ export function useTaskForm(opts: {
 
   return { chosen, editor, choose }
 }
+
+/**
+ * 在任务页上任何地方按 Ctrl+Shift+F（macOS 上 ⌘⇧F）：搜这件任务的文件（`run`：换到编辑器、摆出左栏、
+ * 翻到「搜索」）。按在捕获阶段接住：焦点在编辑器或终端里时也是这一下，不先让它们吃掉。
+ */
+export function useSearchShortcut(opts: { enabled: () => boolean; run: () => void }) {
+  const onScreen = ref(true)
+  onActivated(() => (onScreen.value = true))
+  onDeactivated(() => (onScreen.value = false))
+  function onKeydown(event: KeyboardEvent) {
+    if (!onScreen.value || !opts.enabled()) return
+    if (!(event.ctrlKey || event.metaKey) || !event.shiftKey || event.altKey) return
+    if (event.code !== 'KeyF' && event.key.toLowerCase() !== 'f') return
+    event.preventDefault()
+    event.stopPropagation()
+    opts.run()
+  }
+  window.addEventListener('keydown', onKeydown, { capture: true })
+  onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown, { capture: true }))
+}

@@ -97,3 +97,29 @@ describe('频道页和任务页「对话」那一种：开没开只算这一页'
     expect(panel.open.value).toBe(true)
   })
 })
+
+describe('进来时开不开：频道页放得下对话加概览那一栏就开着，任务页照 1000', () => {
+  function enter(width: number, openMin?: number) {
+    mainWidth.value = width
+    return useTopicPanel({
+      panes: ref(null),
+      tab: ref<string | undefined>(undefined),
+      desktop: ref(true),
+      thread: ref(false),
+      setTab: () => {},
+      showing: () => 'overview',
+      scope: () => 'here',
+      openMin: openMin === undefined ? undefined : () => openMin,
+    })
+  }
+
+  it('频道页（概览一栏 316，对话至少 340）：主区 1000 以下、并排时也开着', () => {
+    expect(enter(1000, 656).open.value).toBe(true)
+    expect(enter(900, 656).open.value).toBe(true)
+  })
+
+  it('任务页：主区不到 1000 收着，1000 起开着', () => {
+    expect(enter(900).open.value).toBe(false)
+    expect(enter(1000).open.value).toBe(true)
+  })
+})
