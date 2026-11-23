@@ -81,10 +81,6 @@ const shortId = computed(() => topicShortId(props.topic.id))
 const title = computed(() => topicTitle(props.topic))
 // 「综合」是项目本身，不是一件事：没有编号，也没有「进行中」这类状态。
 const isWorkTopic = computed(() => props.topic.kind !== 'root')
-/** 按钮上带的件数（概览上进行中的任务）。 */
-function countOf(thing: WorkTabMeta): number {
-  return thing.signal?.kind === 'count' ? thing.signal.count : 0
-}
 // 我对这个频道的通知档位（铃铛）。
 const store = useWorkspaceStore()
 // ---- 用量 popover (was the 资源 drawer) ----
@@ -286,10 +282,11 @@ useCommands(roomCommands)
     <div v-if="mdAndUp && panelThings?.length" class="topic-header__things">
       <span v-for="(thing, i) in panelThings" :key="thing.key" class="topic-header__thing">
         <BaseButton
+          kind="ghost"
           size="sm"
-          class="topic-header__thing-button tap-target"
+          class="topic-header__thing-button"
           :class="{ 'topic-header__thing-button--on': panelShown === thing.key }"
-          v-bind="countOf(thing) ? { prependIcon: thing.icon } : { icon: thing.icon }"
+          :icon="thing.icon"
           :data-panel-toggle="i === 0 ? '' : undefined"
           :data-panel-thing="thing.key"
           :aria-pressed="panelShown === thing.key ? 'true' : 'false'"
@@ -297,8 +294,7 @@ useCommands(roomCommands)
           :aria-label="thing.hint ?? thing.title"
           :title="thing.hint ?? thing.title"
           @click="emit('toggle-panel', thing.key)"
-          ><span v-if="countOf(thing)" class="topic-header__thing-count">{{ countOf(thing) }}</span></BaseButton
-        >
+        />
         <span v-if="thing.signal?.kind === 'dot'" class="topic-header__thing-dot" aria-hidden="true" />
       </span>
     </div>
@@ -485,25 +481,31 @@ useCommands(roomCommands)
   color: var(--faint);
   background: var(--fill);
 }
-/* 对话旁边那一处的几样东西：一组紧挨着的图标按钮，显示着的那一颗是按下的样子。 */
+/* 对话旁边那一处的几样东西：框在一起的一组图标按钮，显示着的那一颗是按下的样子。件数不画在
+   按钮上，在它的提示里。 */
 .topic-header__things {
   display: flex;
   flex: 0 0 auto;
   gap: 2px;
   align-items: center;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
 }
 .topic-header__thing {
   position: relative;
   display: inline-flex;
 }
+/* 比页头上别的图标按钮小一号：四颗框在一起，整组不该比旁边的铃铛高。 */
+.topic-header__thing .topic-header__thing-button {
+  width: 30px;
+  min-width: 0;
+  height: 30px;
+  --v-icon-size-multiplier: 0.85;
+}
 .topic-header__thing-button--on {
   color: var(--ink);
   background: var(--fill-2);
-}
-.topic-header__thing-count {
-  font-size: 13px;
-  font-variant-numeric: tabular-nums;
-  color: var(--muted);
 }
 /* 有没看过的东西（支线上的新回复）：按钮右上角一颗琥珀点，和页签上的那颗同一个记号。 */
 .topic-header__thing-dot {
