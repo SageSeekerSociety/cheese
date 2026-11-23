@@ -36,23 +36,23 @@ async function besideConversation(page: Page) {
 // 这一档里常驻的二级侧栏（280px）把正文挤得太窄，所以侧栏默认收起，rail 顶上那颗
 // 开关开合它（记住了人的选择）。
 //
-// 右侧面板按主区（对话加面板）的宽度分三档（`useWorkspaceLayout.ts` 的 `panelMode`）：
-// 1000 起并排、默认开着；840 到 1000 并排、默认收着，页头「概览」打开；更窄放不下两栏，
-// 面板浮在对话上。频道页上并排时开或关只算这一页：离开再进来（刷新也是）又照宽度来。
+// 右侧面板按主区（对话加面板）的宽度分档（`useWorkspaceLayout.ts` 的 `panelMode`）：
+// 840 起并排，更窄放不下两栏，面板浮在对话上。并排时进来开不开：任务页 1000 起开着、840 到
+// 1000 收着；频道页的概览是一栏窄的目录，放得下对话加这一栏（`CHANNEL_OVERVIEW_FITS`）就开着，
+// 所以并排时都开着。频道页上并排时开或关只算这一页：离开再进来又照宽度来。
 //
 // 这些差别**只在真浏览器里有**（宽度是算出来的布局，不是布尔 prop），所以守在这里：
 // vitest 用的是 happy-dom 的固定宽度，量不到「同一份 DOM 在两个窗口宽下不一样」。
 //
 // 左边那一列 64px 方块栏 2026-11-16 拿掉了，主区就是窗口减去常驻侧栏：平板横放收起侧栏
-// 时主区等于窗口宽。所以「并排、默认收着」那几条落在 980（主区 980，不到 1000）；1024
-// 的主区已经够 1000，面板默认开着。
+// 时主区等于窗口宽。所以 980 那几条的主区是 980：不到 1000，频道页的概览照样开着。
 //
 // 为什么先开到 1280、进屋、再缩到平板宽：话题列表长在二级侧栏里，而那一档默认收着，
 // `openFirstProject` 要等的行在收起状态里不可见。先在宽档进屋（侧栏常驻、行可见），
 // 再缩窗口——这也正是一条真路径：人横过来/缩窗口那一刻布局就换档。
 
 test.describe('平板横放（960–1180）', () => {
-  test('980：侧栏默认收起；面板默认收着，「概览」把它并排打开，只算这一页', async ({ page }) => {
+  test('980：侧栏默认收起；频道的概览默认并排开着，收起只算这一页', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await apiLogin(page);
     const rows = await openFirstProject(page);
@@ -71,23 +71,22 @@ test.describe('平板横放（960–1180）', () => {
     await expect(sidebarToggle).toHaveAttribute('aria-expanded', 'false');
     await expect(page.locator('#secondary-sidebar')).not.toHaveClass(/v-navigation-drawer--active/);
 
-    // 主区不到 1000：面板默认收着，只剩对话。
+    // 主区 980，不到 1000，但放得下对话加概览那一栏：概览并排开在对话右边，不是浮层。
     const panelToggle = page.locator('[data-panel-toggle]');
-    await expect(panelToggle).toHaveAttribute('aria-pressed', 'false');
-    await expect.poll(() => panelShown(page)).toBe(false);
-
-    // 点「概览」：面板并排开在对话右边，不是浮层。
-    await panelToggle.click();
     await expect(panelToggle).toHaveAttribute('aria-pressed', 'true');
     await expect.poll(() => panelShown(page)).toBe(true);
     await expect.poll(() => besideConversation(page)).toBe(true);
     await expect(page.locator('.panel-scrim')).toHaveCount(0);
 
-    // 只算这一页：再进这个频道又照宽度来，收着。按地址进，不是刷新：点「概览」时地址记下了
-    // 它（`?tab=overview`），带着这个地址刷新是地址点名要它开着。
-    await page.goto(new URL(page.url()).pathname);
-    await expect(page.locator('[data-panel-toggle]')).toHaveAttribute('aria-pressed', 'false');
+    // 点「概览」收起，只剩对话。
+    await panelToggle.click();
+    await expect(panelToggle).toHaveAttribute('aria-pressed', 'false');
     await expect.poll(() => panelShown(page)).toBe(false);
+
+    // 只算这一页：按地址再进这个频道，又照宽度来，开着。地址里不带 `?tab=`：那是地址点名要哪一格。
+    await page.goto(new URL(page.url()).pathname);
+    await expect(page.locator('[data-panel-toggle]')).toHaveAttribute('aria-pressed', 'true');
+    await expect.poll(() => panelShown(page)).toBe(true);
 
     // 二级侧栏那颗开关：点开，抽屉成 active；Esc 收起，焦点还回来。
     await sidebarToggle.click();
@@ -163,10 +162,12 @@ test.describe('平板横放（960–1180）', () => {
     await page.waitForURL(/\/channels\//);
     const topicUrl = page.url().split('?')[0];
 
-    // 落到平板横放：地址里没有 ?tab=，面板收着。
+    // 落到平板横放，读者把概览收起：只剩对话。
     await page.setViewportSize({ width: 980, height: 900 });
+    const panelToggle = page.locator('[data-panel-toggle]');
+    await expect(panelToggle).toHaveAttribute('aria-pressed', 'true');
+    await panelToggle.click();
     await expect.poll(() => panelShown(page)).toBe(false);
-    await expect(page.locator('[data-panel-toggle]')).toHaveAttribute('aria-pressed', 'false');
 
     // 别人发来的链接（?tab=）是「有人打开了这一格」，面板得跟着开，页头上按下的是「讨论串」。
     await page.goto(`${topicUrl}?tab=threads`);

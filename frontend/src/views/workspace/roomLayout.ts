@@ -83,6 +83,10 @@ function mainKind(key: string): boolean {
 }
 /** 频道页的概览：一栏窄的目录，拖过就记住。 */
 const OVERVIEW_WIDTH = { initial: 316, min: 260, max: 480, storageKey: 'cheesex.channelOverviewWidth' }
+/** 频道页的对话最窄多宽。 */
+const CHANNEL_CONVERSATION_MIN = 340
+/** 频道页的主区至少这么宽，进来时概览就开着：放得下最窄的对话加概览那一栏。 */
+export const CHANNEL_OVERVIEW_FITS = CHANNEL_CONVERSATION_MIN + OVERVIEW_WIDTH.initial
 /** 频道页对话右边那一处：支线的列表或一条支线，或在频道里打开的一件任务。 */
 export const TALK_GROUP = 'talk'
 /** 频道页再往右那一处：文件的列表或打开的一份文件，或例行事务。 */
@@ -450,7 +454,7 @@ export function useRoomLayout(
           id: CONVERSATION,
           title: t('work.room.tabs.chat'),
           icon: 'mdi-message-outline',
-          minWidth: 340,
+          minWidth: CHANNEL_CONVERSATION_MIN,
           stripWhenShared: true,
           signal: chatNews.value ? { kind: 'dot' } : undefined,
         },

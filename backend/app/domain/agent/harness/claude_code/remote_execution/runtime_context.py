@@ -104,7 +104,8 @@ def context(self, known_files=None):
 
 
 def task_fs(self, params):
-    """Read or edit one task's live worktree, never the room's host filesystem.
+    """Read, search or edit one task's live worktree, never the room's host
+    filesystem.
 
     A task without a checkout (``in_workspace``: its project has no
     repository) is worked in the room's workspace, and is read there."""
@@ -205,6 +206,8 @@ def task_fs(self, params):
             and not any((root / name).iterdir())
         ]
         return {"files": files, "dirs": dirs}
+    if operation == "search":
+        return _search(root, params)
     relative = _relative(params.get("path", ""))
     if operation in ("create", "mkdir", "move", "delete"):
         answer = _arrange(root, relative, operation, params)
@@ -273,6 +276,135 @@ def task_fs(self, params):
             keep_soon(self, task_id)
         return {"version": hashlib.sha256(data).hexdigest()[:16]}
     raise ValueError("Unknown task filesystem operation")
+
+
+#: The longest text a person may search a task's copy for.
+SEARCH_QUERY_MAX = 200
+#: How long one search of a task's copy may run before what it found so far
+#: is answered, cut off.
+SEARCH_DEADLINE_S = 20.0
+#: How much of a matching line is answered: a window around its first match.
+SEARCH_LINE_MAX = 400
+#: How far before the first match that window starts.
+SEARCH_LINE_LEAD = 80
+
+
+def _utf16(text, index):
+    """``index`` (a position in ``text``) counted as the browser counts a
+    string: in UTF-16 code units."""
+    return len(text[:index].encode("utf-16-le")) // 2
+
+
+def _search(root, params):
+    """The lines of the task's copy holding ``query``: tracked files and
+    untracked ones, as the 文件 tree lists them (the repository's ignore rules
+    keep the rest out), binary files skipped. The text is matched as it is
+    typed, ignoring case.
+
+    At most ``max_matches`` lines in all and ``max_per_file`` of one file;
+    ``truncated`` says some were left out, by either cap or by the search
+    running past `SEARCH_DEADLINE_S`. ``-m`` would stop git sooner, but Git
+    older than 2.38 does not know it: git is stopped here once the total is
+    reached instead."""
+    query = params.get("query")
+    if not isinstance(query, str) or not query or len(query) > SEARCH_QUERY_MAX:
+        # i18n-exempt: the route bounds the text before it is sent here; no reader meets this
+        raise ValueError("Invalid search text")
+    limit = int(params.get("max_matches", 500))
+    per_file = int(params.get("max_per_file", 100))
+    pattern = re.compile(re.escape(query), re.IGNORECASE)
+    process = subprocess.Popen(
+        [
+            "git",
+            "-C",
+            str(root),
+            "grep",
+            "--untracked",  # untracked files too; ignored ones stay out
+            "--no-color",
+            "-I",  # never a binary
+            "-F",  # the text as typed, not a pattern
+            "-i",
+            "-n",
+            "-z",  # path, line number and text apart, whatever the path holds
+            "-e",
+            query,
+            "--",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    assert process.stdout is not None and process.stderr is not None
+    late = threading.Event()
+
+    def stop():
+        late.set()
+        process.kill()
+
+    timer = threading.Timer(SEARCH_DEADLINE_S, stop)
+    timer.daemon = True
+    timer.start()
+    files = {}
+    total = 0
+    truncated = False
+    try:
+        for raw in process.stdout:
+            parts = raw.rstrip(b"\n").split(b"\0", 2)
+            if len(parts) != 3 or not parts[1].isdigit():
+                continue
+            path = parts[0].decode("utf-8", "replace")
+            matches = files.setdefault(path, [])
+            if len(matches) >= per_file:
+                truncated = True
+                continue
+            if total >= limit:
+                truncated = True
+                break
+            line = parts[2].decode("utf-8", "replace").rstrip("\r")
+            found = list(pattern.finditer(line))
+            start = 0
+            if len(line) > SEARCH_LINE_MAX:
+                first = found[0].start() if found else 0
+                start = max(0, first - SEARCH_LINE_LEAD)
+            end = min(len(line), start + SEARCH_LINE_MAX)
+            text = line[start:end]
+            matches.append(
+                {
+                    "line": int(parts[1]),
+                    "text": text,
+                    "columns": [
+                        [
+                            _utf16(text, match.start() - start),
+                            _utf16(text, min(match.end(), end) - start),
+                        ]
+                        for match in found
+                        if start <= match.start() < end
+                    ],
+                    "cut_before": start > 0,
+                    "cut_after": end < len(line),
+                }
+            )
+            total += 1
+    finally:
+        timer.cancel()
+        if process.poll() is None:
+            process.kill()
+        stderr = process.stderr.read()
+        process.wait()
+    # 1: nothing matched, which is an answer. Stopped on purpose (a cap, the
+    # deadline) is an answer too. Anything else did not search.
+    if not truncated and not late.is_set() and process.returncode not in (0, 1):
+        # Said by the caller in the reader's language; what git wrote stays in
+        # the answer for whoever reads the log.
+        return {
+            "error": "search_failed",
+            "detail": stderr.decode("utf-8", "replace").strip()[:200],
+        }
+    return {
+        "files": [
+            {"path": path, "matches": lines} for path, lines in files.items() if lines
+        ],
+        "truncated": truncated or late.is_set(),
+    }
 
 
 def _relative(name):

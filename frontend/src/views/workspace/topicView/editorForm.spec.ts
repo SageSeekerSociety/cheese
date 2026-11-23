@@ -5,10 +5,10 @@
 import type { AppNav } from '@/components/common/Navigation/appNav'
 
 import { computed, defineComponent, h, nextTick, ref } from 'vue'
-import { render } from '@testing-library/vue'
+import { fireEvent, render } from '@testing-library/vue'
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { useTaskForm } from './editorForm'
+import { useSearchShortcut, useTaskForm } from './editorForm'
 
 import { provideAppNav } from '@/components/common/Navigation/appNav'
 
@@ -101,5 +101,36 @@ describe('the task page form', () => {
     page.form().choose('chat')
     await nextTick()
     expect(page.folded.value).toBe(true)
+  })
+})
+
+describe('the search shortcut', () => {
+  function page(enabled: () => boolean) {
+    let asked = 0
+    render(
+      defineComponent(() => {
+        useSearchShortcut({ enabled, run: () => (asked += 1) })
+        return () => h('textarea', { 'aria-label': 'composer' })
+      })
+    )
+    return { asked: () => asked }
+  }
+
+  it('asks for the search on Ctrl+Shift+F or ⌘⇧F from anywhere on the page, even inside a field', async () => {
+    const p = page(() => true)
+    const field = document.querySelector('textarea')!
+    await fireEvent.keyDown(field, { key: 'F', code: 'KeyF', ctrlKey: true, shiftKey: true })
+    expect(p.asked()).toBe(1)
+    await fireEvent.keyDown(document.body, { key: 'f', code: 'KeyF', metaKey: true, shiftKey: true })
+    expect(p.asked()).toBe(2)
+    // Ctrl+F alone is the browser's find in page.
+    await fireEvent.keyDown(field, { key: 'f', code: 'KeyF', ctrlKey: true })
+    expect(p.asked()).toBe(2)
+  })
+
+  it('does nothing where the page has no 编辑器 form (a phone, the floating panel)', async () => {
+    const p = page(() => false)
+    await fireEvent.keyDown(document.body, { key: 'F', code: 'KeyF', ctrlKey: true, shiftKey: true })
+    expect(p.asked()).toBe(0)
   })
 })

@@ -17,13 +17,14 @@ import { useChapters } from '@/composables/useChapters'
 import { useConversationFiles } from '@/composables/useConversationFiles'
 import { usePageTitle } from '@/composables/usePageTitle'
 import { useScreenHeader } from '@/composables/useScreenHeader'
+import { PANEL_OPEN_MIN } from '@/composables/useWorkspaceLayout'
 
 import { useTopicActions } from './topicView/actions'
 import { useTopicAddress } from './topicView/address'
 import { useAdoptInPlace } from './topicView/adoptInPlace'
 import { useCardPhase, useTopicConversation } from './topicView/conversation'
 import { useDeliveryTab } from './topicView/delivery'
-import { useTaskForm } from './topicView/editorForm'
+import { useSearchShortcut, useTaskForm } from './topicView/editorForm'
 import { useTopicHeader } from './topicView/header'
 import { useTopicLive } from './topicView/live'
 import { useTopicPanelState } from './topicView/panel'
@@ -58,7 +59,7 @@ import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
 import { openRoomTasksQuery, roomTaskQuery } from '@/query/room'
 import { useWorkspaceStore } from '@/stores/workspace'
-import { CONVERSATION, type RoomWorkTab, useRoomLayout } from '@/views/workspace/roomLayout'
+import { CHANNEL_OVERVIEW_FITS, CONVERSATION, type RoomWorkTab, useRoomLayout } from '@/views/workspace/roomLayout'
 import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
 import { useChannelOverview } from '@/views/workspace/useChannelOverview'
 import { useTaskOverview } from '@/views/workspace/useTaskOverview'
@@ -137,6 +138,8 @@ const taskOverviewRef = ref<TaskOverviewHandle | null>(null)
 const blockForm = ref(false)
 const panelState = useTopicPanelState({
   scope: () => (blockForm.value ? props.taskId ?? 'channel' : null),
+  // 频道页的概览是一栏窄的目录：放得下对话加这一栏就开着。任务页照默认的宽度。
+  openMin: () => (props.taskId ? PANEL_OPEN_MIN : CHANNEL_OVERVIEW_FITS),
   panes: panesRef,
   tab: panelTab,
   desktop: mdAndUp,
@@ -590,6 +593,18 @@ async function openInEditor(key?: string) {
   await nextTick()
   panelRef.value?.select?.(key)
 }
+// Ctrl+Shift+F：搜这件任务的文件。「对话」那一种先换到编辑器，左栏藏着就摆出来，再翻到「搜索」。
+useSearchShortcut({
+  enabled: () => !!props.taskId && mdAndUp.value && !panelFloat.value,
+  run: async () => {
+    if (!taskForm.editor.value) taskForm.choose('editor')
+    if (!room.editorParts.left) room.toggleEditorPart('left')
+    // 编辑器那一种摆法要先交给外壳、摆出来，左栏才在。
+    await nextTick()
+    await nextTick()
+    panelRef.value?.searchFiles?.()
+  },
+})
 /** 编辑器里页头右边那三颗按下没有；没得开终端（只读、任务关了）时终端那一颗是 null，不摆。 */
 const editorParts = computed(() => {
   const parts = room.editorParts

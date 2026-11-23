@@ -1,5 +1,16 @@
 {
   "views": "Left column view",
   "added": "no lines added | 1 line added | {count} lines added",
-  "removed": "no lines removed | 1 line removed | {count} lines removed"
+  "removed": "no lines removed | 1 line removed | {count} lines removed",
+  "more": "More actions",
+  "search": {
+    "label": "Search",
+    "title": "Search (Ctrl+Shift+F)",
+    "placeholder": "Search contents",
+    "matches": "no matches | 1 match | {count} matches",
+    "files": "no files | 1 file | {count} files",
+    "empty": "No matches",
+    "failed": "Search failed",
+    "truncated": "Too many results; only the first ones are listed"
+  }
 }

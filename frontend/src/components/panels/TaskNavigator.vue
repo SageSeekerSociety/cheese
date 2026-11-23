@@ -1,35 +1,45 @@
 <script setup lang="ts">
 // The left column of the task page's 编辑器 form: where the reader finds something to
-// open. A switch in a row at its top picks one view: 文件 (the task's file tree with
-// its own head of actions) or 改动 (the files this task changed, with the lines added and removed;
-// one opens that file's changes in the centre). Which view shows is the page's
-// (`view`), so it stays the same while the form is switched away and back.
+// open. One row at its top: the switch between its views at the left — 文件 (the task's
+// file tree), 搜索 (the text of the task's files) and 改动 (the files this task changed,
+// with the lines added and removed; one opens that file's changes in the centre) — and,
+// for 文件, the tree's actions at the right: 新建文件, and a ⋯ with 新建文件夹, 按名称找文件
+// and 全部收起. Which view shows is the page's (`view`), so it stays the same while the
+// form is switched away and back.
 //
 // It draws what the page holds — the task's files (`useTaskFiles`), which folders
-// are open (`useTaskFileTree`), the changed files and their diffs — and fetches
-// nothing.
+// are open (`useTaskFileTree`), the search (`useTaskSearch`), the changed files and
+// their diffs — and fetches nothing.
 import type { TaskFilesBundle } from '../../composables/useTaskFiles'
 import type { TaskFileTreeState } from '../../composables/useTaskFileTree'
+import type { TaskSearchBundle } from '../../composables/useTaskSearch'
 import type { FileDiff } from '../../lib/diff'
+import type { MenuAction } from '../common/menuAction'
 
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 
+import AdaptiveMenu from '../common/AdaptiveMenu.vue'
 import FileKindMark from '../common/FileKindMark.vue'
 
 import ChangesOpenFile from './ChangesOpenFile.vue'
 import { CODE_TAB, roomTabs } from './panelTabList'
 import TaskFileBrowser from './TaskFileBrowser.vue'
+import TaskFileSearch from './TaskFileSearch.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
-export type NavigatorView = 'files' | 'changes'
+export type NavigatorView = 'files' | 'search' | 'changes'
 
 const props = withDefaults(
   defineProps<{
     files: TaskFilesBundle
     tree: TaskFileTreeState
+    /** The search of the task's files (the 搜索 view). */
+    search: TaskSearchBundle
     view: NavigatorView
+    /** Bumped when the page asks for the 搜索 box (its shortcut): the box takes the focus. */
+    searchFocusTick?: number
     /** Files this task changed (the work summary's list). */
     changed?: string[]
     /** Each changed file's diff, once read: the lines added and removed. */
@@ -39,13 +49,15 @@ const props = withDefaults(
     /** The person may not change this task's files. */
     readOnly?: boolean
   }>(),
-  { changed: () => [], diffs: () => [], activeChange: null, readOnly: false }
+  { changed: () => [], diffs: () => [], activeChange: null, readOnly: false, searchFocusTick: 0 }
 )
 
 const emit = defineEmits<{
   'update:view': [view: NavigatorView]
   /** Open this file in the centre. */
   'open-file': [path: string]
+  /** Open this file in the centre at this line (a search match). */
+  'open-line': [path: string, line: number]
   /** Open this file in a cell of its own beside the centre. */
   'open-beside': [path: string]
   /** Open this changed file's changes in the centre. */
@@ -54,8 +66,61 @@ const emit = defineEmits<{
 
 const changesTab = roomTabs({ withChat: false, review: false, task: true }).find((tab) => tab.key === 'changes')!
 const VIEWS = computed(() => [
-  { key: 'files' as const, label: CODE_TAB.label, icon: CODE_TAB.icon, count: 0 },
-  { key: 'changes' as const, label: changesTab.label, icon: changesTab.icon, count: props.changed.length },
+  { key: 'files' as const, label: CODE_TAB.label, title: CODE_TAB.label, icon: CODE_TAB.icon, count: 0 },
+  {
+    key: 'search' as const,
+    label: t('work.room.navigator.search.label'),
+    title: t('work.room.navigator.search.title'),
+    icon: 'mdi-magnify',
+    count: 0,
+  },
+  {
+    key: 'changes' as const,
+    label: changesTab.label,
+    title: changesTab.label,
+    icon: changesTab.icon,
+    count: props.changed.length,
+  },
+])
+
+// ---- the 搜索 box takes the focus when the person asked for it ----
+// Asked before this column was first drawn (the shortcut also brings the column up): asked all the same.
+const searchFocus = ref(props.view === 'search' && props.searchFocusTick > 0)
+function pickView(key: NavigatorView) {
+  if (key === 'search') searchFocus.value = true
+  emit('update:view', key)
+}
+watch(
+  () => props.searchFocusTick,
+  () => (searchFocus.value = true)
+)
+
+// ---- the 文件 view's actions, in the column's row ----
+const browser = ref<InstanceType<typeof TaskFileBrowser> | null>(null)
+const moreOpen = ref(false)
+const moreActions = computed<MenuAction[]>(() => [
+  ...(props.readOnly
+    ? []
+    : [
+        {
+          key: 'dir',
+          label: t('work.room.taskFiles.newFolder'),
+          icon: 'mdi-folder-plus-outline',
+          onSelect: () => browser.value?.askCreate('dir', ''),
+        },
+      ]),
+  {
+    key: 'find',
+    label: t('work.room.taskFiles.find'),
+    icon: 'mdi-file-search-outline',
+    onSelect: () => (finding.value = true),
+  },
+  {
+    key: 'collapse',
+    label: t('work.room.taskFiles.collapseAll'),
+    icon: 'mdi-collapse-all-outline',
+    onSelect: () => props.tree.collapseAll(),
+  },
 ])
 
 // The changed files: from their diffs once read (with the lines added and removed), from
@@ -90,24 +155,63 @@ function pickFound(path: string) {
             :icon="v.icon"
             :class="{ 'task-nav__view--on': props.view === v.key }"
             :aria-label="v.label"
-            :title="v.label"
+            :title="v.title"
             :aria-pressed="props.view === v.key ? 'true' : 'false'"
-            @click="emit('update:view', v.key)"
+            @click="pickView(v.key)"
           />
           <span v-if="v.count" class="task-nav__count" aria-hidden="true">{{ v.count }}</span>
         </span>
       </div>
+      <div v-if="props.view === 'files'" class="task-nav__actions">
+        <BaseButton
+          v-if="!props.readOnly"
+          kind="ghost"
+          size="sm"
+          icon="mdi-file-plus-outline"
+          :aria-label="t('work.room.taskFiles.newFile')"
+          :title="t('work.room.taskFiles.newFile')"
+          @click="browser?.askCreate('file', '')"
+        />
+        <AdaptiveMenu v-model="moreOpen" :actions="moreActions" :title="CODE_TAB.label">
+          <template #activator="{ props: activator }">
+            <BaseButton
+              v-bind="activator"
+              kind="ghost"
+              size="sm"
+              icon="mdi-dots-horizontal"
+              :aria-label="t('work.room.navigator.more')"
+              :title="t('work.room.navigator.more')"
+            />
+          </template>
+        </AdaptiveMenu>
+      </div>
     </div>
     <TaskFileBrowser
       v-if="props.view === 'files'"
+      ref="browser"
       class="task-nav__body"
       :files="props.files"
       :tree="props.tree"
       :changed="props.changed"
       :editable="!props.readOnly"
+      :head="false"
       @select="emit('open-file', $event)"
       @open-beside="emit('open-beside', $event)"
       @find="finding = true"
+    />
+    <TaskFileSearch
+      v-else-if="props.view === 'search'"
+      class="task-nav__body"
+      :query="props.search.query.value"
+      :state="props.search.state.value"
+      :result="props.search.result.value"
+      :error="props.search.error.value"
+      :focus="searchFocus"
+      @update:query="props.search.setQuery"
+      @submit="props.search.searchNow()"
+      @retry="props.search.searchNow()"
+      @open="(path, line) => emit('open-line', path, line)"
+      @focused="searchFocus = false"
     />
     <template v-else>
       <p v-if="!rows.length" class="task-nav__empty">{{ t('work.room.changes.noChanges') }}</p>
@@ -173,6 +277,13 @@ function pickFound(path: string) {
 .task-nav__view {
   position: relative;
   display: inline-flex;
+}
+.task-nav__actions {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  align-items: center;
+  margin-left: auto;
 }
 .task-nav__view--on {
   background: var(--fill-2);
