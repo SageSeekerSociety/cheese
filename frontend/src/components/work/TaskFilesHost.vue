@@ -82,7 +82,7 @@ const ownLanguage = given
   ? null
   : useTaskLanguage({
       taskId: () => props.taskId,
-      machine: () => files.machine.value,
+      machine: () => files.environment.state.value,
       open: (path, line) => void files.open(path, { start: line, end: line }),
     }).link
 

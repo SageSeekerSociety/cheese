@@ -1,14 +1,17 @@
 // A task's「文件」panel: the task's working copy, the one its AI teammate works
 // in, browsed and edited by a person.
 //
-// Viewing never needs the task's machine: the listing and a file are read as
-// the backend has them (off a machine, or off the forge while none holds the
-// copy, then `editable: false`). Editing does. The first edit asks for the
-// machine in the background (`prepareTaskMachine`) and the person keeps
+// Viewing never needs the task's environment: the listing and a file are read
+// as the backend has them (off the environment, or off the forge while none
+// holds the copy, then `editable: false`; a file of the task's commits says
+// `source: committed`, and the panel marks it as the committed version).
+// Editing does. The first edit asks for the environment in the background
+// (`useTaskEnvironment`, the page's one state of it) and the person keeps
 // typing; their text is held in the browser (`lib/heldEdits`) with the version
-// it was made against, and saved once the machine is ready. A save that finds
-// the file changed underneath is merged by the backend against that version;
-// when it cannot be, the person's text stays and they choose.
+// it was made against, and saved once the environment is ready, when the files
+// read off the forge are read again from it. A save that finds the file changed
+// underneath is merged by the backend against that version; when it cannot be,
+// the person's text stays and they choose.
 //
 // A cell of the 文件 panel keeps a tab for each file opened in it, remembered
 // per task in this browser; closing a tab only stops showing the file — text
@@ -16,32 +19,22 @@
 // holding one file (opened beside) keeps no tabs.
 //
 // A file can be open in several cells at once. What is known about one file
-// of a task — its text, whether it is held, saving or in conflict — and about
-// the task's machine is kept once, here at module level,
-// and every cell showing it reads that one copy: two cells on the same file
-// show the same text, and it is saved once.
+// of a task — its text, whether it is held, saving or in conflict — is kept
+// once, here at module level, and every cell showing it reads that one copy:
+// two cells on the same file show the same text, and it is saved once.
 import type { WorkspaceFile } from '../cx_types'
 import type { MergeConflict } from '../types/reviewComment'
 
-import { computed, onBeforeUnmount, reactive, ref, watch } from 'vue'
+import { computed, effectScope, onBeforeUnmount, reactive, ref, watch } from 'vue'
 
-import {
-  ApiError,
-  arrangeTaskFile,
-  getTaskMachineStatus,
-  listFiles,
-  prepareTaskMachine,
-  readFile,
-  writeFile,
-} from '../api'
+import { ApiError, arrangeTaskFile, listFiles, readFile, writeFile } from '../api'
 import { storageGetJson, storageRemove, storageSetJson } from '../lib/browserStorage'
 import { noteSaved } from '../lib/handIn'
 import { heldEdit, heldOnlyInMemory, heldPaths, holdEdit, releaseEdit } from '../lib/heldEdits'
 
-import { t } from '@/i18n'
+import { taskEnvironment, taskEnvironmentState, useTaskEnvironment } from './useTaskEnvironment'
 
-/** Where the task's machine is, as far as this panel knows. */
-export type TaskMachineState = 'unknown' | 'ready' | 'preparing' | 'failed'
+import { t } from '@/i18n'
 
 /** The file open in the panel. */
 export interface OpenTaskFile {
@@ -54,6 +47,10 @@ export interface OpenTaskFile {
   bytes: number
   binary: boolean
   tooLarge: boolean
+  /** Read off the forge while no environment held the copy: read again once one does. */
+  forge: boolean
+  /** What is shown is the task's committed version (`source: committed`). */
+  committed: boolean
 }
 
 export type TaskFileArrangement =
@@ -75,10 +72,6 @@ export interface TaskFilesOptions {
 
 /** How long typing settles before a save goes out (ms). */
 const SAVE_AFTER_MS = 600
-/** How often the machine's bring-up is asked about (ms). */
-const POLL_MS = 2000
-/** How many answers of "nothing is being brought back" are waited out before it counts as failed. */
-const IDLE_POLLS = 10
 
 /** The tabs each task's panel had open, and the one shown: it opens on them again. */
 interface SavedTabs {
@@ -114,19 +107,17 @@ interface FileState {
   error: string
 }
 
-/** A task's machine and what its cells share. */
+/** What a task's cells share. */
 interface TaskState {
   projectId: string
-  machine: TaskMachineState
-  error: string
   /** What was saved or held here, for the tree's dots. */
   touched: Set<string>
   /** Cells of this task on screen. */
   users: number
-  poll: ReturnType<typeof setTimeout> | null
-  idlePolls: number
-  /** Tree changes waiting for the machine. */
+  /** Tree changes waiting for the environment. */
   queue: (() => Promise<unknown>)[]
+  /** Stops following the task's environment (`followEnvironment`). */
+  unfollow: () => void
 }
 
 const tasks = new Map<string, TaskState>()
@@ -141,17 +132,63 @@ function taskState(tid: string): TaskState {
   if (!state) {
     state = reactive({
       projectId: '',
-      machine: 'unknown',
-      error: '',
       touched: new Set<string>(),
       users: 0,
-      poll: null,
-      idlePolls: 0,
       queue: [],
+      unfollow: () => {},
     }) as TaskState
     tasks.set(tid, state)
+    state.unfollow = followEnvironment(tid)
   }
   return state
+}
+
+const ready = (tid: string) => taskEnvironmentState(tid) === 'ready'
+
+/**
+ * The environment became ready: the text held for the task is saved, the tree changes waiting
+ * are made, and the files read off the forge are read again from it — once per task, however
+ * many of its cells are on screen.
+ */
+function followEnvironment(tid: string): () => void {
+  // Its own scope: the cell that happened to make the task's state may close before the others.
+  const scope = effectScope(true)
+  scope.run(() =>
+    watch(
+      () => taskEnvironmentState(tid),
+      (now, was) => {
+        if (now === 'ready' && was !== 'ready') void flushHeld(tid).then(() => rereadForge(tid))
+      }
+    )
+  )
+  return () => scope.stop()
+}
+
+/** Files shown off the forge, with nothing typed in them: read again from the environment. */
+async function rereadForge(tid: string) {
+  const task = tasks.get(tid)
+  if (!task?.projectId) return
+  const prefix = `${tid}\n`
+  for (const [key, state] of fileStates) {
+    const shown = state.file
+    if (!key.startsWith(prefix) || !shown?.forge || state.held || state.saving) continue
+    try {
+      const read = await readFile(task.projectId, shown.path, null, tid, 'live')
+      if (fileStates.get(key) !== state || state.held || state.saving || read.content === null) continue
+      if (!read.editable) continue
+      state.file = {
+        ...shown,
+        content: read.content,
+        base: read.content,
+        version: read.version,
+        bytes: read.bytes,
+        forge: false,
+        committed: false,
+      }
+    } catch {
+      // What is shown stays; the next read of the file reads it from the environment.
+    }
+  }
 }
 
 function fileState(tid: string, path: string): FileState {
@@ -212,7 +249,15 @@ async function saveHeld(tid: string, path: string): Promise<void> {
     }
     if (state.file) {
       const mine = state.file.content === kept.content
-      state.file = { ...state.file, version: res.version, base: saved, content: mine ? saved : state.file.content }
+      state.file = {
+        ...state.file,
+        version: res.version,
+        base: saved,
+        content: mine ? saved : state.file.content,
+        // Saved into the environment: what is shown is its copy now.
+        forge: false,
+        committed: false,
+      }
       state.held = !mine
     } else {
       // Saved while no cell showed it (a closed tab, an earlier visit).
@@ -221,11 +266,11 @@ async function saveHeld(tid: string, path: string): Promise<void> {
     state.conflict = false
     state.merge = null
     state.error = ''
-    task.machine = 'ready'
+    taskEnvironment.sawReady(tid)
   } catch (e) {
-    if (isRefusal(e, 'MachinePreparing')) {
-      task.machine = 'preparing'
-      watchBringUp(tid)
+    if (taskEnvironment.learn(tid, e)) {
+      // Being prepared, or not answering: the environment's state says so, and the text is
+      // saved once it is ready.
     } else if (e instanceof ApiError && e.status === 409) {
       const regions = (e.data as MergeConflict | undefined)?.regions
       if (regions) state.merge = e.data as MergeConflict
@@ -236,7 +281,7 @@ async function saveHeld(tid: string, path: string): Promise<void> {
   } finally {
     inFlight.delete(key)
     state.saving = false
-    if (again.delete(key) && task.machine === 'ready') void saveHeld(tid, path)
+    if (again.delete(key) && ready(tid)) void saveHeld(tid, path)
   }
 }
 
@@ -247,87 +292,29 @@ function saveSoon(tid: string, path: string) {
   if (!pending) return
   clearTimeout(pending)
   saveTimers.delete(key)
-  if (taskState(tid).machine === 'ready') void saveHeld(tid, path)
+  if (ready(tid)) void saveHeld(tid, path)
 }
 
-/** Save every file of this task with text held, then the tree changes waiting (the machine is ready). */
+/** Save every file of this task with text held, then the tree changes waiting (the environment is ready). */
 async function flushHeld(tid: string) {
   for (const path of heldPaths(tid)) await saveHeld(tid, path)
-  const queued = taskState(tid).queue.splice(0)
+  const queued = tasks.get(tid)?.queue.splice(0) ?? []
   for (const run of queued) await run()
-}
-
-/** Ask for the task's machine for the person's edits, unless that is under way. */
-async function bringUp(tid: string): Promise<void> {
-  const task = taskState(tid)
-  if (task.machine === 'preparing') return
-  task.machine = 'preparing'
-  task.error = ''
-  try {
-    await prepareTaskMachine(tid)
-    watchBringUp(tid)
-  } catch (e) {
-    task.machine = 'failed'
-    task.error = e instanceof Error ? e.message : t('apiError.taskMachinePrepareFailed')
-  }
-}
-
-function watchBringUp(tid: string) {
-  const task = taskState(tid)
-  if (task.poll || task.users === 0) return
-  task.idlePolls = 0
-  task.poll = setTimeout(() => void poll(tid), POLL_MS)
-}
-
-async function poll(tid: string) {
-  const task = taskState(tid)
-  task.poll = null
-  if (task.users === 0) return
-  try {
-    const now = await getTaskMachineStatus(tid)
-    if (tasks.get(tid) !== task) return
-    if (now.machine === 'ready') {
-      task.machine = 'ready'
-      await flushHeld(tid)
-      return
-    }
-    if (now.failed === 'unavailable' || (now.machine === null && ++task.idlePolls > IDLE_POLLS)) {
-      task.machine = 'failed'
-      task.error = t('apiError.taskMachinePrepareFailed')
-      return
-    }
-  } catch {
-    // A status that did not answer is asked again.
-  }
-  if (task.users > 0 && !task.poll) task.poll = setTimeout(() => void poll(tid), POLL_MS)
 }
 
 /** Text held from before (a reload, another visit): carry on saving it. */
 async function resume(tid: string) {
-  const task = taskState(tid)
-  if (task.machine === 'preparing') return
-  if (task.machine === 'ready') return void flushHeld(tid)
-  try {
-    const now = await getTaskMachineStatus(tid)
-    if (now.machine === 'ready') {
-      task.machine = 'ready'
-      return void flushHeld(tid)
-    }
-    if (now.machine === 'preparing') {
-      task.machine = 'preparing'
-      return watchBringUp(tid)
-    }
-  } catch {
-    // Asked for below.
-  }
-  await bringUp(tid)
+  const now = await taskEnvironment.check(tid)
+  if (now === 'ready') return void flushHeld(tid)
+  // After a failed bring-up the text stays held; the person retries it.
+  if (now !== 'preparing' && now !== 'failed' && now !== 'unanswered') await taskEnvironment.bringUp(tid)
 }
 
 /** The last cell of a task closed: nothing more is asked for it. Held text stays in storage. */
 function release(tid: string) {
   const task = tasks.get(tid)
   if (!task || --task.users > 0) return
-  if (task.poll) clearTimeout(task.poll)
+  task.unfollow()
   tasks.delete(tid)
   const prefix = `${tid}\n`
   for (const [key, timer] of saveTimers) {
@@ -360,6 +347,8 @@ export function useTaskFiles(opts: TaskFilesOptions) {
   const keepsTabs = () => opts.tabs?.() ?? true
 
   const task = () => opts.taskId()
+  /** The task's environment, as the page knows it. */
+  const environment = useTaskEnvironment(task)
   // This cell counts as one of its task's cells while it is mounted.
   let joined: string | null = null
   watch(
@@ -391,9 +380,10 @@ export function useTaskFiles(opts: TaskFilesOptions) {
   const saving = computed(() => current.value?.saving ?? false)
   const conflict = computed(() => current.value?.conflict ?? false)
   const merge = computed(() => current.value?.merge ?? null)
-  const machine = computed<TaskMachineState>(() => shared.value?.machine ?? 'unknown')
-  const saveError = computed(() => current.value?.error || shared.value?.error || '')
+  const saveError = computed(() => current.value?.error || '')
   const touched = computed(() => shared.value?.touched ?? new Set<string>())
+  /** The file shown is the task's committed version: no environment held the copy when it was read. */
+  const committedCopy = computed(() => !!file.value?.committed && !held.value)
 
   /** Tabs whose file has text not saved yet. */
   const heldTabs = computed<ReadonlySet<string>>(() => {
@@ -420,8 +410,10 @@ export function useTaskFiles(opts: TaskFilesOptions) {
       listError.value = ''
       listed.value = true
     } catch (e) {
-      if (request !== listRequest || opts2.silent) return
-      listError.value = e instanceof Error ? e.message : t('work.room.changes.loadFailed')
+      if (request !== listRequest) return
+      // The environment's own condition (not answering) is said by its note, with its retry.
+      if (environment.learn(e) || opts2.silent) return
+      listError.value = e instanceof Error ? e.message : ''
     } finally {
       if (request === listRequest) listing.value = false
     }
@@ -450,11 +442,15 @@ export function useTaskFiles(opts: TaskFilesOptions) {
     try {
       const read = await readFile(pid, path, null, tid, 'live')
       if (request !== fileRequest || task() !== tid) return
-      // A copy a machine holds takes a save: nothing has to be brought back.
-      if (read.editable && read.source !== 'committed') taskState(tid).machine = 'ready'
+      const text = read.content
+      // A text file that takes no save was read off the forge: no environment holds the copy.
+      const forge = !read.editable && text !== null && !read.too_large
+      // A copy the environment holds takes a save: nothing has to be brought up. One read off
+      // the forge though the environment was believed ready says it is gone.
+      if (read.editable) environment.sawReady()
+      else if (forge) environment.sawGone()
       // Another cell is saving this file: what it shows is the latest word on it.
       if (state.saving) return
-      const text = read.content
       const kept = text !== null ? heldEdit(tid, path) : null
       state.file = {
         path,
@@ -464,6 +460,8 @@ export function useTaskFiles(opts: TaskFilesOptions) {
         bytes: read.bytes,
         binary: read.binary || (text === null && !read.too_large),
         tooLarge: read.too_large,
+        forge,
+        committed: read.source === 'committed',
       }
       state.held = !!kept
       state.conflict = false
@@ -473,7 +471,9 @@ export function useTaskFiles(opts: TaskFilesOptions) {
     } catch (e) {
       if (request !== fileRequest || task() !== tid) return
       state.file = null
-      fileError.value = e instanceof Error ? e.message : t('work.room.changes.readFileFailed')
+      // The environment's own condition is said by its note; the file is read again once it is ready.
+      if (environment.learn(e)) return
+      fileError.value = e instanceof Error ? e.message : ''
     } finally {
       if (request === fileRequest) opening.value = false
     }
@@ -495,7 +495,7 @@ export function useTaskFiles(opts: TaskFilesOptions) {
 
   /**
    * Close a file's tab. Text held for it is not dropped: a save waiting for the
-   * typing to settle goes out now, and one waiting for the machine goes out with
+   * typing to settle goes out now, and one waiting for the environment goes out with
    * the others once it is ready — as when the person switches to another file.
    */
   function closeTab(path: string) {
@@ -535,9 +535,10 @@ export function useTaskFiles(opts: TaskFilesOptions) {
     state.error = ''
     const shared = taskState(tid)
     shared.touched = new Set(shared.touched).add(now.path)
-    if (shared.machine === 'ready') scheduleSave(tid, now.path)
-    // After a failed bring-up the text stays held; the person retries it.
-    else if (shared.machine !== 'failed') void bringUp(tid)
+    const env = environment.state.value
+    if (env === 'ready') scheduleSave(tid, now.path)
+    // After a failed bring-up, or one that did not answer, the text stays held; the person retries it.
+    else if (env !== 'failed' && env !== 'unanswered') void environment.bringUp()
   }
 
   /** Save at once (Ctrl+S): the text is held either way. */
@@ -549,21 +550,21 @@ export function useTaskFiles(opts: TaskFilesOptions) {
     const pending = saveTimers.get(key)
     if (pending) clearTimeout(pending)
     saveTimers.delete(key)
-    if (machine.value === 'ready') void saveHeld(tid, path)
-    else void bringUp(tid)
+    if (environment.state.value === 'ready') void saveHeld(tid, path)
+    else void environment.bringUp()
   }
 
-  /** The retry offered after a bring-up or a save failed. */
+  /** The retry offered after a save failed. */
   function retry() {
     const tid = task()
     if (!tid) return
-    const shared = taskState(tid)
-    shared.error = ''
     if (current.value) current.value.error = ''
-    if (shared.machine === 'failed') {
-      shared.machine = 'unknown'
-      void bringUp(tid)
-    } else if (openPath.value) void saveHeld(tid, openPath.value)
+    if (openPath.value) void saveHeld(tid, openPath.value)
+  }
+
+  /** The retry offered after the environment failed to come up or did not answer. */
+  function retryEnvironment() {
+    void environment.retry()
   }
 
   // ---------------------------------------------------------------- conflicts
@@ -620,19 +621,19 @@ export function useTaskFiles(opts: TaskFilesOptions) {
     const shared = taskState(tid)
     try {
       const done = await arrangeTaskFile(pid, tid, change)
-      shared.machine = 'ready'
+      environment.sawReady()
       afterArrange(tid, change, done.path)
       await loadListing({ silent: true })
       if (change.operation === 'create') await open(done.path)
       return true
     } catch (e) {
       if (isRefusal(e, 'MachinePreparing')) {
-        // The backend asked for the machine; the change is made once it is ready.
+        // The backend asked for the environment; the change is made once it is ready.
         shared.queue.push(() => arrange(change))
-        shared.machine = 'preparing'
-        watchBringUp(tid)
+        environment.learn(e)
         return true
       }
+      environment.learn(e)
       arrangeError.value = e instanceof Error ? e.message : t('global.updateFailed')
       return false
     }
@@ -694,6 +695,18 @@ export function useTaskFiles(opts: TaskFilesOptions) {
     { immediate: true }
   )
 
+  // The environment came up after the listing was read off the forge (or failed to be read): it
+  // is read again from the environment, which also holds what was never committed.
+  watch(
+    () => environment.state.value,
+    (now, was) => {
+      if (now !== 'ready' || was === 'ready' || was === 'unknown') return
+      if (listed.value) void loadListing({ silent: true })
+      else if (listError.value || opts.active()) void loadListing()
+      if (openPath.value && !file.value && !opening.value) void open(openPath.value, lines.value)
+    }
+  )
+
   // A turn ended: the teammate may have changed files. The open file is read
   // again only when the person has nothing held in it.
   watch(
@@ -731,7 +744,8 @@ export function useTaskFiles(opts: TaskFilesOptions) {
     opening,
     fileError,
     lines,
-    machine,
+    environment,
+    committedCopy,
     saving,
     held,
     saveError,
@@ -747,6 +761,7 @@ export function useTaskFiles(opts: TaskFilesOptions) {
     edit,
     saveNow,
     retry,
+    retryEnvironment,
     reloadLatest,
     keepMine,
     resolveMerge,

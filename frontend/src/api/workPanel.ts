@@ -58,14 +58,21 @@ export async function sessionRecordImageUrl(topicId: string, digest: string): Pr
   return URL.createObjectURL(await response.blob())
 }
 
+export interface GitDiff {
+  diff: string
+  /** Where the changes were read from: `live` only when the task's environment answered;
+   *  `committed` when they came off the forge, asked for or because no environment holds the copy. */
+  source: FileSource
+}
+
 export function getGitDiff(
   projectId: string,
   topicId?: string | null,
   taskId?: string | null,
   source: FileSource = 'committed'
-): Promise<{ diff: string }> {
+): Promise<GitDiff> {
   const t = `?${new URLSearchParams({ source, ...(topicId ? { topic: topicId } : {}), ...(taskId ? { task: taskId } : {}) })}`
-  return request<{ diff: string }>(`/projects/${encodeURIComponent(projectId)}/git/diff${t}`)
+  return request<GitDiff>(`/projects/${encodeURIComponent(projectId)}/git/diff${t}`)
 }
 
 // 工作面板 asks this while its tabs are CLOSED: which of them have anything to

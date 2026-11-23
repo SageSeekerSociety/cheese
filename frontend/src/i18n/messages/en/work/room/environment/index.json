@@ -1,0 +1,8 @@
+{
+  "preparing": "Preparing the environment",
+  "waited": "Waited {seconds} s",
+  "waitedMinutes": "Waited {minutes} min {seconds} s",
+  "failed": "The environment could not be prepared",
+  "unanswered": "The environment isn't responding",
+  "committed": "Committed version"
+}

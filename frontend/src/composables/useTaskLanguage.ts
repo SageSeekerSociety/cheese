@@ -3,7 +3,7 @@
 // cell of the task that shows a file that server reads.
 //
 // A socket is opened only while some editor has such a file open and the task's
-// machine is up (as `useTaskFiles` knows it): this never brings a machine up. The
+// machine is up (as `useTaskEnvironment` knows it): this never brings a machine up. The
 // first TEXT frame says `ready` (with where the checkout sits on the machine) or
 // `refused`; after `ready`, BINARY frames carry the server's stdio both ways,
 // spoken by `lib/lsp/client` (loaded only then). Nothing here shows anything: with
@@ -14,7 +14,7 @@
 // further apart each time, then left until one of those.
 import type { LspClient } from '../lib/lsp/client'
 import type { LanguageLink, LanguageServer } from '../lib/lsp/link'
-import type { TaskMachineState } from './useTaskFiles'
+import type { TaskEnvironmentState } from './useTaskEnvironment'
 
 import { computed, onBeforeUnmount, watch } from 'vue'
 
@@ -235,8 +235,8 @@ function listenOnline() {
 
 export interface TaskLanguageOptions {
   taskId: () => string | null
-  /** The task's machine, as the 文件 panel knows it. */
-  machine: () => TaskMachineState
+  /** The task's environment, as the page knows it (`useTaskEnvironment`). */
+  machine: () => TaskEnvironmentState
   /** Show a file of the checkout at a line, in this cell. */
   open: (path: string, line: number) => void
 }

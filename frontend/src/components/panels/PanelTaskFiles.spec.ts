@@ -26,6 +26,9 @@ const server = {
   failed: null as 'unavailable' | null,
   prepareFails: false,
   prepares: 0,
+  /** How many listings, and file reads, fail before one goes through. */
+  listFails: 0,
+  readFails: 0,
 }
 let versions = 0
 /** Every save the fake took, in order. */
@@ -38,13 +41,23 @@ vi.mock('@/api', async () => {
   const actual = await vi.importActual<typeof import('@/api')>('@/api')
   return {
     ...actual,
-    listFiles: async () => ({
-      data: [...server.files.keys()].map((path) => ({ path, bytes: server.files.get(path)!.content.length })),
-      total: server.files.size,
-      source: 'live',
-      dirs: [],
-    }),
+    listFiles: async () => {
+      if (server.listFails > 0) {
+        server.listFails -= 1
+        throw new actual.ApiError(502, '代码托管暂时无法访问')
+      }
+      return {
+        data: [...server.files.keys()].map((path) => ({ path, bytes: server.files.get(path)!.content.length })),
+        total: server.files.size,
+        source: 'live',
+        dirs: [],
+      }
+    },
     readFile: async (_p: string, path: string) => {
+      if (server.readFails > 0) {
+        server.readFails -= 1
+        throw new actual.ApiError(502, '代码托管暂时无法访问')
+      }
       const f = server.files.get(path)
       if (!f) throw new actual.ApiError(404, 'missing')
       return {
@@ -107,6 +120,8 @@ beforeEach(() => {
   server.failed = null
   server.prepareFails = false
   server.prepares = 0
+  server.listFails = 0
+  server.readFails = 0
   saves.length = 0
   put('src/queue.c', 'int main(void) { return 0; }\n')
   vi.useFakeTimers({ shouldAdvanceTime: true })
@@ -214,6 +229,30 @@ describe('a person edits a task file while its machine is being brought back', (
     await view.open('src/queue.c')
     expect(((await screen.findByTestId('editor')) as HTMLTextAreaElement).readOnly).toBe(true)
     expect(screen.getByText('只读')).toBeTruthy()
+  })
+})
+
+describe('a listing or a file that could not be read', () => {
+  it('says the listing failed and reads it again on 重试', async () => {
+    server.listFails = 1
+    const view = mount()
+    await settle()
+    expect(await screen.findByText('代码托管暂时无法访问', { exact: false })).toBeTruthy()
+    await fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    await settle()
+    expect(await view.open('src/queue.c')).toBe(true)
+    expect(screen.queryByText('代码托管暂时无法访问', { exact: false })).toBeNull()
+  })
+
+  it('says the file could not be read and reads it again on 重试', async () => {
+    const view = mount()
+    await settle()
+    server.readFails = 1
+    await view.open('src/queue.c')
+    expect(await screen.findByText('读取文件失败')).toBeTruthy()
+    await fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    await settle()
+    expect(((await screen.findByTestId('editor')) as HTMLTextAreaElement).value).toBe('int main(void) { return 0; }\n')
   })
 })
 

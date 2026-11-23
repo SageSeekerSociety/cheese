@@ -10,8 +10,12 @@
 // the tabs.
 //
 // It draws what `composables/useTaskFiles` holds and hands the person's
-// actions back to it; nothing here fetches. On a phone the file is shown as
-// text, without loading the editor, and without tabs.
+// actions back to it; nothing here fetches. The task's environment is said
+// in the strip on top, as every surface of the task page says it
+// (`TaskEnvironmentNote`); a file read off the forge while no environment
+// holds the copy is marked as the committed version beside its path. On a
+// phone the file is shown as text, without loading the editor, and without
+// tabs.
 import type { OpenTaskFile, TaskFilesBundle } from '../../composables/useTaskFiles'
 import type { TaskFileTreeState } from '../../composables/useTaskFileTree'
 import type { LanguageLink } from '../../lib/lsp/link'
@@ -19,7 +23,9 @@ import type { LanguageLink } from '../../lib/lsp/link'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
 import CodeEditor from '../CodeEditor.vue'
+import CommittedCopyMark from '../common/CommittedCopyMark.vue'
 import FileKindMark from '../common/FileKindMark.vue'
+import TaskEnvironmentNote from '../common/TaskEnvironmentNote.vue'
 import { rememberedWidth, rememberWidth } from '../layout-area'
 import ReviewMergePicker from '../review/ReviewMergePicker.vue'
 
@@ -28,6 +34,7 @@ import TaskFileBrowser from './TaskFileBrowser.vue'
 import { TASK_FILE_TREE_WIDTH } from './taskFileTreeWidth'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import { t } from '@/i18n'
 
 const props = withDefaults(
@@ -158,7 +165,15 @@ const status = computed(() => {
   if (!editable.value) return t('work.room.changes.readOnly')
   if (f.saving.value) return t('global.saveState.saving')
   if (f.held.value) return t('global.saveState.unsaved')
+  // Read off the forge and not edited: nothing was saved here to say so of.
+  if (f.file.value.forge) return ''
   return t('global.saveState.saved')
+})
+
+// ---- the task's environment, when there is something to say of it ----
+const environmentNote = computed(() => {
+  const state = f.environment.state.value
+  return state === 'preparing' || state === 'failed' || state === 'unanswered' ? state : null
 })
 
 // ---- the lines a file link pointed at, on a phone: scrolled to (the editor reveals them itself) ----
@@ -195,16 +210,22 @@ function pickQuick(path: string) {
 <template>
   <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- listens for Ctrl+P inside the panel; the tree and the editor are the controls -->
   <div class="task-files" @keydown="onKeydown">
-    <div v-if="f.machine.value === 'preparing'" class="task-files__strip" role="status">
-      <v-progress-circular indeterminate size="14" width="2" class="task-files__spin" />
-      <span class="task-files__strip-text">{{ t('work.room.taskFiles.preparing') }}</span>
-    </div>
     <div
-      v-else-if="f.machine.value === 'failed' || f.saveError.value"
-      class="task-files__strip task-files__strip--error"
-      role="alert"
+      v-if="environmentNote"
+      class="task-files__strip"
+      :class="{ 'task-files__strip--error': environmentNote === 'failed' }"
     >
-      <span class="task-files__strip-text">{{ f.saveError.value || t('apiError.taskMachinePrepareFailed') }}</span>
+      <TaskEnvironmentNote
+        class="task-files__strip-text"
+        :state="environmentNote"
+        :since="f.environment.since.value"
+        :detail="f.environment.detail.value"
+        :final="props.readOnly"
+        @retry="f.retryEnvironment()"
+      />
+    </div>
+    <div v-else-if="f.saveError.value" class="task-files__strip task-files__strip--error" role="alert">
+      <span class="task-files__strip-text">{{ f.saveError.value }}</span>
       <BaseButton kind="ghost" size="sm" @click="f.retry()">{{ t('global.loadError.retry') }}</BaseButton>
     </div>
     <div v-if="f.arrangeError.value" class="task-files__strip task-files__strip--error" role="alert">
@@ -269,7 +290,9 @@ function pickQuick(path: string) {
         <div v-if="f.listing.value && !f.files.value.length" class="task-files__center">
           <v-progress-circular indeterminate color="primary" size="24" />
         </div>
-        <p v-else-if="f.listError.value" class="task-files__note">{{ f.listError.value }}</p>
+        <div v-else-if="f.listError.value" class="task-files__failed">
+          <BaseLoadError :error="f.listError.value" @retry="f.loadListing()" />
+        </div>
         <template v-else-if="f.openPath.value">
           <div v-if="showTabs" class="task-files__tabs">
             <div class="task-files__tablist" :aria-label="t('work.room.taskFiles.openFiles')" role="group">
@@ -320,9 +343,17 @@ function pickQuick(path: string) {
               <span v-for="(folder, i) in openFolders" :key="i">{{ folder }} / </span>
               <span class="task-files__name">{{ baseName(f.openPath.value ?? '') }}</span>
             </span>
+            <!-- In the light form the path, and this mark beside it, are in the block's title bar. -->
+            <CommittedCopyMark v-if="!props.light && f.committedCopy.value" />
             <span class="task-files__status">{{ status }}</span>
           </div>
-          <p v-if="f.fileError.value" class="task-files__note">{{ f.fileError.value }}</p>
+          <div v-if="f.fileError.value" class="task-files__failed">
+            <BaseLoadError
+              :title="t('work.room.changes.readFileFailed')"
+              :error="f.fileError.value"
+              @retry="f.openPath.value && f.open(f.openPath.value)"
+            />
+          </div>
           <div v-else-if="f.opening.value && !f.file.value" class="task-files__center">
             <v-progress-circular indeterminate color="primary" size="24" />
           </div>
@@ -386,16 +417,6 @@ function pickQuick(path: string) {
 .task-files__strip-text {
   flex: 1 1 auto;
   min-width: 0;
-}
-.task-files__spin {
-  flex: none;
-  color: var(--muted);
-}
-@media (prefers-reduced-motion: reduce) {
-  .task-files__spin :deep(.v-progress-circular__overlay),
-  .task-files__spin :deep(svg) {
-    animation: none;
-  }
 }
 .task-files__body {
   display: grid;
@@ -598,7 +619,7 @@ function pickQuick(path: string) {
   border-bottom: 1px solid var(--line);
 }
 .task-files__path {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   font-size: 13px;
@@ -612,6 +633,7 @@ function pickQuick(path: string) {
 }
 .task-files__status {
   flex: none;
+  margin-left: auto;
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--muted);
@@ -655,5 +677,8 @@ function pickQuick(path: string) {
   font-size: 13px;
   line-height: var(--lh-13);
   color: var(--muted);
+}
+.task-files__failed {
+  padding: 16px 12px;
 }
 </style>

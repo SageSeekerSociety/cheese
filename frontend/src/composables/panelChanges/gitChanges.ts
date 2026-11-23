@@ -54,6 +54,8 @@ export function usePanelGitChanges(deps: GitChangesDeps) {
 
   // ---- Git: the working-tree diff ----
   const gitDiff = ref<string>('')
+  /** Where the diff shown was read from (`GitDiff.source`); null before one was read. */
+  const diffSource = ref<FileSource | null>(null)
 
   async function loadGit(opts: { silent?: boolean } = {}) {
     const tid = props.topicId
@@ -70,6 +72,7 @@ export function usePanelGitChanges(deps: GitChangesDeps) {
       // Guard against a source switch mid-flight.
       if (selectedTask.value !== task || epoch() !== epochAt) return
       gitDiff.value = diff.diff
+      diffSource.value = diff.source
       // 现场回来了：那条「没有及时响应」的说明就该收起来，后台那次成功也不能
       // 让上一轮的「超时」把来源留在已提交版本上。
       if (fileSource.value === 'live') {
@@ -87,6 +90,7 @@ export function usePanelGitChanges(deps: GitChangesDeps) {
           const fallback = await getGitDiff(pid, tid, task, 'committed')
           if (selectedTask.value !== task || epoch() !== epochAt) return
           gitDiff.value = fallback.diff
+          diffSource.value = fallback.source
           liveFallback.value = 'committed'
         } catch {
           if (selectedTask.value !== task || epoch() !== epochAt) return
@@ -109,7 +113,8 @@ export function usePanelGitChanges(deps: GitChangesDeps) {
   /** 换了来源或任务：上一代的 diff 不能再留着。 */
   function clearGitDiff() {
     gitDiff.value = ''
+    diffSource.value = null
   }
 
-  return { gitDiff, loadGit, fileDiffs, diffByPath, clearGitDiff, liveTimeout }
+  return { gitDiff, diffSource, loadGit, fileDiffs, diffByPath, clearGitDiff, liveTimeout }
 }

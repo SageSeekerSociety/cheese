@@ -13,8 +13,10 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import { Terminal } from '@xterm/xterm'
 
 const props = defineProps<{
-  /** Said in place of the screen (no shell to show: being prepared, gone, refused). */
+  /** Said in place of the screen (no shell here: refused). */
   placeholder?: string | null
+  /** The screen is covered by what the host puts in `cover` (being prepared, reached, gone). */
+  covered?: boolean
   /** Said under what the shell wrote (it has ended). */
   note?: string | null
   /** The panel is on screen: it takes the keyboard. */
@@ -164,8 +166,9 @@ defineExpose({
 
 <template>
   <div class="term">
-    <div ref="host" class="term__screen" :class="{ 'term__screen--off': !!placeholder }" />
-    <div v-if="placeholder" class="term__ph">{{ placeholder }}</div>
+    <div ref="host" class="term__screen" :class="{ 'term__screen--off': !!placeholder || props.covered }" />
+    <div v-if="props.covered" class="term__ph"><slot name="cover" /></div>
+    <div v-else-if="placeholder" class="term__ph">{{ placeholder }}</div>
     <div v-else-if="note" class="term__note">{{ note }}</div>
   </div>
 </template>
@@ -194,7 +197,7 @@ defineExpose({
   display: flex;
   align-items: flex-start;
   justify-content: center;
-  padding-top: 40px;
+  padding: 40px 16px 0;
   color: var(--muted);
   font-size: 13px;
   text-align: center;

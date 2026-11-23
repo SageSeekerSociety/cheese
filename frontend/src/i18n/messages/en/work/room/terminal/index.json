@@ -7,5 +7,6 @@
   "limit": "At most 8 terminals can be open at once",
   "empty": "No terminal sessions",
   "numbered": "Terminal {n}",
-  "switch": "Switch terminal"
+  "switch": "Switch terminal",
+  "start": "Open a terminal"
 }
