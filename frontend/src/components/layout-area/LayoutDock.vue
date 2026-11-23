@@ -321,7 +321,7 @@ function keepShares(dock: DockviewApi) {
   const asked = new Set<string>()
   const inSight = (node: LayoutNode): DockviewGroupPanel[] =>
     gridCellsOf({ root: node })
-      .map((cell) => (cell.id ? dock.getGroup(cell.id) : undefined))
+      .map((cell) => (cell.id ? (dock.getGroup(cell.id) as DockviewGroupPanel | undefined) : undefined))
       .filter((group): group is DockviewGroupPanel => !!group && group.api.isVisible && !isFloatingGroup(group))
   const minimum = (node: LayoutNode, axis: 'width' | 'height'): number => {
     if (!isSplit(node)) {
