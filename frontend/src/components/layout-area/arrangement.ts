@@ -36,14 +36,19 @@ export type LayoutNode = LayoutCell | LayoutSplit
 export interface LayoutArrangement {
   /** Null when every panel has been closed. */
   root: LayoutNode | null
+  /**
+   * Cells popped out of the grid into windows floating over it, each in a place of its own
+   * that the area remembers per panel. Left out when there are none.
+   */
+  floating?: LayoutCell[]
 }
 
 export function isSplit(node: LayoutNode): node is LayoutSplit {
   return 'children' in node
 }
 
-/** Every cell, in reading order (depth first, left to right / top to bottom). */
-export function cellsOf(arrangement: LayoutArrangement): LayoutCell[] {
+/** The cells of the grid, in reading order (depth first, left to right / top to bottom). */
+export function gridCellsOf(arrangement: LayoutArrangement): LayoutCell[] {
   const out: LayoutCell[] = []
   const walk = (node: LayoutNode) => {
     if (isSplit(node)) node.children.forEach(walk)
@@ -51,6 +56,26 @@ export function cellsOf(arrangement: LayoutArrangement): LayoutCell[] {
   }
   if (arrangement.root) walk(arrangement.root)
   return out
+}
+
+/** Every cell: the grid's in reading order, then the floating ones. */
+export function cellsOf(arrangement: LayoutArrangement): LayoutCell[] {
+  return [...gridCellsOf(arrangement), ...(arrangement.floating ?? [])]
+}
+
+/** The same arrangement with another grid; the floating cells stay as they are. */
+function withRoot(arrangement: LayoutArrangement, root: LayoutNode | null): LayoutArrangement {
+  return arrangement.floating?.length ? { root, floating: arrangement.floating } : { root }
+}
+
+/** The cell holding this panel floats over the grid. */
+export function isFloating(arrangement: LayoutArrangement, panelId: string): boolean {
+  return !!arrangement.floating?.some((cell) => cell.panels.includes(panelId))
+}
+
+/** The panels in floating cells. */
+export function floatingPanels(arrangement: LayoutArrangement): string[] {
+  return (arrangement.floating ?? []).flatMap((cell) => cell.panels)
 }
 
 /** Panels that sit in some cell, in reading order. */
@@ -66,6 +91,11 @@ export function unplacedPanels(arrangement: LayoutArrangement, declared: readonl
 
 export function cellOfPanel(arrangement: LayoutArrangement, panelId: string): LayoutCell | undefined {
   return cellsOf(arrangement).find((cell) => cell.panels.includes(panelId))
+}
+
+/** The grid cell holding this panel; undefined when it floats or sits nowhere. */
+function gridCellOfPanel(arrangement: LayoutArrangement, panelId: string): LayoutCell | undefined {
+  return gridCellsOf(arrangement).find((cell) => cell.panels.includes(panelId))
 }
 
 export function findCell(arrangement: LayoutArrangement, cellId: string): LayoutCell | undefined {
@@ -102,7 +132,9 @@ function isCollapsedCell(node: LayoutNode): boolean {
  * - no empty cell, no empty split, no split with a single child, no split nested directly
  *   in a split of the same direction (its children are spliced in, sizes kept in proportion);
  * - each cell's active panel is one of its panels;
- * - something stays open: the root cell is never collapsed, nor every child of a split.
+ * - something stays open: the root cell is never collapsed, nor every child of a split;
+ * - a floating cell is never collapsed and has no weight; a panel in the grid and in a floating
+ *   cell stays in the grid.
  */
 export function reconcile(arrangement: LayoutArrangement, declared: readonly string[]): LayoutArrangement {
   const known = new Set(declared)
@@ -154,10 +186,13 @@ export function reconcile(arrangement: LayoutArrangement, declared: readonly str
     delete root.size
     if (!isSplit(root)) delete root.collapsed
   }
-  return { root }
+  const floating = (arrangement.floating ?? [])
+    .map((cell) => visit({ panels: cell.panels, active: cell.active, ...(cell.id ? { id: cell.id } : {}) }))
+    .filter((cell): cell is LayoutCell => cell !== null)
+  return floating.length ? { root, floating } : { root }
 }
 
-/** Gives every cell an id, keeping the ones it has unless two cells share one. */
+/** Gives every cell an id (floating ones too), keeping the ones it has unless two cells share one. */
 export function withCellIds(arrangement: LayoutArrangement): LayoutArrangement {
   const used = new Set<string>()
   let next = 1
@@ -175,13 +210,17 @@ export function withCellIds(arrangement: LayoutArrangement): LayoutArrangement {
     used.add(id)
     return { ...node, id }
   }
-  return { root: arrangement.root ? visit(arrangement.root) : null }
+  const root = arrangement.root ? visit(arrangement.root) : null
+  const floating = (arrangement.floating ?? []).map((cell) => visit(cell) as LayoutCell)
+  return floating.length ? { root, floating } : { root }
 }
 
 function mapCells(arrangement: LayoutArrangement, fn: (cell: LayoutCell) => LayoutCell): LayoutArrangement {
   const visit = (node: LayoutNode): LayoutNode =>
     isSplit(node) ? { ...node, children: node.children.map(visit) } : fn(node)
-  return { root: arrangement.root ? visit(arrangement.root) : null }
+  const root = arrangement.root ? visit(arrangement.root) : null
+  const floating = (arrangement.floating ?? []).map(fn)
+  return floating.length ? { root, floating } : { root }
 }
 
 function parentOf(arrangement: LayoutArrangement, cellId: string): LayoutSplit | null {
@@ -236,8 +275,8 @@ export function activatePanel(arrangement: LayoutArrangement, panelId: string): 
  */
 export function placePanel(arrangement: LayoutArrangement, panelId: string, nearPanelId?: string): LayoutArrangement {
   if (placedPanels(arrangement).includes(panelId)) return arrangement
-  if (!arrangement.root) return { root: { panels: [panelId], active: panelId } }
-  const cells = cellsOf(arrangement)
+  if (!arrangement.root) return withRoot(arrangement, { panels: [panelId], active: panelId })
+  const cells = gridCellsOf(arrangement)
   const target =
     (nearPanelId && cells.find((cell) => cell.panels.includes(nearPanelId))) ||
     cells.find((cell) => !cell.collapsed) ||
@@ -274,7 +313,7 @@ export function placeInGroup(
  */
 export function placeBeside(arrangement: LayoutArrangement, panelId: string, nearPanelId: string): LayoutArrangement {
   if (placedPanels(arrangement).includes(panelId)) return arrangement
-  const near = cellOfPanel(arrangement, nearPanelId)
+  const near = gridCellOfPanel(arrangement, nearPanelId)
   if (!near || !arrangement.root) return placePanel(arrangement, panelId)
   const fresh: LayoutCell = { panels: [panelId], active: panelId }
   const visit = (node: LayoutNode): LayoutNode => {
@@ -287,7 +326,7 @@ export function placeBeside(arrangement: LayoutArrangement, panelId: string, nea
     }
     return { ...node, children: node.children.map(visit) }
   }
-  return { root: visit(arrangement.root) }
+  return withRoot(arrangement, visit(arrangement.root))
 }
 
 /**
@@ -297,7 +336,7 @@ export function placeBeside(arrangement: LayoutArrangement, panelId: string, nea
  */
 export function placeBelow(arrangement: LayoutArrangement, panelId: string, nearPanelId: string): LayoutArrangement {
   if (placedPanels(arrangement).includes(panelId)) return arrangement
-  const near = cellOfPanel(arrangement, nearPanelId)
+  const near = gridCellOfPanel(arrangement, nearPanelId)
   if (!near || !arrangement.root) return placePanel(arrangement, panelId)
   const fresh: LayoutCell = { panels: [panelId], active: panelId }
   const visit = (node: LayoutNode): LayoutNode => {
@@ -321,7 +360,7 @@ export function placeBelow(arrangement: LayoutArrangement, panelId: string, near
     }
     return { ...node, children: node.children.map(visit) }
   }
-  return { root: visit(arrangement.root) }
+  return withRoot(arrangement, visit(arrangement.root))
 }
 
 /**
@@ -337,6 +376,115 @@ export function placeTransient(
   if (panel.beside) return placeBeside(arrangement, panel.id, panel.beside)
   if (panel.below && !homeCell(arrangement, panel.group, groupOf)) return placeBelow(arrangement, panel.id, panel.below)
   return placeInGroup(arrangement, panel.id, groupOf)
+}
+
+// ---------------------------------------------------------------- floating
+
+/** The arrangement without this panel among the floating cells; a floating cell left empty goes. */
+export function withoutFloating(arrangement: LayoutArrangement, panelId: string): LayoutArrangement {
+  const floating = (arrangement.floating ?? [])
+    .map((cell) => {
+      const panels = cell.panels.filter((id) => id !== panelId)
+      return { ...cell, panels, active: cell.active === panelId ? panels[0] : cell.active }
+    })
+    .filter((cell) => cell.panels.length > 0)
+  return floating.length ? { root: arrangement.root, floating } : { root: arrangement.root }
+}
+
+/** The nodes from the root down to the cell holding this panel, or null. */
+function pathTo(node: LayoutNode | null, panelId: string): LayoutNode[] | null {
+  if (!node) return null
+  if (!isSplit(node)) return node.panels.includes(panelId) ? [node] : null
+  for (const child of node.children) {
+    const below = pathTo(child, panelId)
+    if (below) return [node, ...below]
+  }
+  return null
+}
+
+/**
+ * Puts a panel that sits in no grid cell back where the page's default arrangement has it:
+ * into the cell of a panel it shares its default cell with; else in a cell of its own
+ * beside what stands for its nearest default neighbour — the same side, the same direction.
+ * When nothing of its default surroundings is in the grid, or the default does not place
+ * it, it goes where `placePanel` puts a panel.
+ */
+export function placeAsInDefault(
+  arrangement: LayoutArrangement,
+  panelId: string,
+  defaults: LayoutArrangement
+): LayoutArrangement {
+  if (gridCellOfPanel(arrangement, panelId)) return arrangement
+  const path = pathTo(defaults.root, panelId)
+  if (!arrangement.root || !path) return placePanel(arrangement, panelId)
+  const inGrid = new Set(gridCellsOf(arrangement).flatMap((cell) => cell.panels))
+  const home = path[path.length - 1] as LayoutCell
+  const mate = home.panels.find((id) => id !== panelId && inGrid.has(id))
+  if (mate) {
+    return mapCells(arrangement, (cell) =>
+      gridCellOfPanel(arrangement, mate) === cell
+        ? { ...cell, panels: [...cell.panels, panelId], active: panelId }
+        : cell
+    )
+  }
+  const fresh: LayoutCell = { panels: [panelId], active: panelId }
+  for (let depth = path.length - 1; depth > 0; depth--) {
+    const parent = path[depth - 1] as LayoutSplit
+    const at = parent.children.indexOf(path[depth])
+    // Nearest first; on a tie the one before, so the panel lands after it as in the default.
+    const order = parent.children
+      .map((_, j) => j)
+      .filter((j) => j !== at)
+      .sort((a, b) => Math.abs(a - at) - Math.abs(b - at) || a - b)
+    for (const j of order) {
+      const sibling = new Set(panelsUnder(parent.children[j]))
+      const anchor = [...sibling].find((id) => inGrid.has(id))
+      if (!anchor) continue
+      const stand = standIn(arrangement.root, anchor, sibling)
+      return withRoot(arrangement, insertBeside(arrangement.root, stand, fresh, parent.direction, j > at))
+    }
+  }
+  return placePanel(arrangement, panelId)
+}
+
+/**
+ * What stands in the grid for a default node holding `allowed`: the highest node above the
+ * cell of `panelId` whose panels are all among them.
+ */
+function standIn(root: LayoutNode, panelId: string, allowed: ReadonlySet<string>): LayoutNode {
+  const path = pathTo(root, panelId) as LayoutNode[]
+  let stand = path[path.length - 1]
+  for (let i = path.length - 2; i >= 0; i--) {
+    if (!panelsUnder(path[i]).every((id) => allowed.has(id))) break
+    stand = path[i]
+  }
+  return stand
+}
+
+/** Inserts `fresh` next to `anchor` along `direction`: before it or after it. */
+function insertBeside(
+  root: LayoutNode,
+  anchor: LayoutNode,
+  fresh: LayoutCell,
+  direction: SplitDirection,
+  before: boolean
+): LayoutNode {
+  const pair = (node: LayoutNode): LayoutSplit => ({
+    direction,
+    children: before ? [fresh, { ...node, size: undefined }] : [{ ...node, size: undefined }, fresh],
+    ...(node.size !== undefined ? { size: node.size } : {}),
+  })
+  if (root === anchor) return pair(root)
+  const visit = (node: LayoutNode): LayoutNode => {
+    if (!isSplit(node)) return node
+    const at = node.children.indexOf(anchor)
+    if (at < 0) return { ...node, children: node.children.map(visit) }
+    const children = [...node.children]
+    if (node.direction === direction) children.splice(before ? at : at + 1, 0, fresh)
+    else children[at] = pair(anchor)
+    return { ...node, children }
+  }
+  return visit(root)
 }
 
 /**
@@ -389,7 +537,7 @@ export function hidesTabs(panels: readonly StripPanel[]): boolean {
 }
 
 /**
- * The same arrangement for the reader: the same cells, splits, tab order and folds.
+ * The same arrangement for the reader: the same cells, splits, tab order, folds and floating cells.
  * Sizes, the visible tab and cell ids do not count.
  */
 export function sameArrangement(a: LayoutArrangement, b: LayoutArrangement): boolean {
@@ -399,7 +547,11 @@ export function sameArrangement(a: LayoutArrangement, b: LayoutArrangement): boo
       : isSplit(node)
         ? { d: node.direction, c: node.children.map(shape) }
         : { p: node.panels, f: !!node.collapsed }
-  return JSON.stringify(shape(a.root)) === JSON.stringify(shape(b.root))
+  const whole = (arrangement: LayoutArrangement) => ({
+    root: shape(arrangement.root),
+    floating: (arrangement.floating ?? []).map((cell) => cell.panels),
+  })
+  return JSON.stringify(whole(a)) === JSON.stringify(whole(b))
 }
 
 // ---------------------------------------------------------------- back to the default sizes
@@ -493,7 +645,11 @@ export interface RestoreOptions {
 }
 
 export function serializeArrangement(arrangement: LayoutArrangement, version: number): string {
-  return JSON.stringify({ v: version, root: arrangement.root })
+  return JSON.stringify({
+    v: version,
+    root: arrangement.root,
+    ...(arrangement.floating?.length ? { floating: arrangement.floating } : {}),
+  })
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -547,7 +703,14 @@ export function restoreArrangement(raw: string | null, options: RestoreOptions):
     root = readNode(parsed.root)
     if (!root) return null
   }
-  const arrangement: LayoutArrangement = { root }
+  let floating: LayoutCell[] = []
+  if (parsed.floating !== undefined) {
+    if (!Array.isArray(parsed.floating)) return null
+    const cells = parsed.floating.map(readNode)
+    if (cells.some((cell) => !cell || isSplit(cell))) return null
+    floating = cells as LayoutCell[]
+  }
+  const arrangement: LayoutArrangement = floating.length ? { root, floating } : { root }
   if (hasPlacementFault(arrangement, options.declared)) return null
   const placed = new Set(placedPanels(arrangement))
   if (options.required.some((id) => !placed.has(id))) return null

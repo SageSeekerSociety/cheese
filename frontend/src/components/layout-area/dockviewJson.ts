@@ -61,6 +61,32 @@ export function cellSizing(
   return out
 }
 
+/** Where a floating cell sits over the area, in px from the area's top left corner. */
+export interface FloatBox {
+  left: number
+  top: number
+  width: number
+  height: number
+}
+
+/** No floating window is made smaller than this, in px. */
+export const FLOAT_MIN = { width: 240, height: 120 }
+
+/**
+ * The box moved and shrunk into the area as it is now: wholly inside it, never smaller than
+ * `FLOAT_MIN` unless the area itself is.
+ */
+export function fitFloat(box: FloatBox, area: { width: number; height: number }): FloatBox {
+  const width = Math.round(Math.min(area.width, Math.max(FLOAT_MIN.width, box.width)))
+  const height = Math.round(Math.min(area.height, Math.max(FLOAT_MIN.height, box.height)))
+  return {
+    width,
+    height,
+    left: Math.round(Math.min(Math.max(0, box.left), area.width - width)),
+    top: Math.round(Math.min(Math.max(0, box.top), area.height - height)),
+  }
+}
+
 export interface DockviewLoad {
   layout: SerializedDockview
   /** For each collapsed cell, the size it opens back to, in px along its split. */
@@ -77,13 +103,14 @@ function weight(node: LayoutNode): number {
  * its own size; the other open cells share the rest by weight, and the size a
  * collapsed cell had is returned for when it opens. A hidden cell takes no space now
  * and keeps the share it would have for when it is shown; so does a split whose every cell
- * is hidden.
+ * is hidden. A floating cell floats at the box `floatBox` gives it, fitted into the area.
  */
 export function toDockview(
   arrangement: LayoutArrangement & { root: LayoutNode },
   box: { width: number; height: number },
   panelState: (id: string) => GroupviewPanelState,
-  sizing: (cell: LayoutCell, along: SplitDirection) => CellSizing = () => ({})
+  sizing: (cell: LayoutCell, along: SplitDirection) => CellSizing = () => ({}),
+  floatBox: (cell: LayoutCell) => FloatBox = () => ({ left: 48, top: 48, width: 480, height: 320 })
 ): DockviewLoad {
   const panels: Record<string, GroupviewPanelState> = {}
   const expandedSizes = new Map<string, number>()
@@ -159,10 +186,18 @@ export function toDockview(
   const length = orientation === 'HORIZONTAL' ? box.width : box.height
   const cross = orientation === 'HORIZONTAL' ? box.height : box.width
   const rootNode = branch(isSplit(root) ? root.children : [root], orientation, length, cross, cross)
+  const floatingGroups = (arrangement.floating ?? []).map((cell) => {
+    cell.panels.forEach((id) => (panels[id] = panelState(id)))
+    return {
+      data: { id: cell.id as string, views: cell.panels, activeView: cell.active ?? cell.panels[0] },
+      position: fitFloat(floatBox(cell), box),
+    }
+  })
   return {
     layout: {
       grid: { root: rootNode, width: box.width, height: box.height, orientation } as SerializedDockview['grid'],
       panels,
+      ...(floatingGroups.length ? { floatingGroups } : {}),
     },
     expandedSizes,
   }
@@ -220,6 +255,36 @@ export function fromDockview(
     root.type === 'branch'
       ? { direction: directionOf(orientation), children: children(root.data as GridNode[], orientation) }
       : visit(root, orientation)
-  if (isSplit(node) && node.children.length === 0) return { root: null }
-  return { root: node }
+  const floating = floatingCells(layout)
+  const grid = isSplit(node) && node.children.length === 0 ? null : node
+  return floating.length ? { root: grid, floating } : { root: grid }
+}
+
+type GroupData = { id: string; views: string[]; activeView?: string }
+
+/** dockview's floating windows as cells; a window holding a split of its own gives one cell per group. */
+function floatingCells(layout: SerializedDockview): LayoutCell[] {
+  const leaves = (node: GridNode): GroupData[] =>
+    node.type === 'branch' ? (node.data as GridNode[]).flatMap(leaves) : [node.data as GroupData]
+  return (layout.floatingGroups ?? [])
+    .flatMap((window) => (window.data ? [window.data as GroupData] : window.grid ? leaves(window.grid.root) : []))
+    .map((data) => ({
+      id: data.id,
+      panels: [...data.views],
+      ...(data.activeView ? { active: data.activeView } : {}),
+    }))
+}
+
+/** Where each floating window sits now, by the panels it holds. */
+export function floatBoxes(layout: SerializedDockview): { panels: string[]; box: FloatBox }[] {
+  return (layout.floatingGroups ?? []).map((window) => {
+    // dockview anchors a window to the nearer edges: one placed by its right or bottom edge
+    // is measured back from the area's size.
+    const { width, height } = window.position
+    const at = window.position as Partial<Record<'left' | 'right' | 'top' | 'bottom', number>>
+    const left = at.left ?? layout.grid.width - (at.right ?? 0) - width
+    const top = at.top ?? layout.grid.height - (at.bottom ?? 0) - height
+    const panels = floatingCells({ ...layout, floatingGroups: [window] }).flatMap((cell) => cell.panels)
+    return { panels, box: { left, top, width, height } }
+  })
 }

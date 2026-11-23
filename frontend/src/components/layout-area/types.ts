@@ -108,9 +108,12 @@ export interface LayoutPanel {
   bare?: boolean
   /**
    * The panel carries a title bar of its own instead of a tab: what the area's `head` slot
-   * renders for it (its `title` without one), its `actions`, then maximize and close. A
+   * renders for it (its `title` without one), its `actions`, then pop out (or dock back), maximize and close. A
    * cell of titled panels draws no tab strip and takes no dropped tab; it shows one of them
    * at a time, the one last opened. Closing asks the page (`close`), whatever the panel is.
+   * In the wide layout the bar also pops the panel out into a window floating over the area
+   * and docks it back (`LayoutArea`'s `float`); a floating panel's cell is in the
+   * arrangement's `floating`, and the page hiding the panel hides the window.
    */
   titled?: boolean
   /**

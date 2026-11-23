@@ -11,6 +11,7 @@ import {
   defaultWeightsAmong,
   hidesTabs,
   homeCell,
+  placeAsInDefault,
   placeBelow,
   placeBeside,
   placedPanels,
@@ -26,8 +27,9 @@ import {
   spawnLanding,
   unplacedPanels,
   withCellIds,
+  withoutFloating,
 } from './arrangement'
-import { cellSizing, fromDockview, STRIP_SIZE, toDockview } from './dockviewJson'
+import { cellSizing, floatBoxes, fromDockview, STRIP_SIZE, toDockview } from './dockviewJson'
 
 const DECLARED = ['nav', 'chat', 'files', 'preview', 'terminal']
 const OPTIONS = { version: 3, declared: DECLARED, required: ['nav', 'chat'] }
@@ -619,5 +621,118 @@ describe('a panel opened below another', () => {
   it('goes where any panel would when the other panel is not placed', () => {
     const start: LayoutArrangement = { root: { panels: ['chat'] } }
     expect(placedPanels(placeBelow(start, 'term:1', 'code'))).toEqual(['chat', 'term:1'])
+  })
+})
+
+describe('a cell floating over the grid', () => {
+  /** DEFAULT with the terminal popped out of its cell into a window of its own. */
+  const FLOATED: LayoutArrangement = {
+    root: {
+      direction: 'row',
+      children: [
+        { id: 'left', panels: ['nav'], size: 1 },
+        { id: 'middle', panels: ['chat'], size: 2 },
+        { id: 'top', panels: ['files', 'preview'], active: 'preview', size: 2 },
+      ],
+    },
+    floating: [{ id: 'win', panels: ['terminal'], active: 'terminal' }],
+  }
+
+  it('holds its panel: it is placed, not offered under "+"', () => {
+    holdsEveryPanelOnce(FLOATED, DECLARED)
+    expect(unplacedPanels(FLOATED, DECLARED)).toEqual([])
+  })
+
+  it('is remembered floating: a reload brings it back as a window', () => {
+    const restored = restoreArrangement(serializeArrangement(FLOATED, 3), OPTIONS)!
+    expect(restored.floating?.map((cell) => cell.panels)).toEqual([['terminal']])
+    expect(placedPanels({ root: restored.root })).not.toContain('terminal')
+  })
+
+  it('an arrangement saved before anything could float still loads as it was', () => {
+    const raw = JSON.stringify({ v: 3, root: DEFAULT.root })
+    expect(restoreArrangement(raw, OPTIONS)).toEqual(reconcile(DEFAULT, DECLARED))
+  })
+
+  it('a save that has the same panel in a cell and floating is not used', () => {
+    const raw = JSON.stringify({ v: 3, root: DEFAULT.root, floating: [{ panels: ['terminal'] }] })
+    expect(restoreArrangement(raw, OPTIONS)).toBeNull()
+  })
+
+  it('counts as a change from the default arrangement', () => {
+    expect(sameArrangement(FLOATED, reconcile(DEFAULT, DECLARED))).toBe(false)
+  })
+
+  it('docked back, goes to its place in the default: beside its default neighbour, the same way round', () => {
+    const back = placeAsInDefault(withoutFloating(FLOATED, 'terminal'), 'terminal', DEFAULT)
+    expect(back.floating).toBeUndefined()
+    // In the default it sits under files/preview: a column with it below, in that cell's place.
+    const right = back.root && 'children' in back.root ? back.root.children[2] : null
+    expect(right && 'children' in right ? right.direction : null).toBe('column')
+    expect(cellsOf(back).map((cell) => cell.panels)).toEqual([['nav'], ['chat'], ['files', 'preview'], ['terminal']])
+  })
+
+  it('docked back, joins the cell of a panel it shares its default cell with', () => {
+    const previewOut: LayoutArrangement = {
+      root: {
+        direction: 'row',
+        children: [
+          { panels: ['nav'] },
+          { panels: ['chat'] },
+          { direction: 'column', children: [{ panels: ['files'] }, { panels: ['terminal'] }] },
+        ],
+      },
+      floating: [{ panels: ['preview'] }],
+    }
+    const back = placeAsInDefault(withoutFloating(previewOut, 'preview'), 'preview', DEFAULT)
+    expect(cellOfPanel(back, 'preview')?.panels).toEqual(['files', 'preview'])
+    expect(cellOfPanel(back, 'preview')?.active).toBe('preview')
+  })
+
+  it('docked back with none of its default surroundings left, goes where any panel goes', () => {
+    const lone: LayoutArrangement = { root: { panels: ['chat'] } }
+    expect(placedPanels(placeAsInDefault(lone, 'terminal', { root: { panels: ['terminal'] } }))).toEqual([
+      'chat',
+      'terminal',
+    ])
+  })
+
+  it('reads back from dockview as a window, with the place it floats at', () => {
+    const box = { width: 1000, height: 600 }
+    const panelState = (id: string) => ({ id, contentComponent: 'host', title: id })
+    const at = { left: 100, top: 80, width: 400, height: 300 }
+    const { layout } = toDockview(
+      { root: FLOATED.root!, floating: FLOATED.floating },
+      box,
+      panelState,
+      undefined,
+      () => at
+    )
+    const back = fromDockview(layout, new Set(), new Map())
+    expect(back.floating?.map((cell) => cell.panels)).toEqual([['terminal']])
+    expect(floatBoxes(layout)).toEqual([{ panels: ['terminal'], box: at }])
+  })
+
+  it('a window remembered outside the area, or larger than it, opens wholly inside it', () => {
+    const box = { width: 1000, height: 600 }
+    const panelState = (id: string) => ({ id, contentComponent: 'host', title: id })
+    const { layout } = toDockview(
+      { root: FLOATED.root!, floating: FLOATED.floating },
+      box,
+      panelState,
+      undefined,
+      () => ({ left: 1800, top: -50, width: 1400, height: 200 })
+    )
+    const [window] = floatBoxes(layout)
+    expect(window.box).toEqual({ left: 0, top: 0, width: 1000, height: 200 })
+    const { layout: off } = toDockview(
+      { root: FLOATED.root!, floating: FLOATED.floating },
+      box,
+      panelState,
+      undefined,
+      () => ({ left: 900, top: 500, width: 400, height: 300 })
+    )
+    const [moved] = floatBoxes(off)
+    expect(moved.box).toEqual({ left: 600, top: 300, width: 400, height: 300 })
   })
 })

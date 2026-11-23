@@ -1,8 +1,9 @@
 <script setup lang="ts">
 /**
  * A window-managed area: panels as tabs in cells the reader can split, resize, collapse,
- * maximize and rearrange, remembered per page in this browser. On narrow screens the
- * same panels stack, one at a time.
+ * maximize and rearrange, remembered per page in this browser. A panel with a title bar of
+ * its own (`titled`) can also be popped out into a window floating over the area and docked
+ * back. On narrow screens the same panels stack, one at a time.
  *
  * The layer knows nothing about what a panel is. The page hands it panels (`LayoutPanel`)
  * and a default arrangement (`LayoutArrangement`); a panel's content is a plain component
@@ -11,18 +12,19 @@
  * page's arrangement, and the panels both pages declare keep their instances.
  *
  * The layer owns every panel's component instance and teleports it to wherever the panel
- * currently lives — a dockview cell, the narrow stack, or a hidden parking spot while its
- * cell is collapsed — so moving, collapsing, maximizing or crossing the breakpoint never
- * remounts it. dockview itself (~100 KB) is loaded only when a wide layout is first shown;
+ * currently lives — a dockview cell, a floating window, the narrow stack, or a hidden parking
+ * spot while its cell is collapsed — so moving, collapsing, maximizing, floating or crossing the
+ * breakpoint never remounts it. A floating panel's title bar is teleported into the window's
+ * own bar, which is what the reader drags it by. dockview itself (~100 KB) is loaded only when a wide layout is first shown;
  * until it arrives `LayoutStatic` draws the same cells, so the page does not shift.
  */
 import type { Component } from 'vue'
 import type { LayoutArrangement, LayoutCell, SplitDirection } from './arrangement'
-import type { CellSizing } from './dockviewJson'
+import type { CellSizing, FloatBox } from './dockviewJson'
 import type { ScrollKeeper } from './keepScroll'
 import type { LayoutPanel, LayoutPanelInfo } from './types'
 
-import { computed, markRaw, onBeforeUnmount, reactive, ref, shallowRef, watch } from 'vue'
+import { computed, markRaw, nextTick, onBeforeUnmount, reactive, ref, shallowRef, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useDisplay } from 'vuetify'
 
@@ -30,6 +32,10 @@ import {
   activatePanel,
   cellOfPanel,
   cellsOf,
+  floatingPanels,
+  gridCellsOf,
+  isFloating,
+  placeAsInDefault,
   placedPanels,
   placePanel,
   placeTransient,
@@ -45,7 +51,7 @@ import { cellSizing } from './dockviewJson'
 import { keepScroll } from './keepScroll'
 import LayoutStack from './LayoutStack.vue'
 import LayoutStatic from './LayoutStatic.vue'
-import { rememberedFold, rememberedWidth, rememberFold, rememberWidth } from './widths'
+import { rememberedFloat, rememberedFold, rememberedWidth, rememberFloat, rememberFold, rememberWidth } from './widths'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import { storageGet, storageSet } from '@/lib/browserStorage'
@@ -84,6 +90,8 @@ const emit = defineEmits<{
   keep: [id: string]
   /** The reader picked a panel that spawns others under "+": the page opens a new one. */
   spawn: [id: string]
+  /** The panels floating over the area now, popped out of its cells. */
+  floating: [ids: string[]]
 }>()
 
 defineSlots<{
@@ -352,7 +360,7 @@ function fills(id: string): boolean {
 }
 /** More than one cell in sight: there is something to give this panel's cell the room of. */
 const severalCells = computed(
-  () => cellsOf(arrangement.value).filter((cell) => !sizing(cell, 'row').hidden && !hidesTabsOf(cell)).length > 1
+  () => gridCellsOf(arrangement.value).filter((cell) => !sizing(cell, 'row').hidden && !hidesTabsOf(cell)).length > 1
 )
 function hidesTabsOf(cell: LayoutCell): boolean {
   return cell.panels.every((id) => byId.value.get(id)?.bare)
@@ -361,6 +369,49 @@ function hidesTabsOf(cell: LayoutCell): boolean {
 function signalledElsewhere(id: string): boolean {
   const inSight = new Set(cellOfPanel(arrangement.value, id)?.panels ?? [])
   return placeable.value.some((panel) => panel.signal && !inSight.has(panel.id))
+}
+
+// ---------------------------------------------------------------- floating
+
+/** The bar of the floating window each floating panel's title bar goes into. */
+const floatHeads = reactive<Record<string, HTMLElement | undefined>>({})
+/** The panel just popped out: its title bar takes the focus once it is in the window. */
+let focusOnFloat: string | null = null
+function onFloatHead(id: string, element: HTMLElement | null) {
+  if (element) floatHeads[id] = element
+  else delete floatHeads[id]
+  if (!element || focusOnFloat !== id) return
+  focusOnFloat = null
+  void nextTick(() => element.querySelector<HTMLElement>('[data-layout-dock]')?.focus())
+}
+function onFloatMoved(ids: string[], box: FloatBox) {
+  for (const id of ids) rememberFloat(id, box)
+}
+/** A floating panel docked back goes where the page would place it: its default place, or its group's. */
+function homeOf(next: LayoutArrangement, id: string): LayoutArrangement {
+  return transient.value.has(id) ? placeTransientPanel(next, id) : placeAsInDefault(next, id, defaultNow())
+}
+/** Only the wide layout floats; dockview does it. */
+const canFloat = computed(() => !isNarrow.value && dockReady.value)
+const floats = (id: string) => isFloating(arrangement.value, id)
+
+watch(
+  () => floatingPanels(arrangement.value).join('\n'),
+  (ids) => emit('floating', ids ? ids.split('\n') : []),
+  { immediate: true }
+)
+
+/**
+ * Pressed inside a floating window's title bar: a control there is pressed, not the bar it
+ * sits in, so the window is not dragged by it.
+ */
+function holdControls(id: string, event: PointerEvent) {
+  const target = event.target instanceof Element ? event.target : null
+  if (
+    floatHeads[id] &&
+    target?.closest('button, a, input, textarea, select, [role="button"], [contenteditable="true"]')
+  )
+    event.stopPropagation()
 }
 
 // ---------------------------------------------------------------- narrow
@@ -403,7 +454,7 @@ watch(
 // ---------------------------------------------------------------- page API
 
 /** Asks dockview to act on a panel without reloading the layout; counted so a repeat still acts. */
-const request = shallowRef<{ id: string; fold?: boolean; n: number } | null>(null)
+const request = shallowRef<{ id: string; fold?: boolean; float?: boolean; n: number } | null>(null)
 let requests = 0
 
 /**
@@ -464,7 +515,17 @@ function fold(id: string, folded: boolean) {
   request.value = { id, fold: folded, n: ++requests }
 }
 
-defineExpose({ reset, open, fold, rearranged })
+/** Pops a titled panel out into a window over the area (`true`), or docks it back where it belongs. */
+function float(id: string, floating: boolean) {
+  if (!canFloat.value || !byId.value.get(id)?.titled || floats(id) === floating) return
+  if (floating) {
+    if (maximizedNow.value) setMaximized(null)
+    focusOnFloat = id
+  }
+  request.value = { id, float: floating, n: ++requests }
+}
+
+defineExpose({ reset, open, fold, float, rearranged })
 </script>
 
 <template>
@@ -493,6 +554,8 @@ defineExpose({ reset, open, fold, rearranged })
           :default-arrangement="defaultArrangement"
           :maximized="maximizedNow"
           :request="request"
+          :float-box="rememberedFloat"
+          :home-of="homeOf"
           @change="commit"
           @host="onDockHost"
           @shown="restoreScroll"
@@ -504,6 +567,8 @@ defineExpose({ reset, open, fold, rearranged })
           @visible="emit('visible', $event)"
           @close="emit('close', $event)"
           @keep="emit('keep', $event)"
+          @float-head="onFloatHead"
+          @float-moved="onFloatMoved"
         />
       </div>
     </template>
@@ -529,44 +594,68 @@ defineExpose({ reset, open, fold, rearranged })
             'layout-area__panel--titled': byId.get(id)?.titled,
           }"
         >
-          <div v-if="byId.get(id)?.titled" class="layout-head" :data-layout-head="id">
-            <div class="layout-head__main">
-              <slot :id="id" name="head">
-                <span class="layout-head__title">{{ byId.get(id)?.title ?? id }}</span>
-              </slot>
-            </div>
-            <BaseButton
-              v-for="action in byId.get(id)?.actions ?? []"
-              :key="action.label"
-              kind="ghost"
-              size="sm"
-              :icon="action.icon"
-              :aria-label="action.label"
-              :title="action.label"
-              @click="action.run()"
-            />
-            <span v-if="!isNarrow && (severalCells || fills(id))" class="layout-head__signalled">
+          <!-- In a floating window the title bar goes into the window's own bar, which drags it. -->
+          <Teleport v-if="byId.get(id)?.titled" :to="floatHeads[id]" :disabled="!floatHeads[id]">
+            <!-- eslint-disable-next-line vuejs-accessibility/no-static-element-interactions -- only keeps a press on a control from dragging the window; the bar itself is no control -->
+            <div class="layout-head" :data-layout-head="id" @pointerdown="holdControls(id, $event)">
+              <div class="layout-head__main">
+                <slot :id="id" name="head">
+                  <span class="layout-head__title">{{ byId.get(id)?.title ?? id }}</span>
+                </slot>
+              </div>
+              <BaseButton
+                v-for="action in byId.get(id)?.actions ?? []"
+                :key="action.label"
+                kind="ghost"
+                size="sm"
+                :icon="action.icon"
+                :aria-label="action.label"
+                :title="action.label"
+                @click="action.run()"
+              />
+              <BaseButton
+                v-if="canFloat && floats(id)"
+                kind="ghost"
+                size="sm"
+                icon="mdi-dock-window"
+                :aria-label="t('shell.layout.dock')"
+                :title="t('shell.layout.dock')"
+                :data-layout-dock="id"
+                @click="float(id, false)"
+              />
+              <BaseButton
+                v-else-if="canFloat"
+                kind="ghost"
+                size="sm"
+                icon="mdi-dock-window"
+                :aria-label="t('shell.layout.float')"
+                :title="t('shell.layout.float')"
+                :data-layout-float="id"
+                @click="float(id, true)"
+              />
+              <span v-if="!isNarrow && !floats(id) && (severalCells || fills(id))" class="layout-head__signalled">
+                <BaseButton
+                  kind="ghost"
+                  size="sm"
+                  :icon="fills(id) ? 'mdi-arrow-collapse' : 'mdi-arrow-expand'"
+                  :aria-label="fills(id) ? t('shell.layout.restore') : t('shell.layout.maximize')"
+                  :title="fills(id) ? t('shell.layout.restore') : t('shell.layout.maximize')"
+                  data-layout-maximize
+                  @click="setMaximized(fills(id) ? null : id)"
+                />
+                <span v-if="fills(id) && signalledElsewhere(id)" class="layout-head__dot" aria-hidden="true" />
+              </span>
               <BaseButton
                 kind="ghost"
                 size="sm"
-                :icon="fills(id) ? 'mdi-arrow-collapse' : 'mdi-arrow-expand'"
-                :aria-label="fills(id) ? t('shell.layout.restore') : t('shell.layout.maximize')"
-                :title="fills(id) ? t('shell.layout.restore') : t('shell.layout.maximize')"
-                data-layout-maximize
-                @click="setMaximized(fills(id) ? null : id)"
+                icon="mdi-close"
+                :aria-label="t('shell.layout.close', { title: byId.get(id)?.title ?? id })"
+                :title="t('shell.layout.close', { title: byId.get(id)?.title ?? id })"
+                :data-layout-close="id"
+                @click="emit('close', id)"
               />
-              <span v-if="fills(id) && signalledElsewhere(id)" class="layout-head__dot" aria-hidden="true" />
-            </span>
-            <BaseButton
-              kind="ghost"
-              size="sm"
-              icon="mdi-close"
-              :aria-label="t('shell.layout.close', { title: byId.get(id)?.title ?? id })"
-              :title="t('shell.layout.close', { title: byId.get(id)?.title ?? id })"
-              :data-layout-close="id"
-              @click="emit('close', id)"
-            />
-          </div>
+            </div>
+          </Teleport>
           <div class="layout-area__body">
             <component
               :is="byId.get(id)!.component"

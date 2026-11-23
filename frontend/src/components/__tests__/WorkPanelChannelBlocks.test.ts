@@ -99,6 +99,7 @@ function mountChannel() {
     maximize: () => {},
     restore: () => {},
     visible: inSight,
+    floating: computed(() => new Set<string>()),
     show: () => {},
     rearranged: computed(() => false),
     reset: () => {},

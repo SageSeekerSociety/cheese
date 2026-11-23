@@ -20,7 +20,8 @@ function setup(
   kind: 'room' | 'task' | 'editor',
   tabs?: RoomLayoutOptions['tabs'],
   workHidden = ref(false),
-  scope = ref('t1')
+  scope = ref('t1'),
+  floating = ref<string[]>([])
 ) {
   let spec: () => PagePanels | null = () => null
   const shown: string[] = []
@@ -32,6 +33,7 @@ function setup(
     maximize: () => {},
     restore: () => {},
     visible: computed(() => new Set<string>()),
+    floating: computed(() => new Set(floating.value)),
     show: (id) => shown.push(id),
     rearranged: computed(() => false),
     reset: () => {},
@@ -291,6 +293,43 @@ describe('任务页的「对话」那一种摆法', () => {
     expect(onClose).toHaveBeenCalledWith('changes')
     expect(hide).not.toHaveBeenCalled()
     expect(inSight(spec())).toEqual(['code'])
+  })
+
+  it('浮着的一块不挤走概览：概览开着时打开浮着的终端，两样都在，页头上它那一颗按下', async () => {
+    const floating = ref([TERMINAL_BLOCK])
+    const { room, spec } = setup('task', TASK_TABS, ref(false), ref('t1'), floating)
+    room.workLayout.value!.show('terminal:t1')
+    expect(inSight(spec())).toEqual(['overview', TERMINAL_BLOCK])
+    expect(room.chatBlocks.value).toEqual({ overview: true, open: [TERMINAL_BLOCK] })
+  })
+
+  it('弹出成浮窗的一块让出对话旁边那一处：没有别的块摆在那里时概览回来', async () => {
+    const floating = ref<string[]>([])
+    const { room, spec } = setup('task', TASK_TABS, ref(false), ref('t1'), floating)
+    room.workLayout.value!.show('code')
+    expect(inSight(spec())).toEqual(['code'])
+    floating.value = ['code']
+    await nextTick()
+    expect(inSight(spec())).toEqual(['overview', 'code'])
+  })
+
+  it('停靠回去的一块回到对话旁边，概览让开', async () => {
+    const floating = ref<string[]>(['code'])
+    const { room, spec } = setup('task', TASK_TABS, ref(false), ref('t1'), floating)
+    room.workLayout.value!.show('code')
+    expect(inSight(spec())).toEqual(['overview', 'code'])
+    floating.value = []
+    await nextTick()
+    expect(inSight(spec())).toEqual(['code'])
+  })
+
+  it('关掉浮着的一块：概览留着，工作面板那一侧不收', () => {
+    const floating = ref([TERMINAL_BLOCK])
+    const { room, spec, hide } = setup('task', TASK_TABS, ref(false), ref('t1'), floating)
+    room.workLayout.value!.show('terminal:t1')
+    room.closeBlock(TERMINAL_BLOCK)
+    expect(hide).not.toHaveBeenCalled()
+    expect(inSight(spec())).toEqual(['overview'])
   })
 
   it('换一件任务，回到只有概览', async () => {
