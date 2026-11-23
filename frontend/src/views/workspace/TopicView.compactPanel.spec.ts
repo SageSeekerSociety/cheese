@@ -1,14 +1,13 @@
 /** 右侧面板放在哪、开不开，看的是主区（对话加面板）有多宽，不是整个窗口：
  *
- * - 主区窄于 840px：两栏放不下，面板是一只浮在对话上的浮层。「概览」开关打开它时
- *   回到面板此刻正在画的那一格（包括进房间时自动挑中、没写进地址的「现场」），收起时
- *   把地址里那一格清掉。浮层不记这个人的选择。
- * - 840px 起：面板和对话并排。1000px 起默认开着，840–1000 默认收着；「概览」开关记下
+ * - 主区窄于 840px：两栏放不下，面板是一只浮在对话上的浮层。页头上点哪一样（概览、支线……）
+ *   浮层就开在哪一样上；再点正显示的那一样收起，把地址里那一格清掉。浮层不记这个人的选择。
+ * - 840px 起：面板和对话并排。1000px 起默认开着，840–1000 默认收着；页头上的开合记下
  *   这个人自己的选择，下次照它来。
  */
 import type { Component } from 'vue'
 
-import { h, ref } from 'vue'
+import { h, ref, watch } from 'vue'
 import { fireEvent, render, waitFor } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -91,21 +90,23 @@ vi.mock('@/composables/usePageTitle', () => ({
   usePageTitle: () => ({ setDynamicTitle: vi.fn(), clearDynamicTitle: vi.fn() }),
 }))
 
-// 页头只留「概览」那颗开关——打开 / 收起都由它走，它也说着面板此刻开没开。
+// 页头只留「概览」「支线」两颗按钮——打开、换、收起都由它们走，按下的那颗说着面板此刻显示的是哪一样。
 vi.mock('@/components/TopicHeader.vue', () => ({
   default: {
     name: 'TopicHeader',
-    props: { panelOpen: { type: Boolean, default: false } },
+    props: { panelShown: { type: String, default: null } },
     emits: ['toggle-panel'],
-    template:
-      '<button data-toggle-panel :aria-pressed="String(panelOpen)" @click="$emit(\'toggle-panel\')">概览</button>',
+    template: `<div>
+      <button :aria-pressed="String(panelShown === 'overview')" @click="$emit('toggle-panel', 'overview')">概览</button>
+      <button :aria-pressed="String(panelShown === 'threads')" @click="$emit('toggle-panel', 'threads')">支线</button>
+    </div>`,
   },
 }))
 vi.mock('@/views/workspace/TopicChatColumn.vue', () => ({
   default: { name: 'TopicChatColumn', template: '<div />' },
 }))
-// 面板替身：把「正在画的哪一格」当作它此刻的 tab 画在 DOM 上，并像真面板那样把它暴露
-// 出来（真面板暴露的是内部 active；这里模拟「自动挑中的那一格 = site」）。
+// 面板替身：把地址给它的 tab 画在 DOM 上；像真面板那样记着自己在画哪一格（地址换了跟着换），
+// 换一格时说出来（`update:tab`）。
 vi.mock('@/components/WorkPanel.vue', () => ({
   default: {
     name: 'WorkPanel',
@@ -114,8 +115,23 @@ vi.mock('@/components/WorkPanel.vue', () => ({
       compact: { type: Boolean, default: false },
       openCardId: { type: String, default: null },
     },
-    setup(props: { tab?: string }, { expose }: { expose: (api: unknown) => void }) {
-      expose({ activeTab: () => 'site' })
+    emits: ['update:tab'],
+    setup(
+      props: { tab?: string },
+      { expose, emit }: { expose: (api: unknown) => void; emit: (e: 'update:tab', key: string) => void }
+    ) {
+      const active = ref('overview')
+      watch(
+        () => props.tab,
+        (tab) => tab && (active.value = tab)
+      )
+      expose({
+        activeTab: () => active.value,
+        select: (key: string) => {
+          active.value = key
+          emit('update:tab', key)
+        },
+      })
       return () => h('div', { 'data-testid': 'panel', 'data-tab': props.tab ?? '' })
     },
   },
@@ -136,24 +152,25 @@ function mountView() {
   return render(View, { props: { projectId: 'p1', topicId: 't1' } })
 }
 
-/** 「概览」开关说面板开着没有。 */
-function toggleSaysOpen(getByText: (text: string) => HTMLElement): boolean {
-  return getByText('概览').getAttribute('aria-pressed') === 'true'
+/** 页头上那一样的按钮是不是按下的（那一处开着、显示的是它）。 */
+function pressed(getByText: (text: string) => HTMLElement, label = '概览'): boolean {
+  return getByText(label).getAttribute('aria-pressed') === 'true'
 }
 
 describe('主区窄于 840px：面板是浮层', () => {
-  it('打开浮层：回到面板正在画的那一格（自动挑中的「现场」也在内）', async () => {
+  it('点页头上的一样：浮层开在它上面', async () => {
     const { getByText, getByTestId } = mountView()
     await waitFor(() => expect(getByTestId('panel')).toBeTruthy())
 
     // 还没人打开：地址里没有 tab，浮层收着。
     expect(query.value.tab).toBeUndefined()
-    expect(toggleSaysOpen(getByText)).toBe(false)
+    expect(pressed(getByText)).toBe(false)
 
-    await fireEvent.click(getByText('概览'))
+    await fireEvent.click(getByText('支线'))
 
-    await waitFor(() => expect(getByTestId('panel').getAttribute('data-tab')).toBe('site'))
-    expect(toggleSaysOpen(getByText)).toBe(true)
+    await waitFor(() => expect(getByTestId('panel').getAttribute('data-tab')).toBe('threads'))
+    expect(pressed(getByText, '支线')).toBe(true)
+    expect(pressed(getByText, '概览')).toBe(false)
     // 浮在对话上面：背后有一层点了就收起的遮罩。
     expect(document.querySelector('.panel-scrim')).toBeTruthy()
   })
@@ -163,11 +180,24 @@ describe('主区窄于 840px：面板是浮层', () => {
     await waitFor(() => expect(getByTestId('panel')).toBeTruthy())
 
     await fireEvent.click(getByText('概览'))
-    await waitFor(() => expect(getByTestId('panel').getAttribute('data-tab')).toBe('site'))
+    await waitFor(() => expect(getByTestId('panel').getAttribute('data-tab')).toBe('overview'))
 
     await fireEvent.click(getByText('概览'))
     await waitFor(() => expect(getByTestId('panel').getAttribute('data-tab')).toBe(''))
-    expect(toggleSaysOpen(getByText)).toBe(false)
+    expect(pressed(getByText)).toBe(false)
+  })
+
+  it('开着时点另一样：换过去，浮层还开着', async () => {
+    const { getByText, getByTestId } = mountView()
+    await waitFor(() => expect(getByTestId('panel')).toBeTruthy())
+
+    await fireEvent.click(getByText('概览'))
+    await waitFor(() => expect(pressed(getByText, '概览')).toBe(true))
+    await fireEvent.click(getByText('支线'))
+
+    await waitFor(() => expect(getByTestId('panel').getAttribute('data-tab')).toBe('threads'))
+    expect(pressed(getByText, '支线')).toBe(true)
+    expect(pressed(getByText, '概览')).toBe(false)
   })
 })
 
@@ -177,7 +207,7 @@ describe('主区 840px 起：面板和对话并排', () => {
     const { getByText, getByTestId } = mountView()
     await waitFor(() => expect(getByTestId('panel')).toBeTruthy())
 
-    expect(toggleSaysOpen(getByText)).toBe(true)
+    expect(pressed(getByText)).toBe(true)
     expect(document.querySelector('.panel-scrim')).toBeNull()
   })
 
@@ -185,11 +215,11 @@ describe('主区 840px 起：面板和对话并排', () => {
     mainWidth.value = 900
     const { getByText, getByTestId } = mountView()
     await waitFor(() => expect(getByTestId('panel')).toBeTruthy())
-    expect(toggleSaysOpen(getByText)).toBe(false)
+    expect(pressed(getByText)).toBe(false)
 
     await fireEvent.click(getByText('概览'))
 
-    await waitFor(() => expect(toggleSaysOpen(getByText)).toBe(true))
+    await waitFor(() => expect(pressed(getByText)).toBe(true))
     expect(document.querySelector('.panel-scrim')).toBeNull()
     expect(query.value.tab).toBeUndefined()
   })
@@ -199,11 +229,11 @@ describe('主区 840px 起：面板和对话并排', () => {
     const first = mountView()
     await waitFor(() => expect(first.getByTestId('panel')).toBeTruthy())
     await fireEvent.click(first.getByText('概览'))
-    await waitFor(() => expect(toggleSaysOpen(first.getByText)).toBe(false))
+    await waitFor(() => expect(pressed(first.getByText)).toBe(false))
     first.unmount()
 
     const again = mountView()
     await waitFor(() => expect(again.getByTestId('panel')).toBeTruthy())
-    expect(toggleSaysOpen(again.getByText)).toBe(false)
+    expect(pressed(again.getByText)).toBe(false)
   })
 })

@@ -100,14 +100,20 @@ vi.mock('@/views/workspace/TopicChatColumn.vue', () => ({
 vi.mock('@/components/TopicHeader.vue', () => ({
   default: {
     name: 'TopicHeader',
-    props: ['topic', 'members', 'me', 'connected', 'focus', 'panelOpen'],
+    props: ['topic', 'members', 'me', 'connected', 'focus', 'panelShown'],
     template: '<div data-testid="header" :data-connected="connected ? \'yes\' : \'no\'" />',
   },
 }))
 
 // 工作面板只是这一页的邻居，这份用例不关心它画了什么。
 vi.mock('@/components/WorkPanel.vue', () => ({
-  default: { name: 'WorkPanel', template: '<div data-testid="panel" />' },
+  default: {
+    name: 'WorkPanel',
+    setup(_: unknown, { expose }: { expose: (api: unknown) => void }) {
+      expose({ activeTab: () => 'overview' })
+      return () => h('div', { 'data-testid': 'panel' })
+    },
+  },
 }))
 
 import TopicView from './TopicView.vue'

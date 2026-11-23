@@ -10,8 +10,8 @@ import { defineComponent, h, ref } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { render, screen, waitFor } from '@testing-library/vue'
-import { beforeAll, describe, expect, it, vi } from 'vitest'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/vue'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import i18n from '@/i18n'
 
@@ -60,6 +60,8 @@ function mountChannel() {
       outlet: () => undefined,
       visible: front.value,
       show: (key) => (front.value = new Set([key])),
+      single: false,
+      head: () => undefined,
     }
     return h(
       WorkPanel,
@@ -124,5 +126,92 @@ describe('asking for a cell of the work panel brings it forward', () => {
     routineId.value = 'r1'
     await waitFor(() => expect([...front.value]).toEqual(['routines']))
     expect(visible('概览的内容')).toBe(false)
+  })
+})
+
+/** The channel page beside the conversation: one thing at a time, each with its own title bar. */
+function mountPlace() {
+  const front = ref<Set<string>>(new Set(['overview']))
+  const tab = ref<string | undefined>(undefined)
+  const deliveries = ref<{ id: string; title: string }[]>([])
+  const heads = new Map<string, HTMLElement>()
+  const head = (key: string) => {
+    let el = heads.get(key)
+    if (!el) {
+      el = document.createElement('div')
+      el.setAttribute('aria-label', `bar ${key}`)
+      el.setAttribute('role', 'toolbar')
+      document.body.appendChild(el)
+      heads.set(key, el)
+    }
+    return el
+  }
+  const panel = ref<{ openSkill(skill: { id: string; title: string }): Promise<void> } | null>(null)
+  const Host = defineComponent(() => () => {
+    const layout: WorkLayout = {
+      outlet: () => undefined,
+      visible: front.value,
+      show: (key) => (front.value = new Set([key])),
+      single: true,
+      head,
+    }
+    return h(
+      WorkPanel,
+      { ref: panel, topic: room, activityTick: 0, tab: tab.value, deliveries: deliveries.value, layout },
+      {
+        overview: () => h('p', '概览的内容'),
+        threads: () => h('p', '支线的内容'),
+        delivery: ({ id }: { id: string }) => h('p', `任务 ${id} 的内容`),
+        skill: ({ id }: { id: string }) => h('p', `技能 ${id} 的内容`),
+      }
+    )
+  })
+  render(Host, { global: { plugins: [createVuetify({ components, directives }), i18n] } })
+  return { tab, deliveries, panel, bar: (key: string) => screen.getByRole('toolbar', { name: `bar ${key}` }) }
+}
+
+describe('beside the conversation, one thing at a time', () => {
+  afterEach(() => document.querySelectorAll('[role="toolbar"]').forEach((bar) => bar.remove()))
+
+  it('back on something opened from a pane returns to that pane', async () => {
+    const { tab, panel, bar } = mountPlace()
+    tab.value = 'threads'
+    await waitFor(() => expect(visible('支线的内容')).toBe(true))
+    await panel.value!.openSkill({ id: 's1', title: '写周报' })
+    await waitFor(() => expect(visible('技能 s1 的内容')).toBe(true))
+    const back = within(bar('file:skill:s1')).getByRole('button', { name: i18n.global.t('global.back') })
+    await fireEvent.click(back)
+    await waitFor(() => expect(visible('支线的内容')).toBe(true))
+    expect(screen.queryByText('技能 s1 的内容')).toBeNull()
+  })
+
+  it('back on something opened from a task in the channel returns to that task', async () => {
+    const { tab, deliveries, panel, bar } = mountPlace()
+    deliveries.value = [{ id: 't1', title: '开放日流程页' }]
+    tab.value = 'delivery:t1'
+    await waitFor(() => expect(visible('任务 t1 的内容')).toBe(true))
+    await panel.value!.openSkill({ id: 's1', title: '写周报' })
+    await waitFor(() => expect(visible('技能 s1 的内容')).toBe(true))
+    await fireEvent.click(within(bar('file:skill:s1')).getByRole('button', { name: i18n.global.t('global.back') }))
+    await waitFor(() => expect(screen.queryByText('技能 s1 的内容')).toBeNull())
+    expect(visible('任务 t1 的内容')).toBe(true)
+    expect(visible('概览的内容')).toBe(false)
+  })
+
+  it('opening a second thing replaces the first instead of keeping it out of sight', async () => {
+    const { panel } = mountPlace()
+    await panel.value!.openSkill({ id: 's1', title: '写周报' })
+    await waitFor(() => expect(visible('技能 s1 的内容')).toBe(true))
+    await panel.value!.openSkill({ id: 's2', title: '整理笔记' })
+    await waitFor(() => expect(visible('技能 s2 的内容')).toBe(true))
+    expect(screen.queryByText('技能 s1 的内容')).toBeNull()
+  })
+
+  it('a fixed pane carries its name and no back', async () => {
+    const { bar } = mountPlace()
+    await waitFor(() =>
+      expect(within(bar('overview')).getByText(i18n.global.t('work.room.tabs.overview'))).toBeTruthy()
+    )
+    expect(within(bar('overview')).queryByRole('button', { name: i18n.global.t('global.back') })).toBeNull()
   })
 })

@@ -9,6 +9,13 @@ export interface WorkLayout {
   visible: ReadonlySet<string>
   /** 把这一格翻到它那一格的前面（收起的打开，关掉的放回来）。 */
   show: (key: string) => void
+  /**
+   * 各格一次只显示一格、每一格带自己的标题栏（频道页）：没有页签可点，新打开的一格换掉正显示的
+   * 那一格，从别处打开的那几格在标题栏上有「返回」。
+   */
+  single: boolean
+  /** 这一格标题栏里面板那一段的落点（`single` 时才有）：返回、名字写在这里。 */
+  head: (key: string) => HTMLElement | undefined
 }
 
 /** 工作面板一格内容的元素 id：页头「概览」那颗开关用它说自己管着哪几块。 */

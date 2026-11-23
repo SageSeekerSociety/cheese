@@ -19,6 +19,8 @@ defineProps<{
   heading: string
   version?: number | null
   state?: TaskState | null
+  /** 画在桌面一格的标题栏里（见 `DeliveryHead`）。 */
+  embedded?: boolean
 }>()
 
 const emit = defineEmits<{ (e: 'open-task'): void }>()
@@ -41,6 +43,7 @@ const decide = computed(() => !!accept && !accept.gateCard.value && accept.decis
     :heading="heading"
     :state="state ?? null"
     :version="version ?? null"
+    :embedded="embedded"
     :decided="decided"
     :decide="decide"
     :accept-label="accept?.acceptLabel.value ?? ''"

@@ -1,5 +1,6 @@
-// 交付到了、等的是我：右栏停在「概览」时直接打开它那一格；在别的页签时加进那一排、不选中、
-// 带一个点；右栏收着、或者等的不是我时什么都不做。右栏里换页签时，交付和支线回到频道的地址。
+// 交付到了、等的是我：右栏停在「概览」时直接打开它那一格；带页签的右栏在别的页签时加进那一排、
+// 不选中、带一个点；右栏收着、或者等的不是我时什么都不做。右栏里换页签时，交付和支线回到频道的
+// 地址。一次只显示一格的右栏（频道页并排）没有那一排：打开另一件任务换掉这一件。
 import type { RoomTask } from '@/cx_types'
 import type { TopicPlace } from './shared'
 
@@ -12,7 +13,9 @@ function row(id: string, reviewer: string, status = 'pending'): RoomTask {
   return { id, card: { id: `c-${id}`, status, reviewer } } as unknown as RoomTask
 }
 
-function setup(over: { place?: TopicPlace; open?: boolean; active?: string; rows?: RoomTask[] } = {}) {
+function setup(
+  over: { place?: TopicPlace; open?: boolean; active?: string; rows?: RoomTask[]; single?: boolean } = {}
+) {
   const place = ref<TopicPlace>(over.place ?? { projectId: 'p1', topicId: 'c1' })
   const opened: string[] = []
   const tabs: string[] = []
@@ -30,6 +33,7 @@ function setup(over: { place?: TopicPlace; open?: boolean; active?: string; rows
     setTab: (key) => tabs.push(key),
     toChannelTab: (key) => channelTabs.push(key),
     refreshDelivery: (id) => refreshed.push(id),
+    single: () => over.single ?? false,
   })
   return { place, delivery, opened, tabs, channelTabs, refreshed }
 }
@@ -138,5 +142,28 @@ describe('几件任务同时开着', () => {
     expect(opened).toEqual(['k1'])
     delivery.close('k1')
     expect(delivery.tabs.value.map((tab) => tab.taskId)).toEqual(['k2'])
+  })
+})
+
+describe('一次只显示一格的右栏', () => {
+  it('打开另一件任务换掉这一件，不在看不见的地方留着', async () => {
+    const { place, delivery } = setup({ single: true, place: { projectId: 'p1', topicId: 'c1', reviewTaskId: 'k1' } })
+    place.value = { projectId: 'p1', topicId: 'c1', reviewTaskId: 'k2' }
+    await Promise.resolve()
+    expect(delivery.tabs.value.map((tab) => tab.taskId)).toEqual(['k2'])
+    expect(delivery.shownTab.value).toBe('delivery:k2')
+  })
+
+  it('交付到了而右栏在别的地方：不添一格看不见的', async () => {
+    const { delivery, opened } = setup({ single: true, active: 'files' })
+    await delivery.arrived('k1')
+    expect(opened).toEqual([])
+    expect(delivery.tabs.value).toEqual([])
+  })
+
+  it('交付到了而右栏停在「概览」：照样直接打开它', async () => {
+    const { delivery, opened } = setup({ single: true })
+    await delivery.arrived('k1')
+    expect(opened).toEqual(['k1'])
   })
 })

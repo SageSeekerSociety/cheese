@@ -1,14 +1,19 @@
 // 频道页、任务页和私聊页在桌面上怎么摆：对话是一块，工作面板的每一格各是一块，都交给外壳的
-// 布局区（layouts/pagePanels.ts）。页签可以拖去和别的并排、拖进对话那一格，格子可以收起、
-// 放大，摆法按页面的种类（频道 / 任务 / 私聊）记在这台设备上。
+// 布局区（layouts/pagePanels.ts）。摆法按页面的种类（频道 / 任务 / 私聊）记在这台设备上。
 //
-// 对话那一块和工作面板固定的那几格不能关（只能挪）；频道和私聊里对话独占一格时不画页签栏，
-// 任务页上它和别的格子一样有页签栏（收起、放大）。工作面板那几格
-// 同属 `work` 这一组：新打开的一格（一件任务、一份文件）落到这一组页签最多的那一格里，✕ 也只在
-// 那一格上。「收起」（✕、页头的「概览」）收的是只装着这一组的那几格；挪进对话那一格的不跟着收。
+// 频道页：对话旁边只有一处。工作面板的每一格都带自己的标题栏（`titled`），全在对话右边那一格里，
+// 一次显示一格：概览、支线、文件、例行事务（页头那四颗按钮），以及从它们里面打开的一件任务、
+// 一份文件。没有页签可点，也就没有拖动；标题栏上的 ✕ 收起这一处（和页头上再点一下正显示的那
+// 一颗同一件事），对话占满。
 //
-// 放大（页签栏上的 ⤢）是布局层的；对话因此看不见的这段时间里有了新回复，那颗还原按钮上带一个
-// 点（对话这一块的信号）。挪过摆法之后，「恢复默认摆法」在页头 ⋯ 和命令面板里。
+// 任务页和私聊页：页签可以拖去和别的并排、拖进对话那一格，格子可以收起、放大。对话那一块和工作
+// 面板固定的那几格不能关（只能挪）；私聊里对话独占一格时不画页签栏，任务页上它和别的格子一样
+// 有页签栏（收起、放大）。工作面板那几格同属 `work` 这一组：新打开的一格（一份文件、一个终端）
+// 落到这一组页签最多的那一格里，✕ 也只在那一格上。「收起」（✕、页头的开关）收的是只装着这一组
+// 的那几格；挪进对话那一格的不跟着收。
+//
+// 放大（页签栏或标题栏上的 ⤢）是布局层的；对话因此看不见的这段时间里有了新回复，那颗还原按钮
+// 上带一个点（对话这一块的信号）。挪过摆法之后，「恢复默认摆法」在页头 ⋯ 和命令面板里。
 import type { ComputedRef, Ref } from 'vue'
 import type { LayoutNode } from '@/components/layout-area'
 import type { WorkLayout, WorkTabMeta } from '@/components/work/workLayout'
@@ -42,7 +47,7 @@ export interface RoomLayoutOptions {
   workHidden: () => boolean
   /** 主区太窄、工作面板是压在对话上的浮层：它自己排页签，不进布局区。 */
   floating: () => boolean
-  /** 页签栏上 ✕ 的说法和动作。 */
+  /** 收起工作面板那一侧：页签栏上 ✕ 的说法和动作；频道页上是标题栏上的 ✕。 */
   hide: { label: () => string; run: () => void }
   /** 读者在布局区里点了工作面板的一格；关掉了能关的一格；双击留下了一格。 */
   onActivated: (key: string) => void
@@ -63,7 +68,7 @@ export function useRoomLayout(
   conversationInSight: ComputedRef<boolean>
   /** 对话看不见的这段时间里来了新回复。 */
   noteChatNews: () => void
-  /** 页头「概览」开合的那几块的 id：交给外壳时是工作面板在屏幕上的那几格，否则是整块面板。 */
+  /** 页头开关开合的那几块的 id：交给外壳时是工作面板在屏幕上的那几格，否则是整块面板。 */
   panelControls: ComputedRef<string>
 } {
   const chatNews: Ref<boolean> = ref(false)
@@ -71,6 +76,8 @@ export function useRoomLayout(
   function spec(): PagePanels | null {
     const kind = opts.kind()
     if (!kind) return null
+    // 频道页：每一格带自己的标题栏，✕ 是布局层画的，收起的是这一处。
+    const titled = kind === 'room'
     const hideAction = { icon: 'mdi-close', label: opts.hide.label(), run: opts.hide.run }
     const work: PagePanel[] = opts.tabs().map((tab) => ({
       id: tab.key,
@@ -81,7 +88,7 @@ export function useRoomLayout(
       signal: tab.signal,
       temporary: tab.temporary,
       transient: tab.transient,
-      beside: tab.beside,
+      beside: titled ? undefined : tab.beside,
       alwaysRender: tab.alwaysRender,
       spawns: tab.spawns,
       group: WORK_GROUP,
@@ -89,7 +96,7 @@ export function useRoomLayout(
       closable: !!tab.transient || !!tab.closable,
       minWidth: 360,
       hidden: opts.workHidden(),
-      actions: [hideAction],
+      ...(titled ? { titled: true } : { actions: [hideAction] }),
     }))
     // 默认摆法里只有不能关的那几格：「文件」由读者打开（「+」、点一个文件链接）。
     const fixed = work.filter((panel) => !panel.closable && !panel.spawns).map((panel) => panel.id)
@@ -119,7 +126,7 @@ export function useRoomLayout(
       ],
       arrangement,
       onActivated: (id) => id !== CONVERSATION && opts.onActivated(id),
-      onClose: opts.onClose,
+      onClose: titled ? () => opts.hide.run() : opts.onClose,
       onKeep: opts.onKeep,
       onSpawn: opts.onSpawn,
       // 私聊页没有页头那一行：对话自己的头和工作面板的页签栏并排，同高。
@@ -131,7 +138,13 @@ export function useRoomLayout(
 
   const workLayout = computed<WorkLayout | null>(() =>
     panels.active.value && !opts.floating()
-      ? { outlet: (key) => panels.outlet(key), visible: panels.visible.value, show: (key) => panels.show(key) }
+      ? {
+          outlet: (key) => panels.outlet(key),
+          visible: panels.visible.value,
+          show: (key) => panels.show(key),
+          single: opts.kind() === 'room',
+          head: (key) => panels.headOutlet(key),
+        }
       : null
   )
   // 收着时说的是上一次在屏幕上的那几格（再打开回到的就是它们）；从没打开过时是第一格。

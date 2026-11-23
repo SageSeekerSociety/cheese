@@ -23,6 +23,8 @@ export interface WorkPanelHandle {
   previewShown?: () => void
   /** 面板此刻在画哪一格。收起再打开要回到它——自动选中的那一格不在地址里，只能问它。 */
   activeTab: () => string
+  /** 换到这一格（页头上点了它那一颗）：和读者点它的页签同一件事，地址跟着走。 */
+  select?: (key: string) => void
 }
 
 /** 对话栏往回够的那几处。它自己的输入框就是这一页用的那个，这一页只是要个把手。 */

@@ -8,6 +8,7 @@
 // 拼好：任务那一半（这件任务和能对它做的事）来自任务页那一份，另一半——在哪个房间、
 // 谁在场、面板开没开——是这一页的。
 import type { ComputedRef, Ref } from 'vue'
+import type { WorkTabMeta } from '@/components/work/workLayout'
 import type { HandInState } from '@/composables/acceptCard/handIn'
 import type { RoomTask, Topic, TopicMemberRow } from '@/cx_types'
 import type { TopicPlace } from './shared'
@@ -43,8 +44,14 @@ export function useTopicHeader<TaskHalf extends Record<string, unknown>>(opts: {
   handIn: HandInState
   /** 读者挪过这一页的摆法时，⋯ 里「恢复默认摆法」做的事；没挪过是 null。 */
   resetLayout: () => (() => void) | null
-  /** 「概览」开合的那几块的 id。 */
+  /** 页头开关开合的那几块的 id。 */
   panelControls: () => string
+  /** 频道页：对话旁边那一处能放的几样固定的东西（页头上一样一颗按钮）。 */
+  panelThings: () => WorkTabMeta[]
+  /** 那一处此刻显示的是其中哪一样（收着、或显示的是别的时 null）。 */
+  panelShown: () => string | null
+  /** 点了其中一样：开在它上面，或收起。 */
+  togglePlace: (key: string) => void
 }) {
   const store = useWorkspaceStore()
 
@@ -96,10 +103,11 @@ export function useTopicHeader<TaskHalf extends Record<string, unknown>>(opts: {
       members: store.members,
       me: opts.me,
       connected: opts.roomConnected.value,
-      panelOpen: opts.panelOpen.value,
+      panelThings: opts.panelThings(),
+      panelShown: opts.panelShown(),
       resetLayout: opts.resetLayout() ?? undefined,
       panelControls: opts.panelControls(),
-      'onToggle-panel': opts.togglePanel,
+      'onToggle-panel': opts.togglePlace,
       'onOpen-topic': opts.openTopic,
       onRename: (title: string) => store.renameTopic(opts.place().topicId, title),
     }

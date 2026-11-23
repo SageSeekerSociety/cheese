@@ -38,6 +38,12 @@ export const LAYOUT_AREA_ENTRIES: CatalogEntry[] = [
         props: { storageKey: 'catalog.layout-area.narrow', narrow: true },
         expect: '导航 第 1 行',
       },
+      {
+        name: '标题栏',
+        note: '右边那一格里「文件」「预览」各带自己的标题栏，一次显示一格：上面的按钮把它翻到前面，⤢ 放大，✕ 收起那一格；「预览」前面的「返回」回到「文件」。',
+        props: { storageKey: 'catalog.layout-area.titled', titled: true },
+        expect: '恢复默认摆法',
+      },
     ],
   },
 ]

@@ -280,9 +280,25 @@ const { taskHeaderBinding, topicHeaderBinding } = useTopicHeader({
   // 布局区那一份在下面才建（它要读打开的交付）；页头渲染时早已有了。
   resetLayout: () => (room.panels.rearranged.value ? room.panels.reset : null),
   panelControls: () => room.panelControls.value,
+  panelThings: () => fixedTabs(),
+  panelShown: () => (panelOpen.value ? panelRef.value?.activeTab() ?? null : null),
+  togglePlace,
 })
+/**
+ * 页头上那几颗按钮（频道页）：点的那一样正显示着就收起这一处；否则把这一处打开在它上面。打开
+ * 时它就是正显示着的那一样的话只打开，不再写一遍地址（收起前在看什么，打开还是什么）。
+ */
+function togglePlace(key: string) {
+  const panel = panelRef.value
+  const showing = panel?.activeTab()
+  if (panelOpen.value && showing === key) return closePanel()
+  if (!panelOpen.value) panelShow()
+  if (showing !== key) panel?.select?.(key)
+}
 // ---- 在频道里审阅的那件交付、右栏开着哪一格（见 topicView/delivery.ts）----
 const reviewReload = ref(0)
+/** 布局区那一份（下面才建）：右栏是不是一次只显示一格。建好之前不是。 */
+let roomLayoutHandle: { workLayout: { value: { single: boolean } | null } } | null = null
 const delivery = useDeliveryTab({
   place: here,
   desktop: mdAndUp,
@@ -304,6 +320,7 @@ const delivery = useDeliveryTab({
     reviewReload.value += 1
     void queryClient.invalidateQueries({ queryKey: keys.roomTask(taskId) })
   },
+  single: () => roomLayoutHandle?.workLayout.value?.single === true,
 })
 const {
   tabs: deliveryTabs,
@@ -367,20 +384,27 @@ const deliveryTabsBinding = computed(() =>
 // 只装着工作面板的那几格藏起来；浮层那一档面板自己排页签。
 const docked = computed(() => !panelFloat.value && panelOpen.value)
 const roomReady = computed(() => !!selectedTopic.value && !(props.taskId && !currentTask.value))
-/** 工作面板此刻有哪几格：固定的几格（面板算好的名字和信号，没挂上时照表），打开的任务，打开的文件。 */
-function workTabs() {
-  const handle = panelRef.value as
-    | (WorkPanelHandle & { fixedMeta?: WorkTabMeta[]; fileMeta?: WorkTabMeta[]; terminalMeta?: WorkTabMeta[] })
-    | null
-  const fixed =
-    handle?.fixedMeta ??
+type WorkPanelMeta = WorkPanelHandle & {
+  fixedMeta?: WorkTabMeta[]
+  fileMeta?: WorkTabMeta[]
+  terminalMeta?: WorkTabMeta[]
+}
+/** 工作面板固定的几格：面板算好的名字和信号，没挂上时照表。 */
+function fixedTabs(): WorkTabMeta[] {
+  return (
+    (panelRef.value as WorkPanelMeta | null)?.fixedMeta ??
     roomTabs({ withChat: false, review: false, task: !!props.taskId }).map((tab) => ({
       key: tab.key,
       title: tab.label,
       icon: tab.icon,
     }))
+  )
+}
+/** 工作面板此刻有哪几格：固定的几格，打开的任务，打开的文件。 */
+function workTabs() {
+  const handle = panelRef.value as WorkPanelMeta | null
   return [
-    ...fixed.map((tab) => ({ ...tab, alwaysRender: tab.key === 'preview' })),
+    ...fixedTabs().map((tab) => ({ ...tab, alwaysRender: tab.key === 'preview' })),
     ...deliveryTabsBinding.value.map((tab) => ({
       key: `delivery:${tab.id}`,
       title: tab.title || t('work.room.delivery.title'),
@@ -405,6 +429,7 @@ const room = useRoomLayout(usePagePanels, {
   onKeep: (key) => (panelRef.value as { keepTab?: (key: string) => void } | null)?.keepTab?.(key),
   onSpawn: (key) => void (panelRef.value as { spawnTab?: (key: string) => void } | null)?.spawnTab?.(key),
 })
+roomLayoutHandle = room
 const conversationTarget = computed(() => room.panels.outlet(CONVERSATION))
 /** 对话那一格里的那一块：窄档的面板浮层就压在它上面。 */
 const conversationBox = ref<HTMLElement | null>(null)
@@ -864,12 +889,14 @@ void openPlace()
                   @mention-click="handleMentionClick"
                 />
               </template>
-              <!-- Desktop: the delivery under review, in its own closable tab. -->
-              <template v-if="mdAndUp" #delivery="{ id }">
+              <!-- Desktop: the delivery under review, in a place of its own; beside the conversation its
+                   head goes into that place's title bar (head), after the back button. -->
+              <template v-if="mdAndUp" #delivery="{ id, head }">
                 <WorkPanel
                   :key="id"
                   class="tab-fill"
                   v-bind="reviewPanel(id)"
+                  :head-target="head"
                   :review-head="{
                     heading: taskFor(id) ? taskTitle(taskFor(id)!) : '',
                     version: taskFor(id)?.card?.version ?? null,

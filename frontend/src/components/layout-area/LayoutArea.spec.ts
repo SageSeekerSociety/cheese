@@ -185,3 +185,60 @@ describe('LayoutArea on a narrow screen', () => {
     expect(area.value!.rearranged).toBe(false)
   })
 })
+
+describe('LayoutArea with panels that carry a title bar of their own', () => {
+  const TITLED: LayoutPanel[] = [
+    { id: 'one', title: 'One', component: Note, props: { label: 'note one' } },
+    { id: 'two', title: 'Two', component: Note, props: { label: 'note two' }, titled: true },
+    { id: 'three', title: 'Three', component: Note, props: { label: 'note three' }, titled: true },
+  ]
+  const BESIDE: LayoutArrangement = {
+    root: { direction: 'row', children: [{ panels: ['one'] }, { panels: ['two', 'three'] }] },
+  }
+
+  beforeEach(() => localStorage.clear())
+  afterEach(() => localStorage.clear())
+
+  function mountWide(onClose = vi.fn()) {
+    const area = ref<{ open(id: string): void }>()
+    render(
+      defineComponent({
+        setup: () => () =>
+          h(
+            LayoutArea,
+            {
+              ref: area,
+              panels: TITLED,
+              defaultArrangement: BESIDE,
+              storageKey: KEY,
+              version: 1,
+              narrow: false,
+              onClose,
+            },
+            { head: ({ id }: { id: string }) => h('span', `What the page says about ${id}`) }
+          ),
+      }),
+      { global: { plugins: [createVuetify({ components, directives }), i18n] } }
+    )
+    return { area, onClose }
+  }
+  /** A note the reader can see (not parked out of sight). */
+  const seen = (label: string) => screen.queryByRole('textbox', { name: label })
+
+  it('shows what the page puts in the title bar, and its close asks the page', async () => {
+    const { onClose } = mountWide()
+    await screen.findByText('What the page says about two')
+    await fireEvent.click(screen.getByRole('button', { name: i18n.global.t('shell.layout.close', { title: 'Two' }) }))
+    expect(onClose).toHaveBeenCalledWith('two')
+  })
+
+  it('a cell of such panels has no tabs and shows only the one opened', async () => {
+    const { area } = mountWide()
+    await waitFor(() => expect(seen('note two')).not.toBeNull())
+    expect(seen('note three')).toBeNull()
+    expect(screen.queryAllByRole('tab')).toHaveLength(0)
+    area.value!.open('three')
+    await waitFor(() => expect(seen('note three')).not.toBeNull())
+    expect(seen('note two')).toBeNull()
+  })
+})
