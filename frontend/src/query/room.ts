@@ -11,6 +11,7 @@ import { queryOptions } from '@tanstack/vue-query'
 import { getPreview, getProgress, getTask, getTopicEnvironment, listRoomTasks, listTopicMembers } from '@/api'
 import { listChapters } from '@/api/chapters'
 import { listPins } from '@/api/pins'
+import { listProjectRoutines } from '@/api/routines'
 import { getThread, listThreads } from '@/api/threads'
 import { prefetchNewestBlocks } from '@/query/blocks'
 import { queryClient, refreshQueries } from '@/query/client'
@@ -31,6 +32,14 @@ export function environmentQuery(roomId: string) {
   return queryOptions({
     queryKey: keys.roomEnvironment(roomId),
     queryFn: (): Promise<TopicEnvironment> => getTopicEnvironment(roomId),
+  })
+}
+
+/** 频道的例行事务：概览里列着最近的几条，名字和什么时候跑。 */
+export function routinesQuery(projectId: string, roomId: string) {
+  return queryOptions({
+    queryKey: keys.roomRoutines(roomId),
+    queryFn: async () => (await listProjectRoutines(projectId, roomId)).data,
   })
 }
 

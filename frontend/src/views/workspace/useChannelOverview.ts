@@ -1,5 +1,5 @@
-// 频道概览要的数据：置顶、这个频道里的任务（各带最后说的一句），综合还要项目总览
-// 是哪一份文档。频道说明在频道本身上，由 store 改。
+// 频道概览要的数据：置顶、这个频道里的任务（各带最后说的一句）、例行事务，综合还要项目
+// 总览是哪一份文档。频道说明在频道本身上，由 store 改。
 import type { PanelDocument } from '@/composables/usePanelDoc'
 import type { RoomTask } from '@/cx_types'
 import type { ChannelPin } from '@/types/channels'
@@ -9,10 +9,11 @@ import { useQuery } from '@tanstack/vue-query'
 
 import { unpinBlock } from '@/api/pins'
 import { RECENT_DONE } from '@/lib/channelTasks'
+import { routineWhenLine } from '@/lib/routine'
 import { patchQuery, queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
 import { overviewQuery } from '@/query/project'
-import { openRoomTasksQuery, pinsQuery, roomTasksQuery } from '@/query/room'
+import { openRoomTasksQuery, pinsQuery, roomTasksQuery, routinesQuery } from '@/query/room'
 
 export function useChannelOverview(opts: {
   /** 正看着的频道；任务页上是 null，什么都不读。 */
@@ -56,8 +57,22 @@ export function useChannelOverview(opts: {
   })
   const overviewText = computed(() => (opts.general() ? overviewRead.data.value?.text ?? '' : ''))
 
+  /** 例行事务：名字和什么时候跑。芝士可能刚在一轮里起草了一条，所以有动静时也重读。 */
+  const routinesRead = useQuery(
+    computed(() => ({ ...routinesQuery(opts.projectId(), channel()), enabled: !!opts.channelId() })),
+    queryClient
+  )
+  const routines = computed(() =>
+    (routinesRead.data.value ?? []).map((routine) => ({
+      id: routine.id,
+      title: routine.title,
+      when: routineWhenLine(routine),
+    }))
+  )
+
   watch(opts.tick, () => {
     if (opts.general()) void queryClient.invalidateQueries({ queryKey: keys.projectOverview(opts.projectId()) })
+    if (opts.channelId()) void queryClient.invalidateQueries({ queryKey: keys.roomRoutines(channel()) })
   })
 
   async function unpin(blockId: string) {
@@ -71,5 +86,5 @@ export function useChannelOverview(opts: {
     }
   }
 
-  return { tasks, pins, overview, overviewText, unpin }
+  return { tasks, pins, routines, overview, overviewText, unpin }
 }

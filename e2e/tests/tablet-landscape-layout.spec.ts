@@ -38,7 +38,7 @@ async function besideConversation(page: Page) {
 //
 // 右侧面板按主区（对话加面板）的宽度分三档（`useWorkspaceLayout.ts` 的 `panelMode`）：
 // 1000 起并排、默认开着；840 到 1000 并排、默认收着，页头「概览」打开；更窄放不下两栏，
-// 面板浮在对话上。并排时「概览」记住这个人的选择。
+// 面板浮在对话上。频道页上并排时开或关只算这一页：离开再进来（刷新也是）又照宽度来。
 //
 // 这些差别**只在真浏览器里有**（宽度是算出来的布局，不是布尔 prop），所以守在这里：
 // vitest 用的是 happy-dom 的固定宽度，量不到「同一份 DOM 在两个窗口宽下不一样」。
@@ -52,7 +52,7 @@ async function besideConversation(page: Page) {
 // 再缩窗口——这也正是一条真路径：人横过来/缩窗口那一刻布局就换档。
 
 test.describe('平板横放（960–1180）', () => {
-  test('980：侧栏默认收起；面板默认收着，「概览」把它并排打开并记住', async ({ page }) => {
+  test('980：侧栏默认收起；面板默认收着，「概览」把它并排打开，只算这一页', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 900 });
     await apiLogin(page);
     const rows = await openFirstProject(page);
@@ -83,10 +83,10 @@ test.describe('平板横放（960–1180）', () => {
     await expect.poll(() => besideConversation(page)).toBe(true);
     await expect(page.locator('.panel-scrim')).toHaveCount(0);
 
-    // 这是人的选择：刷新回来还开着。
+    // 只算这一页：刷新（再进来）又照宽度来，收着。
     await page.reload();
-    await expect(page.locator('[data-panel-toggle]')).toHaveAttribute('aria-pressed', 'true');
-    await expect.poll(() => panelShown(page)).toBe(true);
+    await expect(page.locator('[data-panel-toggle]')).toHaveAttribute('aria-pressed', 'false');
+    await expect.poll(() => panelShown(page)).toBe(false);
 
     // 二级侧栏那颗开关：点开，抽屉成 active；Esc 收起，焦点还回来。
     await sidebarToggle.click();

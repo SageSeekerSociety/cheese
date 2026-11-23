@@ -71,3 +71,29 @@ describe('右侧面板换档', () => {
     expect(tab.value).toBeUndefined()
   })
 })
+
+describe('频道页和任务页「对话」那一种：开没开只算这一页', () => {
+  it('在一件任务上全关掉，换一件任务、回到频道，旁边又开着', async () => {
+    mainWidth.value = 1300
+    const where = ref<string | null>('k1')
+    const panel = useTopicPanel({
+      panes: ref(null),
+      tab: ref<string | undefined>(undefined),
+      desktop: ref(true),
+      thread: ref(false),
+      setTab: () => {},
+      showing: () => 'overview',
+      scope: () => where.value,
+    })
+    expect(panel.open.value).toBe(true)
+    panel.hide()
+    expect(panel.open.value).toBe(false)
+    where.value = 'k2'
+    await Promise.resolve()
+    expect(panel.open.value).toBe(true)
+    panel.hide()
+    where.value = 'channel'
+    await Promise.resolve()
+    expect(panel.open.value).toBe(true)
+  })
+})

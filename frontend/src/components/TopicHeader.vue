@@ -13,7 +13,7 @@
 // seconds for as long as it was open; usage numbers do not move that fast, and
 // nobody watches them. Now they load once, when the popover is opened.
 import type { MenuAction } from '@/components/common/menuAction'
-import type { WorkTabMeta } from '@/components/work/workLayout'
+import type { TaskBlockButton } from '@/components/task/taskBlocks'
 import type { ProjectMemberRow, Topic } from '@/cx_types'
 
 import { computed, ref, watch } from 'vue'
@@ -50,12 +50,10 @@ const props = defineProps<{
   /** ChatPanel's live socket state — the dot that says 已连接 / 未连接. */
   connected: boolean
   /**
-   * 对话旁边那一处能放的几样固定的东西（概览、支线、文件、例行事务）：页头上一样一颗按钮，带着
-   * 它的名字、图标和信号（支线上有没读过的回复时的点、进行中的件数）。
+   * 对话旁边那几块（概览、支线、文件，例行事务在 ⋯ 里）：页头上一样一颗按钮，带着它的名字、图标、
+   * 开没开着，和支线上有没读过的回复时的点。
    */
-  panelThings?: WorkTabMeta[]
-  /** 那一处此刻显示的是其中哪一样；收着、或显示的是别的（一份文件、一件任务）时是 null。 */
-  panelShown?: string | null
+  blocks?: TaskBlockButton[]
   /** 读者挪过这一页的摆法时给：⋯ 里多一项「恢复默认摆法」。 */
   resetLayout?: () => void
   /** 那几颗按钮开合的那几块的 id。 */
@@ -65,12 +63,14 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'open-topic', topicId: string): void
   (e: 'rename', title: string): void
-  /** 点了其中一样：把那一处开在它上面；它正显示着就收起那一处。 */
-  (e: 'toggle-panel', key: string): void
+  /** 点了其中一颗：它那一块开着就关掉，关着就打开。 */
+  (e: 'toggle-block', key: string): void
   // 这个话题换了 AI 队友。对话栏要重拉名册——它显示的 AI 名字来自那份名册。
 }>()
 
 const { mdAndUp } = useDisplay()
+const blockButtons = computed(() => (props.blocks ?? []).filter((block) => !block.more))
+const moreBlocks = computed(() => (props.blocks ?? []).filter((block) => block.more))
 // 房间自己的生命周期只在不寻常时说一句（已归档 / 草稿），和侧栏那一行同一个规矩。
 // 房间没有「在干活 / 待审阅」这种状态：干活的是成员（输入框下面那一行），待审阅
 // 的是卡（卡上、看板上）。
@@ -317,28 +317,62 @@ useCommands(roomCommands)
       </template>
     </AdaptiveMenu>
 
-    <!-- The fixed things that can sit beside the conversation, one button each: opens the place
-         on it, or closes the place when it is the one shown. Last in the row, above the place it
-         controls; what is about the channel itself (roster, notifications, the menu) sits before it. Phones show them as tabs instead.
+    <!-- The blocks that can sit beside the conversation, one button each (the less used under ⋯):
+         opens its block, or closes it when it is open; several can be open at once. Last in the row,
+         above the blocks it controls; what is about the channel itself (roster, notifications, the menu)
+         sits before it. Phones show them as tabs instead.
          Focus returns to the first one (data-panel-toggle) when the floating panel closes. -->
-    <div v-if="mdAndUp && panelThings?.length" class="topic-header__things">
-      <span v-for="(thing, i) in panelThings" :key="thing.key" class="topic-header__thing">
+    <div
+      v-if="mdAndUp && blockButtons.length"
+      class="topic-header__things"
+      role="group"
+      :aria-label="t('work.task.form.blocks')"
+    >
+      <span v-for="(block, i) in blockButtons" :key="block.key" class="topic-header__thing">
         <BaseButton
           kind="ghost"
           size="sm"
           class="topic-header__thing-button"
-          :class="{ 'topic-header__thing-button--on': panelShown === thing.key }"
-          :icon="thing.icon"
+          :class="{ 'topic-header__thing-button--on': block.on }"
+          :icon="block.icon"
           :data-panel-toggle="i === 0 ? '' : undefined"
-          :data-panel-thing="thing.key"
-          :aria-pressed="panelShown === thing.key ? 'true' : 'false'"
+          :data-panel-thing="block.key"
+          :aria-pressed="block.on ? 'true' : 'false'"
           :aria-controls="panelControls"
-          :aria-label="thing.hint ?? thing.title"
-          :title="thing.hint ?? thing.title"
-          @click="emit('toggle-panel', thing.key)"
+          :aria-label="block.hint ?? block.label"
+          :title="block.hint ?? block.label"
+          @click="emit('toggle-block', block.key)"
         />
-        <span v-if="thing.signal?.kind === 'dot'" class="topic-header__thing-dot" aria-hidden="true" />
+        <span v-if="block.dot" class="topic-header__thing-dot" aria-hidden="true" />
       </span>
+      <v-menu v-if="moreBlocks.length" location="bottom end">
+        <template #activator="{ props: menuProps }">
+          <BaseButton
+            v-bind="menuProps"
+            kind="ghost"
+            size="sm"
+            class="topic-header__thing-button"
+            :class="{ 'topic-header__thing-button--on': moreBlocks.some((block) => block.on) }"
+            icon="mdi-dots-horizontal"
+            :aria-label="t('work.task.form.moreBlocks')"
+            :title="t('work.task.form.moreBlocks')"
+            data-testid="channel-blocks-more"
+          />
+        </template>
+        <v-list density="compact" role="menu" :aria-label="t('work.task.form.moreBlocks')">
+          <v-list-item
+            v-for="block in moreBlocks"
+            :key="block.key"
+            role="menuitemcheckbox"
+            :aria-checked="block.on ? 'true' : 'false'"
+            :title="block.label"
+            :prepend-icon="block.icon"
+            :append-icon="block.on ? 'mdi-check' : undefined"
+            :data-panel-thing="block.key"
+            @click="emit('toggle-block', block.key)"
+          />
+        </v-list>
+      </v-menu>
     </div>
     <!-- 改名、删除两张表单两端共用一份，不能待在手机那一支里：桌面版也得够得着。 -->
     <AdaptiveDialog
@@ -482,8 +516,8 @@ useCommands(roomCommands)
   color: var(--faint);
   background: var(--fill);
 }
-/* 对话旁边那一处的几样东西：框在一起的一组图标按钮，显示着的那一颗是按下的样子。件数不画在
-   按钮上，在它的提示里。 */
+/* 对话旁边那几块：框在一起的一组图标按钮，开着的那几颗是按下的样子。件数不画在按钮上，在它的
+   提示里。 */
 .topic-header__things {
   display: flex;
   flex: 0 0 auto;
@@ -498,8 +532,8 @@ useCommands(roomCommands)
   position: relative;
   display: inline-flex;
 }
-/* 比页头上别的图标按钮小一号：四颗框在一起，整组不该比旁边的铃铛高。 */
-.topic-header__thing .topic-header__thing-button {
+/* 比页头上别的图标按钮小一号：几颗框在一起，整组不该比旁边的铃铛高。 */
+.topic-header__things .topic-header__thing-button {
   width: 30px;
   min-width: 0;
   height: 30px;

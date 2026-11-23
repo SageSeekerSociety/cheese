@@ -103,7 +103,6 @@ function mountTask() {
       outlet: () => undefined,
       visible: front.value,
       show: (key) => (front.value = new Set([...(editor.value ? ['navigator'] : []), key])),
-      single: false,
       head: () => undefined,
       editor: editor.value,
       blocks: !editor.value,

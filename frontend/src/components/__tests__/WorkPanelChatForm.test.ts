@@ -115,7 +115,6 @@ function mountChatForm() {
         if (key === 'overview') inSight.value = new Set(['overview'])
         else inSight.value = new Set([...inSight.value].filter((one) => one !== 'overview').concat(key))
       },
-      single: false,
       blocks: true,
       head: (key) => (inSight.value.has(key) ? head(key) : undefined),
     }

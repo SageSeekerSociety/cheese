@@ -123,6 +123,9 @@ async function pointAt(row: Routine) {
   void focusRow(`[data-routine="${CSS.escape(row.id)}"]`)
 }
 
+// 频道概览里「例行事务」旁那一颗「+」：页面打开这一格后叫它开出新建那一页。
+defineExpose({ startNew })
+
 watch(
   [() => props.routineId, routines],
   ([id, rows]) => {

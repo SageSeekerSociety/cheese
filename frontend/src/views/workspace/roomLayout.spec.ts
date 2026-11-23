@@ -1,10 +1,10 @@
 /**
- * 桌面上频道页和任务页交给外壳布局区的样子。频道页旁边只有一处：工作面板的每一格带自己的标题栏，
- * 全在对话旁边那一格里，标题栏上的 ✕ 收起这一处。任务页「对话」那一种摆法里一样一块，各带标题栏：
- * 进来是概览，开别的概览就让开，几块能同时开着；编辑器那一种另有自己的摆法。
+ * 桌面上频道页和任务页交给外壳布局区的样子。频道页和任务页「对话」那一种摆法里一样一块，各带
+ * 标题栏：进来是概览，开别的概览就让开，几块能同时开着；频道页的概览是一栏窄的目录，没有标题栏，
+ * 右边两处各显示一样。编辑器那一种另有自己的摆法。
  */
 import type { PagePanels, PagePanelsHandle } from '@/layouts/pagePanels'
-import type { RoomLayoutOptions } from './roomLayout'
+import type { RoomLayoutOptions, RoomWorkTab } from './roomLayout'
 
 import { computed, defineComponent, h, nextTick, ref } from 'vue'
 import { render } from '@testing-library/vue'
@@ -73,27 +73,106 @@ function setup(
   return { declared, work, hide, onClose, room, spec: () => spec()!, shown }
 }
 
+/** 频道页工作面板此刻有哪几格；`extra` 是读者打开的任务和文件。 */
+function channelTabs(extra: RoomWorkTab[] = []) {
+  return () => [
+    { key: 'overview', title: '概览', icon: 'mdi-file-document-outline' },
+    { key: 'threads', title: '支线', icon: 'mdi-forum-outline' },
+    { key: 'files', title: '文件', icon: 'mdi-paperclip' },
+    { key: 'routines', title: '例行事务', icon: 'mdi-clock-outline' },
+    ...extra,
+  ]
+}
+
 describe('频道页', () => {
-  it('工作面板的每一格带自己的标题栏，固定的几格默认在对话旁边同一格里', () => {
-    const { declared, work } = setup('room')
-    expect(work.every((panel) => panel.titled)).toBe(true)
-    const root = declared.arrangement
-    expect(isSplit(root) && root.children.map((child) => (isSplit(child) ? null : child.panels))).toEqual([
-      [CONVERSATION],
-      ['overview', 'threads'],
+  const inSight = (declared: PagePanels) =>
+    declared.panels.filter((one) => one.id !== CONVERSATION && !one.hidden).map((one) => one.id)
+  const panelOf = (declared: PagePanels, id: string) => declared.panels.find((one) => one.id === id)
+
+  it('进频道时旁边只有概览：一栏窄的目录，没有标题栏，有自己的宽度', () => {
+    const { declared } = setup('room', channelTabs())
+    expect(inSight(declared)).toEqual(['overview'])
+    const overview = panelOf(declared, 'overview')!
+    expect(overview.bare).toBe(true)
+    expect(overview.titled).toBeFalsy()
+    expect(overview.width?.initial).toBeLessThanOrEqual(320)
+    expect(
+      declared.panels.filter((one) => !['overview', CONVERSATION].includes(one.id)).every((one) => one.titled)
+    ).toBe(true)
+  })
+
+  it('打开支线，概览让开；再打开文件，两块并排，支线在左', () => {
+    const { room, spec } = setup('room', channelTabs())
+    room.workLayout.value!.show('threads')
+    expect(inSight(spec())).toEqual(['threads'])
+    room.workLayout.value!.show('files')
+    const now = spec()
+    expect(inSight(now)).toEqual(['threads', 'files'])
+    const cells = laidOut(now)
+    expect(cells.findIndex((cell) => cell.includes('threads'))).toBeLessThan(
+      cells.findIndex((cell) => cell.includes('files'))
+    )
+    expect(room.chatBlocks.value).toEqual({ overview: false, open: ['threads', 'files'] })
+  })
+
+  it('在频道里打开的一件任务开在支线那一处，换掉支线；再点支线，任务关掉', () => {
+    const tabs = ref(channelTabs())
+    const { room, spec, onClose } = setup('room', () => tabs.value())
+    room.workLayout.value!.show('threads')
+    tabs.value = channelTabs([
+      { key: 'delivery:k1', title: '报名表改短', icon: 'mdi-file-eye-outline', transient: true },
     ])
+    room.workLayout.value!.show('delivery:k1')
+    const now = spec()
+    expect(inSight(now)).toEqual(['delivery:k1'])
+    const cells = laidOut(now)
+    expect(cells.findIndex((cell) => cell.includes('delivery:k1'))).toBe(
+      cells.findIndex((cell) => cell.includes('threads'))
+    )
+    room.workLayout.value!.show('threads')
+    expect(inSight(spec())).toEqual(['threads'])
+    expect(onClose).toHaveBeenCalledWith('delivery:k1')
   })
 
-  it('标题栏上的 ✕ 收起这一处，不管是哪一格', () => {
-    const { declared, hide, onClose } = setup('room')
-    declared.onClose!('overview')
-    declared.onClose!('file:a.md')
-    expect(hide).toHaveBeenCalledTimes(2)
-    expect(onClose).not.toHaveBeenCalled()
+  it('打开的一份文件开在文件那一处，换掉列表；例行事务也开在那一处', () => {
+    const tabs = ref(channelTabs([{ key: 'file:a.md', title: 'a.md', icon: 'mdi-file-outline', transient: true }]))
+    const { room, spec, onClose } = setup('room', () => tabs.value())
+    room.workLayout.value!.show('files')
+    room.workLayout.value!.show('file:a.md')
+    expect(inSight(spec())).toEqual(['file:a.md'])
+    room.workLayout.value!.show('routines')
+    expect(inSight(spec())).toEqual(['routines'])
+    expect(onClose).toHaveBeenCalledWith('file:a.md')
   })
 
-  it('交给工作面板的是一次显示一格', () => {
-    expect(setup('room').room.workLayout.value?.single).toBe(true)
+  it('标题栏上的 ✕ 只关那一块；最后一块关掉时对话占满', () => {
+    const workHidden = ref(false)
+    const { room, spec, hide, onClose } = setup('room', channelTabs(), workHidden)
+    hide.mockImplementation(() => (workHidden.value = true))
+    room.workLayout.value!.show('threads')
+    room.workLayout.value!.show('files')
+    spec().onClose!('threads')
+    expect(onClose).toHaveBeenCalledWith('threads')
+    expect(inSight(spec())).toEqual(['files'])
+    expect(hide).not.toHaveBeenCalled()
+    spec().onClose!('files')
+    expect(hide).toHaveBeenCalledTimes(1)
+    expect(inSight(spec())).toEqual([])
+  })
+
+  it('离开再进来（换了一页），又只有概览', async () => {
+    const scope = ref<string>('channel')
+    const { room, spec } = setup('room', channelTabs(), ref(false), scope)
+    room.workLayout.value!.show('files')
+    scope.value = 't1'
+    await nextTick()
+    scope.value = 'channel'
+    await nextTick()
+    expect(inSight(spec())).toEqual(['overview'])
+  })
+
+  it('交给工作面板的是一块一块的那一种', () => {
+    expect(setup('room', channelTabs()).room.workLayout.value?.blocks).toBe(true)
   })
 })
 

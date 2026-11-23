@@ -72,6 +72,7 @@ from app.domain.agent.announce import announce
 from app.domain.agent.preview_hub import preview_hub
 from app.domain.agent.preview_owner import inspect_owner
 from app.domain.block.shown import add_shown_block, repeat_of_latest_shown
+from app.domain.library import in_room
 from app.domain.library import records as library_records
 from app.domain.library import service as library
 from app.domain.preview import office
@@ -380,10 +381,15 @@ async def list_shown(
     """这个房间里摆出来过的东西 (#1085 结论四)。
 
     一个房间常有好几样值得看的东西，而「当前预览」只说得出最后那一样 —— 这里是全
-    部，新的在前。它们仍然只属于这个房间；要成为项目的产物得有人按一下。"""
+    部，新的在前。它们仍然只属于这个房间；要成为项目的产物得有人按一下。问的是频道
+    或私聊时，它的任务和支线里摆出来的也算（「文件」那一格列的是整个频道的）；问的是
+    一件任务或一条支线时，只有它自己的。"""
     place = await place_or_404(db, topic_id)
     await _actor_in_place(resolver, place)
-    shown = await BlockRepository(db).shown_in_room(place.conversation_id)
+    if place.task is None and place.thread is None:
+        shown = await in_room.shown(db, place.room_id)
+    else:
+        shown = await BlockRepository(db).shown_in_room(place.conversation_id)
     items = [
         {
             "path": block.content,

@@ -1,4 +1,4 @@
-/** 「文件」那一格的保存到资料库：私密频道和私聊里先问，取消就不保存；公开频道直接保存。 */
+/** 「文件」那一格：一行一样东西，新的在前；保存到资料库在私密频道和私聊里先问，取消就不保存，公开频道直接保存。 */
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
@@ -9,6 +9,7 @@ const api = vi.hoisted(() => ({
   listRoomAttachments: vi.fn(),
   listRoomDocuments: vi.fn(),
   listRoomFiles: vi.fn(),
+  listRoomOutputs: vi.fn(),
   saveRoomOutputToLibrary: vi.fn(),
   keepDocument: vi.fn(),
   listTopicMembers: vi.fn(),
@@ -35,6 +36,7 @@ beforeEach(() => {
   api.listRoomAttachments.mockResolvedValue({ data: [sent], total: 1 })
   api.listRoomDocuments.mockResolvedValue({ data: [], total: 0 })
   api.listRoomFiles.mockResolvedValue({ data: [], total: 0, truncated: false })
+  api.listRoomOutputs.mockResolvedValue({ data: [], total: 0 })
   api.saveRoomOutputToLibrary.mockResolvedValue({ name: '合作协议.docx' })
   api.listTopicMembers.mockResolvedValue({ data: [], total: 0 })
 })
@@ -52,34 +54,46 @@ function mount(seatsOnly: boolean) {
   })
 }
 
-describe('文件夹', () => {
-  it('定时任务按日期放的结果在文件夹里，点进去才看得到，面包屑回到最上层', async () => {
+function areaFile(path: string, modified: string, authorKind: 'human' | 'agent') {
+  return {
+    path,
+    bytes: 10,
+    modified_at: modified,
+    author: authorKind === 'human' ? 'bob' : 'cheese',
+    author_kind: authorKind,
+    source: authorKind === 'human' ? 'upload' : 'ai',
+    in_library: false,
+  }
+}
+
+describe('一行一样东西', () => {
+  it('列摆出来过的和人放进来的，新的在前；网页自己的文件和没摆出来的中间文件不单列', async () => {
     api.listRoomFiles.mockResolvedValue({
       data: [
-        {
-          path: 'runs/2026-09-14/weekly-report.md',
-          bytes: 10,
-          modified_at: '2026-09-14T02:10:00Z',
-          author: null,
-          author_kind: null,
-          source: null,
-          in_library: false,
-        },
+        areaFile('site/index.html', '2026-10-20T00:00:00Z', 'agent'),
+        areaFile('site/style.css', '2026-10-20T00:00:00Z', 'agent'),
+        areaFile('work/tmp.txt', '2026-10-21T00:00:00Z', 'agent'),
+        areaFile('notes/plan.md', '2026-10-18T00:00:00Z', 'human'),
+        areaFile('report.docx', '2026-10-10T00:00:00Z', 'agent'),
       ],
-      total: 1,
+      total: 5,
       truncated: false,
     })
+    api.listRoomOutputs.mockResolvedValue({
+      data: [
+        { path: 'site/index.html', mime: 'text/html', kind: 'file', shown_at: '2026-10-20T00:00:00Z' },
+        { path: 'report.docx', mime: 'application/msword', kind: 'file', shown_at: '2026-10-19T00:00:00Z' },
+      ],
+      total: 2,
+    })
     mount(false)
-    expect(await screen.findByText('合作协议.docx')).toBeTruthy()
-    expect(screen.queryByText('weekly-report.md')).toBeNull()
-
-    await fireEvent.click(await screen.findByText('runs'))
-    await fireEvent.click(await screen.findByText('2026-09-14'))
-    expect(await screen.findByText('weekly-report.md')).toBeTruthy()
-    expect(screen.queryByText('合作协议.docx')).toBeNull()
-
-    await fireEvent.click(screen.getByRole('button', { name: '全部文件' }))
-    expect(await screen.findByText('合作协议.docx')).toBeTruthy()
+    await screen.findByText('index.html')
+    const names = [...document.querySelectorAll('.room-files-panel__name')].map((el) => el.textContent?.trim())
+    expect(names).toEqual(['index.html', 'report.docx', 'plan.md', '合作协议.docx'])
+    // 它在哪个文件夹是次要的一句，不是一层要点进去的文件夹。
+    expect(screen.getByText('notes')).toBeTruthy()
+    expect(screen.queryByText('style.css')).toBeNull()
+    expect(screen.queryByText('tmp.txt')).toBeNull()
   })
 })
 

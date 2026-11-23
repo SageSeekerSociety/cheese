@@ -66,6 +66,8 @@ export const keys = {
   roomTask: (roomId: string) => ['room', roomId, 'task'] as const,
   roomPreview: (roomId: string) => ['room', roomId, 'preview'] as const,
   roomPins: (roomId: string) => ['room', roomId, 'pins'] as const,
+  /** 频道的例行事务（概览里列着的那几条）。 */
+  roomRoutines: (roomId: string) => ['room', roomId, 'routines'] as const,
   /** 一段对话的章节（频道或任务，键是那段对话的 id）。 */
   roomChapters: (conversationId: string) => ['room', conversationId, 'chapters'] as const,
   roomThreads: (roomId: string) => ['room', roomId, 'threads'] as const,

@@ -21,18 +21,18 @@
 //
 // 桌面上（`layout` 给了）每一格是外壳布局区里的一块：页签条是布局区画的，一格可以拖到别处、
 // 和对话并排；这里只把每一格的内容传送到布局区给的落点（`WorkPane`），并把每一格的名字、
-// 图标、信号交给页面（`tabMeta`）。频道页上（`layout.single`）没有页签条：一次显示一格，每一格
-// 带自己的标题栏，这里往标题栏里放「返回」和名字（`WorkPaneHead`），新打开的一份文件换掉上一份。
-// 任务页「对话」那一种摆法里（`layout.blocks`）也没有页签条：每一格是一块，带自己的标题栏，几块能
-// 同时开着；「文件」那一块一次一份文件（标题栏上的路径换文件），终端那一块一次一个终端，从对话里
-// 打开的一份产出换掉上一份。
+// 图标、信号交给页面（`tabMeta`）。频道页和任务页「对话」那一种摆法里（`layout.blocks`）没有
+// 页签条：每一格是一块，带自己的标题栏（这里往标题栏里放「返回」和名字，`WorkPaneHead`），几块能
+// 同时开着。任务页上「文件」那一块一次一份文件（标题栏上的路径换文件），终端那一块一次一个终端，
+// 从对话里打开的一份产出换掉上一份。频道页上打开的一份文件、文档、技能开在「文件」那一块里，
+// 换掉上一份，「返回」回到文件的列表；打开的一件任务是一块，标题栏里是它自己的页头。
 // 手机上、平板的浮层里、频道里打开的一件任务里，这一栏自己画页签条，一次一格。
 //
 // 页签分两段。固定区（概览 / 现场 / 改动 / 预览 / 例行事务）不能关，位置记忆来自这里。自由区是
 // 读者自己打开的那几份文件，可以关——变化是他自己做的，所以不算「页签自己出现和
 // 消失」。单击打开的那一格是临时的，下一次打开会换掉它；双击就固定下来。不这样的
 // 话，聊一小时能攒出二十个页签。
-import type { ConversationFile } from '../composables/useConversationFiles'
+import type { ConversationFile, ConversationFiles } from '../composables/useConversationFiles'
 import type { OpenFileTab } from '../composables/useTopicMemory'
 import type { AgentControlState, Block, ProjectMemberRow, Topic } from '../cx_types'
 import type { DocReviewRequest, OpenedDocument } from '../lib/docReview'
@@ -178,6 +178,10 @@ const props = withDefaults(
     deliveries?: { id: string; title: string; dot?: boolean }[]
     // 桌面：每一格是外壳布局区里的一块（见文件头）。不给就自己排页签。
     layout?: WorkLayout | null
+    // 频道页「支线」那一块此刻显示的是一条支线（不是列表）：标题栏里名字那一段留给它的页头。
+    threadOpen?: boolean
+    // 这段对话的文件（页面读的那一份，概览里也列着）：「文件」那一格不再自己读一遍。
+    roomFiles?: ConversationFiles | null
   }>(),
   {
     taskId: null,
@@ -206,6 +210,8 @@ const props = withDefaults(
     askReturn: null,
     deliveries: () => [],
     layout: null,
+    threadOpen: false,
+    roomFiles: null,
   }
 )
 // 审阅时这一栏的采纳卡（见 `review`）。一栏一份，换一件任务就换一栏（页面按任务给 key）。
@@ -329,10 +335,10 @@ const deliveryKey = (id: string) => DELIVERY_PREFIX + id
 const isDelivery = (key: string | undefined) => !!key?.startsWith(DELIVERY_PREFIX)
 const deliveryOrigin = ref<string | null>(null)
 
-// 频道页上一次显示一格、每一格带自己的标题栏（`WorkLayout.single`）。
-const single = computed(() => !!props.layout?.single)
-// 任务页「对话」那一种摆法：一样一块，几块能同时开着（`WorkLayout.blocks`）。
+// 任务页「对话」那一种摆法和频道页：一样一块，几块能同时开着（`WorkLayout.blocks`）。
 const blocks = computed(() => !!props.layout?.blocks)
+// 频道页上的那一种：打开的文件在「文件」那一块里，返回回到文件的列表。
+const channelBlocks = computed(() => blocks.value && !props.taskId)
 
 const active = ref<string>(defaultTab.value)
 /** The URL's answer, if it names a tab that exists (or one that used to). */
@@ -736,6 +742,12 @@ const deliveryTabs = computed<PanelTab[]>(() =>
 async function closeDelivery(key: string) {
   const wasActive = active.value === key
   if (wasActive && !(await confirmAnnotationDiscard())) return
+  // 一块一块的那一种：只关掉它这一块，此刻在看的换成还开着的另一块，不去打开别的。
+  if (blocks.value) {
+    leaveBlock(key)
+    emit('close-delivery', key.slice(DELIVERY_PREFIX.length))
+    return
+  }
   const list = props.deliveries.map((d) => deliveryKey(d.id))
   const at = list.indexOf(key)
   const neighbour = list[at + 1] ?? list[at - 1] ?? null
@@ -752,8 +764,12 @@ watch(
   () => {
     const open = new Set(props.deliveries.map((d) => deliveryKey(d.id)))
     if (isDelivery(active.value) && !open.has(active.value)) {
-      const origin = deliveryOrigin.value
-      active.value = origin && !isDelivery(origin) && keyExists(origin) ? origin : defaultTab.value
+      // 一块一块的那一种：换成还开着的另一块（没有就不换），不去打开来处那一块。
+      if (blocks.value) leaveBlock(active.value)
+      else {
+        const origin = deliveryOrigin.value
+        active.value = origin && !isDelivery(origin) && keyExists(origin) ? origin : defaultTab.value
+      }
     }
     const gone = [...mounted.value].filter((key) => isDelivery(key) && !open.has(key))
     if (!gone.length) return
@@ -922,6 +938,22 @@ function goBack(key: string) {
  * 「文件」和终端那两块的标题栏另有自己的样子（模板里），不在这里。
  */
 const paneHeads = computed<{ key: string; title?: string; back: boolean }[]>(() => {
+  if (channelBlocks.value) {
+    return [
+      // 概览没有标题栏；「支线」那一块显示一条支线时，名字那一段是它的页头（`#threads` 的 `head`）。
+      ...fixedMeta.value
+        .filter((meta) => meta.key !== 'overview')
+        .map((meta) => ({
+          key: meta.key,
+          title: meta.key === 'threads' && props.threadOpen ? undefined : meta.title,
+          back: false,
+        })),
+      // 打开的任务：名字那一段由它自己的页头填（`headTarget`），关掉它用标题栏上的 ✕。
+      ...props.deliveries.map((d) => ({ key: deliveryKey(d.id), back: false })),
+      // 打开的一份文件在「文件」那一块里：返回回到文件的列表。
+      ...fileMeta.value.map((meta) => ({ key: meta.key, title: meta.title, back: true })),
+    ]
+  }
   if (blocks.value) {
     return [
       ...fixedMeta.value
@@ -932,14 +964,7 @@ const paneHeads = computed<{ key: string; title?: string; back: boolean }[]>(() 
         .map((meta) => ({ key: meta.key, title: meta.title, back: !!fileOrigin.value && keyExists(fileOrigin.value) })),
     ]
   }
-  return single.value
-    ? [
-        ...fixedMeta.value.map((meta) => ({ key: meta.key, title: meta.title, back: false })),
-        // 打开的任务：名字那一段由它自己的页头填（`headTarget`）。
-        ...props.deliveries.map((d) => ({ key: deliveryKey(d.id), back: true })),
-        ...fileMeta.value.map((meta) => ({ key: meta.key, title: meta.title, back: true })),
-      ]
-    : []
+  return []
 })
 /** 「文件」那一块标题栏上换了一份文件。 */
 function pickFile(path: string) {
@@ -950,9 +975,9 @@ const headOutlets = reactive<Record<string, HTMLElement | null>>({})
 function headOutlet(key: string, element: HTMLElement | null) {
   if (headOutlets[key] !== element) headOutlets[key] = element
 }
-/** 交给 `#delivery` 插槽的落点：频道页上是它那一格标题栏里的一段，别处不给。 */
-function deliveryHead(key: string): HTMLElement | null | undefined {
-  return single.value ? headOutlets[key] ?? null : undefined
+/** 交给 `#delivery`、`#threads` 插槽的落点：频道页上是它那一块标题栏里的一段，别处不给。 */
+function paneHead(key: string): HTMLElement | null | undefined {
+  return channelBlocks.value ? headOutlets[key] ?? null : undefined
 }
 /** 自由区那一格被双击：留下来。 */
 function keepTab(key: string) {
@@ -965,7 +990,8 @@ function keepTab(key: string) {
 // that was there before you arrived.
 {
   const id = conversationId.value
-  openFiles.value = (id && filesByTopic.get(id)) || []
+  // 一块一块的那一种进来时只有概览（之前开着的文件不跟回来）。
+  openFiles.value = (id && !props.layout?.blocks && filesByTopic.get(id)) || []
   const asked = tabFromUrl()
   ensureFileFromUrl(asked)
   active.value = asked ?? defaultTab.value
@@ -1121,7 +1147,7 @@ function placeFile(
     ...(skill ? { skill } : {}),
   }
   const temp = next.findIndex((f) => !f.pinned)
-  if (single.value || blocks.value) {
+  if (blocks.value) {
     // 一次只显示一份：新开的这一份换掉开着的那几份，不在看不见的地方攒着。编辑器里单开在旁边
     // 的工作文件不在此列（它们只在编辑器里有）。
     const stays = (f: OpenFileTab) => blocks.value && f.path.startsWith(WORK_TAB) && !path.startsWith(WORK_TAB)
@@ -1215,22 +1241,24 @@ async function closeFile(path: string, opts: { back?: boolean } = {}) {
   const key = fileKey(path)
   const wasActive = active.value === key
   if (wasActive && !(await confirmAnnotationDiscard())) return
-  if (opts.back === false) leaveBlock(key)
+  // 频道页上没说要返回（删掉了、挪走了这份文档）也只先让开这一块，下面再回到文件的列表。
+  if (opts.back === false || (channelBlocks.value && !opts.back)) leaveBlock(key)
   const next = openFiles.value.filter((f) => f.path !== path)
   setFiles(next)
   const nextMounted = new Set(mounted.value)
   nextMounted.delete(key)
   mounted.value = nextMounted
   if (!wasActive || opts.back === false) return
+  // 频道页：打开的文件在「文件」那一块里，回到文件的列表。
+  if (channelBlocks.value) return void setTab('files')
   const neighbour = blocks.value ? undefined : next[Math.min(at, next.length - 1)]
   if (neighbour) {
     setTab(fileKey(neighbour.path))
     return
   }
-  // 来处可能已经不在了（这件任务还没有分支、换过房间），那就还是落到兜底那一格。频道页上
-  // 「返回」也回到在频道里打开的那件任务（从它的对话里点开的文件）。
+  // 来处可能已经不在了（这件任务还没有分支、换过房间），那就还是落到兜底那一格。
   const origin = fileOrigin.value
-  const back = single.value || blocks.value ? !!origin && keyExists(origin) : tabs.value.some((t) => t.key === origin)
+  const back = blocks.value ? !!origin && keyExists(origin) : tabs.value.some((t) => t.key === origin)
   // 「对话」那一种摆法里没有来处可回：只关掉这一块（回到概览会让开别的几块）。
   if (blocks.value && !back) return
   setTab(origin && back ? origin : defaultTab.value)
@@ -1268,6 +1296,16 @@ function setFiles(next: OpenFileTab[]) {
   if (tid) filesByTopic.set(tid, next)
 }
 
+// 新建一条例行事务（频道概览里那一颗「+」）：打开「例行事务」那一格，开出新建那一页。
+const routinesRef = ref<InstanceType<typeof RoutinePanelHost> | null>(null)
+async function newRoutine() {
+  if (!(await setTab('routines'))) return
+  // 那一格第一次打开时下一次渲染才挂上。
+  await nextTick()
+  await nextTick()
+  routinesRef.value?.startNew()
+}
+
 // 对话栏的 socket 上来了现场的一行：交给现场那格。那格还没打开过就不用管，它第一次
 // 打开时会整段读一遍。
 const siteRef = ref<InstanceType<typeof PanelSiteHost> | null>(null)
@@ -1282,6 +1320,7 @@ defineExpose({
   openFile,
   openDocument,
   openSkill,
+  newRoutine,
   siteBlock,
   previewShown,
   activeTab: () => active.value,
@@ -1430,7 +1469,7 @@ defineExpose({
             :shown="shown('threads')"
             :pane-class="enterClass('threads')"
           >
-            <slot name="threads" />
+            <slot name="threads" :head="paneHead('threads')" />
             <template v-if="docked === 'threads'" #dock><slot name="dock" /></template>
           </WorkPane>
           <template v-for="d in deliveries" :key="d.id">
@@ -1441,7 +1480,7 @@ defineExpose({
               :shown="shown(deliveryKey(d.id))"
               :pane-class="enterClass(deliveryKey(d.id))"
             >
-              <slot :id="d.id" name="delivery" :head="deliveryHead(deliveryKey(d.id))" />
+              <slot :id="d.id" name="delivery" :head="paneHead(deliveryKey(d.id))" />
             </WorkPane>
           </template>
           <WorkPane
@@ -1572,6 +1611,7 @@ defineExpose({
           >
             <RoomFilesPanelHost
               ref="roomFilesRef"
+              :files="roomFiles"
               :topic-id="taskId ?? topicId"
               :seats-only="!!topic?.members_only"
               @open="openConversationFile"
@@ -1586,6 +1626,7 @@ defineExpose({
             :pane-class="enterClass('routines')"
           >
             <RoutinePanelHost
+              ref="routinesRef"
               :topic-id="topicId"
               :project-id="projectId"
               :room-title="topic?.title ?? ''"

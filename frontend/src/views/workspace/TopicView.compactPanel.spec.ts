@@ -85,20 +85,24 @@ vi.mock('@/api/chapters', () => ({
 }))
 vi.mock('@/api', () => ({
   listTopicMembers: vi.fn(async () => ({ data: [], total: 0 })),
+  listRoomAttachments: vi.fn(async () => ({ data: [], total: 0 })),
+  listRoomFiles: vi.fn(async () => ({ data: [], total: 0, truncated: false })),
+  listRoomOutputs: vi.fn(async () => ({ data: [], total: 0 })),
+  listRoomDocuments: vi.fn(async () => ({ data: [], total: 0 })),
 }))
+vi.mock('@/api/routines', () => ({ listProjectRoutines: vi.fn(async () => ({ data: [], total: 0 })) }))
 vi.mock('@/composables/usePageTitle', () => ({
   usePageTitle: () => ({ setDynamicTitle: vi.fn(), clearDynamicTitle: vi.fn() }),
 }))
 
-// 页头只留「概览」「支线」两颗按钮——打开、换、收起都由它们走，按下的那颗说着面板此刻显示的是哪一样。
+// 页头那一组按钮：打开、换、收起都由它们走，按下的那颗说着面板此刻显示的是哪一样。
 vi.mock('@/components/TopicHeader.vue', () => ({
   default: {
     name: 'TopicHeader',
-    props: { panelShown: { type: String, default: null } },
-    emits: ['toggle-panel'],
+    props: { blocks: { type: Array, default: () => [] } },
+    emits: ['toggle-block'],
     template: `<div>
-      <button :aria-pressed="String(panelShown === 'overview')" @click="$emit('toggle-panel', 'overview')">概览</button>
-      <button :aria-pressed="String(panelShown === 'threads')" @click="$emit('toggle-panel', 'threads')">支线</button>
+      <button v-for="block in blocks" :key="block.key" :aria-pressed="String(block.on)" @click="$emit('toggle-block', block.key)">{{ block.label }}</button>
     </div>`,
   },
 }))
@@ -138,6 +142,10 @@ vi.mock('@/components/WorkPanel.vue', () => ({
 }))
 
 import TopicView from './TopicView.vue'
+
+import { setLocale } from '@/i18n'
+
+setLocale('zh-CN')
 
 const View = TopicView as unknown as Component
 

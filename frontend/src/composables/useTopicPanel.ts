@@ -10,9 +10,12 @@
 // 自己拉开。不然打开个人芝士（它自己占掉右边一条）时，对话会被一块面板和一层遮罩盖住。
 // 主动要看的（人自己点了那一格、点了「查看改动」）照旧拉开——那是刚发生的一次点击，
 // 不是「上次看过的那一格」。
+//
+// 频道页和任务页「对话」那一种摆法（`scope` 给了）不记这个选择：每进一个频道、一件任务，
+// 都照主区的宽度来（够宽就开着，概览在）；在这一页上开或关，只算到离开这一页为止。
 import type { Ref } from 'vue'
 
-import { computed, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useElementSize } from '@vueuse/core'
 
 import { panelMode, panelOpenByDefault } from '@/composables/useWorkspaceLayout'
@@ -32,13 +35,26 @@ export function useTopicPanel(opts: {
   setTab: (tab: string | undefined) => void
   /** 面板此刻在画哪一格：收起再打开回到它。 */
   showing: () => string | undefined
+  /**
+   * 并排时开没开只算这一页的：给的是此刻在哪一页（频道、哪件任务），换了一页就又开着。不给
+   * （或给的是 null）时照这个人记下的选择。
+   */
+  scope?: () => string | null
 }) {
   const store = useWorkspaceStore()
   const { width } = useElementSize(opts.panes)
   const float = computed(() => opts.desktop.value && panelMode(width.value) === 'float')
+  /** 只算这一页的那一种：这一页上开了（true）、关了（false），还没动过（null）。 */
+  const chosenHere = ref<boolean | null>(null)
+  const scoped = () => opts.scope?.() != null
+  watch(
+    () => opts.scope?.(),
+    () => (chosenHere.value = null)
+  )
   const open = computed(() => {
     if (!opts.desktop.value || opts.thread.value || opts.tab.value) return true
     if (float.value) return false
+    if (scoped()) return chosenHere.value ?? panelOpenByDefault(width.value)
     return store.panelPref ?? panelOpenByDefault(width.value)
   })
 
@@ -52,11 +68,14 @@ export function useTopicPanel(opts: {
     if (opts.tab.value) opts.setTab(undefined)
   })
   function show() {
-    if (!float.value) store.setPanelPref(true)
-    else opts.setTab(opts.showing() ?? 'overview')
+    if (float.value) opts.setTab(opts.showing() ?? 'overview')
+    else if (scoped()) chosenHere.value = true
+    else store.setPanelPref(true)
   }
   function hide() {
-    if (!float.value) store.setPanelPref(false)
+    // 浮层不记。
+    if (!float.value && scoped()) chosenHere.value = false
+    else if (!float.value) store.setPanelPref(false)
     // 清掉地址里那一格：不然下一次「查看改动」会因为「已经在那一格」什么都不做。
     if (opts.tab.value) opts.setTab(undefined)
   }

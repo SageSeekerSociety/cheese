@@ -1,10 +1,12 @@
 // 频道页、任务页和私聊页在桌面上怎么摆：对话是一块，工作面板的每一格各是一块，都交给外壳的
 // 布局区（layouts/pagePanels.ts）。摆法按页面的种类（频道 / 任务 / 私聊）记在这台设备上。
 //
-// 频道页：对话旁边只有一处。工作面板的每一格都带自己的标题栏（`titled`），全在对话右边那一格里，
-// 一次显示一格：概览、支线、文件、例行事务（页头那四颗按钮），以及从它们里面打开的一件任务、
-// 一份文件。没有页签可点，也就没有拖动；标题栏上的 ✕ 收起这一处（和页头上再点一下正显示的那
-// 一颗同一件事），对话占满。
+// 频道页：和任务页「对话」那一种摆法同一个规矩，一样东西一块，各带自己的标题栏，几块能同时开着。
+// 进频道时旁边是概览：一栏窄的目录（宽度自己记着），没有标题栏（`bare`）；打开别的哪一块，概览
+// 就让开。对话右边先是「支线」那一处（支线的列表或一条支线；在频道里打开的一件任务也开在这一处，
+// 换掉它），再往右是「文件」那一处（文件的列表或打开的一份文件、文档、技能；例行事务也开在这一处）。
+// 一处一次显示一样：新打开的换掉这一处原来的，换下去的是任务或文件时它就关掉了。最后一块关掉时
+// 对话占满。
 //
 // 私聊页：页签可以拖去和别的并排、拖进对话那一格，格子可以收起、放大。对话那一块和工作面板固定
 // 的那几格不能关（只能挪）；对话独占一格时不画页签栏。工作面板那几格同属 `work` 这一组：新打开的
@@ -74,7 +76,19 @@ const TERMINAL_HEIGHT = { initial: 220, min: 120, max: 640, storageKey: 'cheesex
 function mainKind(key: string): boolean {
   return key === 'code' || key === 'preview' || key === TERMINAL_BLOCK || key.startsWith('file:')
 }
-/** 「对话」那一种摆法里，对话右边那几块此刻显示哪几样。 */
+/** 频道页的概览：一栏窄的目录，拖过就记住。 */
+const OVERVIEW_WIDTH = { initial: 316, min: 260, max: 480, storageKey: 'cheesex.channelOverviewWidth' }
+/** 频道页对话右边那一处：支线的列表或一条支线，或在频道里打开的一件任务。 */
+export const TALK_GROUP = 'talk'
+/** 频道页再往右那一处：文件的列表或打开的一份文件，或例行事务。 */
+export const DOC_GROUP = 'doc'
+/** 频道页上一样东西开在哪一处；概览和不认识的是 null。 */
+function placeOf(key: string): typeof TALK_GROUP | typeof DOC_GROUP | null {
+  if (key === 'threads' || key.startsWith('delivery:')) return TALK_GROUP
+  if (key === 'files' || key === 'routines' || key.startsWith('file:')) return DOC_GROUP
+  return null
+}
+/** 「对话」那一种摆法（和频道页）里，对话右边那几块此刻显示哪几样。 */
 export interface ChatBlocks {
   /** 概览在（这时别的都让开）。 */
   overview: boolean
@@ -107,10 +121,15 @@ export interface RoomLayoutOptions {
   /** 读者在布局区里点了工作面板的一格；关掉了能关的一格；双击留下了一格。 */
   onActivated: (key: string) => void
   onClose: (key: string) => void
+  /**
+   * 频道页上一处换了别的东西，换下去的那一件任务或那一份文件随之关掉（不是读者关的）。不给时
+   * 同 `onClose`。
+   */
+  onDrop?: (key: string) => void
   onKeep: (key: string) => void
   /** 读者在「+」里选了能开好几格的那一种：页面新开一格。 */
   onSpawn: (key: string) => void
-  /** 换了一件任务：「对话」那一种摆法回到刚进来的样子（只有概览）。 */
+  /** 换了一件任务、回到频道：「对话」那一种摆法和频道页回到刚进来的样子（只有概览）。 */
   scope?: () => string | null | undefined
 }
 
@@ -130,9 +149,9 @@ export function useRoomLayout(
   /** 编辑器那一种摆法里三块各自在不在屏幕上；`toggleEditorPart` 藏起或摆回一块。 */
   editorParts: Readonly<EditorParts>
   toggleEditorPart: (part: EditorPart) => void
-  /** 「对话」那一种摆法里此刻显示哪几块（工作面板那一侧收着时什么都不显示）。 */
+  /** 「对话」那一种摆法和频道页上此刻显示哪几块（工作面板那一侧收着时什么都不显示）。 */
   chatBlocks: ComputedRef<ChatBlocks>
-  /** 关掉「对话」那一种摆法里的一块（页头上再点一下开着的那一颗）。 */
+  /** 关掉一块（页头上再点一下开着的那一颗）。 */
   closeBlock: (key: string) => void
 } {
   const chatNews: Ref<boolean> = ref(false)
@@ -223,7 +242,7 @@ export function useRoomLayout(
     }
   }
 
-  // ---- 任务页「对话」那一种摆法 ----
+  // ---- 任务页「对话」那一种摆法，和频道页 ----
   const chat = reactive<{ overview: boolean; open: string[] }>({ overview: true, open: [] })
   watch(
     () => opts.scope?.(),
@@ -253,7 +272,7 @@ export function useRoomLayout(
         .filter((tab) => tab.transient && !tab.terminal && !tab.beside)
         .map((tab) => tab.key),
     (now, before) => {
-      if (opts.kind() !== 'task') return
+      if (opts.kind() !== 'task' && opts.kind() !== 'room') return
       for (const key of now) if (!before?.includes(key)) openBlock(key)
     },
     { flush: 'sync' }
@@ -275,10 +294,23 @@ export function useRoomLayout(
   }
   /** 布局区里的一块装的是工作面板的哪一样。 */
   const contentOf = (id: string) => (id.startsWith(SIDE_PREFIX) ? id.slice(SIDE_PREFIX.length) : id)
-  /** 「对话」那一种摆法里显示一块：概览让开别的，别的让开概览。 */
+  /**
+   * 「对话」那一种摆法和频道页上显示一块：概览让开别的，别的让开概览。频道页上一处一次一样：
+   * 换下去的是一件任务或一份文件时，它随之关掉。
+   */
   function openBlock(key: string) {
     if (key === 'overview') chat.overview = true
-    else {
+    else if (opts.kind() === 'room') {
+      const place = placeOf(key)
+      if (!place || !present().has(key)) return
+      chat.overview = false
+      const before = chat.open.find((one) => placeOf(one) === place)
+      if (before === key) return
+      const rest = chat.open.filter((one) => one !== before)
+      chat.open = place === TALK_GROUP ? [key, ...rest] : [...rest, key]
+      if (before && (before.startsWith('delivery:') || before.startsWith('file:')))
+        (opts.onDrop ?? opts.onClose)(before)
+    } else {
       const block = key.startsWith('terminal:') ? TERMINAL_BLOCK : key
       if (block !== TERMINAL_BLOCK && !present().has(block)) return
       chat.overview = false
@@ -379,13 +411,68 @@ export function useRoomLayout(
     }
   }
 
+  /** 频道页：概览一栏窄的目录，右边两处各显示一样（见文件头）。 */
+  function channelSpec(): PagePanels {
+    const shown = chatBlocks.value
+    const inSight = (key: string) => (shown.overview ? key === 'overview' : shown.open.includes(key))
+    const work: PagePanel[] = opts.tabs().map((tab): PagePanel => {
+      const base: PagePanel = {
+        id: tab.key,
+        title: tab.title,
+        icon: tab.icon,
+        faint: tab.faint,
+        hint: tab.hint,
+        signal: tab.signal,
+        alwaysRender: tab.alwaysRender,
+        hidden: !inSight(tab.key),
+      }
+      if (tab.key === 'overview') return { ...base, bare: true, width: OVERVIEW_WIDTH }
+      const place = placeOf(tab.key)
+      return { ...base, titled: true, minWidth: 320, transient: tab.transient, group: place ?? undefined }
+    })
+    // 没拖过的人：对话和右边一处对半分，宽屏（≥ 1440px）把多出来的那块给右边；两处都开着时三份。
+    const wide = window.innerWidth >= 1440
+    const declared = new Set(work.map((panel) => panel.id))
+    const cell = (ids: string[], size?: number): LayoutNode[] => {
+      const here = ids.filter((id) => declared.has(id))
+      return here.length ? [{ panels: here, ...(size ? { size } : {}) }] : []
+    }
+    return {
+      key: 'room',
+      panels: [
+        {
+          id: CONVERSATION,
+          title: t('work.room.tabs.chat'),
+          icon: 'mdi-message-outline',
+          minWidth: 340,
+          stripWhenShared: true,
+          signal: chatNews.value ? { kind: 'dot' } : undefined,
+        },
+        ...work,
+      ],
+      arrangement: {
+        direction: 'row',
+        children: [
+          { panels: [CONVERSATION], size: wide ? 45 : 50 },
+          ...cell(['overview']),
+          ...cell(['threads'], wide ? 55 : 50),
+          ...cell(['files', 'routines'], wide ? 55 : 50),
+        ],
+      },
+      onActivated: () => {},
+      onClose: closeBlock,
+      onKeep: opts.onKeep,
+      onSpawn: opts.onSpawn,
+    }
+  }
+
   function spec(): PagePanels | null {
     const kind = opts.kind()
     if (!kind) return null
     if (kind === 'editor') return editorSpec()
     if (kind === 'task') return chatSpec()
-    // 频道页：每一格带自己的标题栏，✕ 是布局层画的，收起的是这一处。
-    const titled = kind === 'room'
+    if (kind === 'room') return channelSpec()
+    // 私聊页：页签栏上的 ✕ 收起工作面板那一侧。
     const hideAction = { icon: 'mdi-close', label: opts.hide.label(), run: opts.hide.run }
     const work: PagePanel[] = opts.tabs().map((tab) => ({
       id: tab.key,
@@ -396,17 +483,16 @@ export function useRoomLayout(
       signal: tab.signal,
       temporary: tab.temporary,
       transient: tab.transient,
-      beside: titled ? undefined : tab.beside,
+      beside: tab.beside,
       alwaysRender: tab.alwaysRender,
       spawns: tab.spawns,
       group: WORK_GROUP,
-      // 固定的几格不能关（挪去哪都行）；能关的是打开的任务和文件，以及任务的「文件」那一格。
+      // 固定的几格不能关（挪去哪都行）；能关的是打开的文件。
       closable: !!tab.transient || !!tab.closable,
       minWidth: 360,
       hidden: opts.workHidden(),
-      ...(titled ? { titled: true } : { actions: [hideAction] }),
+      actions: [hideAction],
     }))
-    // 默认摆法里只有不能关的那几格：「文件」由读者打开（「+」、点一个文件链接）。
     const fixed = work.filter((panel) => !panel.closable && !panel.spawns).map((panel) => panel.id)
     // 没拖过的人：窄桌面对半分，宽屏（≥ 1440px）把多出来的那块给工作面板。
     const wide = window.innerWidth >= 1440
@@ -433,11 +519,11 @@ export function useRoomLayout(
       ],
       arrangement,
       onActivated: (id) => id !== CONVERSATION && opts.onActivated(id),
-      onClose: titled ? () => opts.hide.run() : opts.onClose,
+      onClose: opts.onClose,
       onKeep: opts.onKeep,
       onSpawn: opts.onSpawn,
       // 私聊页没有页头那一行：对话自己的头和工作面板的页签栏并排，同高。
-      tabStripHeight: kind === 'dm' ? 'var(--app-page-header-height)' : undefined,
+      tabStripHeight: 'var(--app-page-header-height)',
     }
   }
 
@@ -453,7 +539,7 @@ export function useRoomLayout(
       const tab = opts.tabs().find((one) => one.key === key)
       if (tab && onDemand(tab)) opened.value = [...opened.value, key]
     }
-    if (kind === 'task') {
+    if (kind === 'task' || kind === 'room') {
       openBlock(key)
       return void panels.show(cellOf(key))
     }
@@ -468,7 +554,6 @@ export function useRoomLayout(
         outlet: (key) => panels.outlet(cellOf(key)),
         visible: new Set([...panels.visible.value].map(contentOf)),
         show,
-        single: false,
         blocks: true,
         head: (key) => panels.headOutlet(cellOf(key)),
       }
@@ -477,7 +562,7 @@ export function useRoomLayout(
       outlet: (key) => panels.outlet(key),
       visible: panels.visible.value,
       show,
-      single: kind === 'room',
+      blocks: kind === 'room',
       head: (key) => panels.headOutlet(key),
       editor: kind === 'editor',
     }

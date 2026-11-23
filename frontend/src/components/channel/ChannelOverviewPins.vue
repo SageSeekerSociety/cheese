@@ -93,12 +93,13 @@ function actions(pin: ChannelPin): MenuAction[] {
   flex-direction: column;
   gap: 8px;
 }
+/* 和概览里别的段名一样：目录的标签，次要的颜色。 */
 .pins__title {
   margin: 0;
   font-size: 13px;
   line-height: var(--lh-13);
-  font-weight: 600;
-  color: var(--ink);
+  font-weight: 500;
+  color: var(--muted);
 }
 .pin {
   display: flex;

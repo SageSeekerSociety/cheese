@@ -20,5 +20,8 @@
   "save": "保存",
   "waiting": "等你处理",
   "writeProject": "写项目目标",
-  "closedByNeglect": "因无人理会自动关闭"
+  "closedByNeglect": "因无人理会自动关闭",
+  "add": "新建{name}",
+  "none": "暂无{name}",
+  "all": "全部 {count} 项"
 }
