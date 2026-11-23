@@ -15,6 +15,7 @@
   "marketLoading": "Reading the market…",
   "marketNeedMachine": "Connect a machine to install skills on it; the catalogue needs no machine.",
   "marketNoInstall": "Read-only",
+  "marketNoteSeparator": "; ",
   "marketPluginTotal": "Showing the first {shown}; the catalogue names {total}.",
   "marketTabAgents": "Agent templates",
   "marketTabAgentsEmpty": "No agent templates yet.",

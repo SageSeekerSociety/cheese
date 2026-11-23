@@ -15,6 +15,7 @@
   "marketLoading": "正在读市场…",
   "marketNeedMachine": "先连接一台机器，才能把技能装到本机；目录不用机器也能看。",
   "marketNoInstall": "只读",
+  "marketNoteSeparator": "；",
   "marketPluginTotal": "这里列出前 {shown} 条，官方目录共 {total} 条。",
   "marketTabAgents": "Agent 模板",
   "marketTabAgentsEmpty": "还没有 Agent 模板。",
