@@ -29,6 +29,8 @@ export interface WorkPanelHandle {
   newRoutine?: () => Promise<void>
   /** 关掉一格（布局区里它那一块的 ✕，或它那一处换了别的）。 */
   closeTab?: (key: string) => void
+  /** 编辑器左栏翻到「搜索」，输入框拿到焦点。 */
+  searchFiles?: () => void
 }
 
 /** 对话栏往回够的那几处。它自己的输入框就是这一页用的那个，这一页只是要个把手。 */

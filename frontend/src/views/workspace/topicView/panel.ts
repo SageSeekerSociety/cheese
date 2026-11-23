@@ -28,6 +28,8 @@ export function useTopicPanelState(opts: {
   backToRoom: () => void
   /** 开没开只算这一页的时候，此刻在哪一页（见 `useTopicPanel` 的 `scope`）。 */
   scope?: () => string | null
+  /** 主区至少多宽，并排时没人选过面板就开着（见 `useTopicPanel` 的 `openMin`）。 */
+  openMin?: () => number
 }) {
   const panel = useTopicPanel({
     panes: opts.panes,
@@ -37,6 +39,7 @@ export function useTopicPanelState(opts: {
     setTab: opts.setTab,
     showing: opts.showing,
     scope: opts.scope,
+    openMin: opts.openMin,
   })
   const open = panel.open
   const float = panel.float

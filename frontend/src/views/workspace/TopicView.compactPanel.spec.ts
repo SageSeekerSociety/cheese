@@ -2,8 +2,8 @@
  *
  * - 主区窄于 840px：两栏放不下，面板是一只浮在对话上的浮层。页头上点哪一样（概览、讨论串……）
  *   浮层就开在哪一样上；再点正显示的那一样收起，把地址里那一格清掉。浮层不记这个人的选择。
- * - 840px 起：面板和对话并排。1000px 起默认开着，840–1000 默认收着；页头上的开合记下
- *   这个人自己的选择，下次照它来。
+ * - 840px 起：面板和对话并排。频道页的概览是一栏窄的目录，并排时就默认开着（任务页 1000px
+ *   起才默认开着，见 useTopicPanel.spec）；页头上的开合记下这个人自己的选择，下次照它来。
  */
 import type { Component } from 'vue'
 
@@ -219,12 +219,14 @@ describe('主区 840px 起：面板和对话并排', () => {
     expect(document.querySelector('.panel-scrim')).toBeNull()
   })
 
-  it('840–1000 之间默认收着；打开后并排，不写地址', async () => {
+  it('频道页在 840–1000 之间也默认开着：放得下对话加概览那一栏；收起再打开仍是并排，不写地址', async () => {
     mainWidth.value = 900
     const { getByText, getByTestId } = mountView()
     await waitFor(() => expect(getByTestId('panel')).toBeTruthy())
-    expect(pressed(getByText)).toBe(false)
+    expect(pressed(getByText)).toBe(true)
 
+    await fireEvent.click(getByText('概览'))
+    await waitFor(() => expect(pressed(getByText)).toBe(false))
     await fireEvent.click(getByText('概览'))
 
     await waitFor(() => expect(pressed(getByText)).toBe(true))

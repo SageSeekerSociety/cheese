@@ -3,7 +3,8 @@
 // each file this task changed, and the person's ways to change the tree —
 // new file and new folder at the top, rename and delete on each row (its ⋯
 // or a right click). The head also finds a file by name and folds every
-// folder. It only says what was asked; the panel does it.
+// folder; a place that carries those actions in a row of its own draws the tree
+// without it (`head`). It only says what was asked; the panel does it.
 import type { TaskFileRow } from '../../lib/taskFileTree'
 import type { MenuAction } from '../common/menuAction'
 
@@ -15,19 +16,24 @@ import FileKindMark from '../common/FileKindMark.vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import { t } from '@/i18n'
 
-const props = defineProps<{
-  rows: TaskFileRow[]
-  open: ReadonlySet<string>
-  activePath: string | null
-  /** Files this task changed. */
-  changed: ReadonlySet<string>
-  /** The person may change the tree. */
-  editable: boolean
-  /** Not a phone: the tree has its head row, and a file can be opened in a cell beside this one. */
-  canSplit?: boolean
-  /** Bumped when a file opened from elsewhere should be scrolled into view. */
-  revealTick: number
-}>()
+const props = withDefaults(
+  defineProps<{
+    rows: TaskFileRow[]
+    open: ReadonlySet<string>
+    activePath: string | null
+    /** Files this task changed. */
+    changed: ReadonlySet<string>
+    /** The person may change the tree. */
+    editable: boolean
+    /** Not a phone: the tree has its head row, and a file can be opened in a cell beside this one. */
+    canSplit?: boolean
+    /** Draw the head row (off where the place holding the tree carries its actions itself). */
+    head?: boolean
+    /** Bumped when a file opened from elsewhere should be scrolled into view. */
+    revealTick: number
+  }>(),
+  { canSplit: false, head: true }
+)
 
 const emit = defineEmits<{
   select: [path: string]
@@ -112,7 +118,7 @@ const hasMenu = (row: TaskFileRow) => props.editable || (!!props.canSplit && row
 
 <template>
   <div class="task-tree">
-    <div v-if="props.canSplit" class="task-tree__head">
+    <div v-if="props.canSplit && props.head" class="task-tree__head">
       <span class="task-tree__title">{{ t('work.room.tabs.files') }}</span>
       <BaseButton
         kind="ghost"

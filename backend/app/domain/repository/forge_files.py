@@ -61,6 +61,11 @@ MAX_DIFFED_FILES = 200
 MAX_BLOB_READS = 8
 #: The longest listing every committed file of one revision may take.
 TREE_DEADLINE_S = 30
+#: The longest text a task's copy is searched for (the executor's own bound).
+SEARCH_QUERY_MAX = 200
+#: How many matching lines one search answers, in all and of one file.
+SEARCH_MAX_MATCHES = 500
+SEARCH_MAX_PER_FILE = 100
 
 
 def _file_entry(path: str, entry: dict) -> dict:
@@ -291,6 +296,10 @@ class ProjectFiles:
         The changes are the branch's: a kept snapshot's own are not compared
         here, since the comparison would need the merge base the platform's
         forge does not answer."""
+        if operation == "search":
+            # Searched where the copy is, on its machine: the forge has no
+            # search of its own, and reading every file off it is not one.
+            raise NotFoundError(say("taskSearchNeedsEnvironment"))
         revision = await self._copy_revision(task)
         if not revision:
             if operation not in _WHOLE_COPY:
@@ -460,6 +469,28 @@ class ProjectFiles:
             tree = await self.live("tree")
             return tree["files"], source, tree.get("dirs", [])
         return await self._listing(await self.revision()), source, []
+
+    async def search(self, query: str, source: str) -> dict:
+        """The lines of the task's copy that hold ``query``, by file: what
+        the 文件 tree lists (tracked and untracked files, the ignored ones
+        left out), binary files skipped, case ignored. ``truncated`` says
+        some were left out (`SEARCH_MAX_MATCHES`, `SEARCH_MAX_PER_FILE`, or a
+        search that ran too long).
+
+        Only a copy on a machine is searched; one no machine holds, and a
+        task's committed files, answer that they cannot be."""
+        if await self.source(source) != "live":
+            raise NotFoundError(say("taskSearchNeedsEnvironment"))
+        found = await self.live(
+            "search",
+            query=query,
+            max_matches=SEARCH_MAX_MATCHES,
+            max_per_file=SEARCH_MAX_PER_FILE,
+        )
+        if found.get("error") == "search_failed":
+            # git on the machine could not search (a broken checkout, say).
+            raise UpstreamUnavailableError(say("taskSearchFailed"))
+        return {"files": found["files"], "truncated": found["truncated"]}
 
     async def _listing(self, revision: str) -> list[dict]:
         """Every file one commit has, as the 文件 panel lists them."""

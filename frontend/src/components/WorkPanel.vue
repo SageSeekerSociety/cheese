@@ -55,6 +55,7 @@ import { useRoomFileProbe } from '../composables/useRoomFileProbe'
 import { useTaskFiles } from '../composables/useTaskFiles'
 import { useTaskFileTree } from '../composables/useTaskFileTree'
 import { useTaskLanguage } from '../composables/useTaskLanguage'
+import { useTaskSearch } from '../composables/useTaskSearch'
 import { useTaskTerminals } from '../composables/useTaskTerminals'
 import { useTopicMemory } from '../composables/useTopicMemory'
 import { useTopicWorkSummary } from '../composables/useTopicWorkSummary'
@@ -649,6 +650,14 @@ const taskFiles = useTaskFiles({
   refreshTick: () => refreshTick.value,
 })
 const taskTree = useTaskFileTree(taskFiles)
+// 左栏「搜索」：搜这件任务的文件里的字。
+const taskSearch = useTaskSearch({ projectId: () => projectId.value, taskId: () => props.taskId })
+const searchFocusTick = ref(0)
+/** 页面要搜（Ctrl+Shift+F）：左栏翻到「搜索」，输入框拿到焦点。 */
+function searchFiles() {
+  navigatorView.value = 'search'
+  searchFocusTick.value += 1
+}
 // 跳到定义落在另一份文件里：在「文件」那一格里打开它，停在那一行。
 const { link: taskLanguage } = useTaskLanguage({
   taskId: () => props.taskId,
@@ -671,6 +680,11 @@ const changes = props.review
 /** 左栏里点了一份文件：在中间打开它。 */
 async function openFromNavigator(path: string) {
   void taskFiles.open(path)
+  await setTab('code')
+}
+/** 左栏「搜索」里点了一行：在中间打开这份文件，停在那一行。 */
+async function openLineFromNavigator(path: string, line: number) {
+  void taskFiles.open(path, { start: line, end: line })
   await setTab('code')
 }
 /** 左栏「改动」里点了一份：中间的「改动」翻到这份文件的改动。 */
@@ -1332,6 +1346,7 @@ defineExpose({
   activated,
   closeTab,
   keepTab,
+  searchFiles,
 })
 </script>
 
@@ -1539,11 +1554,14 @@ defineExpose({
               v-model:view="navigatorView"
               :files="taskFiles"
               :tree="taskTree"
+              :search="taskSearch"
+              :search-focus-tick="searchFocusTick"
               :changed="summary.changedFiles"
               :diffs="changes?.fileDiffs.value ?? []"
               :active-change="shown('changes') ? changes?.openPath.value ?? null : null"
               :read-only="changesReadOnly"
               @open-file="openFromNavigator"
+              @open-line="openLineFromNavigator"
               @open-beside="openBeside"
               @open-change="openChange"
             />
