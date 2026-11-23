@@ -367,7 +367,8 @@ const DocLink = Link.extend({
   renderHTML(props) {
     // The parent draws the `<a>` and is where the `javascript:` guard lives, so
     // it always runs; this only takes the `_blank` back off a link that stays.
-    const dom = this.parent?.(props)
+    // A config that extends another always has that parent (`this.parent`).
+    const dom = this.parent!(props)
     const opensHere = !/^(?:https?:|mailto:)/i.test(String(props.mark.attrs.href ?? ''))
     if (!opensHere || !Array.isArray(dom) || !dom[1] || typeof dom[1] !== 'object') return dom
     const attrs = { ...(dom[1] as Record<string, unknown>) }
