@@ -22,8 +22,8 @@ const flip = (orientation: Orientation): Orientation => (orientation === 'HORIZO
 /** How one cell is laid out beyond its weight. */
 export interface CellSizing {
   /**
-   * Its extent along its split, in px. It takes no share of the weights, and its
-   * neighbours absorb any change in the area's size (dockview's low priority).
+   * Its extent along its split, in px. It takes no share of the weights, and the cells
+   * sharing the split absorb any change in the area's size (`keepShares` in the adapter).
    */
   fixed?: number
   /** Laid out out of sight, with the size it will come back at. */
@@ -93,7 +93,8 @@ export interface DockviewLoad {
   expandedSizes: Map<string, number>
 }
 
-function weight(node: LayoutNode): number {
+/** A node's share of its split, as laid out: its size, or 1 when it has none. */
+export function weight(node: LayoutNode): number {
   return typeof node.size === 'number' && node.size > 0 ? node.size : 1
 }
 
