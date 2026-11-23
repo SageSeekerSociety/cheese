@@ -75,9 +75,9 @@ class _Runner:
 
 
 async def _seed(factory):
-    """One channel, 5 waiting messages in 2 conversations: a 支线 and a task.
+    """One channel, 5 waiting messages in 2 conversations: a 讨论串 and a task.
 
-    Returns (project id, room id, 支线 id, task id, the agent's seat, the
+    Returns (project id, room id, 讨论串 id, task id, the agent's seat, the
     agent's handle). Every message names the project's agent but another
     instance, so its seat is resolved and it is then skipped — the path where a
     per-message scan asks again for every message.
@@ -101,7 +101,7 @@ async def _seed(factory):
             conversation_id=room.id,
             author="u",
             author_type=AuthorType.participant,
-            content="支线的根",
+            content="讨论串的根",
         )
         thread = Thread(
             id=uuid.uuid4(),
@@ -117,7 +117,7 @@ async def _seed(factory):
         )
         await session.flush()
         for index in range(3):
-            await _said(blocks, project.id, thread.id, instance.handle, index, "支线")
+            await _said(blocks, project.id, thread.id, instance.handle, index, "讨论串")
         for index in range(2):
             await _said(blocks, project.id, task_id, instance.handle, index, "任务")
         await session.commit()
@@ -148,7 +148,7 @@ async def _more(factory, project_id, thread_id, task_id, handle, *, per_conversa
         await lock_conversations(session, [thread_id, task_id])
         blocks = BlockRepository(session)
         for index in range(per_conversation):
-            await _said(blocks, project_id, thread_id, handle, index, "后补支线")
+            await _said(blocks, project_id, thread_id, handle, index, "后补讨论串")
             await _said(blocks, project_id, task_id, handle, index, "后补任务")
         await session.commit()
 

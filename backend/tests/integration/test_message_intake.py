@@ -25,7 +25,7 @@ from tests.support.threads import thread_in
 
 
 async def _room(factory, *, in_thread=False):
-    """A channel of alice's (or a 支线 in it). bob is in the project too: alone
+    """A channel of alice's (or a 讨论串 in it). bob is in the project too: alone
     in it, everything alice said there would be handed to the AI teammate."""
     async with factory() as session:
         await registered(session, "alice")

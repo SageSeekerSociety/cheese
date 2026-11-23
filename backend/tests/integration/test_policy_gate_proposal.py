@@ -125,7 +125,7 @@ def _say(client, topic_id: str, text: str = "帮我看看", who: str = "andyl") 
     @ 写在正文里：「这一句点了谁的名」是服务端从正文解析出来的（I13），帧上没有
     那一位，所以不 @ 就没有人被叫起来，闸门也就轮不到撞。
     """
-    # 芝士 answers in a 支线 of the room; the room's machine is what it takes.
+    # 芝士 answers in a 讨论串 of the room; the room's machine is what it takes.
     thread = in_thread(client, topic_id, who)
     with room_socket(client, thread, who) as ws:
         post_message(client, thread, who, {"content": f"@芝士 {text}"})

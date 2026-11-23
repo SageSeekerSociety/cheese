@@ -666,7 +666,7 @@ def test_worktree_prepares_the_task_directory(monkeypatch, tmp_path, capsys):
 def test_checkout_brings_the_default_branch_and_keeps_what_was_changed(
     monkeypatch, tmp_path, capsys
 ):
-    """A 支线 reads the project's code from `cheese checkout`: a copy of the
+    """A 讨论串 reads the project's code from `cheese checkout`: a copy of the
     default branch, brought up to date on the next call unless something in it
     was changed there."""
     import subprocess

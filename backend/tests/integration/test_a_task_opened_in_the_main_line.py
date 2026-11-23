@@ -8,7 +8,7 @@ The rules a person can state without the code:
 - How the task ended is recorded back where it was opened, in the channel's
   main line, as something that happened rather than anyone's words. A person
   who closed it said so by clicking: the teammate that opened the task is not
-  woken, and reads who closed it and how in its next input. No 支线 opens
+  woken, and reads who closed it and how in its next input. No 讨论串 opens
   under the message for it.
 """
 

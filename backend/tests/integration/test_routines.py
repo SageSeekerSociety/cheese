@@ -222,7 +222,7 @@ def test_a_due_moment_wakes_the_teammate_once(client):
     runs = _runs(client, routine["id"])
     assert len(runs) == 1
     # The run is a message of the teammate's in the main line, and the run
-    # itself is answered in that message's 支线.
+    # itself is answered in that message's 讨论串.
     message = _run_message(client, room, runs[0]["id"])
     assert message["author"] == routine["agent_handle"]
     assert topic_id == message["routine_run"]["thread_id"] != room

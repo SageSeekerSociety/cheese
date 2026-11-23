@@ -15,7 +15,7 @@ import { cleanup, render } from '@testing-library/vue'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@/lib/roomLink', () => import('@/test/fakeRoomLink'))
-// 重连之后，置顶和支线那几行也要重读一次（断线期间它们的通知丢了）：这里都没有。
+// 重连之后，置顶和讨论串那几行也要重读一次（断线期间它们的通知丢了）：这里都没有。
 vi.mock('@/api/pins', () => ({ listPins: async () => [], pinBlock: vi.fn(), unpinBlock: vi.fn() }))
 vi.mock('@/api/chapters', () => ({
   listChapters: async () => [],

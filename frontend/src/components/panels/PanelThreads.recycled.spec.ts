@@ -1,6 +1,6 @@
-// 支线页那一格（纯展示）：开着的在上，收起来的在下面「已回收」一栏里。
+// 讨论串页那一格（纯展示）：开着的在上，收起来的在下面「已回收」一栏里。
 //
-// 收起来的是报错满三天、没人回来的支线（`thread/recycle.py`）。它平时收着，点一下才
+// 收起来的是报错满三天、没人回来的讨论串（`thread/recycle.py`）。它平时收着，点一下才
 // 摊开；摊开之后每一行都读得出来、点得进去，能恢复的人旁边有一颗「恢复」，按下去是把
 // 意图抛出去，不是自己去发请求。
 import type { ThreadRow } from '@/types/threads'
@@ -65,8 +65,8 @@ function open(rows: ThreadRow[], recycled: ThreadRow[], canRestore?: (r: ThreadR
   })
 }
 
-describe('支线页的「已回收」那一栏', () => {
-  it('没有收起来的支线时，那一栏根本不出现', () => {
+describe('讨论串页的「已回收」那一栏', () => {
+  it('没有收起来的讨论串时，那一栏根本不出现', () => {
     const { queryByTestId, getAllByTestId } = open([row('t1')], [])
     expect(queryByTestId('recycled-toggle')).toBeNull()
     expect(getAllByTestId('thread-row')).toHaveLength(1)
@@ -82,7 +82,7 @@ describe('支线页的「已回收」那一栏', () => {
     expect(getByTestId('recycled-toggle').textContent).toContain('已回收 · 1')
   })
 
-  it('点一条收起来的支线，是把它打开来读 —— 不是恢复它', async () => {
+  it('点一条收起来的讨论串，是把它打开来读 —— 不是恢复它', async () => {
     const { getByTestId, queryAllByTestId, emitted } = open([], [row('t2', '2026-10-26T00:00:00Z')])
     await fireEvent.click(getByTestId('recycled-toggle'))
 

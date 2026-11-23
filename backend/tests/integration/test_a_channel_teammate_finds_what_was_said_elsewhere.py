@@ -94,5 +94,5 @@ def test_what_was_said_in_a_thread_is_found_as_the_channels_thread(client):
     found = _find(client, p["id"], p["root_topic_id"], "回滚步骤")
 
     line = next(line for line in found.splitlines() if said in line)
-    assert "支线" in line and "任务" not in line, line
-    assert thread in line, "带着读它要用的那条支线"
+    assert "讨论串" in line and "任务" not in line, line
+    assert thread in line, "带着读它要用的那条讨论串"

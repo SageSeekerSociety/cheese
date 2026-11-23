@@ -93,7 +93,7 @@ vi.mock('@/api/routines', async (importOriginal) => ({
 const store = vi.hoisted(() => ({ value: null as unknown }))
 vi.mock('@/stores/workspace', () => ({ useWorkspaceStore: () => store.value }))
 vi.mock('@/me', () => ({ myHandle: () => 'alice' }))
-// 频道的支线清单：这几条测试不看它。
+// 频道的讨论串清单：这几条测试不看它。
 vi.mock('@/api/threads', () => ({ listThreads: async () => [], openThread: async () => ({ id: 'th' }) }))
 // 频道概览的置顶：这几条测试不看它。
 vi.mock('@/api/pins', () => ({ listPins: async () => [], pinBlock: vi.fn(), unpinBlock: vi.fn() }))

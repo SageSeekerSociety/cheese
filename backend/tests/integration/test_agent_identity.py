@@ -81,8 +81,8 @@ def _project_and_topic(client, created_by: str = "alice") -> tuple[str, str]:
 
 
 def _turn(client, topic_id: str, content: str = "hi") -> str:
-    """Run one addressed turn against the stub agent, in a 支线 of the room —
-    where 芝士 answers — and return the 支线.
+    """Run one addressed turn against the stub agent, in a 讨论串 of the room —
+    where 芝士 answers — and return the 讨论串.
 
     点名由正文说了算（I13），所以每条都得点到人；已经点了名的原样发出去。在一句
     「<@ops> hi」前面再补一个 `@芝士`，点到的就是名册上排在前面的那一个，答话的于
@@ -218,7 +218,7 @@ def test_a_memory_without_a_seat_is_the_projects_own_cheese(client):
 
 def _post_without_summon(client, topic_id: str, content: str, author: str) -> None:
     """Post a human message in the room's main line. Whoever it names is told
-    as the message lands; an AI teammate it calls answers in its 支线."""
+    as the message lands; an AI teammate it calls answers in its 讨论串."""
     post_message(client, topic_id, author, {"content": content})
 
 

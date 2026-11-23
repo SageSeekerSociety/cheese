@@ -149,7 +149,7 @@ async def _tell_operators_wedged(
         where = (
             [f"频道 {place.room_id}"]
             + ([f"任务 {place.task_id}"] if place.task_id else [])
-            + ([f"支线 {place.thread_id}"] if place.thread_id else [])
+            + ([f"讨论串 {place.thread_id}"] if place.thread_id else [])
             if place is not None
             else [f"对话 {record.topic_id}"]
         )

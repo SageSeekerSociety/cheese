@@ -43,7 +43,7 @@ POLISH_KIND = "voice_polish"
 #: The day the allowance resets on, the product's day.
 _DAY = ZoneInfo("Asia/Shanghai")
 #: Words of the product people say aloud and a recogniser has no reason to know.
-_TERMS = ("知是", "芝士", "验收卡", "实况文档", "支线", "频道", "任务", "资料库")
+_TERMS = ("知是", "芝士", "验收卡", "实况文档", "讨论串", "频道", "任务", "资料库")
 #: DashScope's instant hotwords: weights 1-5, at most 2000 entries.
 _NAME_WEIGHT = 4
 _TERM_WEIGHT = 3

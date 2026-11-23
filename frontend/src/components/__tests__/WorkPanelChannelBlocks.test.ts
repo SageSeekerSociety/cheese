@@ -1,7 +1,7 @@
 /**
- * 频道页对话旁边一块一块的：进来是概览；支线、文件两块先是列表，选中一样在同一块里显示它，
- * 「返回」回到列表；对话里点开的一份文件、文档、技能开在文件那一块里，和支线那一块并排；在频道里
- * 打开的一件任务开在支线那一处，换掉支线，再要支线时任务关掉；例行事务开在文件那一处；全关掉时
+ * 频道页对话旁边一块一块的：进来是概览；讨论串、文件两块先是列表，选中一样在同一块里显示它，
+ * 「返回」回到列表；对话里点开的一份文件、文档、技能开在文件那一块里，和讨论串那一块并排；在频道里
+ * 打开的一件任务开在讨论串那一处，换掉讨论串，再要讨论串时任务关掉；例行事务开在文件那一处；全关掉时
  * 对话占满。
  *
  * 用的是真的摆法（`useRoomLayout`）和真的工作面板；外壳是一个最小的替身：没藏起来的那几块就是在
@@ -151,7 +151,7 @@ function mountChannel() {
         },
         {
           overview: () => h('p', '概览的内容'),
-          threads: () => h('p', '支线的列表'),
+          threads: () => h('p', '讨论串的列表'),
           delivery: ({ id }: { id: string }) => h('p', `任务 ${id} 的内容`),
           skill: ({ id }: { id: string }) => h('p', `技能 ${id} 的内容`),
         }
@@ -180,15 +180,15 @@ describe('beside the channel conversation, one block per kind of thing', () => {
     expect(screen.getByText('概览的内容')).toBeTruthy()
   })
 
-  it('opening 支线 makes 概览 step aside and shows its list under a title bar of its own', async () => {
+  it('opening 讨论串 makes 概览 step aside and shows its list under a title bar of its own', async () => {
     const { panel, bar } = mountChannel()
     await waitFor(() => expect(panel.value).toBeTruthy())
     panel.value!.select('threads')
     await waitFor(() => expect(blocksInSight()).toEqual(['threads']))
-    expect(within(bar('threads')).getByText('支线')).toBeTruthy()
+    expect(within(bar('threads')).getByText('讨论串')).toBeTruthy()
   })
 
-  it('a link to a skill opens it in the 文件 block beside 支线, and back returns that block to the list', async () => {
+  it('a link to a skill opens it in the 文件 block beside 讨论串, and back returns that block to the list', async () => {
     const { panel, bar } = mountChannel()
     await waitFor(() => expect(panel.value).toBeTruthy())
     panel.value!.select('threads')
@@ -202,7 +202,7 @@ describe('beside the channel conversation, one block per kind of thing', () => {
     expect(screen.queryByText('技能 s1 的内容')).toBeNull()
   })
 
-  it('a task opened in the channel takes the place of 支线; asking for 支线 again closes the task', async () => {
+  it('a task opened in the channel takes the place of 讨论串; asking for 讨论串 again closes the task', async () => {
     const { panel, deliveries, closedTasks, bar } = mountChannel()
     await waitFor(() => expect(panel.value).toBeTruthy())
     panel.value!.select('threads')

@@ -863,7 +863,7 @@ async def agent_wait(
 
 _LEVELS = {
     "all": "所有新消息",
-    "mentions": "只在 @我和我参与的支线有回复时",
+    "mentions": "只在 @我和我参与的讨论串有回复时",
     "mute": "静音",
 }
 

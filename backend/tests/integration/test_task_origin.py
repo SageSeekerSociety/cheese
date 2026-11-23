@@ -1,7 +1,7 @@
 """Where a task came from, as its page shows it (相关) and its AI teammate is
 told: the discussion it was made from, and what was put on the table there.
 
-- a task made from a message knows that message and its 支线;
+- a task made from a message knows that message and its 讨论串;
 - the files referred to in that discussion are listed, each once;
 - the AI teammate drafting the document is handed the same list;
 - a task created on its own came from nowhere.
@@ -49,7 +49,7 @@ def _task_from_discussion(client):
         "alice",
         {"content": "还有一张 <&uploads/wechat.png>，同一张 <&uploads/white.png>"},
     )
-    # A reply in the 支线 becomes a task of its own, which starts from the
+    # A reply in the 讨论串 becomes a task of its own, which starts from the
     # discussion it was said in.
     r = client.post(
         f"/blocks/{reply['id']}/upgrade", headers=session_auth_headers("alice")

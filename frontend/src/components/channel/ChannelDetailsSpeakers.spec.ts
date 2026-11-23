@@ -1,7 +1,7 @@
 // 频道详情里的「谁能发言」（#4795）。错了也照样渲染、却会把频道设错的几条：
 //   1. 从「所有人」改成「指定角色」，先交出管理员和成员两个，频道不会一下子谁也说不了话
 //   2. 勾掉最后一个角色不交出去：至少留一个
-//   3. 支线开关只在限了角色时出现，拨它时角色名单原样带上
+//   3. 讨论串开关只在限了角色时出现，拨它时角色名单原样带上
 import type { Topic } from '@/cx_types'
 
 import { createVuetify } from 'vuetify'
@@ -90,7 +90,7 @@ describe('频道详情：谁能发言', () => {
   it('改成指定角色时先交出管理员和成员', async () => {
     const { emitted } = mount()
     const dialog = await settingsTab()
-    expect(within(dialog).queryByText('允许所有人在支线里回复')).toBeNull()
+    expect(within(dialog).queryByText('允许所有人在讨论串里回复')).toBeNull()
     await tick(within(dialog).getByLabelText('指定角色'), true)
     expect(emitted('speakers')).toEqual([[['admin', 'member'], true]])
   })
@@ -104,10 +104,10 @@ describe('频道详情：谁能发言', () => {
     expect(emitted('speakers')).toEqual([[['member', 'r-tester'], true]])
   })
 
-  it('支线开关只在限了角色时出现，拨它时名单原样带上', async () => {
+  it('讨论串开关只在限了角色时出现，拨它时名单原样带上', async () => {
     const { emitted } = mount({ speaker_roles: ['member'] })
     const dialog = await settingsTab()
-    await tick(within(dialog).getByLabelText('允许所有人在支线里回复'), false)
+    await tick(within(dialog).getByLabelText('允许所有人在讨论串里回复'), false)
     expect(emitted('speakers')).toEqual([[['member'], false]])
   })
 })

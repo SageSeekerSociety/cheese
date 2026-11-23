@@ -16,7 +16,7 @@ The rules, as a person would state them:
   live, are in `test_the_main_line_judges_whether_its_task_is_done`). A
   person's close does not wake it: it reads who closed it and how in its next
   input. Each end is told once; a task reopened and closed again ends again.
-- Nobody is told for a task a person made, or one that came from a 支线.
+- Nobody is told for a task a person made, or one that came from a 讨论串.
 - How the task ended is recorded where it came from as something that
   happened, under nobody's name, not as words of an AI teammate.
 """

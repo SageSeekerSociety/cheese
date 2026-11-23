@@ -167,7 +167,7 @@ test.describe('平板横放（960–1180）', () => {
     await expect.poll(() => panelShown(page)).toBe(false);
     await expect(page.locator('[data-panel-toggle]')).toHaveAttribute('aria-pressed', 'false');
 
-    // 别人发来的链接（?tab=）是「有人打开了这一格」，面板得跟着开，页头上按下的是「支线」。
+    // 别人发来的链接（?tab=）是「有人打开了这一格」，面板得跟着开，页头上按下的是「讨论串」。
     await page.goto(`${topicUrl}?tab=threads`);
     await expect.poll(() => panelShown(page)).toBe(true);
     await expect(page.locator('[data-panel-thing="threads"]')).toHaveAttribute('aria-pressed', 'true');

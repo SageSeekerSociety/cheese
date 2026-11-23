@@ -11,7 +11,7 @@ The rules, as a person would state them:
   stays the teammate's message.
 - Each line stays where it was in the conversation, and nobody's place in it
   moves.
-- A 支线 counts as its replies only the messages in it.
+- A 讨论串 counts as its replies only the messages in it.
 """
 
 import json

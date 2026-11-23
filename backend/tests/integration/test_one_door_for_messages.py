@@ -120,7 +120,7 @@ def test_a_persons_message_is_live_for_the_room_and_wakes_who_it_names(
 ):
     _, room = _room(client)
     agent = room_agent_seat(client, room)
-    # 芝士 is called in a 支线: everyone watching it sees the message there.
+    # 芝士 is called in a 讨论串: everyone watching it sees the message there.
     topic_id = in_thread(client, room, "alice")
     request_id = str(uuid.uuid4())
     with room_socket(client, topic_id, "alice") as ws:

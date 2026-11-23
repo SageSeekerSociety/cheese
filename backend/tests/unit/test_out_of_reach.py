@@ -375,7 +375,7 @@ def test_a_refusal_to_a_credential_that_only_reads_says_why_and_not_to_retry(
 def test_a_refusal_to_a_session_whose_work_is_not_kept_says_why_and_not_to_retry(
     monkeypatch, tmp_path
 ):
-    """支线、还没开始的任务，改动留不下；同步被拒时 agent 要知道是这个原因，而不是
+    """讨论串、还没开始的任务，改动留不下；同步被拒时 agent 要知道是这个原因，而不是
     当成机器出了故障去重试。"""
     client = failing_client(monkeypatch, tmp_path, 403)
     (tmp_path / "execution.token").write_text(_bound_token(scratch=True))
@@ -402,7 +402,7 @@ def test_a_403_to_a_credential_that_may_write_is_not_called_read_only(
 def test_a_session_whose_work_is_not_kept_does_not_ask_to_sync_it(
     monkeypatch, tmp_path
 ):
-    """支线、还没开始的任务，回合结束时没有改动要同步进项目，也就不去问机器。"""
+    """讨论串、还没开始的任务，回合结束时没有改动要同步进项目，也就不去问机器。"""
     client = failing_client(monkeypatch, tmp_path, 403)
     (tmp_path / "execution.token").write_text(_bound_token(scratch=True))
 

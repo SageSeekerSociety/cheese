@@ -1,6 +1,6 @@
 {
-  "asked": "{name} 向频道主线提问",
-  "blocked": "{name} 向频道主线报告无法继续",
-  "done": "{name} 向频道主线报告已做完",
-  "told": "{name} 在频道主线转达"
+  "asked": "{name} 向频道提问",
+  "blocked": "{name} 向频道报告无法继续",
+  "done": "{name} 向频道报告已做完",
+  "told": "{name} 在频道里转达"
 }

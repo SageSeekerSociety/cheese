@@ -150,7 +150,7 @@ def test_a_routine_run_in_a_shared_room_carries_nobodys_private_memory(
     assert payload["eventType"] == "routine_run"
     assert submitted["content"] == payload["content"]
 
-    # The run is answered where the runner was told to: the run's own 支线.
+    # The run is answered where the runner was told to: the run's own 讨论串.
     prompt = _prompt_of_the_routine_turn(client, tmp_path, conversation, submitted)
     assert TEAM_HOOK in prompt
     for absent in (_index_of(OWNER), OWNER_HOOK, _index_of(BOB), BOB_HOOK):

@@ -42,8 +42,8 @@ def stub_hooks() -> SubagentScreen:
 
 def _chat(client, topic_id: str) -> None:
     """One turn in the channel's own line. Only the platform starts one there
-    (a routine's run, say): a person calling 芝士 is answered in a 支线, and a
-    支线 only reads, so it changes nothing to summarise."""
+    (a routine's run, say): a person calling 芝士 is answered in a 讨论串, and a
+    讨论串 only reads, so it changes nothing to summarise."""
     from app.api.deps import get_chat_service
 
     chat = client.app.dependency_overrides[get_chat_service]()

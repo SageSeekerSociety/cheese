@@ -79,7 +79,7 @@ def test_someone_who_may_not_add_people_is_told_they_may_not(client):
     tid = _channel(client, p["id"], private=False)
     thread = in_thread(client, tid, "alice")
 
-    # bob is not in the channel and does not manage it: he answers in a 支线.
+    # bob is not in the channel and does not manage it: he answers in a 讨论串.
     sent = post_message(client, thread, "bob", {"content": "<@carol> 你怎么看"})
 
     assert sent["mentioned_outside"]["handles"] == ["carol"]

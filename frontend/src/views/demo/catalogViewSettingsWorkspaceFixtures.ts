@@ -669,7 +669,7 @@ export const ASSISTANT_ROUTINES: AssistantRoutine[] = [
     id: 'r2',
     title: '有人找我',
     note: '有人 @ 用户时读消息，起草回复',
-    when: '每次有人 @ 你或回复你的支线时',
+    when: '每次有人 @ 你或回复你的讨论串时',
     state: 'active',
     paused: '',
     nextRunAt: null,

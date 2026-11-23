@@ -75,7 +75,7 @@ vi.mock('@/stores/workspace', async () => {
   return { useWorkspaceStore: () => store }
 })
 vi.mock('@/me', () => ({ myHandle: () => 'alice' }))
-// 频道的支线清单：这几条测试不看它。
+// 频道的讨论串清单：这几条测试不看它。
 vi.mock('@/api/threads', () => ({ listThreads: async () => [], openThread: async () => ({ id: 'th' }) }))
 // 频道概览的置顶：这几条测试不看它。
 vi.mock('@/api/pins', () => ({ listPins: async () => [], pinBlock: vi.fn(), unpinBlock: vi.fn() }))
@@ -224,22 +224,22 @@ describe('频道页页头那一组按钮', () => {
     expect(panel('overview')).toMatchObject({ bare: true })
     expect(panel('overview')?.titled).toBeFalsy()
     expect(pressed(getByText('概览'))).toBe(true)
-    expect(pressed(getByText('支线'))).toBe(false)
+    expect(pressed(getByText('讨论串'))).toBe(false)
     expect(pressed(getByText('文件'))).toBe(false)
   })
 
-  it('点支线，概览让开；再点文件，两块都开着，两颗都按下', async () => {
+  it('点讨论串，概览让开；再点文件，两块都开着，两颗都按下', async () => {
     const { getByText } = mountView()
     await waitFor(() => expect(inSight()).toEqual(['overview']))
-    await fireEvent.click(getByText('支线'))
+    await fireEvent.click(getByText('讨论串'))
     await waitFor(() => expect(inSight()).toEqual(['threads']))
     expect(pressed(getByText('概览'))).toBe(false)
     await fireEvent.click(getByText('文件'))
     await waitFor(() => expect(inSight()).toEqual(['threads', 'files']))
-    expect(pressed(getByText('支线'))).toBe(true)
+    expect(pressed(getByText('讨论串'))).toBe(true)
     expect(pressed(getByText('文件'))).toBe(true)
     // 再点一下开着的那一颗：只关它那一块。
-    await fireEvent.click(getByText('支线'))
+    await fireEvent.click(getByText('讨论串'))
     await waitFor(() => expect(inSight()).toEqual(['files']))
   })
 

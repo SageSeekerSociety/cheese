@@ -74,7 +74,7 @@ function mountChannel() {
       },
       {
         overview: () => h('p', '概览的内容'),
-        threads: () => h('p', '支线的内容'),
+        threads: () => h('p', '讨论串的内容'),
         delivery: ({ id }: { id: string }) => h('p', `任务 ${id} 的内容`),
       }
     )
@@ -94,7 +94,7 @@ describe('asking for a cell of the work panel brings it forward', () => {
     const { tab } = mountChannel()
     await waitFor(() => expect(visible('概览的内容')).toBe(true))
     tab.value = 'threads'
-    await waitFor(() => expect(visible('支线的内容')).toBe(true))
+    await waitFor(() => expect(visible('讨论串的内容')).toBe(true))
     expect(visible('概览的内容')).toBe(false)
   })
 
@@ -110,12 +110,12 @@ describe('asking for a cell of the work panel brings it forward', () => {
   it('closing the task being looked at brings back the tab it was opened from', async () => {
     const { tab, deliveries } = mountChannel()
     tab.value = 'threads'
-    await waitFor(() => expect(visible('支线的内容')).toBe(true))
+    await waitFor(() => expect(visible('讨论串的内容')).toBe(true))
     deliveries.value = [{ id: 't1', title: '开放日流程页' }]
     tab.value = 'delivery:t1'
     await waitFor(() => expect(visible('任务 t1 的内容')).toBe(true))
     deliveries.value = []
-    await waitFor(() => expect(visible('支线的内容')).toBe(true))
+    await waitFor(() => expect(visible('讨论串的内容')).toBe(true))
   })
 
   it('a routine named by the address brings the routines cell forward', async () => {

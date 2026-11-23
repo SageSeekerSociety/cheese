@@ -484,7 +484,7 @@ async def test_a_stuck_card_waits_on_the_agent_and_neither_read_scans_every_bloc
 
 @pytest.mark.anyio
 async def test_a_whole_room_read_finds_its_conversations_blocks_by_index(db_factory):
-    """A read across a room — its own line, its tasks', its 支线' — goes to
+    """A read across a room — its own line, its tasks', its 讨论串' — goes to
     those conversations' blocks, not through every block of every room."""
     async with db_factory() as session:
         seeded = await _seed(session)

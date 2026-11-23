@@ -132,7 +132,7 @@ def test_a_question_is_only_on_the_list_of_whoever_started_the_turn(
     """
     project = _project(client, "alice")
     room = _room(client, project, "alice")
-    # 芝士在支线里回答，题也在那里问。
+    # 芝士在讨论串里回答，题也在那里问。
     thread = in_thread(client, room, "alice")
 
     with active_ask(client, stub_hooks, monkeypatch, thread, actor="alice") as headers:
@@ -152,7 +152,7 @@ def test_a_question_still_waits_on_its_person_after_the_turn_ends(
     """
     project = _project(client, "alice")
     room = _room(client, project, "alice")
-    # 芝士在支线里回答，题也在那里问。
+    # 芝士在讨论串里回答，题也在那里问。
     thread = in_thread(client, room, "alice")
     with active_ask(client, stub_hooks, monkeypatch, thread, actor="alice") as headers:
         _ask(client, thread, headers)
@@ -172,7 +172,7 @@ def test_a_leftover_turn_does_not_decide_who_the_question_waits_on(
     """
     project = _project(client, "alice")
     room = _room(client, project, "alice")
-    # 芝士在支线里回答，题也在那里问。
+    # 芝士在讨论串里回答，题也在那里问。
     thread = in_thread(client, room, "alice")
     client.portal.call(
         lambda: open_turn(
@@ -276,7 +276,7 @@ def test_one_request_id_in_two_rooms_asks_in_both(client, stub_hooks, monkeypatc
     project = _project(client, "alice")
     rooms = [_room(client, project, "alice", title) for title in ("预算", "发布")]
     for room in rooms:
-        # 芝士在支线里回答，题也在那里问。
+        # 芝士在讨论串里回答，题也在那里问。
         thread = in_thread(client, room, "alice")
         with active_ask(
             client, stub_hooks, monkeypatch, thread, actor="alice"

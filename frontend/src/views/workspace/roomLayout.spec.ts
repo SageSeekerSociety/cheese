@@ -44,7 +44,7 @@ function setup(
       tabs ??
       (() => [
         { key: 'overview', title: '概览', icon: 'mdi-file-document-outline' },
-        { key: 'threads', title: '支线', icon: 'mdi-forum-outline' },
+        { key: 'threads', title: '讨论串', icon: 'mdi-forum-outline' },
         { key: 'file:a.md', title: 'a.md', icon: 'mdi-file-outline', transient: true },
       ]),
     workHidden: () => workHidden.value,
@@ -77,7 +77,7 @@ function setup(
 function channelTabs(extra: RoomWorkTab[] = []) {
   return () => [
     { key: 'overview', title: '概览', icon: 'mdi-file-document-outline' },
-    { key: 'threads', title: '支线', icon: 'mdi-forum-outline' },
+    { key: 'threads', title: '讨论串', icon: 'mdi-forum-outline' },
     { key: 'files', title: '文件', icon: 'mdi-paperclip' },
     { key: 'routines', title: '例行事务', icon: 'mdi-clock-outline' },
     ...extra,
@@ -101,7 +101,7 @@ describe('频道页', () => {
     ).toBe(true)
   })
 
-  it('打开支线，概览让开；再打开文件，两块并排，支线在左', () => {
+  it('打开讨论串，概览让开；再打开文件，两块并排，讨论串在左', () => {
     const { room, spec } = setup('room', channelTabs())
     room.workLayout.value!.show('threads')
     expect(inSight(spec())).toEqual(['threads'])
@@ -115,7 +115,7 @@ describe('频道页', () => {
     expect(room.chatBlocks.value).toEqual({ overview: false, open: ['threads', 'files'] })
   })
 
-  it('在频道里打开的一件任务开在支线那一处，换掉支线；再点支线，任务关掉', () => {
+  it('在频道里打开的一件任务开在讨论串那一处，换掉讨论串；再点讨论串，任务关掉', () => {
     const tabs = ref(channelTabs())
     const { room, spec, onClose } = setup('room', () => tabs.value())
     room.workLayout.value!.show('threads')

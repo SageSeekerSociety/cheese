@@ -1,6 +1,6 @@
-"""一个队友说过的话，对同一条支线里的另一位队友也是消息。
+"""一个队友说过的话，对同一条讨论串里的另一位队友也是消息。
 
-每个座位各记一个「读到哪」。同一条支线里先后 @ 两位队友，后一位要能看到前一位
+每个座位各记一个「读到哪」。同一条讨论串里先后 @ 两位队友，后一位要能看到前一位
 的回复，也要看到它自己没读过的那条点名；谁先读过不改变别人读什么。
 """
 
@@ -22,7 +22,7 @@ from tests.integration.conftest import (
 
 
 def _room_with_two_teammates(client) -> tuple[str, str, str]:
-    """A 支线 in a channel holding the project's own agent and a second one."""
+    """A 讨论串 in a channel holding the project's own agent and a second one."""
     data = post_project(client, {"name": "Two seats"}, owner="alice").json()["data"]
 
     async def seat() -> str:

@@ -68,7 +68,7 @@ async def thread_context(
         parts = [
             piece("context/thread", title=room.title),
             "",
-            "支线挂在主线的这条消息下面：",
+            "讨论串挂在主线的这条消息下面：",
             _line(root),
         ]
     if earlier:
@@ -112,7 +112,7 @@ async def channel_tasks(
             lead,
             *(
                 _task_line(task, states[task.id], names)
-                + ("（从这条支线的消息建的）" if _made_from(task, root) else "")
+                + ("（从这条讨论串的消息建的）" if _made_from(task, root) else "")
                 for task in open_tasks
             ),
         ]

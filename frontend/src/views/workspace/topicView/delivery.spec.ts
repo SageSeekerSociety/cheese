@@ -1,7 +1,7 @@
 // 交付到了、等的是我：右栏停在「概览」时直接打开它那一格；带页签的右栏在别的页签时加进那一排、
-// 不选中、带一个点；右栏收着、或者等的不是我时什么都不做。右栏里换页签时，交付和支线回到频道的
+// 不选中、带一个点；右栏收着、或者等的不是我时什么都不做。右栏里换页签时，交付和讨论串回到频道的
 // 地址。频道页一块一块的那一种没有那一排：打开另一件任务换掉这一件；换到文件、例行事务那几块时
-// 地址不离开打开着的任务和支线。
+// 地址不离开打开着的任务和讨论串。
 import type { RoomTask } from '@/cx_types'
 import type { TopicPlace } from './shared'
 
@@ -109,7 +109,7 @@ describe('右栏里换页签', () => {
     expect(tabs).toEqual([])
   })
 
-  it('在支线里点「支线」：留在这条支线上', () => {
+  it('在讨论串里点「讨论串」：留在这条讨论串上', () => {
     const { delivery, channelTabs, tabs } = setup({ place: { projectId: 'p1', topicId: 'c1', threadId: 'th1' } })
     expect(delivery.shownTab.value).toBe('threads')
     delivery.select('threads')
@@ -168,7 +168,7 @@ describe('频道页一块一块的那一种', () => {
     expect(opened).toEqual(['k1'])
   })
 
-  it('在任务或支线的地址上打开文件那一块：地址不离开它们，任务和支线照样开着', () => {
+  it('在任务或讨论串的地址上打开文件那一块：地址不离开它们，任务和讨论串照样开着', () => {
     const onTask = setup({ blocks: true, place: { projectId: 'p1', topicId: 'c1', reviewTaskId: 'k1' } })
     onTask.delivery.select('files')
     expect(onTask.channelTabs).toEqual([])
@@ -179,7 +179,7 @@ describe('频道页一块一块的那一种', () => {
     expect(onThread.tabs).toEqual(['routines'])
   })
 
-  it('在任务的地址上点「支线」：任务让开，回到频道的地址，开着支线', () => {
+  it('在任务的地址上点「讨论串」：任务让开，回到频道的地址，开着讨论串', () => {
     const { delivery, channelTabs } = setup({
       blocks: true,
       place: { projectId: 'p1', topicId: 'c1', reviewTaskId: 'k1' },

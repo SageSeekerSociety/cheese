@@ -4,7 +4,7 @@
  * 单独一份是因为 `catalog.ts` 已经九百多行，再塞两条会顶到 `frontend/src` 那一千行
  * 的上限 —— 和 `catalogRoom.ts`、`catalogChannelFiles.ts` 同一个理由。
  *
- * 两件都是后来才有的动作：删频道要先确认，建支线不必先有一条消息可回。它们都只吃
+ * 两件都是后来才有的动作：删频道要先确认，建讨论串不必先有一条消息可回。它们都只吃
  * props、只往上发一个事件，开出来之后去哪由打开它们的页面决定，所以摆得出来。
  *
  * 这里的 `CatalogEntry` 是 type-only 引用：`catalog.ts` 反过来要
@@ -50,7 +50,7 @@ export const CHANNEL_DIALOG_ENTRIES: CatalogEntry[] = [
   {
     id: 'new-thread-dialog',
     title: 'NewThreadDialog',
-    about: '在频道下新建一条支线：填一个标题就开出来，不必先在主线上找一条消息去回复。',
+    about: '在频道下新建一条讨论串：填一个标题就开出来，不必先在主线上找一条消息去回复。',
     file: 'src/components/channel/NewThreadDialog.vue',
     component: NewThreadDialog,
     needs: UI_T,
@@ -59,9 +59,9 @@ export const CHANNEL_DIALOG_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '刚打开，标题还空着',
-        note: '标题空着时「新建支线」是灰的 —— 支线要有名字才开得出来；框顶上写着这是在哪一个频道下开。',
+        note: '标题空着时「新建讨论串」是灰的 —— 讨论串要有名字才开得出来；框顶上写着这是在哪一个频道下开。',
         props: {},
-        expect: `在「${CHANNEL}」下新建支线`,
+        expect: `在「${CHANNEL}」下新建讨论串`,
         expectSelector: '.v-btn--disabled',
       },
       {

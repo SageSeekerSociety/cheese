@@ -216,7 +216,7 @@ def dangling_refs_warning(dangling: list[str]) -> str:
     that stored them or the read that found them."""
     named = "、".join(f"`<#{ref}>`" for ref in dangling)
     return (
-        f"{named} 指不到这个项目里的任何频道、任务、支线或文档，读的人看到的是一个"
-        "打不开的「引用不存在」。`<#id>` 只认频道、任务、支线和文档自己的 id："
+        f"{named} 指不到这个项目里的任何频道、任务、讨论串或文档，读的人看到的是一个"
+        "打不开的「引用不存在」。`<#id>` 只认频道、任务、讨论串和文档自己的 id："
         "换成正确的 id，或者改成普通文字。"
     )

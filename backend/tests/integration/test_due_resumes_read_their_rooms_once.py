@@ -25,7 +25,7 @@ from tests.support.threads import thread_in
 
 
 async def _five_due(factory) -> list[uuid.UUID]:
-    """Two rooms' own lines, a 支线 in each and a task in the first, each owed
+    """Two rooms' own lines, a 讨论串 in each and a task in the first, each owed
     a resume: two rooms so that a resume handed another's room shows."""
     async with factory() as session:
         await registered(session, "u")
@@ -76,7 +76,7 @@ async def test_a_batch_of_due_resumes_reads_its_rooms_once(business_db_factory):
     room_reads: list[str] = []
 
     def record(conn, cursor, statement, parameters, context, executemany):
-        # `room_of` and its batch both read the tasks-and-支线 union by name.
+        # `room_of` and its batch both read the tasks-and-讨论串 union by name.
         if "inside" in statement:
             room_reads.append(statement)
 

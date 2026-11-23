@@ -3,7 +3,7 @@ much of it reaches each person.
 
 Everyone in a project reads every public channel. Joining is what puts one in a
 person's sidebar and lets them speak in its main line; anyone else answers in a
-支线 under a message. 综合 is everyone in the project. A channel is managed by
+讨论串 under a message. 综合 is everyone in the project. A channel is managed by
 its creator and by whoever manages the project.
 """
 
@@ -195,14 +195,14 @@ def test_an_archived_channel_is_read_not_spoken_in(client):
     tid = _channel(client, p["id"])
     said = post_message(client, tid, "alice", {"content": "收尾了"})
     thread = _thread_under(client, said["id"], "alice")
-    assert _say(client, thread, "alice", "支线里也说一句").status_code == 200
+    assert _say(client, thread, "alice", "讨论串里也说一句").status_code == 200
     archived = client.post(
         f"/topics/{tid}/archive", headers=session_auth_headers("alice")
     )
     assert archived.status_code == 200, archived.text
 
     assert _say(client, tid, "alice", "还能说吗").status_code == 403
-    assert _say(client, thread, "alice", "支线呢").status_code == 403
+    assert _say(client, thread, "alice", "讨论串呢").status_code == 403
     # The history is still there to read.
     history = client.get(f"/topics/{tid}/blocks", headers=session_auth_headers("bob"))
     assert history.status_code == 200
@@ -495,7 +495,7 @@ def test_at_all_skips_whoever_muted_the_channel(client):
     assert inbox(client, "alice", "MENTION") == []
 
 
-# ---- replies in a 支线 -------------------------------------------------------
+# ---- replies in a 讨论串 -------------------------------------------------------
 
 
 def test_a_reply_in_a_thread_reaches_the_people_who_took_part(client):
@@ -512,7 +512,7 @@ def test_a_reply_in_a_thread_reaches_the_people_who_took_part(client):
     assert len(bob) == 1  # carol's; not his own
     assert inbox(client, "carol", "THREAD_REPLY") == []
     assert inbox(client, "dave", "THREAD_REPLY") == []
-    # The 支线's replies count on the channel for whoever took part in it.
+    # The 讨论串's replies count on the channel for whoever took part in it.
     assert _unread(client, pid, tid, "bob")["count"] == 1
 
 
@@ -571,7 +571,7 @@ def test_a_mention_reaches_each_person_by_their_own_settings(client, monkeypatch
 
 def test_a_thread_reply_reaches_email_and_not_push_by_default(client, monkeypatch):
     """「我的消息被回复」 defaults to the inbox and email, without a push; email
-    defaults to the digest. The reply opens in its 支线."""
+    defaults to the digest. The reply opens in its 讨论串."""
     from app.core.config import settings
 
     monkeypatch.setattr(settings, "vapid_public_key", "public-key", raising=False)

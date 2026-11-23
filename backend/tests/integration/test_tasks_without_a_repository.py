@@ -3,7 +3,7 @@
 The rules a person can state without the code:
 
 - A project with no code repository (a GitHub project not connected yet) can
-  have tasks: a person opens one, its AI teammate opens one, and a 支线 turns
+  have tasks: a person opens one, its AI teammate opens one, and a 讨论串 turns
   into one. Such a task has no branch.
 - Its session is told there is no checkout to start in, which is an answer and
   not a failure: it works where its session is.

@@ -2,7 +2,7 @@
 
 The rules, as a person would state them:
 
-- a `<#id>` names a channel, a task or a 支线, and whoever reads it learns which
+- a `<#id>` names a channel, a task or a 讨论串, and whoever reads it learns which
   one, what it is called and which channel it is in;
 - an id that names none of them, or a channel only its members see, names
   nothing to anyone outside it, so the page can say so instead of borrowing a
@@ -70,8 +70,8 @@ def test_a_reference_says_whether_it_names_a_channel_a_task_or_a_thread(client):
     assert found[task["id"]]["room_id"] == channel["id"]
     assert found[thread]["kind"] == "thread"
     assert found[thread]["room_id"] == channel["id"]
-    # A 支线 is called by the message it hangs under.
-    assert "这件事在支线里说" in found[thread]["title"]
+    # A 讨论串 is called by the message it hangs under.
+    assert "这件事在讨论串里说" in found[thread]["title"]
     assert nothing not in found
 
 

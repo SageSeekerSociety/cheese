@@ -2,8 +2,8 @@
 
 The rules, stated before it was written:
 
-- a task an AI teammate proposed in a 支线 hangs under the message that 支线 is
-  under; one made from a reply in a 支线 hangs under that 支线's message;
+- a task an AI teammate proposed in a 讨论串 hangs under the message that 讨论串 is
+  under; one made from a reply in a 讨论串 hangs under that 讨论串's message;
 - the main line no longer says what happened to a task made from a message: its
   created, started and closed lines, and the lines about its deliveries, move
   into the task's own conversation, and nothing else moves;

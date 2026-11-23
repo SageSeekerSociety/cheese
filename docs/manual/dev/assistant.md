@@ -172,14 +172,14 @@ covers:
 
 面板里的芝士在项目里也是这个人自己的：替他做事，记他的额度。项目里真正干活的是频道和任务里的 AI 队友，记项目的额度；面板里的芝士不改项目的文档和代码，要改就开任务交给队友。
 
-- **当前页面**：项目外框（`views/workspace/ProjectShell.vue`）按地址登记这一页：打开了文档是 `doc`，在频道、任务或支线里是 `topic`，别的页是 `project`，编号都是 UUID（`personal/pages.py`）。写给芝士时换成[编号](#refs)。能不能读按读来判（`ActorResolver.for_reading`）：归档项目的页也能问。频道页附上最近 12 条消息，文档页只附标题和编号，正文由芝士按需去读。
+- **当前页面**：项目外框（`views/workspace/ProjectShell.vue`）按地址登记这一页：打开了文档是 `doc`，在频道、任务或讨论串里是 `topic`，别的页是 `project`，编号都是 UUID（`personal/pages.py`）。写给芝士时换成[编号](#refs)。能不能读按读来判（`ActorResolver.for_reading`）：归档项目的页也能问。频道页附上最近 12 条消息，文档页只附标题和编号，正文由芝士按需去读。
 - **团队的页**：团队文档页登记 `doc`，团队资料库页登记 `library`（编号是团队 id）。芝士没有读团队文档、别的团队资料库的工具，所以团队文档的正文开头（6000 字）和资料库最新 30 份的名字直接写进「当前页面」；本人的资料库写明用 `cheese_read library/<名字>` 读。能不能读按团队成员判（`assistant_deps.ProjectPages.team`）。
 
 **这一句带上什么**（`personal/citing.py`）：面板输入框里和附件同一行（`AssistantContextRow` 用频道输入框的 `ComposerChipRow`）先是这一页和选中的字两枚标签。
 
 - 人点掉这一页（×，划掉后 + 带回来），或这一页没登记，请求带 `no_page: true`：不附页面，也不退回到话题挂着的那一页，芝士读到一段「这一问没有附上页面」（`pages.NO_PAGE`）。关掉只管这一页，换页后前端又带上（`stores/agent.ts` 的 `agentPageOff`）。
 - 在页面上选中一段字点「问芝士」（`AgentSelectionAsk.vue`），这段字作为 `selection`（最多 2000 字）随下一句交出。这是唯一由浏览器交上来的正文：它和人自己贴进来的字一样，写给芝士时标明是资料、不是指令。输入框、可编辑的区域和项目文档里不出这个按钮（`data-agent-select="off"`，项目文档有自己的选区框）；团队文档的编辑器标着 `on`，照常出。
-- 输入框里打 `@` 挑一样东西（`useCitePicker`），正文里写下 `<#id>`：频道、任务、支线、文档是它自己的 UUID，资料库文件是 `file-<id>`，题目是 `problem-<id>`，一句最多 5 样（后端在校验里拒）。候选来自 `GET /api/assistant/citable?project=`：这个人参加的项目里他打得开的频道和这些频道的任务、这些项目和他所在团队的文档、眼前项目和他自己资料库的文件；题目打字时用 `/tasks/search` 搜。匹配和「最近去过」用 Ctrl+K 的同一套（`commands/palette/match.ts`、`recents.ts`）。
+- 输入框里打 `@` 挑一样东西（`useCitePicker`），正文里写下 `<#id>`：频道、任务、讨论串、文档是它自己的 UUID，资料库文件是 `file-<id>`，题目是 `problem-<id>`，一句最多 5 样（后端在校验里拒）。候选来自 `GET /api/assistant/citable?project=`：这个人参加的项目里他打得开的频道和这些频道的任务、这些项目和他所在团队的文档、眼前项目和他自己资料库的文件；题目打字时用 `/tasks/search` 搜。匹配和「最近去过」用 Ctrl+K 的同一套（`commands/palette/match.ts`、`recents.ts`）。
 - 服务端按 `<#id>` 逐样判断能不能打开，打不开的当作没引用；问题里的引用换成名字，后面附一段「用户引用的」写明每样是什么、用哪个编号读，团队文档和资料库文件附上正文。问题照原样存，`parts` 里记 `page`（在哪一页问的）、`selection`、`cited`（每样的 id、种类、名字），面板读回对话时照它画标签。
 - **凭据**：凭据不限项目，见[凭据](#credential)。
 
@@ -222,7 +222,7 @@ covers:
 这个人让芝士定时做一件事、在某件事发生时做一件事，或过一会儿提醒他，芝士用 `cheese_routine` 建一条自动化（`assistant_routines`，`domain/routine/personal.py`）。只影响他自己，直接建，不做授权判断。分两种：只做一次的（`spec.freq = once` 或 `spec.once`）和反复做的，每种每人最多 20 条。描述（`describe`）里反复的以「每天」「每次」等开头，只做一次的直接写时间或事情。
 
 - **原话**：建的时候，平台把这段对话里这个人说过的话存进规则（`words`）。运行时授权判断只把这些话当作他说的（`gate._said_and_done` 在最前面加一行「用户（建这条自动化时说）」）。规则的名称和说明是芝士写的，不读；从另一段对话里改规则，那段对话里他说的话追加进去。运行中的芝士不能建或改自动化。建好或改过时，回答里放一张卡片（`rule` 事件，随回答存进 `parts.rules`）：什么时候、做什么；状态按编号从 `GET /assistant/routines` 读（`useAgentRules`），等待中的可取消、开着的可暂停、暂停的可恢复。
-- **触发**：定时（`routine.schedule` 的每小时、每天、每周、每月，或某个时刻一次，按他的时区），或发生了一件事：有人 @ 他或回复他参与的支线（`mention`，可以只看某几个人 `from`、某个频道或任务 `place`）、有任务提交审阅且审阅人有他（`review`）、某个任务或他提的任务（`task` / `mine`）提交审阅（`filed`）或被采纳、退回（`decided`，`outcome` 可以只等一种）、空间题目快到截止（`due`）、收到邀请（`invite`）；都可以只看一个项目。
+- **触发**：定时（`routine.schedule` 的每小时、每天、每周、每月，或某个时刻一次，按他的时区），或发生了一件事：有人 @ 他或回复他参与的讨论串（`mention`，可以只看某几个人 `from`、某个频道或任务 `place`）、有任务提交审阅且审阅人有他（`review`）、某个任务或他提的任务（`task` / `mine`）提交审阅（`filed`）或被采纳、退回（`decided`，`outcome` 可以只等一种）、空间题目快到截止（`due`）、收到邀请（`invite`）；都可以只看一个项目。
 - **事件从哪来**：事情发生的地方，在同一个事务里写一行 `happenings`（`domain/happenings`，C5 最底层，不认识芝士和规则）：投递账本给人记下一条通知时（`delivery/ledger.record_mailbox`，`notified`），审阅递卡时（`review/room_notices._announce_filed`，`task_filed`），卡被采纳或退回时（`_settle_the_card`，`task_decided`）。提交后经 Valkey 列表 `cheese:happenings:wake` 叫醒周期任务；周期任务一次取走最多 500 行、读完即删，逐条对照所有启用中的事件规则，命中一条记一行 `assistant_runs`（`occurrence = <规则>:h:<事件>`，`(user_id, occurrence)` 唯一）。没有规则在等的事件照样删掉。一条反复的事件规则一小时最多运行 6 次，超出的记为跳过。
 - **运行**：周期任务 `assistant routines` 被事件叫醒时只处理事件和开始运行；每 30 秒的那一拍做全部（过期的卡、长时间未登录、额度恢复、到点的定时规则、等太久的规则），也兜住丢了的叫醒。叫醒不占那一拍的租约，所以只在持有所有权锁的进程上跑（`PeriodicRunner` 的 `woken_by`）。每人同时只跑一个，同一条规则上一次还没跑完，这一次跳过。只做一次的规则在建它的那段对话里运行，命中第一件事就是 `done`，之后的不再触发；14 天（`WAITS_FOR`）没等到就是 `done` 并通知他，通知点开是那段对话。反复的每次开一段新对话（`place_kind = routine`）。第一条消息由平台写（`role = platform`，授权判断、对话标题都不读它；面板上只显示「自动化「X」开始运行」；只做一次的等到任务审阅时说发生了什么（`assistant_runs.shown`，如「任务「X」提交审阅了」）），触发它的那件事写成资料。运行和人提问走同一条路（`personal.service.admit` / `ask`），记这个人的额度，没有人看着也能答完。
 - **不等确认**：运行中要请人确认的操作照样出卡片，但工具不等（`agent_wait` 看到这次回答是一次运行就立刻返回），芝士接着做别的或结束。这些卡片保留 3 天；同一条规则下一次运行开始时，上一次没处理的也作废，状态为 `expired`，不能再确认。
