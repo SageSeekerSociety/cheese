@@ -20,7 +20,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 
 import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,7 +28,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import model_roles
 from app.core.config import settings
 from app.core.sentences import say
-from app.domain.gateway_chat import GatewayCallError, GatewayChat
+from app.domain.gateway_chat import (
+    Completion,
+    GatewayCallError,
+    GatewayChat,
+)
 from app.domain.service_keys import service_key
 from app.domain.space import knowledge_suggestions
 from app.domain.space.knowledge_suggestions import Refused
@@ -59,8 +63,11 @@ MAX_LECTURE_CHARS = 900
 #: 交给模型的他说过的话：至多几条、每条至多多少字。
 _QUOTES = 5
 _QUOTE_CHARS = 400
-#: 一次回答的上限：3 道题加讲解，一千来个 token 就够。
-_ANSWER_TOKENS = 2048
+#: 一次回答的上限：3 道题，每题题干 + 4 个选项 + 讲解。按解析器收得下的最大一份量过
+#: （题干 400 字、选项 200 字 ×4、讲解按提示词说的 120 字），中文一字约一个 token，
+#: 一排题约 4500 token，再留三成余量。原来的注释估「一千来个 token 就够」、值定成
+#: 2048，比最小的一份还小：3 道题常写到两千以上，JSON 被截在中间解析不出来。
+_ANSWER_TOKENS = 6144
 
 _LEVEL_WORDS = {"mastered": "掌握", "shaky": "不稳", "weak": "薄弱"}
 
@@ -203,6 +210,30 @@ def _no_model() -> Refused:
     return Refused(503, say("learningAnalysisNoModel"), 60)
 
 
+async def refund_member_call(
+    session: AsyncSession,
+    *,
+    space: Space,
+    member_id: int | None,
+    day: date | None = None,
+) -> None:
+    """Hand back the member's own daily slot for a call that produced nothing.
+
+    A set that failed to come out is not something to charge the student's
+    ``DAILY_CALLS_PER_MEMBER`` for: they pressed the button once and got
+    nothing. The board's counter is not refunded — the call really was made
+    and really did cost money; only the student's own allowance is theirs.
+    """
+    if member_id is None:
+        return
+    if day is None:
+        day, _ = local_day(datetime.now(UTC))
+    await LearningPracticeRepository(session).refund_call(
+        space_id=space.id, user_id=member_id, day=day
+    )
+    await session.commit()
+
+
 async def ask(
     session: AsyncSession,
     *,
@@ -210,14 +241,18 @@ async def ask(
     system: str,
     prompt: str,
     member_id: int | None,
+    spot: str,
     transport: httpx.AsyncBaseTransport | None = None,
-) -> str | Refused:
+) -> Completion | Refused:
     """One question to the model on the board's behalf, or why it cannot be asked.
 
     ``member_id`` is the person who asked for it themselves (their own daily
-    cap applies); ``None`` is a set a teacher pushed. The board's cap, the
-    member's cap and the call are counted before the call is made, so a call
-    that fails still counts. ``session`` is committed along the way.
+    cap applies); ``None`` is a set a teacher pushed. ``spot`` names which
+    question this is (``questions`` / ``lecture``) for the logs. The board's
+    cap, the member's cap and the call are counted before the call is made, so
+    a call that fails still counts — and a call that fails is refunded to the
+    member's own allowance, so a student is not charged a slot for a set that
+    never came out. ``session`` is committed along the way.
     """
     payer_id = space.learning_analysis_enabled_by
     if payer_id is None:
@@ -260,8 +295,12 @@ async def ask(
         )
     except GatewayCallError:
         logger.warning(
-            "learning practice call failed space=%s", space.id, exc_info=True
+            "learning practice: call failed spot=%s space=%s",
+            spot,
+            space.id,
+            exc_info=True,
         )
+        await refund_member_call(session, space=space, member_id=member_id, day=day)
         return Refused(503, say("learningAnalysisNoModel"), 30)
     if answer.usage.total_tokens:
         await Ledger(session).charge_priced(
@@ -276,4 +315,14 @@ async def ask(
             kind=knowledge_suggestions.USAGE_KIND,
         )
         await session.commit()
-    return answer.content
+    if answer.cut_at_length:
+        logger.warning(
+            "learning practice: answer cut at max_tokens spot=%s space=%s model=%s "
+            "max_tokens=%s output_tokens=%s",
+            spot,
+            space.id,
+            model,
+            _ANSWER_TOKENS,
+            answer.usage.completion_tokens,
+        )
+    return answer

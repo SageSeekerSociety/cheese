@@ -49,7 +49,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core import model_roles
 from app.core.config import settings
 from app.core.db import SessionFactory
-from app.domain.gateway_chat import Completion, GatewayCallError, GatewayChat
+from app.domain.gateway_chat import (
+    Completion,
+    GatewayCallError,
+    GatewayChat,
+    unreadable_note,
+)
 from app.domain.service_keys import service_key
 from app.domain.space import (
     knowledge_suggestions,
@@ -88,8 +93,12 @@ LOCAL_ZONE = ZoneInfo("Asia/Shanghai")
 #: 试的话不是学生的学情。
 ANALYSED_SEATS = frozenset({space_seats.Seat.member, space_seats.Seat.in_scope})
 
-#: 一次回答的上限：一批几十条发言的判断与归类，几百个 token 就够；这是封顶。
-_ANSWER_TOKENS = 2048
+#: 一次回答的上限：一批至多 ``learning_analysis_batch_messages`` 条发言，判断（每个
+#: 涉及的知识点一条）加提问归类（每条发言至多一条）都在这一个 JSON 里。按 40 条发言、
+#: 十来个知识点、每条概括 60 字量过，约 7000 token；原来的 2048 只有它的三成，模型
+#: 一写长回答就被截断，这一路白花一次调用。给它 8192：收得下提示词要求的最长一份，
+#: 又留着余量。这一路失败不丢数据（游标不推进，下次再读），但一半的调用白花了。
+_ANSWER_TOKENS = 8192
 #: 一条发言、一段芝士回复交给模型时至多多少字。
 _SAID_CHARS = 1500
 _REPLY_CHARS = 600
@@ -595,7 +604,9 @@ class _Asker:
     def capped(self) -> bool:
         return self.run.calls >= self.pass_.ceiling(self.space)
 
-    async def __call__(self, *, system: str, prompt: str) -> str | None:
+    async def __call__(
+        self, *, system: str, prompt: str, spot: str
+    ) -> Completion | None:
         await SpaceLearningRunRepository(self.session).count_call(self.run)
         await self.session.commit()
         self.pass_.counts["calls"] += 1
@@ -608,11 +619,24 @@ class _Asker:
             )
         except GatewayCallError:
             logger.warning(
-                "learning analysis call failed space=%s", self.space.id, exc_info=True
+                "learning analysis call failed spot=%s space=%s",
+                spot,
+                self.space.id,
+                exc_info=True,
             )
             return None
         await _charge(self.session, self.space, answer, self.pass_)
-        return answer.content
+        if answer.cut_at_length:
+            logger.warning(
+                "learning analysis: answer cut at max_tokens spot=%s space=%s "
+                "model=%s max_tokens=%s output_tokens=%s",
+                spot,
+                self.space.id,
+                self.pass_.model,
+                _ANSWER_TOKENS,
+                answer.usage.completion_tokens,
+            )
+        return answer
 
 
 async def _analyse_pair(
@@ -674,7 +698,7 @@ async def _analyse_pair(
             space.id, [p.id for p in allowed], per_point=MISCONCEPTIONS_PER_POINT
         )
         # 先记这一次，再去调（``_Asker``）：失败的调用也算在上限里。
-        content = await ask(
+        answer = await ask(
             system=SYSTEM_PROMPT,
             prompt=material(
                 task_name=task_names.get(pair.task_id, ""),
@@ -684,15 +708,19 @@ async def _analyse_pair(
                 replies=replies_after(messages, agent_said),
                 misconceptions=wrong,
             ),
+            spot="member",
         )
-        if content is None:
+        if answer is None:
             return "failed"
-        reading = parse(content, points=allowed, messages=messages)
+        reading = parse(answer.content, points=allowed, messages=messages)
         if reading is None:
             logger.warning(
-                "learning analysis: unreadable answer space=%s task=%s",
+                "learning analysis: unreadable answer space=%s task=%s "
+                "output_tokens=%s (%s)",
                 space.id,
                 pair.task_id,
+                answer.usage.completion_tokens,
+                unreadable_note(answer),
             )
             return "failed"
         await _write(

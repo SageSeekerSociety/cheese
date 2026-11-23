@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.db import SessionFactory
 from app.core.errors import BadRequestError, ConflictError, NotFoundError
 from app.core.sentences import say
+from app.domain.gateway_chat import unreadable_note
 from app.domain.space import learning_live
 from app.domain.space import learning_practice_analysis as ai
 from app.domain.space.knowledge_suggestions import Refused
@@ -153,19 +154,27 @@ async def generate_into(
     if judgment is None or point is None:
         return Refused(409, say("learningPracticeNoJudgment"))
     prompt = await _material(session, space.id, judgment, point.name)
-    content = await ai.ask(
+    answer = await ai.ask(
         session,
         space=space,
         system=ai.PRACTICE_PROMPT,
         prompt=prompt,
         member_id=member_id,
+        spot="questions",
         transport=transport,
     )
-    if isinstance(content, Refused):
-        return content
-    questions = ai.parse_questions(content)
+    if isinstance(answer, Refused):
+        return answer
+    questions = ai.parse_questions(answer.content)
     if questions is None:
-        logger.warning("learning practice: unreadable questions space=%s", space.id)
+        logger.warning(
+            "learning practice: unreadable questions space=%s output_tokens=%s (%s)",
+            space.id,
+            answer.usage.completion_tokens,
+            unreadable_note(answer),
+        )
+        # 没出成东西，不扣这个学生当天的一格。
+        await ai.refund_member_call(session, space=space, member_id=member_id)
         return Refused(503, say("learningPracticeUnreadable"), 30)
     row.questions = questions
     row.answers = [_UNANSWERED] * len(questions)
@@ -474,18 +483,26 @@ class SpaceLearningPracticeService:
         if cached is not None and cached.basis_at == judgment.updated_at:
             return _lecture_to_api(point_id, cached.body, cached.generated_at)
         basis = judgment.updated_at
-        content = await ai.ask(
+        answer = await ai.ask(
             self._session,
             space=space,
             system=ai.LECTURE_PROMPT,
             prompt=await _material(self._session, space.id, judgment, point.name),
             member_id=user_id,
+            spot="lecture",
             transport=self._transport,
         )
-        if isinstance(content, Refused):
-            return content
-        body = ai.parse_lecture(content)
+        if isinstance(answer, Refused):
+            return answer
+        body = ai.parse_lecture(answer.content)
         if body is None:
+            logger.warning(
+                "learning practice: unreadable lecture space=%s output_tokens=%s (%s)",
+                space.id,
+                answer.usage.completion_tokens,
+                unreadable_note(answer),
+            )
+            await ai.refund_member_call(self._session, space=space, member_id=user_id)
             return Refused(503, say("learningPracticeUnreadable"), 30)
         now = datetime.now(UTC)
         await self._repo.write_explanation(

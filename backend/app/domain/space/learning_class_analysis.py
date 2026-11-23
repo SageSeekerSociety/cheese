@@ -30,6 +30,7 @@ from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.gateway_chat import Completion, unreadable_note
 from app.domain.space.learning_class_repositories import (
     STUCK_LEVELS,
     JudgmentRow,
@@ -55,12 +56,17 @@ ADVICE_MISCONCEPTIONS = 3
 
 
 class Ask(Protocol):
-    """第 2 步那个调用口：上限、记账、失败都在它里面。"""
+    """第 2 步那个调用口：上限、记账、失败都在它里面。
+
+    ``spot`` 只说这一次问的是哪一路（``member`` / ``clusters`` / ``advice``），
+    供日志分辨。调用失败为 ``None``。"""
 
     def capped(self) -> bool: ...
 
-    async def __call__(self, *, system: str, prompt: str) -> str | None:
-        """模型的回答；调用失败为 ``None``。"""
+    async def __call__(
+        self, *, system: str, prompt: str, spot: str
+    ) -> Completion | None:
+        """模型的回答（含 ``finish_reason`` 与用量）；调用失败为 ``None``。"""
         ...
 
 
@@ -237,14 +243,20 @@ async def cluster_questions(
         answer = await ask(
             system=CLUSTER_PROMPT,
             prompt=cluster_material(points=points, clusters=clusters, asked=asked),
+            spot="clusters",
         )
         if answer is None:
             return "failed"
         grouping = parse_clustering(
-            answer, points=points, clusters=clusters, asked=asked
+            answer.content, points=points, clusters=clusters, asked=asked
         )
         if grouping is None:
-            logger.warning("learning clustering: unreadable answer space=%s", space_id)
+            logger.warning(
+                "learning clustering: unreadable answer space=%s output_tokens=%s (%s)",
+                space_id,
+                answer.usage.completion_tokens,
+                unreadable_note(answer),
+            )
             return "failed"
         for cid, ids in grouping.assigned.items():
             await writes.assign(space_id=space_id, cluster_id=cid, ids=ids)
@@ -391,12 +403,18 @@ async def refresh_advice(
                 involved=len(c.involved),
                 misconceptions=[(labels[mid][1], len(people)) for mid, people in top],
             ),
+            spot="advice",
         )
         if answer is None:
             return "failed"
-        advice = parse_advice(answer)
+        advice = parse_advice(answer.content)
         if advice is None:
-            logger.warning("learning advice: unreadable answer space=%s", space_id)
+            logger.warning(
+                "learning advice: unreadable answer space=%s output_tokens=%s (%s)",
+                space_id,
+                answer.usage.completion_tokens,
+                unreadable_note(answer),
+            )
             return "failed"
         await writes.write_advice(
             space_id=space_id,
