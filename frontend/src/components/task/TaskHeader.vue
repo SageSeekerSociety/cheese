@@ -141,6 +141,10 @@ const editorOpens = computed(() => (props.form === 'editor' ? props.blocks : [])
 /** 编辑器里那两个菜单由别处的按钮打开、挨着它摆：任务名旁边那一颗、那一组里的 ⋯。 */
 const infoEl = ref<HTMLElement | null>(null)
 const moreOpen = ref(false)
+// The menu closes itself on a press outside it, this button included: a press on the button
+// while it is open is a close, not a second open.
+let moreWasOpen = false
+let detailsWasOpen = false
 const moreEl = ref<HTMLElement | null>(null)
 const elementOf = (el: unknown): HTMLElement | null =>
   el instanceof HTMLElement ? el : ((el as { $el?: unknown } | null)?.$el as HTMLElement | null) ?? null
@@ -400,7 +404,8 @@ function actionTestId(id: string): string | undefined {
         :title="t('work.task.details')"
         :aria-label="t('work.task.details')"
         data-testid="task-details"
-        @click="detailsOpen = true"
+        @pointerdown="detailsWasOpen = detailsOpen"
+        @click="detailsOpen = !detailsWasOpen"
       />
     </div>
 
@@ -661,7 +666,8 @@ function actionTestId(id: string): string | undefined {
         :title="t('work.task.more')"
         :aria-label="t('work.task.more')"
         data-testid="task-more"
-        @click="moreOpen = true"
+        @pointerdown="moreWasOpen = moreOpen"
+        @click="moreOpen = !moreWasOpen"
       />
     </div>
     <div
