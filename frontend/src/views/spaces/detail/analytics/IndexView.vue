@@ -19,6 +19,8 @@ import PageHeader from '@/components/common/PageHeader.vue'
 const props = defineProps<{
   /** 正文那一格。页面从 `<router-view>` 的插槽里认出来，再递进来。 */
   page: Component | null
+  /** 正文是哪一格（路由名）。换一格才换这个值；同一格里改筛选条件不变。 */
+  pageKey?: string
   categoryItems: Array<{ title: string; value: number | null }>
   /** 已经落定的筛选条件（页面把它们写在地址上）。 */
   filters: SpaceAnalyticsQueryState
@@ -90,8 +92,15 @@ const applyPreset = (preset: '30d' | '180d' | 'all') => {
     />
 
     <div class="analytics-layout__body">
+      <!--
+        淡入淡出只认得「根上是一个元素」的一格。根上是几个并列节点的（「学情分析」是画面
+        加两个弹窗），离开时淡出那一步收不了尾，`out-in` 就一直等，新的一格永远进不来，
+        正文一片空白。所以每一格都先包进一个按路由名换的元素里，再交给淡入淡出。
+      -->
       <transition name="fade" mode="out-in">
-        <component :is="page" />
+        <div v-if="page" :key="pageKey" class="analytics-layout__page">
+          <component :is="page" />
+        </div>
       </transition>
     </div>
   </div>

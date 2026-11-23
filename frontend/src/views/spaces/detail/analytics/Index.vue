@@ -50,9 +50,10 @@ watch(
 </script>
 
 <template>
-  <router-view v-slot="{ Component: routedPage }">
+  <router-view v-slot="{ Component: routedPage, route }">
     <IndexView
       :page="asPage(routedPage)"
+      :page-key="String(route.name ?? route.path)"
       :category-items="categoryItems"
       :filters="filters"
       @apply="applyFilters"
