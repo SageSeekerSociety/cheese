@@ -68,6 +68,7 @@
         :narrow="false"
         :tab-strip-height="pageClaim?.tabStripHeight"
         @visible="pageHost.visible.value = $event"
+        @floating="pageHost.floating.value = $event"
         @activated="pageClaim?.onActivated?.($event)"
         @close="pageClaim?.onClose?.($event)"
         @keep="pageClaim?.onKeep?.($event)"

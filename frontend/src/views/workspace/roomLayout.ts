@@ -35,12 +35,17 @@
 //
 // 放大（页签栏或标题栏上的 ⤢）是布局层的；对话因此看不见的这段时间里有了新回复，那颗还原按钮
 // 上带一个点（对话这一块的信号）。挪过摆法之后，「恢复默认摆法」在页头 ⋯ 和命令面板里。
+//
+// 「对话」那一种摆法和频道页上带标题栏的每一块都能「弹出成浮窗」（标题栏上那一颗，布局层的），
+// 浮在页面上、能拖能改大小，「停靠回去」回到它默认的位置；浮着的那一块记在摆法里。它不占对话
+// 旁边的位置，所以不让开概览，也不挤走概览：概览摆在对话旁边时打开一块浮着的，概览留着；页头上
+// 它那一颗照样按下，再点一下照样关掉它（关掉的浮窗下次打开还浮在原处）。
 import type { ComputedRef, Ref } from 'vue'
 import type { LayoutNode } from '@/components/layout-area'
 import type { WorkLayout, WorkTabMeta } from '@/components/work/workLayout'
 import type { PagePanel, PagePanels, PagePanelsHandle } from '@/layouts/pagePanels'
 
-import { computed, reactive, ref, watch } from 'vue'
+import { computed, reactive, ref, shallowRef, watch } from 'vue'
 
 import { useCommands } from '@/commands'
 import { TASK_FILE_TREE_WIDTH } from '@/components/panels/taskFileTreeWidth'
@@ -252,12 +257,34 @@ export function useRoomLayout(
   }
 
   // ---- 任务页「对话」那一种摆法，和频道页 ----
-  const chat = reactive<{ overview: boolean; open: string[] }>({ overview: true, open: [] })
+  /**
+   * 读者开着的：概览开没开、别的几块（按打开的先后），和对话旁边那一处此刻归谁（`front`）：概览
+   * 和摆在那里的块只能有一方在，后打开的那一方在前。浮着的块不占那一处，不算哪一方。
+   */
+  const chat = reactive<{ overview: boolean; open: string[]; front: 'overview' | 'blocks' }>({
+    overview: true,
+    open: [],
+    front: 'overview',
+  })
+  /** 此刻浮在页面上的那几块（布局区里的 id）；外壳交回来之前是空的。 */
+  const floatingIds = shallowRef<ReadonlySet<string>>(new Set())
+  /** 一样浮着时它那一块在布局区里的 id（改动、现场有两处，浮着的是其中一处）。 */
+  function floatingCellIn(ids: ReadonlySet<string>, key: string): string | undefined {
+    const block = key.startsWith('terminal:') ? TERMINAL_BLOCK : key
+    return [block, SIDE_PREFIX + block].find((id) => ids.has(id))
+  }
+  const floatingCell = (key: string) => floatingCellIn(floatingIds.value, key)
+  const floats = (key: string) => floatingCell(key) !== undefined
+  // 停靠回去的一块回到对话旁边：和刚打开它一样，那一处归它。
+  watch(floatingIds, (now, before) => {
+    if (chat.open.some((key) => floatingCellIn(before, key) && !floatingCellIn(now, key))) chat.front = 'blocks'
+  })
   watch(
     () => opts.scope?.(),
     () => {
       chat.overview = true
       chat.open = []
+      chat.front = 'overview'
     }
   )
   /** 工作面板此刻有的那几样，加上终端那一块（有终端可开时）。 */
@@ -289,32 +316,39 @@ export function useRoomLayout(
   const chatBlocks = computed<ChatBlocks>(() => {
     if (opts.workHidden()) return { overview: false, open: [] }
     const keys = present()
-    return chat.overview
-      ? { overview: true, open: [] }
-      : { overview: false, open: chat.open.filter((k) => keys.has(k)) }
+    const open = chat.open.filter((key) => keys.has(key))
+    const beside = open.filter((key) => !floats(key))
+    const overviewBeside = !floats('overview')
+    // 对话旁边那一处归概览时摆在那里的块让开；归那几块时概览让开，它们都关掉了概览就回来。
+    const overview = chat.overview && (!overviewBeside || chat.front === 'overview' || beside.length === 0)
+    const blocksYield = chat.overview && overviewBeside && chat.front === 'overview'
+    return { overview, open: open.filter((key) => floats(key) || !blocksYield) }
   })
-  /** 对话右边那一栏里有东西：改动、现场去窄栏。 */
-  const mainOpen = computed(() => chatBlocks.value.open.some(mainKind))
+  /** 对话右边那一栏里有东西（浮着的不算）：改动、现场去窄栏。 */
+  const mainOpen = computed(() => chatBlocks.value.open.some((key) => mainKind(key) && !floats(key)))
   /** 工作面板的一样此刻摆在布局区里的哪一块（「对话」那一种摆法和编辑器里两者不同）。 */
   function cellOf(key: string): string {
     const kind = opts.kind()
     if (kind === 'editor') return editorCellOf(key)
     if (kind !== 'task') return key
     if (key.startsWith('terminal:')) return TERMINAL_BLOCK
-    return SIDE_KINDS.includes(key) && mainOpen.value ? SIDE_PREFIX + key : key
+    if (!SIDE_KINDS.includes(key)) return key
+    return floatingCell(key) ?? (mainOpen.value ? SIDE_PREFIX + key : key)
   }
   /** 布局区里的一块装的是工作面板的哪一样。 */
   const contentOf = (id: string) => (id.startsWith(SIDE_PREFIX) ? id.slice(SIDE_PREFIX.length) : id)
   /**
-   * 「对话」那一种摆法和频道页上显示一块：概览让开别的，别的让开概览。频道页上一处一次一样：
-   * 换下去的是一件任务或一份文件时，它随之关掉。
+   * 「对话」那一种摆法和频道页上显示一块：概览让开别的，别的让开概览；浮着的一块（或浮着的概览）
+   * 不占对话旁边的位置，谁也不让。频道页上一处一次一样：换下去的是一件任务或一份文件时，它随之关掉。
    */
   function openBlock(key: string) {
-    if (key === 'overview') chat.overview = true
-    else if (opts.kind() === 'room') {
+    if (key === 'overview') {
+      chat.overview = true
+      chat.front = 'overview'
+    } else if (opts.kind() === 'room') {
       const place = placeOf(key)
       if (!place || !present().has(key)) return
-      chat.overview = false
+      if (!floats(key)) chat.front = 'blocks'
       const before = chat.open.find((one) => placeOf(one) === place)
       if (before === key) return
       const rest = chat.open.filter((one) => one !== before)
@@ -324,29 +358,31 @@ export function useRoomLayout(
     } else {
       const block = key.startsWith('terminal:') ? TERMINAL_BLOCK : key
       if (block !== TERMINAL_BLOCK && !present().has(block)) return
-      chat.overview = false
+      if (!floats(block)) chat.front = 'blocks'
       if (!chat.open.includes(block)) chat.open = [...chat.open, block]
     }
   }
   /**
    * 关掉一块（标题栏上的 ✕、页头上再点一下开着的那一颗）。工作面板先听到（它此刻在看的那一样
-   * 换成还开着的一块）；关的是概览时，它让开的那几块回来。一块都不剩时对话占满：工作面板那一侧
-   * 收起来，下一次打开从概览开始。
+   * 换成还开着的一块）；关的是概览时，它让开的那几块回来。屏幕上一块都不剩时对话占满：工作面板
+   * 那一侧收起来，下一次打开从概览开始（让开了的概览不因此回来）。
    */
   function closeBlock(key: string) {
     opts.onClose(key)
+    const overviewWasShown = chatBlocks.value.overview
     if (key === 'overview') chat.overview = false
     else chat.open = chat.open.filter((one) => one !== key)
-    const keys = present()
-    if (chat.overview || chat.open.some((one) => keys.has(one))) return
+    const left = chatBlocks.value
+    if (left.open.length || (left.overview && overviewWasShown)) return
     chat.overview = true
     chat.open = []
+    chat.front = 'overview'
     opts.hide.run()
   }
 
   function chatSpec(): PagePanels {
     const shown = chatBlocks.value
-    const inSight = (key: string) => (shown.overview ? key === 'overview' : shown.open.includes(key))
+    const inSight = (key: string) => (key === 'overview' ? shown.overview : shown.open.includes(key))
     const block = (tab: RoomWorkTab, id: string, hidden: boolean): PagePanel => ({
       id,
       title: tab.title,
@@ -366,9 +402,10 @@ export function useRoomLayout(
         return [{ ...block(tab, tab.key, !inSight(tab.key)), transient: true, group: OPENED_GROUP, below: 'preview' }]
       }
       if (SIDE_KINDS.includes(tab.key)) {
+        const here = cellOf(tab.key)
         return [
-          block(tab, tab.key, !(inSight(tab.key) && !mainOpen.value)),
-          { ...block(tab, SIDE_PREFIX + tab.key, !(inSight(tab.key) && mainOpen.value)), width: SIDE_WIDTH },
+          block(tab, tab.key, !(inSight(tab.key) && here === tab.key)),
+          { ...block(tab, SIDE_PREFIX + tab.key, !(inSight(tab.key) && here !== tab.key)), width: SIDE_WIDTH },
         ]
       }
       return [block(tab, tab.key, !inSight(tab.key))]
@@ -425,7 +462,7 @@ export function useRoomLayout(
   /** 频道页：概览一栏窄的目录，右边两处各显示一样（见文件头）。 */
   function channelSpec(): PagePanels {
     const shown = chatBlocks.value
-    const inSight = (key: string) => (shown.overview ? key === 'overview' : shown.open.includes(key))
+    const inSight = (key: string) => (key === 'overview' ? shown.overview : shown.open.includes(key))
     const work: PagePanel[] = opts.tabs().map((tab): PagePanel => {
       const base: PagePanel = {
         id: tab.key,
@@ -540,6 +577,12 @@ export function useRoomLayout(
   }
 
   const panels = usePanels(spec)
+  // 只在那几块真的变了时换：页面每交一次，外壳那边的集合都是新的，而摆法又跟着它交。
+  watch(
+    () => [...panels.floating.value].sort().join('\n'),
+    (ids) => (floatingIds.value = new Set(ids ? ids.split('\n') : [])),
+    { immediate: true, flush: 'sync' }
+  )
 
   /**
    * 显示一样。「对话」那一种摆法和频道页里打开它那一块（概览让开，或别的让开概览）。编辑器里

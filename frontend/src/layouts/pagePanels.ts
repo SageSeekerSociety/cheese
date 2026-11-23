@@ -13,7 +13,8 @@
  * The page never learns which cell a panel is in. It can ask for a panel to be shown (its
  * cell opens and it becomes the visible tab there), for one panel's cell to fill the area
  * (maximize) and give the space back, and it can hide a panel for now. It hears which tab
- * the reader picked, which panels are on screen, and a transient tab closed or kept.
+ * the reader picked, which panels are on screen, which float over the others (popped out of
+ * their cells by the reader), and a transient tab closed or kept.
  *
  * Where no shell provides this (phone and tablet layouts, a component mounted on its
  * own), `active` is false and the page lays its panels out in place.
@@ -83,6 +84,8 @@ export interface PagePanelsHost {
   maximized: Ref<string | null>
   /** The panels on screen now. */
   visible: Ref<string[]>
+  /** The panels floating over the area, popped out of their cells. */
+  floating: Ref<string[]>
   /** The shell's layout area, while it is mounted. */
   area: ShallowRef<PagePanelsArea | null>
   /** A panel a page asked to show before the area was mounted. */
@@ -99,6 +102,7 @@ export function providePagePanels(): PagePanelsHost {
     headOutlets: reactive({}),
     maximized: ref(null),
     visible: ref([]),
+    floating: ref([]),
     area: shallowRef(null),
     pendingShow: ref(null),
   }
@@ -124,6 +128,8 @@ export interface PagePanelsHandle {
   restore: () => void
   /** The page's panels on screen now (the visible tab of each cell in sight). */
   visible: ComputedRef<ReadonlySet<string>>
+  /** The page's panels floating over the others: they take no place in the page's rows and columns. */
+  floating: ComputedRef<ReadonlySet<string>>
   /** Shows a panel: brings it back if it was closed, opens its cell, makes it the visible tab. */
   show: (id: string) => void
   /** The reader has moved the page's panels away from its default arrangement. */
@@ -185,6 +191,9 @@ export function usePagePanels(spec: () => PagePanels | null): PagePanelsHandle {
     },
     visible: computed(
       () => new Set(active.value ? host!.visible.value.filter((id) => declared.value.includes(id)) : [])
+    ),
+    floating: computed(
+      () => new Set(active.value ? host!.floating.value.filter((id) => declared.value.includes(id)) : [])
     ),
     show: (id) => {
       if (!host || !active.value) return
