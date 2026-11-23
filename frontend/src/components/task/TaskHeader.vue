@@ -143,8 +143,8 @@ const infoEl = ref<HTMLElement | null>(null)
 const moreOpen = ref(false)
 // The menu closes itself on a press outside it, this button included: a press on the button
 // while it is open is a close, not a second open.
-let moreWasOpen = false
-let detailsWasOpen = false
+const moreWasOpen = ref(false)
+const detailsWasOpen = ref(false)
 const moreEl = ref<HTMLElement | null>(null)
 const elementOf = (el: unknown): HTMLElement | null =>
   el instanceof HTMLElement ? el : ((el as { $el?: unknown } | null)?.$el as HTMLElement | null) ?? null
