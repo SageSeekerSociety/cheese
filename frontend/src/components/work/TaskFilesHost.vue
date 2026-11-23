@@ -107,7 +107,7 @@ defineExpose({
     :agent-name="props.agentName"
     :single="!!props.path"
     :tree="given ? props.tree : ownTree"
-    :language="given ? props.language : ownLanguage?.value ?? null"
+    :language="given ? props.language : ownLanguage ?? null"
     @open-beside="emit('open-beside', $event)"
   />
 </template>

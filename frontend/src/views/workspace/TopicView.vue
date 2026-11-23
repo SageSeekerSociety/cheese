@@ -55,7 +55,7 @@ import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
 import { openRoomTasksQuery, roomTaskQuery } from '@/query/room'
 import { useWorkspaceStore } from '@/stores/workspace'
-import { CONVERSATION, useRoomLayout } from '@/views/workspace/roomLayout'
+import { CONVERSATION, type RoomWorkTab, useRoomLayout } from '@/views/workspace/roomLayout'
 import TopicChatColumn from '@/views/workspace/TopicChatColumn.vue'
 import { useChannelOverview } from '@/views/workspace/useChannelOverview'
 import { useTaskOverview } from '@/views/workspace/useTaskOverview'
@@ -412,7 +412,7 @@ function fixedTabs(): WorkTabMeta[] {
   )
 }
 /** 工作面板此刻有哪几格：固定的几格，打开的任务，打开的文件。 */
-function workTabs() {
+function workTabs(): RoomWorkTab[] {
   const handle = panelRef.value as WorkPanelMeta | null
   return [
     ...fixedTabs().map((tab) => ({ ...tab, alwaysRender: tab.key === 'preview' })),
