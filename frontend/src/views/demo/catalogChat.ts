@@ -269,7 +269,7 @@ export const CHAT_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '加不了人',
-        note: '在支线里回话、自己没加入这个公开频道也不管它：不给添加的按钮，说清楚只有频道里的人能添加成员。',
+        note: '在讨论串里回话、自己没加入这个公开频道也不管它：不给添加的按钮，说清楚只有频道里的人能添加成员。',
         props: { names: '张衡', membersOnly: false, mayAdd: false },
         expect: '只有频道里的人能添加成员',
       },

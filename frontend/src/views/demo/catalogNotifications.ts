@@ -309,16 +309,16 @@ export const NOTIFICATION_ENTRIES: CatalogEntry[] = [
   {
     id: 'render-thread-reply-notification',
     title: 'RenderThreadReplyNotification',
-    about: '一条「你参与过的支线里有人回复了」的动态：谁回复的、在哪个频道，下面是那条回复的开头。',
+    about: '一条「你参与过的讨论串里有人回复了」的动态：谁回复的、在哪个频道，下面是那条回复的开头。',
     file: 'src/components/common/Notification/renders/RenderThreadReplyNotification.vue',
     component: RenderThreadReplyNotification,
     needs: TEXT,
     states: [
       {
-        name: '支线里的一条回复',
-        note: '点开落在支线里的那条回复上（`threadId` + `blockId`）。',
+        name: '讨论串里的一条回复',
+        note: '点开落在讨论串里的那条回复上（`threadId` + `blockId`）。',
         props: { notification: channelMessageNotification('THREAD_REPLY') },
-        expect: '林夏 在「课程安排」的支线里回复了',
+        expect: '林夏 在「课程安排」的讨论串里回复了',
       },
     ],
   },

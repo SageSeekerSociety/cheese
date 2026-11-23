@@ -189,7 +189,7 @@ export const CATALOG: CatalogEntry[] = [
   ...VIEW_ENTRIES,
   // 频道和私聊「文件」那一格在自己的文件里：`catalogChannelFiles.ts`。
   ...CHANNEL_FILES_ENTRIES,
-  // 频道那两个弹窗（删频道前的确认、新建支线）在自己的文件里：`catalogChannelDialogs.ts`。
+  // 频道那两个弹窗（删频道前的确认、新建讨论串）在自己的文件里：`catalogChannelDialogs.ts`。
   ...CHANNEL_DIALOG_ENTRIES,
   // 反馈详情那一组（从详情页右栏拆出来的处理人、评论条、评论楼、进展时间线，数据在
   // `catalogFeedbackFixtures.ts`）在自己的文件里：`catalogFeedback.ts`。

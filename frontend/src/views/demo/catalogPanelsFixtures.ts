@@ -13,7 +13,7 @@
  *     是 ref 或 computed（和产品里那一样一致），动作是什么都不做的函数。一包里有哪几样
  *     由返回类型守着，少一样 typecheck 就报错；壳子只是把包摊开递给 View，所以画出来
  *     的就是 View 那几格。
- *   - 剧本没演到的（定时规则、支线、很长的一份 diff），照各自的类型造，人和房间仍然
+ *   - 剧本没演到的（定时规则、讨论串、很长的一份 diff），照各自的类型造，人和房间仍然
  *     是剧本里那几位。
  *
  * 单独一份文件：`catalogFixtures.ts` 已经九百多行，再加会顶到一千行的上限。条目在
@@ -621,15 +621,15 @@ export function checklistAt(step: number): TodoItem[] {
   return typeof checklist === 'object' ? checklist.items : []
 }
 
-// ---- 支线 -----------------------------------------------------------------------
+// ---- 讨论串 -----------------------------------------------------------------------
 
-/** 剧本里一条消息读成支线的一句（作者、正文、时间）。 */
+/** 剧本里一条消息读成讨论串的一句（作者、正文、时间）。 */
 function replyOf(step: number, who: string, index = 0): ThreadReply {
   const block = frame(step).chat.filter((l) => l.block?.kind === 'message' && l.author === who)[index].block!
   return { author: block.author, content: block.content, created_at: block.created_at }
 }
 
-/** 第二条支线下面那一句：剧本里没人在「先记一下」下面回话，照支线的类型造一句，
+/** 第二条讨论串下面那一句：剧本里没人在「先记一下」下面回话，照讨论串的类型造一句，
  *  说话的仍是芝士，时间在那条消息之后。 */
 const NOTE_ROOT = replyOf(0, 'wang')
 const NOTE_REPLY: ThreadReply = {
@@ -638,7 +638,7 @@ const NOTE_REPLY: ThreadReply = {
   created_at: new Date(Date.parse(NOTE_ROOT.created_at) + 5 * 60_000).toISOString(),
 }
 
-/** 两条支线：王长鑫点名芝士的那句下面芝士回了话；另一条芝士回了一句，后来转成了任务。 */
+/** 两条讨论串：王长鑫点名芝士的那句下面芝士回了话；另一条芝士回了一句，后来转成了任务。 */
 export const THREAD_ROWS: ThreadRow[] = [
   {
     id: 'thread-1',
@@ -666,7 +666,7 @@ export const THREAD_ROWS: ThreadRow[] = [
   },
 ]
 
-/** 一条收起来的支线（`thread/recycle.py`）：报错满三天、没人回来的那条。
+/** 一条收起来的讨论串（`thread/recycle.py`）：报错满三天、没人回来的那条。
  *  「已回收」那一栏画的就是它，和开着的那些同一个形状，多一个收起来的时刻。 */
 export const RECYCLED_THREAD_ROW: ThreadRow = {
   id: 'thread-recycled',
@@ -683,7 +683,7 @@ export const RECYCLED_THREAD_ROW: ThreadRow = {
   recycled_at: '2026-10-24T02:00:00Z',
 }
 
-/** 支线行上的时刻：和话题页的写法一样，今天的写时分，更早的写月日。 */
+/** 讨论串行上的时刻：和话题页的写法一样，今天的写时分，更早的写月日。 */
 export function threadTime(iso: string): string {
   const at = new Date(iso)
   return at.toDateString() === new Date().toDateString()
