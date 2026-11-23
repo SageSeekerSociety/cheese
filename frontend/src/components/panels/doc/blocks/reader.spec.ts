@@ -74,6 +74,23 @@ describe('reading Markdown outside the editor', () => {
     }
   })
 
+  // A link that stays in the app must not carry `target="_blank"`: in the
+  // desktop app the window sends every `_blank` to the system browser, so a
+  // link to a page of this app (a challenge's own requirements) left the app.
+  // A link out still opens in another window.
+  it('opens a link into the app here, and a link out in another window', () => {
+    const host = show(
+      '[查看完整赛题要求](/spaces/3/tasks/9)\n\n[资料](https://example.com/x)\n\n[联系](mailto:a@b.com)',
+      { as: 'chat' }
+    )
+    const links = Array.from(host.querySelectorAll('a')).map((a) => [a.getAttribute('href'), a.getAttribute('target')])
+    expect(links).toEqual([
+      ['/spaces/3/tasks/9', null],
+      ['https://example.com/x', '_blank'],
+      ['mailto:a@b.com', '_blank'],
+    ])
+  })
+
   it('shows a reference as the name it points to, but leaves code as written', () => {
     const host = show('交给 <@zhangsan> 看 `<@zhangsan>`', {
       as: 'chat',

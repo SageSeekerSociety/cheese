@@ -13,6 +13,8 @@ import type { RefNames } from '@/lib/refChip'
 
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
+import { useInAppLinks } from '@/composables/useInAppLinks'
+
 import { refsVersion } from '@/lib/refDirectory'
 import { renderPlain } from '@/lib/renderMessage'
 
@@ -70,6 +72,9 @@ onBeforeUnmount(() => {
   gone = true
   stop?.()
 })
+
+// 正文里指向站内页面的链接在应用里翻页，不整页重载（useInAppLinks）。
+useInAppLinks(host)
 
 /** 画出来的那块 DOM：要从读者的选区算出原文的地方（文件预览的引用）用它。 */
 defineExpose({ el: host })
