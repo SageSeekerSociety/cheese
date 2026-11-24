@@ -1,9 +1,9 @@
 """Feishu / Lark documents over the open platform API.
 
-Two ways in: the platform's own app (app_id + app_secret, held by the platform
-administrator, tenant token — sees the documents shared with the app), or the
-owner's user authorization (sees what the owner sees, and is the only way the
-search API answers). Every failure becomes ``IntegrationError`` with a kind:
+Two ways in, both through the self-built app the connection's owner brought
+from their own company: the app itself (app_id + app_secret, tenant token —
+sees the documents shared with the app), or the owner's user authorization
+(sees what the owner sees, and is the only way the search API answers). Every failure becomes ``IntegrationError`` with a kind:
 expired or missing authorization, no permission on that document, not found, or
 the service failing.
 """
@@ -61,8 +61,9 @@ BLOCK_KEY = {
 #: What the owner is asked to grant: keeping the authorization past the access
 #: token's two hours (``offline_access`` — without it Feishu issues no refresh
 #: token), searching their documents, and reading and writing them. The
-#: platform's app has to have each of these enabled in Feishu's developer
-#: console, or the authorization page refuses everyone (20027).
+#: owner's app has to have each of these enabled in Feishu's developer console,
+#: or the authorization page refuses them (20027). The import JSON the
+#: connections page offers (``MyConnectionsViewView.vue``) lists the same three.
 USER_SCOPES = ("offline_access", "search:docs:read", "docx:document")
 
 

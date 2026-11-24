@@ -1,12 +1,10 @@
 {
   "member": {
     "connect": "连接飞书",
-    "notConfigured": "管理员还没配置平台的飞书应用，可以用你公司自己的飞书应用连接",
     "notConnected": "还没连接飞书",
     "ownApp": {
-      "open": "用自己公司的飞书应用",
-      "title": "用自己公司的飞书应用",
-      "why": "企业自建应用只能连同一家企业的飞书账号。你的飞书属于别的公司时，先在你公司的飞书里建一个应用，再把它的凭据填在这里。",
+      "title": "连接飞书",
+      "why": "Cheese 通过你公司自己的飞书应用连接你的飞书账号：在你公司的飞书里建一个企业自建应用，把它的凭据填在这里。",
       "step1": "在飞书开放平台（{console}）创建一个「企业自建应用」。",
       "step2": "在「安全设置」里添加这个重定向 URL，并打开「刷新 user_access_token」：",
       "step3": "在「权限管理」里点「批量导入/导出权限」，粘贴这段权限配置并申请开通：",
@@ -18,23 +16,10 @@
       "copied": "已复制",
       "setupTitle": "还没有这个应用？照这几步在你公司的飞书里建一个",
       "redirectLabel": "重定向 URL",
-      "copy": "复制"
+      "copy": "复制",
+      "domain": "版本",
+      "appId": "App ID",
+      "appSecret": "App Secret"
     }
-  },
-  "admin": {
-    "sub": "这里填一次，和这个应用同一家企业的成员在「我的连接」里点一下就接上了；飞书属于别的公司的成员用自己公司的应用连接。",
-    "appId": "App ID",
-    "appSecret": "App Secret",
-    "domain": "版本",
-    "secretHint": "留空表示不改已经存下的那一个",
-    "save": "保存",
-    "saved": "已保存",
-    "saveFailed": "保存失败",
-    "loadFailed": "飞书应用加载失败",
-    "retry": "重试",
-    "configured": "已配置",
-    "notConfigured": "还没配置",
-    "updatedBy": "最后由 {handle} 更新",
-    "appIdRequired": "先填 App ID"
   }
 }

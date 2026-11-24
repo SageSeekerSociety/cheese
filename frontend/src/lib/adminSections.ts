@@ -176,14 +176,6 @@ export const ADMIN_SECTIONS: AdminSectionDef[] = [
     group: 'settings',
   },
   {
-    to: '/admin/integrations',
-    name: 'AdminIntegrations',
-    icon: 'mdi-connection',
-    labelKey: 'navigation.admin.integrations',
-    badge: false,
-    group: 'settings',
-  },
-  {
     to: '/admin/integration-health',
     name: 'AdminIntegrationHealth',
     icon: 'mdi-lan-check',

@@ -1,12 +1,10 @@
 {
   "member": {
     "connect": "Connect Feishu",
-    "notConfigured": "An administrator has not configured the platform's Feishu app. You can connect with your own company's Feishu app",
     "notConnected": "Not connected to Feishu yet",
     "ownApp": {
-      "open": "Use my company's Feishu app",
-      "title": "Use my company's Feishu app",
-      "why": "A custom app only connects Feishu accounts in its own organization. If your Feishu belongs to another company, create an app in your company's Feishu first, then enter its credentials here.",
+      "title": "Connect Feishu",
+      "why": "Cheese connects to your Feishu account through your own company's app: create a custom app in your company's Feishu and enter its credentials here.",
       "step1": "On the Feishu developer console ({console}), create a custom app.",
       "step2": "Under Security Settings, add this redirect URL and turn on refreshing user_access_token:",
       "step3": "Under Permissions, choose batch import/export and paste this configuration, then apply for it:",
@@ -18,23 +16,10 @@
       "copied": "Copied",
       "setupTitle": "No app yet? Create one in your company's Feishu with these steps",
       "redirectLabel": "Redirect URL",
-      "copy": "Copy"
+      "copy": "Copy",
+      "domain": "Domain",
+      "appId": "App ID",
+      "appSecret": "App Secret"
     }
-  },
-  "admin": {
-    "sub": "Fill this in once and members in this app's organization connect with one click in My connections; members whose Feishu belongs to another company connect with their own company's app.",
-    "appId": "App ID",
-    "appSecret": "App Secret",
-    "domain": "Domain",
-    "secretHint": "Leave empty to keep the saved one",
-    "save": "Save",
-    "saved": "Saved",
-    "saveFailed": "Could not save",
-    "loadFailed": "Lark integration failed to load",
-    "retry": "Retry",
-    "configured": "Configured",
-    "notConfigured": "Not configured",
-    "updatedBy": "Last updated by {handle}",
-    "appIdRequired": "Enter the App ID first"
   }
 }

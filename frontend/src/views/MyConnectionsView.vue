@@ -5,10 +5,10 @@
 // 画的那一半在 `MyConnectionsViewView.vue`：这里只留下请求、地址和 toast，画面只收
 // props、只 emit。邮箱表单的那份草稿跟着画面走 —— 每个字段都是那边的元素。
 import type { Integration, MailDraft } from '../api'
-import type { FeishuAvailability, FeishuOwnApp } from '../api/feishu'
+import type { FeishuOwnApp } from '../api/feishu'
 import type { Project } from '../cx_types'
 
-import { computed, onMounted, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import {
@@ -21,7 +21,7 @@ import {
   sendMailDraft,
   updateIntegration,
 } from '../api'
-import { claimFeishuHandoff, connectFeishu, feishuAuthorizeUrl, feishuAvailability } from '../api/feishu'
+import { claimFeishuHandoff, connectFeishu, feishuAuthorizeUrl, feishuSetup } from '../api/feishu'
 
 import MyConnectionsViewView from './MyConnectionsViewView.vue'
 
@@ -38,16 +38,9 @@ const router = useRouter()
 const integrations = ref<Integration[]>([])
 const drafts = ref<MailDraft[]>([])
 const projects = ref<Project[]>([])
-/** 平台管理员配过飞书应用没有。没配时「连接飞书」改走成员自己公司的应用那张表单 ——
- *  去平台应用那条路必然失败，只会把人送到一句报错上。 */
-const feishu = ref<FeishuAvailability>({ configured: false, app_id: '', domain: '', redirect_uri: '' })
-/** 上面那个问题问到答案没有。读不到时照旧走平台应用 —— 没读到不等于没配，而「管理员还没
- *  配置飞书应用」是一句会被当真的话：宁可让人按下去，由服务端回那句实话。 */
-const feishuKnown = ref(false)
-/** 还在问：按钮先灰着，不然还不知道按下去该走哪条路。 */
-const feishuAsking = ref(true)
-/** 确定没配：按钮打开自己公司应用那张表单，底下写明为什么。 */
-const feishuMissing = computed(() => feishuKnown.value && !feishu.value.configured)
+/** 成员自己公司的应用要填的授权回调地址（「连接飞书」那张表单上的重定向 URL）。读不到
+ *  就是空的：表单照样能填，只是那一格不画。 */
+const feishuRedirectUri = ref('')
 const loading = ref(false)
 const error = ref('')
 /** 从飞书授权回来时地址栏里的结果（`?feishu=`）：一个结果码，或者平台那句拒绝的
@@ -75,10 +68,10 @@ const busy = ref('')
 async function load() {
   loading.value = true
   error.value = ''
-  // 应用配没配与上面三项并行发起，但单独结算：问不到不该把整页的连接一起掀掉。
-  const feishuRead = feishuAvailability().then(
-    (got) => ({ ok: true as const, got }),
-    () => ({ ok: false as const })
+  // 回调地址与下面三项并行发起，但单独结算：问不到不该把整页的连接一起掀掉。
+  const setupRead = feishuSetup().then(
+    (got) => got.redirect_uri,
+    () => ''
   )
   try {
     const [mine, waiting, projectList] = await Promise.all([
@@ -94,14 +87,7 @@ async function load() {
   } finally {
     loading.value = false
   }
-  const feishuRes = await feishuRead
-  if (feishuRes.ok) {
-    feishu.value = feishuRes.got
-    feishuKnown.value = true
-  } else {
-    feishuKnown.value = false
-  }
-  feishuAsking.value = false
+  feishuRedirectUri.value = await setupRead
 }
 
 function replace(row: Integration) {
@@ -140,31 +126,22 @@ async function authorize(row: Integration) {
 /**
  * 「连接飞书」：两跳一步。
  *
- * 先要自己那一行（`POST /me/integrations/feishu`），再拿它的授权地址跳去飞书 —— 回调
- * 要靠行 id 找回它是谁（见 `feishu_callback` 的 `state`），所以顺序不能反过来。不带
- * `ownApp` 时这一行没有任何凭据：应用是平台管理员的，成员出的是自己的账号；带了就是成员
- * 自己公司的应用，那张表单的结果用 `done` 带回去（没成时把服务端那句话留在表单底下）。
+ * 先要自己那一行（`POST /me/integrations/feishu`，带上成员自己公司应用的 App ID / Secret），
+ * 再拿它的授权地址跳去飞书 —— 回调要靠行 id 找回它是谁（见 `feishu_callback` 的 `state`），
+ * 所以顺序不能反过来。表单的结果用 `done` 带回去：没成时把服务端那句话留在表单底下。
  */
-async function connectFeishuAccount(ownApp: FeishuOwnApp | null, done?: (ok: boolean, message?: string) => void) {
-  let row: Integration | undefined
-  if (done) {
-    busy.value = 'feishu:connect'
-    try {
-      row = await connectFeishu(ownApp ?? undefined)
-      done(true)
-    } catch (e) {
-      done(false, e instanceof Error ? e.message : t('account.connections.connectFailed'))
-    } finally {
-      busy.value = ''
-    }
-  } else {
-    row = await act('feishu:connect', () => connectFeishu())
+async function connectFeishuAccount(app: FeishuOwnApp, done: (ok: boolean, message?: string) => void) {
+  let row: Integration
+  try {
+    row = await connectFeishu(app)
+  } catch (e) {
+    done(false, e instanceof Error ? e.message : t('account.connections.connectFailed'))
+    return
   }
-  if (!row) return
-  const got = row
-  if (integrations.value.some((x) => x.id === got.id)) replace(got)
-  else integrations.value = [...integrations.value, got]
-  await authorize(got)
+  done(true)
+  if (integrations.value.some((x) => x.id === row.id)) replace(row)
+  else integrations.value = [...integrations.value, row]
+  await authorize(row)
 }
 
 async function remove(row: Integration) {
@@ -235,9 +212,7 @@ onMounted(async () => {
     :loading="loading"
     :error="error"
     :busy="busy"
-    :feishu-missing="feishuMissing"
-    :feishu-asking="feishuAsking"
-    :feishu-redirect-uri="feishu.redirect_uri"
+    :feishu-redirect-uri="feishuRedirectUri"
     @refresh="load"
     @discard="discard"
     @send="send"

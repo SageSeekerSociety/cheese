@@ -5,12 +5,10 @@ AI teammates may use it, and sends a drafted mail. A teammate in a granted
 project may search, read, fetch attachments, write drafts, and read and write
 Feishu documents — always as the owner's account, never as the platform's.
 
-The Feishu app those documents are reached through is either the platform's,
-configured once by a platform administrator (``FeishuApp``,
-``/admin/integrations/feishu``), or the member's own: a self-built app lives in
-one Feishu tenant, so a member whose Feishu belongs to another company connects
-with an app built in that company, its ``app_id`` and ``app_secret`` kept on the
-connection itself.
+The Feishu app those documents are reached through is the member's own: a
+self-built app lives in one Feishu tenant, so each member connects with an app
+built in their own company, its ``app_id`` and ``app_secret`` kept on the
+connection itself. The platform holds no app of its own.
 """
 
 from __future__ import annotations
@@ -37,12 +35,7 @@ from app.core.sentences import say
 from app.domain.integration import mail
 from app.domain.integration.feishu import FeishuClient, FeishuSettings
 from app.domain.integration.mail import IntegrationError, MailSettings
-from app.domain.integration.models import (
-    FEISHU_APP_ROW_ID,
-    FeishuApp,
-    Integration,
-    MailDraft,
-)
+from app.domain.integration.models import Integration, MailDraft
 from app.domain.integration.ports import RoomFiles, TeammateNames
 
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
@@ -64,82 +57,6 @@ def unseal(row: Integration) -> dict:
     )
 
 
-#: What the platform app's secret is sealed to. That row is a singleton with a
-#: fixed integer key, so binding to a name says what a ciphertext belongs to
-#: where "1" would only say it belongs to some row.
-FEISHU_APP_BINDING = "platform-feishu-app"
-
-
-def seal_app(row: FeishuApp, secret: dict) -> None:
-    row.secret = encrypt(
-        Purpose.INTEGRATION_SECRET, json.dumps(secret), bound_to=FEISHU_APP_BINDING
-    )
-
-
-def unseal_app(row: FeishuApp) -> dict:
-    if not row.secret:
-        return {}
-    return json.loads(
-        decrypt(Purpose.INTEGRATION_SECRET, row.secret, bound_to=FEISHU_APP_BINDING)
-    )
-
-
-def feishu_app_view(row: FeishuApp | None) -> dict:
-    """The platform app as the admin page sees it. Never carries the secret.
-
-    ``configured`` is the answer to the only question the page asks first, and
-    ``None`` — no administrator has saved one — is an answer, not an error.
-    """
-    if row is None:
-        return {
-            "configured": False,
-            "app_id": "",
-            "domain": "feishu",
-            "updated_by": "",
-            "updated_at": None,
-        }
-    return {
-        "configured": True,
-        "app_id": row.app_id,
-        "domain": row.domain,
-        "updated_by": row.updated_by,
-        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
-    }
-
-
-class FeishuAppService:
-    """The one Feishu app the platform holds: read by everybody, written by an
-    administrator. Nothing here is per person."""
-
-    def __init__(self, session: AsyncSession):
-        self._session = session
-
-    async def current(self) -> FeishuApp | None:
-        return await self._session.get(FeishuApp, FEISHU_APP_ROW_ID)
-
-    async def save(
-        self, *, app_id: str, app_secret: str, domain: str, by: str
-    ) -> FeishuApp:
-        """Save the password-style update: an empty ``app_secret`` keeps the one
-        already stored, so the page can be saved without retyping the secret it
-        never shows."""
-        if domain not in ("feishu", "lark"):
-            raise ValidationError(say("feishuDomainInvalid"))
-        row = await self.current()
-        if row is None:
-            row = FeishuApp(id=FEISHU_APP_ROW_ID, secret="")
-        if app_secret:
-            seal_app(row, {"app_secret": app_secret})
-        elif not row.secret:
-            raise ValidationError(say("feishuAppSecretRequired"))
-        row.app_id = app_id
-        row.domain = domain
-        row.updated_by = by
-        self._session.add(row)
-        await self._session.flush()
-        return row
-
-
 def mail_settings(row: Integration) -> MailSettings:
     config = row.config
     return MailSettings(
@@ -153,52 +70,21 @@ def mail_settings(row: Integration) -> MailSettings:
     )
 
 
-def feishu_settings(row: Integration, app: FeishuApp | None = None) -> FeishuSettings:
-    """Which app credentials this connection is used with.
-
-    A connection carrying its own ``app_id`` (and the sealed ``app_secret`` next
-    to it) is used with those — its owner's Feishu is a tenant the platform's app
-    does not reach (``connect_under_own_app``). Every other connection goes
-    through the app the platform administrator configured, read here at the
-    moment of the call so a rotated secret reaches it; with none configured there
-    is nothing to call with and the person is told whose job that is.
-    """
+def feishu_settings(row: Integration) -> FeishuSettings:
+    """The app credentials and the owner's tokens this connection is used with:
+    the self-built app its owner brought (``config.app_id``, the sealed
+    ``app_secret``), and whatever authorization the owner gave it."""
     secret = unseal(row)
-    own_app_id = row.config.get("app_id")
-    if own_app_id:
-        app_id = own_app_id
-        app_secret = secret.get("app_secret") or ""
-        domain = row.config.get("domain", "feishu")
-    elif app is not None:
-        app_id = app.app_id
-        app_secret = unseal_app(app).get("app_secret") or ""
-        domain = app.domain
-    else:
-        raise ValidationError(say("feishuAppNotConfigured"))
     return FeishuSettings(
-        app_id=app_id,
-        app_secret=app_secret,
-        domain=domain,
+        app_id=row.config["app_id"],
+        app_secret=secret.get("app_secret") or "",
+        domain=row.config.get("domain", "feishu"),
         user_access_token=secret.get("user_access_token"),
         user_token_expires_at=secret.get("user_token_expires_at"),
         refresh_token=secret.get("refresh_token"),
         refresh_token_expires_at=secret.get("refresh_token_expires_at"),
         folders=list(row.config.get("folders") or []),
     )
-
-
-async def feishu_settings_for(
-    session: AsyncSession, row: Integration
-) -> FeishuSettings:
-    """``feishu_settings`` with the platform app read from the database.
-
-    The read is skipped for a connection that carries its own credentials: the
-    platform's app plays no part in it.
-    """
-    app = (
-        None if row.config.get("app_id") else await FeishuAppService(session).current()
-    )
-    return feishu_settings(row, app)
 
 
 def keep_feishu_tokens(row: Integration, settings: FeishuSettings) -> None:
@@ -250,12 +136,12 @@ async def _renewed(
     written back at once — a caller that waited on the lock finds them there and
     does not refresh a second time.
     """
-    settings = await feishu_settings_for(session, row)
+    settings = feishu_settings(row)
     if not lapses(settings):
         return settings
     if inspect(row).persistent:
         await session.refresh(row, with_for_update=True)
-        settings = await feishu_settings_for(session, row)
+        settings = feishu_settings(row)
         if not lapses(settings):
             return settings
     try:
@@ -294,9 +180,6 @@ async def renew_feishu(sessions: async_sessionmaker[AsyncSession]) -> None:
                 # answer for is tried again the next hour.
                 if exc.kind != "auth_failed":
                     continue
-            except ValidationError:
-                # No platform app any more: there is nothing to refresh with.
-                continue
             await session.commit()
 
 
@@ -318,8 +201,6 @@ def public(row: Integration) -> dict:
         if row.last_checked_at
         else None,
         "user_authorized": authorized,
-        #: Uses the platform's app rather than credentials of its own.
-        "shared_app": row.provider == "feishu" and not row.config.get("app_id"),
     }
 
 
@@ -461,17 +342,13 @@ class IntegrationService:
             if row.provider == "mail":
                 await asyncio.to_thread(mail.check, mail_settings(row))
             else:
-                settings = await feishu_settings_for(self._session, row)
+                settings = feishu_settings(row)
                 # The owner's authorization is proved by refreshing it: a token
                 # still in its two hours says nothing of whether it will be
                 # renewed, and the refresh is what stops working when it lapses.
                 if settings.user_access_token or settings.refresh_token:
                     settings = await _renewed(self._session, row, lambda _: True)
-                # Nothing to call with yet on the platform's app before the member
-                # has authorized: the credentials are the administrator's and the
-                # authorization-code exchange is what proves them.
-                if row.config.get("app_id") or settings.user_access_token:
-                    await FeishuClient(settings).tenant_token()
+                await FeishuClient(settings).tenant_token()
         except IntegrationError as exc:
             row.status = {
                 "auth_failed": "auth_failed",
@@ -509,41 +386,7 @@ class IntegrationService:
         await self._session.flush()
         return row
 
-    async def connect_under_platform_app(
-        self, *, owner_user_id: int, owner_handle: str
-    ) -> Integration:
-        """The member's own row under the platform's app, before they authorize.
-
-        The row carries no credentials of its own: it is where the callback puts
-        the ``user_access_token`` and ``refresh_token`` that make it usable.
-
-        Idempotent — the app is one and so is this person's account in it, so
-        clicking «连接飞书» twice returns the same row rather than a second one.
-        No call is made here: the app credentials belong to the administrator,
-        and the authorization-code exchange proves them a moment later.
-        """
-        app = await FeishuAppService(self._session).current()
-        if app is None:
-            raise ValidationError(say("feishuAppNotConfigured"))
-        for row in await self.owned(owner_user_id):
-            if row.provider == "feishu" and not row.config.get("app_id"):
-                return row
-        row = Integration(
-            id=uuid.uuid4(),
-            owner_user_id=owner_user_id,
-            owner_handle=owner_handle,
-            provider="feishu",
-            label="飞书" if app.domain == "feishu" else "Lark",
-            config={},
-            grants=[],
-            status="ok",
-        )
-        seal(row, {})
-        self._session.add(row)
-        await self._session.flush()
-        return row
-
-    async def connect_under_own_app(
+    async def connect_feishu(
         self,
         *,
         owner_user_id: int,
@@ -552,14 +395,14 @@ class IntegrationService:
         app_secret: str,
         domain: str,
     ) -> Integration:
-        """The member's own row under a self-built app of their own company.
+        """The member's Feishu connection, under a self-built app of their own
+        company.
 
-        The platform's app is a self-built app too, usable only inside its own
-        Feishu tenant; a member whose Feishu belongs to another company builds
-        one there and brings its credentials. They are proved here (a tenant
-        token is asked for) so a wrong App Secret is said now, not after the
-        authorization page. The same App ID entered again updates that row
-        rather than adding a second one.
+        A self-built app is usable only inside its own Feishu tenant, so each
+        member builds one in their company and brings its credentials. They are
+        proved here (a tenant token is asked for) so a wrong App Secret is said
+        now, not after the authorization page. The same App ID entered again
+        updates that row rather than adding a second one.
         """
         if domain not in ("feishu", "lark"):
             raise ValidationError(say("feishuDomainInvalid"))

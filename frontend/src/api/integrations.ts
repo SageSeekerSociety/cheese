@@ -13,8 +13,6 @@ export interface Integration {
   last_error: string
   last_checked_at: string | null
   user_authorized: boolean
-  /** 用的是平台管理员配的那一个应用，而不是这条连接自己带的凭据。 */
-  shared_app: boolean
 }
 
 export interface MailDraft {

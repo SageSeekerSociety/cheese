@@ -45,15 +45,6 @@ export type MockReply =
 // `?fail=1`：布局预览用的开关，判定写在 `routes()` 里、紧挨着用它的地方。
 const PREVIEW_FAIL = typeof location !== 'undefined' && new URLSearchParams(location.search).get('fail') === '1'
 
-/** 飞书应用（样例）。App ID 是编的，不对应任何真实应用。 */
-const FEISHU_APP = {
-  configured: true,
-  app_id: 'cli_a7f3c2e9d4b10018',
-  domain: 'feishu',
-  updated_by: 'andy',
-  updated_at: new Date(Date.now() - 3 * 86400_000).toISOString(),
-}
-
 /** 提交、支持、评论这些写操作在预览里**真的改内存里的那份数据**：点一下按钮能看见
  *  列表变化，而不是弹一个「预览模式下不可用」。它们是预览，但不该是死的。
  *
@@ -68,17 +59,6 @@ export function routes(url: URL, method: string, body: unknown): MockReply {
   if (PREVIEW_FAIL && method === 'GET' && path !== '/feedback/counts') return { failed: '服务暂时不可用（样例错误）' }
   const admin = adminRoutes(path, method, url, payload)
   if (admin) return admin
-  if (path === '/admin/integrations/feishu' && method === 'GET') return { data: FEISHU_APP }
-  if (path === '/admin/integrations/feishu' && method === 'PUT') {
-    Object.assign(FEISHU_APP, {
-      configured: true,
-      app_id: payload.app_id,
-      domain: payload.domain,
-      updated_by: 'andy',
-      updated_at: new Date().toISOString(),
-    })
-    return { data: FEISHU_APP }
-  }
   if (path === '/feedback/counts' && method === 'GET') return { data: counts() }
   if (path === '/feedback/read' && method === 'POST') {
     // 游标推到**此刻**，不是「这一条」：`markRead` 的语义是「我全看过了」，所以之后

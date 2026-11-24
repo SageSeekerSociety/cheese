@@ -1289,29 +1289,6 @@
       "note": "401/403 means \"you may not see this\", not \"this read failed\": it says so and offers no retry."
     }
   },
-  "adminIntegrationsPageView": {
-    "about": "The admin \"Feishu app\" page: an admin fills in the platform App ID / Secret / domain once and members connect with one click. The Secret is write-only and never echoed.",
-    "s1": {
-      "name": "Already configured",
-      "note": "Default state: the status line reads \"Configured · App ID · domain\" and who last updated it; App ID and domain are filled in, the Secret is always empty."
-    },
-    "s2": {
-      "name": "Never configured",
-      "note": "Never set up: the status line reads \"Not configured\" and the three fields wait to be filled."
-    },
-    "s3": {
-      "name": "Could not load",
-      "note": "A failed read shows only \"could not load\" with a retry — no status line and no form, because only a successful read knows whether it is configured."
-    },
-    "s4": {
-      "name": "App ID blank",
-      "note": "Saving with a blank App ID: it says \"Enter the App ID first\" and the request is never sent."
-    },
-    "s5": {
-      "name": "Save failed",
-      "note": "A rejected save shows the server's own words and leaves every field untouched."
-    }
-  },
   "adminSpacesPageView": {
     "about": "The admin \"space applications\" page: applications awaiting review, one per row, with approve/reject to the right of the row; rejecting asks for a reason.",
     "s1": {

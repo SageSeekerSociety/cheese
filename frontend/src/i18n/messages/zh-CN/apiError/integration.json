@@ -11,8 +11,6 @@
   "feishuActionSearchDocs": "搜索文档",
   "feishuActionTenantToken": "以应用身份取令牌",
   "feishuActionUnreachable": "{action}：连不上飞书（{error}）",
-  "feishuAppNotConfigured": "管理员还没配置飞书应用，暂时不能连接飞书",
-  "feishuAppSecretRequired": "App Secret 不能为空",
   "feishuAuthExpired": "授权已失效，到「我的连接」里重新授权",
   "feishuAuthExpiredAfter": "{detail}。授权已失效，到「我的连接」里重新授权",
   "feishuDocEditShape": "要么给 append（追加的内容），要么给 block_id 和 text（改哪一段、改成什么）",

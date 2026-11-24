@@ -113,8 +113,6 @@ export const SCENES_PAGES2_ENTRIES: CatalogEntry[] = [
       loading: false,
       error: '',
       busy: '',
-      feishuMissing: false,
-      feishuAsking: false,
       feishuRedirectUri: 'https://okcheese.com/api/integrations/feishu/callback',
       refresh: noop,
       discard: noop,
@@ -142,15 +140,9 @@ export const SCENES_PAGES2_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '连着两个账号，飞书那个还没授权',
-        note: '一条邮箱、一条走平台应用的飞书：飞书那条在授权回来之前什么也做不了，所以它那一行说的是「还没连接飞书」，而不是旁边那颗「正常」药丸的意思。',
+        note: '一条邮箱、一条填了自己公司应用的飞书：飞书那条在个人授权回来之前搜不了，所以它那一行说的是「还没连接飞书」，而不是旁边那颗「正常」药丸的意思。',
         props: { integrations: INTEGRATIONS },
         expect: '还没连接飞书',
-      },
-      {
-        name: '平台没配飞书应用',
-        note: '管理员还没在这一部署里填飞书应用：「连接飞书」照样能按，打开用自己公司飞书应用连接的那张表单，底下写明为什么。',
-        props: { integrations: [INTEGRATIONS[0]], feishuMissing: true },
-        expect: '管理员还没配置平台的飞书应用',
       },
       {
         name: '读失败',

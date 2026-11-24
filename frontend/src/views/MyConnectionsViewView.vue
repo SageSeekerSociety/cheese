@@ -31,10 +31,6 @@ const props = defineProps<{
   error: string
   /** 正在飞的那个动作（`<id>:<动作>`），用来只把点过的那颗按钮画成在转。 */
   busy: string
-  /** 平台管理员没配飞书应用：「连接飞书」直接打开自己公司应用那张表单，底下写明为什么。 */
-  feishuMissing: boolean
-  /** 还在问「配没配」：按钮先灰着，不然还不知道按下去该走哪条路。 */
-  feishuAsking: boolean
   /** 授权回调地址，自己公司的应用要把它填进「重定向 URL」；`''` 表示没问到。 */
   feishuRedirectUri: string
 }>()
@@ -43,8 +39,8 @@ const emit = defineEmits<{
   refresh: []
   discard: [draft: MailDraft]
   send: [draft: MailDraft]
-  /** `null` 走平台的应用；带了就是成员自己公司的应用，`done` 带回成没成、以及没成时那句话。 */
-  'connect-feishu': [ownApp: FeishuOwnApp | null, done?: (ok: boolean, message?: string) => void]
+  /** 成员自己公司的应用；`done` 带回成没成、以及没成时那句话。 */
+  'connect-feishu': [app: FeishuOwnApp, done: (ok: boolean, message?: string) => void]
   'set-grants': [row: Integration, grants: string[]]
   recheck: [row: Integration]
   authorize: [row: Integration]
@@ -130,10 +126,9 @@ function confirmRemove() {
 }
 
 // ── 接入 ───────────────────────────────────────────────────────────────────
-// 两张表单：邮箱，和飞书「用自己公司的应用」。平台配了飞书应用时「连接飞书」是一下就
-// 跳到飞书授权页（页面里的 `connectFeishuAccount`），凭据在管理员那边；但企业自建应用
-// 只在它那家企业的飞书里能用，飞书属于别的公司的成员、或平台没配应用时，就填自己公司
-// 的应用。表单自己那份草稿住在这一半：每一个字段都是这个文件里的一个元素。
+// 两张表单：邮箱，和「连接飞书」。企业自建应用只在它那家企业的飞书里能用，所以飞书那张
+// 表单填的是成员自己公司的应用；保存后页面（`connectFeishuAccount`）直接跳去飞书授权。
+// 表单自己那份草稿住在这一半：每一个字段都是这个文件里的一个元素。
 const adding = ref(false)
 const saving = ref(false)
 const formError = ref('')
@@ -175,12 +170,6 @@ const ownAppForm = reactive({ domain: 'feishu', app_id: '', app_secret: '' })
 const consoleUrl = computed(() =>
   ownAppForm.domain === 'lark' ? 'https://open.larksuite.com/app' : 'https://open.feishu.cn/app'
 )
-
-/** 平台没配应用时，「连接飞书」只剩自己公司应用这一条路。 */
-function connectFeishu() {
-  if (props.feishuMissing) ownApp.value = true
-  else emit('connect-feishu', null)
-}
 
 function saveOwnApp() {
   if (ownAppSaving.value) return
@@ -286,28 +275,11 @@ function save() {
           <BaseButton kind="secondary" size="sm" prepend-icon="mdi-email-plus-outline" @click="adding = true">
             {{ t('account.connections.addMail') }}
           </BaseButton>
-          <BaseButton
-            kind="secondary"
-            size="sm"
-            prepend-icon="mdi-link-variant-plus"
-            :disabled="feishuAsking"
-            :loading="busy === 'feishu:connect' && !ownApp"
-            @click="connectFeishu"
-          >
+          <BaseButton kind="secondary" size="sm" prepend-icon="mdi-link-variant-plus" @click="ownApp = true">
             {{ t('integrations.member.connect') }}
-          </BaseButton>
-          <BaseButton
-            v-if="!feishuMissing && !feishuAsking"
-            kind="secondary"
-            size="sm"
-            prepend-icon="mdi-office-building-outline"
-            @click="ownApp = true"
-          >
-            {{ t('integrations.member.ownApp.open') }}
           </BaseButton>
         </div>
       </div>
-      <p v-if="feishuMissing" class="settings-card__desc">{{ t('integrations.member.notConfigured') }}</p>
       <BaseEmptyState
         v-if="!integrations.length && !loading"
         size="inline"
@@ -322,10 +294,10 @@ function save() {
               {{ row.label }}
             </div>
             <div v-if="row.last_error" class="conn-row__sub c-danger">{{ row.last_error }}</div>
-            <!-- 平台应用那一行在授权回来之前什么也做不了（凭据是管理员的，账号是你的），
-                 所以这里说的是「连结上了没有」，不是「工作正常」—— 旁边那个状态在授权
-                 之前说的「正常」只到「这一行本身没问题」为止。 -->
-            <div v-else-if="row.shared_app && !row.user_authorized" class="conn-row__sub">
+            <!-- 飞书那一行在授权回来之前搜不了（搜索只认个人授权），所以这里说的是「连结上
+                 了没有」，不是「工作正常」—— 旁边那个状态在授权之前说的「正常」只到「应用
+                 凭据没问题」为止。 -->
+            <div v-else-if="row.provider === 'feishu' && !row.user_authorized" class="conn-row__sub">
               {{ t('integrations.member.notConnected') }}
             </div>
           </div>
@@ -350,11 +322,9 @@ function save() {
           <BaseButton kind="ghost" size="sm" :loading="busy === `${row.id}:check`" @click="emit('recheck', row)">
             {{ t('account.connections.check') }}
           </BaseButton>
-          <!-- 自带凭据的老连接：授权个人账号是它在搜索上差的那一步，按钮留着是为了让
-               这些行照旧能用（`feishu_settings` 优先用它自己那套凭据）。走平台应用的那
-               些行没有这一颗 —— 它们连接的方式就是上面那颗「连接飞书」。 -->
+          <!-- 授权个人账号：连接时跳过一次飞书；没授权完、授权过期或想换账号时从这里再走一次。 -->
           <BaseButton
-            v-if="row.provider === 'feishu' && !row.shared_app"
+            v-if="row.provider === 'feishu'"
             kind="ghost"
             size="sm"
             :loading="busy === `${row.id}:auth`"
@@ -418,14 +388,14 @@ function save() {
             { title: t('integrations.member.ownApp.feishu'), value: 'feishu' },
             { title: 'Lark', value: 'lark' },
           ]"
-          :label="t('integrations.admin.domain')"
+          :label="t('integrations.member.ownApp.domain')"
         />
-        <v-text-field v-model="ownAppForm.app_id" autocomplete="off" :label="t('integrations.admin.appId')" />
+        <v-text-field v-model="ownAppForm.app_id" autocomplete="off" :label="t('integrations.member.ownApp.appId')" />
         <v-text-field
           v-model="ownAppForm.app_secret"
           autocomplete="new-password"
           type="password"
-          :label="t('integrations.admin.appSecret')"
+          :label="t('integrations.member.ownApp.appSecret')"
         />
         <p v-if="ownAppError" role="alert" class="t-body c-danger mb-3">{{ ownAppError }}</p>
         <details class="conn-setup t-body" open>

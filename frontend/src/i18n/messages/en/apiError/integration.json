@@ -11,8 +11,6 @@
   "feishuActionSearchDocs": "search documents",
   "feishuActionTenantToken": "get a token as the app",
   "feishuActionUnreachable": "Couldn't {action}: can't reach Feishu ({error})",
-  "feishuAppNotConfigured": "An admin hasn't set up the Feishu app yet, so Feishu can't be connected for now",
-  "feishuAppSecretRequired": "App Secret can't be empty",
   "feishuAuthExpired": "The authorization has expired. Authorize again in “My connections”",
   "feishuAuthExpiredAfter": "{detail}. The authorization has expired. Authorize again in “My connections”",
   "feishuDocEditShape": "Give either append (the content to add), or block_id and text (which block to change, and to what)",

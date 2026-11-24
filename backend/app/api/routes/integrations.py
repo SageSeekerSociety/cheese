@@ -37,10 +37,9 @@ from app.domain.integration.feishu import FeishuClient
 from app.domain.integration.mail import IntegrationError
 from app.domain.integration.models import Integration, MailDraft
 from app.domain.integration.service import (
-    FeishuAppService,
     IntegrationService,
     draft_view,
-    feishu_settings_for,
+    feishu_settings,
     keep_feishu_tokens,
     public,
 )
@@ -225,26 +224,17 @@ async def connect_mail(body: MailIn, db: DbSession, resolver: ActorResolverDep) 
 
 
 @router.get("/me/integrations/feishu")
-async def feishu_availability(db: DbSession, resolver: ActorResolverDep) -> dict:
-    """平台配过飞书应用没有，以及授权回调地址 —— 没配、或者成员的飞书属于别的公司时，
-    成员用自己公司的应用连接，要把这个地址填进那个应用的「重定向 URL」。
+async def feishu_setup(resolver: ActorResolverDep) -> dict:
+    """成员建自己公司的飞书应用时要用到的回调地址：要填进那个应用的「重定向 URL」。
 
-    平台应用只有一个，读它不需要是谁的连接；但这是成员自己的页面，所以还是要本人。
+    这是成员自己的页面，所以要本人。
     """
     await _person(resolver)
-    app = await FeishuAppService(db).current()
-    return ok(
-        {
-            "configured": app is not None,
-            "app_id": app.app_id if app else "",
-            "domain": app.domain if app else "",
-            "redirect_uri": _redirect_uri(),
-        }
-    )
+    return ok({"redirect_uri": _redirect_uri()})
 
 
-class FeishuOwnAppIn(BaseModel):
-    """成员自己公司的企业自建应用。平台的应用只在它自己那家企业的飞书里能用。"""
+class FeishuAppIn(BaseModel):
+    """成员自己公司的企业自建应用。企业自建应用只在它自己那家企业的飞书里能用。"""
 
     app_id: str = Field(min_length=1, max_length=64)
     app_secret: str = Field(min_length=1, max_length=256)
@@ -253,30 +243,23 @@ class FeishuOwnAppIn(BaseModel):
 
 @router.post("/me/integrations/feishu", dependencies=[ROUTE_DECIDES])
 async def connect_feishu(
-    db: DbSession, resolver: ActorResolverDep, body: FeishuOwnAppIn | None = None
+    body: FeishuAppIn, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
     """「连接飞书」按下的第一步：先有自己那一行，再跳去飞书授权页。
 
     行在这里就落库，因为回调用 `state` 里的 id 找到它、把 token 写进去（见
-    `feishu_callback`）。不带正文走平台的应用，这一行不带凭据；带了 App ID / Secret
-    就是成员自己公司的应用，凭据存在这一行上，授权和续期都用它。授予哪些项目之后在
-    这个连接那一行上勾选。
+    `feishu_callback`）。App ID / Secret 是成员自己公司的应用，存在这一行上，授权和
+    续期都用它。授予哪些项目之后在这个连接那一行上勾选。
     """
     actor = await _person(resolver)
     assert actor.user_id is not None
-    service = _service(db)
-    if body is None:
-        row = await service.connect_under_platform_app(
-            owner_user_id=actor.user_id, owner_handle=actor.handle
-        )
-    else:
-        row = await service.connect_under_own_app(
-            owner_user_id=actor.user_id,
-            owner_handle=actor.handle,
-            app_id=body.app_id.strip(),
-            app_secret=body.app_secret.strip(),
-            domain=body.domain,
-        )
+    row = await _service(db).connect_feishu(
+        owner_user_id=actor.user_id,
+        owner_handle=actor.handle,
+        app_id=body.app_id.strip(),
+        app_secret=body.app_secret.strip(),
+        domain=body.domain,
+    )
     await db.commit()
     return ok(public(row))
 
@@ -359,7 +342,7 @@ async def feishu_authorize(
     actor = await _person(resolver)
     assert actor.user_id is not None
     row = await _service(db).get_owned(integration_id, actor.user_id)
-    settings = await feishu_settings_for(db, row)
+    settings = feishu_settings(row)
     url = FeishuClient(settings).authorize_url(
         _redirect_uri(), _state(row.id, in_app=started_in_app(request))
     )
@@ -449,7 +432,7 @@ async def _finish_feishu(
         return query
 
     try:
-        config = await feishu_settings_for(db, row)
+        config = feishu_settings(row)
         await FeishuClient(config).exchange_code(code, _redirect_uri())
     except Exception as exc:  # the person reads why, on the page
         # Feishu's answer goes by Feishu's own words, under the code the page

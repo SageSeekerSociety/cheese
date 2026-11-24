@@ -26,29 +26,11 @@ def _project(client) -> tuple[str, dict]:
 def test_a_non_admin_is_refused_with_a_key(client, monkeypatch):
     monkeypatch.setattr(settings, "platform_admin_handles", [ADMIN])
 
-    r = client.get("/admin/integrations/feishu", headers=session_auth_headers("bob"))
+    r = client.get("/admin/feature-stats", headers=session_auth_headers("bob"))
 
     assert r.status_code == 403
     assert r.json()["error"]["i18n"] == {"key": "platformAdminRequired", "params": {}}
     assert r.json()["error"]["message"] == "需要平台管理员"
-
-
-def test_saving_the_feishu_app_without_a_secret_is_refused_with_a_key(
-    client, monkeypatch
-):
-    monkeypatch.setattr(settings, "platform_admin_handles", [ADMIN])
-
-    r = client.put(
-        "/admin/integrations/feishu",
-        json={"app_id": "cli_platform", "app_secret": "", "domain": "feishu"},
-        headers=session_auth_headers(ADMIN),
-    )
-
-    assert r.status_code == 422, r.text
-    assert r.json()["error"]["i18n"] == {
-        "key": "feishuAppSecretRequired",
-        "params": {},
-    }
 
 
 def test_a_reserved_environment_variable_says_which(client):
