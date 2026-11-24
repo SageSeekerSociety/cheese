@@ -2,7 +2,7 @@
 //
 // 文件本身走工作区那几条（`workPanel.ts` 的 `listFiles` / `workspaceFileRawUrl`，
 // 不带任务、`committed`）；这里是改动记录：哪一次、谁、什么时候，来自哪件任务。
-import type { ProjectChange } from '../cx_types'
+import type { ProjectChange, RoomTask } from '../cx_types'
 
 import { t } from '../i18n'
 
@@ -38,4 +38,15 @@ export async function projectFileBytes(projectId: string, path: string): Promise
     // 不是 JSON：只剩状态码可说。
   }
   throw new ApiError(response.status, message || t('files.library.readFailed', { status: response.status }))
+}
+
+/**
+ * 「编辑」：开一件任务来改项目里的这一份——按的人负责、在综合里、以文件名为名，AI 队友不来。
+ * 它改动之前频道里不说、清单里不列，同一个人下一次「编辑」开的还是它。
+ */
+export function editProjectFile(projectId: string, path: string): Promise<RoomTask> {
+  return request<RoomTask>(`/projects/${encodeURIComponent(projectId)}/files/edit`, {
+    method: 'POST',
+    body: JSON.stringify({ path }),
+  })
 }

@@ -13,6 +13,7 @@ from sqlalchemy import (
     any_,
     bindparam,
     cast,
+    exists,
     func,
     not_,
     or_,
@@ -31,6 +32,7 @@ from app.domain.room_task.models import (
     TaskProgress,
     TaskStatus,
     TaskTitleSource,
+    UnsaidTask,
     people_of,
 )
 
@@ -320,6 +322,7 @@ class TaskRepository:
                 Task.room_id.in_(room_ids),
                 Task.status == TaskStatus.open,
                 Task.closing_since.is_(None),
+                TaskRepository.said(),
             )
             .order_by(TaskRepository._moved().desc())
         )
@@ -350,6 +353,7 @@ class TaskRepository:
                 Task.room_id.in_(room_ids),
                 Task.status == TaskStatus.open,
                 Task.closing_since.is_(None),
+                TaskRepository.said(),
             )
             .group_by(Task.room_id)
         )
@@ -433,6 +437,10 @@ class TaskRepository:
                     Task.source_block_id == any_(_uuids("sources", origins)),
                 )
             )
+        else:
+            # Asked for by id, a task is read whether it was said or not; a
+            # room's list shows only the said ones.
+            stmt = stmt.where(self.said())
         if with_branch:
             stmt = stmt.where(Task.branch_name.is_not(None))
         if latest is None:
@@ -480,7 +488,7 @@ class TaskRepository:
         """
         stmt = (
             select(Task)
-            .where(Task.project_id == project_id)
+            .where(Task.project_id == project_id, self.said())
             .order_by(Task.created_at, Task.id)
         )
         if rooms is not None:
@@ -500,6 +508,13 @@ class TaskRepository:
             )
         stmt = self._accepted(stmt, accepted)
         return list((await self._session.scalars(stmt)).all())
+
+    @staticmethod
+    def said():
+        """A task whose opening has been said: every task but one opened to
+        edit a file that has changed nothing yet (`UnsaidTask`). Lists of
+        tasks show only these."""
+        return not_(exists().where(UnsaidTask.task_id == Task.id))
 
     @staticmethod
     def _accepted(stmt, accepted: bool | None):
@@ -569,6 +584,7 @@ class TaskRepository:
             Task.project_id == project_id,
             Task.room_id.in_(list(rooms)),
             Task.status == TaskStatus(status),
+            self.said(),
         )
         return stmt if channel is None else stmt.where(Task.room_id == channel)
 
@@ -679,7 +695,7 @@ class TaskRepository:
                 Task.owner_handle,
                 Task.contributor_handles,
             )
-            .where(Task.project_id.in_(project_ids))
+            .where(Task.project_id.in_(project_ids), TaskRepository.said())
             .order_by(Task.created_at, Task.id)
         )
         if open_only:

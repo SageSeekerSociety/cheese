@@ -5,7 +5,7 @@
 // sits beside the open files in the 对话 form's 文件 panel and in a column of its own
 // in the 编辑器 form; which folders are open is the page's (`useTaskFileTree`), so both
 // show the same. It draws what `composables/useTaskFiles` holds and fetches nothing.
-import type { TaskFilesBundle } from '../../composables/useTaskFiles'
+import type { FileTreeSource } from '../../composables/useTaskFiles'
 import type { TaskFileTreeState } from '../../composables/useTaskFileTree'
 
 import { computed, ref } from 'vue'
@@ -20,7 +20,7 @@ import { t } from '@/i18n'
 
 const props = withDefaults(
   defineProps<{
-    files: TaskFilesBundle
+    files: FileTreeSource
     tree: TaskFileTreeState
     /** Files this task changed (the work summary's list). */
     changed?: string[]

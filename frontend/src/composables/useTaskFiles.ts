@@ -22,6 +22,7 @@
 // of a task — its text, whether it is held, saving or in conflict — is kept
 // once, here at module level, and every cell showing it reads that one copy:
 // two cells on the same file show the same text, and it is saved once.
+import type { Ref } from 'vue'
 import type { WorkspaceFile } from '../cx_types'
 import type { MergeConflict } from '../types/reviewComment'
 
@@ -771,3 +772,26 @@ export function useTaskFiles(opts: TaskFilesOptions) {
 }
 
 export type TaskFilesBundle = ReturnType<typeof useTaskFiles>
+
+/**
+ * What a file tree draws and asks of the files it shows: a task's (`useTaskFiles`), or the
+ * project's current version, read-only (项目文件 in the library), whose `arrange` is never
+ * asked.
+ */
+export interface FileTreeSource {
+  files: Readonly<Ref<WorkspaceFile[]>>
+  dirs: Readonly<Ref<string[]>>
+  /** What was saved or held here, for the tree's dots. */
+  touched: Readonly<Ref<ReadonlySet<string>>>
+  /** The file shown. */
+  openPath: Readonly<Ref<string | null>>
+  arrange: (change: TaskFileArrangement) => Promise<boolean>
+}
+
+/**
+ * Open a task's 文件 on these files the next time it is shown, with `active` the one shown:
+ * a task opened from a place that already had them open carries them over.
+ */
+export function openTaskFilesOn(taskId: string, open: string[], active: string | null) {
+  writeTabs(taskId, { open, active: active && open.includes(active) ? active : null })
+}

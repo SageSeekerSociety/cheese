@@ -18,5 +18,7 @@
   "loadError": "Couldn't read the project files",
   "openInLibrary": "Open in library",
   "backToTree": "Back to project files",
-  "taskTitle": "“{title}”"
+  "taskTitle": "“{title}”",
+  "readOnly": "Read-only",
+  "edit": "Edit"
 }

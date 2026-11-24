@@ -18,5 +18,7 @@
   "loadError": "无法读取项目文件",
   "openInLibrary": "在资料库打开",
   "backToTree": "返回项目文件",
-  "taskTitle": "「{title}」"
+  "taskTitle": "「{title}」",
+  "readOnly": "只读",
+  "edit": "编辑"
 }

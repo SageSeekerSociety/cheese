@@ -8,7 +8,7 @@ from typing import Annotated, Literal
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Query, Request, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.api.auth import (
     ActorResolverDep,
@@ -25,6 +25,7 @@ from app.auth.project_access import may_read_project
 from app.auth.project_roles import may
 from app.core.errors import (
     AuthenticationRequiredError,
+    ForbiddenError,
     GatewayUnavailableError,
     NotFoundError,
     ValidationError,
@@ -33,7 +34,8 @@ from app.core.sandbox_auth import verify_scoped_token
 from app.core.sentences import say
 from app.domain.agent import execution
 from app.domain.agent.chat import ChatService
-from app.domain.agent.file_edits import announce_edit
+from app.domain.agent.file_edits import announce_edit, changed_lines
+from app.domain.agent_instance.adapters import project_team, seat_project
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.machine.preview_wake import wake_for_files
 from app.domain.machine.task_machine import SEARCH_WAIT_S, prepare_for_person
@@ -43,7 +45,9 @@ from app.domain.repository.forge_files import SEARCH_QUERY_MAX, ProjectFiles
 from app.domain.repository.ports import PrepareWorkingCopy, WakeWorkingCopy
 from app.domain.review import forge_clients
 from app.domain.review.landed import tasks_that_landed
+from app.domain.room_task import dispatch as task_dispatch
 from app.domain.room_task.place import Task, TaskStatus, TopicStatus, place_or_404
+from app.domain.room_task.schemas import TaskOut
 from app.domain.room_task.services import TaskService
 from app.domain.topic.services import TopicService
 
@@ -365,6 +369,14 @@ async def write_file(
     ).save(path, content, version, base if isinstance(base, str) else None)
     row = await TaskService(db).get(task)
     if row is not None and actor.authenticated and actor.via != "cheese":
+        previous = saved["previous"]
+        if (
+            previous is None
+            or changed_lines(previous, saved.get("content", content)) is not None
+        ) and await task_dispatch.say_opened(db, row):
+            # Its own transaction: a transaction numbers the lines of one
+            # set of conversations (`conversation.numbering`).
+            await db.commit()
         said = await announce_edit(
             db,
             task=row,
@@ -434,7 +446,48 @@ async def arrange_file(
         wake=wake,
         prepare=partial(prepare_for_person, db.bind, actor),
     ).arrange(body.operation, body.path.strip(), body.to.strip() if body.to else None)
+    row = await TaskService(db).get(task)
+    if row is not None and await task_dispatch.say_opened(db, row):
+        await db.commit()
     return ok({"path": done.get("path", body.path)})
+
+
+class FileEditIn(BaseModel):
+    #: The project file the person is reading when they press 「编辑」.
+    path: str = Field(min_length=1, max_length=1024)
+
+
+@router.post("/{project_id}/files/edit", **typed_response(TaskOut))
+async def edit_project_file(
+    body: FileEditIn,
+    db: DbSession,
+    at: Annotated[InProject, Can(Permission.tasks)],
+) -> dict:
+    """「编辑」 in 项目文件: the task the person edits this file in, owned by
+    them, in the project's 综合. Its AI teammate starts only on a message, as
+    in any task. Until it changes something it is not said in 综合 nor listed
+    anywhere, and the person's next 「编辑」 in the project opens that same task
+    again rather than a second empty one (`dispatch.open_to_edit`)."""
+    actor = at.actor
+    if not actor.authenticated or actor.via == "cheese":
+        raise ForbiddenError(say("taskCreatedByPerson"))
+    path = body.path.strip().strip("/")
+    if not path:
+        raise ValidationError(say("pathEmpty"))
+    if at.project.root_topic_id is None:
+        raise NotFoundError(say("topicNotFound"))
+    task = await task_dispatch.open_to_edit(
+        db,
+        project_id=at.project.id,
+        room_id=at.project.root_topic_id,
+        person=actor.handle,
+        path=path,
+        seat_project=seat_project,
+        team=project_team,
+    )
+    out = TaskOut.model_validate(task).model_dump(mode="json")
+    await db.commit()
+    return ok(out)
 
 
 class LandedTaskOut(BaseModel):

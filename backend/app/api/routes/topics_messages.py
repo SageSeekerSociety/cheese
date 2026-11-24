@@ -126,6 +126,7 @@ from app.domain.notice_meta import (
 from app.domain.project.address import Numbered, things_by_ref
 from app.domain.project.reads import load_project
 from app.domain.project_permissions import Permission
+from app.domain.room_task import dispatch as task_dispatch
 from app.domain.room_task import naming
 from app.domain.room_task.place import place_or_404
 from app.domain.task import guide
@@ -252,6 +253,10 @@ async def send_chat_message(
         )
     except AddressingChanged:
         raise await addressed_now() from None
+    # A message is a change of a task opened to edit a file (`UnsaidTask`):
+    # its channel is told it was opened.
+    if task is not None and await task_dispatch.say_opened(db, task):
+        await db.commit()
     # The anchor as the room was told it, preview of the parent included: what
     # reading it back produced, without the reads.
     told = next((p for p in landed if p.get("id") == str(anchor_id)), None)
