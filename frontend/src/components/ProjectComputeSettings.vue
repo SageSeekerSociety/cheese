@@ -65,20 +65,12 @@ const agents = (count: number) => t('work.projectMachine.agents', { count })
         </p>
         <ul v-else class="distribution-list">
           <li v-for="group in state.distribution.sandboxes" :key="group.spec">
-            <span class="status-dot" />{{
-              t('work.projectMachine.onPlatform', {
-                env: t('compute.env.sandboxOf', { spec: group.label }),
-                agents: agents(group.agents),
-              })
-            }}
+            <span class="status-dot" /><span>{{ group.label }}</span>
+            <span class="distribution-count">{{ agents(group.agents) }}</span>
           </li>
           <li v-for="device in state.distribution.devices" :key="device.device_id ?? ''">
-            <span class="status-dot" />{{
-              t('work.projectMachine.onDevice', {
-                name: device.name ?? t('compute.env.removedDevice'),
-                agents: agents(device.agents),
-              })
-            }}
+            <span class="status-dot" /><span>{{ device.name ?? t('compute.env.removedDevice') }}</span>
+            <span class="distribution-count">{{ agents(device.agents) }}</span>
             <component
               :is="deviceSessionsComponent"
               v-if="deviceSessionsComponent && state.can_manage"
@@ -129,5 +121,9 @@ const agents = (count: number) => t('work.projectMachine.agents', { count })
   gap: 8px;
   padding: 4px 0;
   color: var(--text);
+}
+.distribution-count {
+  margin-left: 8px;
+  color: var(--muted);
 }
 </style>

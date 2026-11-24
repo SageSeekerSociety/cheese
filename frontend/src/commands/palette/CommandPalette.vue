@@ -319,44 +319,46 @@ const activeDescendant = computed(() =>
       <div v-if="paletteOpen" class="palette-layer" :class="{ 'palette-layer--page': !mdAndUp }">
         <!-- eslint-disable-next-line vuejs-accessibility/click-events-have-key-events, vuejs-accessibility/no-static-element-interactions -- clicking outside closes the palette; Escape closes it too, once it has cleared the query, the action list or ask mode -->
         <div v-if="mdAndUp" class="palette-scrim" @click="close" />
-        <div class="palette" role="dialog" aria-modal="true" :aria-label="t('navigation.palette.open')">
-          <PaletteInput
-            ref="bar"
-            v-model:input="input"
-            v-model:ask-text="askText"
-            :md-and-up="mdAndUp"
-            :ask="paletteAsk"
-            :scope-name="scopeName"
-            :searching="searching"
-            :expanded="rows.length > 0"
-            :active-descendant="activeDescendant"
-            @close="close"
-            @keydown="onKeydown"
-            @ask-keydown="onAskKeydown"
-            @leave-scope="scope = null"
-          />
-          <PaletteResults
-            v-if="!paletteAsk"
-            :groups="groups"
-            :selected="selected"
-            :input="input"
-            :searching="searching"
-            :md-and-up="mdAndUp"
-            @select="selected = $event"
-            @choose="choose"
-            @contextmenu="onRowContextMenu"
-            @longpress="openSheet"
-            @dismiss="acting && mdAndUp && (acting = null)"
-          />
-          <PaletteFoot
-            v-if="mdAndUp && (paletteAsk || selectedRow)"
-            :asking="!!paletteAsk"
-            :action-title="acting?.actions[actSelected]?.title"
-            :verb="selectedRow ? verbOf(selectedRow) : undefined"
-            :can-search-in="!!selectedRow?.scope"
-            :has-more="hasMore(selectedRow)"
-            :has-target="!!selectedRow?.to"
-          />
+        <div class="palette-frame">
+          <div class="palette" role="dialog" aria-modal="true" :aria-label="t('navigation.palette.open')">
+            <PaletteInput
+              ref="bar"
+              v-model:input="input"
+              v-model:ask-text="askText"
+              :md-and-up="mdAndUp"
+              :ask="paletteAsk"
+              :scope-name="scopeName"
+              :searching="searching"
+              :expanded="rows.length > 0"
+              :active-descendant="activeDescendant"
+              @close="close"
+              @keydown="onKeydown"
+              @ask-keydown="onAskKeydown"
+              @leave-scope="scope = null"
+            />
+            <PaletteResults
+              v-if="!paletteAsk"
+              :groups="groups"
+              :selected="selected"
+              :input="input"
+              :searching="searching"
+              :md-and-up="mdAndUp"
+              @select="selected = $event"
+              @choose="choose"
+              @contextmenu="onRowContextMenu"
+              @longpress="openSheet"
+              @dismiss="acting && mdAndUp && (acting = null)"
+            />
+            <PaletteFoot
+              v-if="mdAndUp && (paletteAsk || selectedRow)"
+              :asking="!!paletteAsk"
+              :action-title="acting?.actions[actSelected]?.title"
+              :verb="selectedRow ? verbOf(selectedRow) : undefined"
+              :can-search-in="!!selectedRow?.scope"
+              :has-more="hasMore(selectedRow)"
+              :has-target="!!selectedRow?.to"
+            />
+          </div>
           <PaletteActions
             v-if="acting && mdAndUp"
             :title="acting.row.title"
@@ -387,11 +389,19 @@ const activeDescendant = computed(() =>
   inset: 0;
   background: var(--overlay);
 }
+/* 面板和它右下角那份操作清单叠在同一格里：清单比面板高时，这一格跟着清单长高，面板
+   随之撑开，清单不会伸到面板外面被裁掉。 */
+.palette-frame {
+  position: relative;
+  display: grid;
+  width: min(640px, calc(100vw - 32px));
+}
 .palette {
   position: relative;
   display: flex;
   flex-direction: column;
-  width: min(640px, calc(100vw - 32px));
+  grid-area: 1 / 1;
+  min-width: 0;
   max-height: 64vh;
   overflow: hidden;
   background: var(--surface);
@@ -405,8 +415,10 @@ const activeDescendant = computed(() =>
 .palette-layer--page {
   padding-top: env(safe-area-inset-top, 0px);
 }
-.palette-layer--page .palette {
+.palette-layer--page .palette-frame {
   width: 100%;
+}
+.palette-layer--page .palette {
   height: calc(var(--app-height, 100dvh) - var(--keyboard-inset, 0px));
   max-height: none;
   border: 0;

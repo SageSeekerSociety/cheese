@@ -144,8 +144,8 @@ it('offers each sandbox spec and my other computers, not the one being left or a
 
   await fireEvent.mouseDown(screen.getByLabelText('换到'))
 
-  expect(await screen.findByRole('option', { name: '沙箱 · 标准' })).toBeTruthy()
-  expect(screen.getByRole('option', { name: '沙箱 · 虚拟机' })).toBeTruthy()
+  expect(await screen.findByRole('option', { name: '标准' })).toBeTruthy()
+  expect(screen.getByRole('option', { name: '虚拟机' })).toBeTruthy()
   expect(screen.getByRole('option', { name: '备用机 · 不可用' })).toBeTruthy()
   expect(screen.queryByRole('option', { name: /实验室/ })).toBeNull()
   expect(screen.queryByRole('option', { name: /旧工作站/ })).toBeNull()

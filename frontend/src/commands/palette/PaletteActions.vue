@@ -48,10 +48,14 @@ const emit = defineEmits<{
 
 <style scoped>
 .palette__actions {
-  position: absolute;
-  right: 10px;
-  bottom: 44px;
+  position: relative;
+  grid-area: 1 / 1;
+  align-self: end;
+  justify-self: end;
   width: 260px;
+  max-height: calc(64vh - 52px);
+  margin: 8px 10px 44px 0;
+  overflow-y: auto;
   padding: 4px;
   border: 1px solid var(--line-2);
   border-radius: var(--radius-md);

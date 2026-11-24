@@ -2,7 +2,6 @@
   "env": {
     "sandbox": "Sandbox",
     "sandboxHint": "Sees only its own work directory and the project's package cache, not other AI teammates' work",
-    "sandboxOf": "Sandbox · {spec}",
     "selfHosted": "Use a specific device",
     "selfHostedHint": "For when it must be a particular computer: runs directly on it, without isolation, and can see and operate the whole computer",
     "noDeviceOfMine": "You have no devices you can choose; only their team administrators can choose one",

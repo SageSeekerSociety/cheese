@@ -7,7 +7,5 @@
   "hint": "Only affects agents that have not started; agents already working keep their own environment",
   "loadFailed": "Could not load environment settings",
   "noneStarted": "No agents have started",
-  "onDevice": "{name} · {agents}",
-  "onPlatform": "{env} · {agents}",
   "saveFailed": "Could not save environment settings"
 }
