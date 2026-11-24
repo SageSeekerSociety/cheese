@@ -454,6 +454,8 @@ export function docBundle(
     editable: computed(() => v.editable),
     loading: computed(() => v.loading),
     errorMsg: computed(() => v.errorMsg),
+    openError: computed(() => null),
+    retryOpen: noop,
     documentId: ref(null),
     suggestionReasons: ref({}),
     fetchSuggestionReasons: noopAsync,
