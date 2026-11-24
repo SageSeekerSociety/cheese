@@ -115,6 +115,7 @@ export const SCENES_PAGES2_ENTRIES: CatalogEntry[] = [
       busy: '',
       feishuMissing: false,
       feishuAsking: false,
+      feishuRedirectUri: 'https://okcheese.com/api/integrations/feishu/callback',
       refresh: noop,
       discard: noop,
       send: noop,
@@ -123,6 +124,7 @@ export const SCENES_PAGES2_ENTRIES: CatalogEntry[] = [
       recheck: noop,
       authorize: noop,
       remove: noop,
+      copy: noop,
       save: (_body: Record<string, unknown>, done: (ok: boolean, message?: string) => void) => done(true),
     },
     states: [
@@ -146,9 +148,9 @@ export const SCENES_PAGES2_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '平台没配飞书应用',
-        note: '管理员还没在这一部署里填飞书应用：「连接飞书」灰着，底下写明为什么 —— 灰按钮没有理由，人只会当成坏了。',
+        note: '管理员还没在这一部署里填飞书应用：「连接飞书」照样能按，打开用自己公司飞书应用连接的那张表单，底下写明为什么。',
         props: { integrations: [INTEGRATIONS[0]], feishuMissing: true },
-        expect: '管理员还没配置飞书应用',
+        expect: '管理员还没配置平台的飞书应用',
       },
       {
         name: '读失败',

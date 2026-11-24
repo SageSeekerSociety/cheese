@@ -25,6 +25,7 @@ import { claimFeishuHandoff, connectFeishu, feishuAuthorizeUrl, feishuAvailabili
 
 import MyConnectionsViewView from './MyConnectionsViewView.vue'
 
+import { copyText } from '@/commands/copy'
 import { t } from '@/i18n'
 import { goAuthorize } from '@/lib/desktopApp'
 import { renderNoticeMessage } from '@/lib/noticeText'
@@ -245,6 +246,7 @@ onMounted(async () => {
     @recheck="recheck"
     @authorize="authorize"
     @remove="remove"
+    @copy="(text: string) => copyText(text, t('integrations.member.ownApp.copied'))"
     @save="save"
   />
 </template>

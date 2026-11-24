@@ -14,7 +14,6 @@ import { computed, reactive, ref } from 'vue'
 import ConfirmDialog from '../components/base/ConfirmDialog.vue'
 import AdaptiveDialog from '../components/common/AdaptiveDialog.vue'
 
-import { copyText } from '@/commands/copy'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
@@ -50,6 +49,8 @@ const emit = defineEmits<{
   recheck: [row: Integration]
   authorize: [row: Integration]
   remove: [row: Integration]
+  /** 表单上那几段要贴进飞书后台的内容；复制和提示在页面里。 */
+  copy: [text: string]
   /** 表单已经按服务端认的样子拼好了；`done` 带回成没成、以及没成时那句话。 */
   save: [body: Record<string, unknown>, done: (ok: boolean, message?: string) => void]
 }>()
@@ -415,7 +416,7 @@ function save() {
                 icon="mdi-content-copy"
                 :aria-label="t('integrations.member.ownApp.copyRedirect')"
                 :title="t('integrations.member.ownApp.copyRedirect')"
-                @click="copyText(feishuRedirectUri, t('integrations.member.ownApp.copied'))"
+                @click="emit('copy', feishuRedirectUri)"
               />
             </div>
           </li>
@@ -429,7 +430,7 @@ function save() {
                 icon="mdi-content-copy"
                 :aria-label="t('integrations.member.ownApp.copyScopes')"
                 :title="t('integrations.member.ownApp.copyScopes')"
-                @click="copyText(FEISHU_SCOPES_IMPORT, t('integrations.member.ownApp.copied'))"
+                @click="emit('copy', FEISHU_SCOPES_IMPORT)"
               />
             </div>
           </li>
@@ -443,7 +444,7 @@ function save() {
                 icon="mdi-content-copy"
                 :aria-label="t('integrations.member.ownApp.copyReason')"
                 :title="t('integrations.member.ownApp.copyReason')"
-                @click="copyText(t('integrations.member.ownApp.reason'), t('integrations.member.ownApp.copied'))"
+                @click="emit('copy', t('integrations.member.ownApp.reason'))"
               />
             </div>
           </li>
