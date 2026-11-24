@@ -17,6 +17,7 @@ import type {
   NotificationField,
   NotificationPreferences,
 } from '@/lib/notificationPreferences'
+import type { PushOutcome } from '@/services/webPush'
 
 import { onMounted, ref } from 'vue'
 
@@ -39,11 +40,14 @@ const failingReason = ref<string | null>(null)
 /** 正在存的是哪一处（字段名或矩阵格键）。只让那一处显出「在存」，不整页一起变灰。 */
 const pending = ref<NotificationChangeKey | null>(null)
 
+/** 浏览器推送没开成：说的是为什么没开成，不是「保存失败」。 */
+class PushNotEnabled extends Error {}
+
 // 拨一下开关就提交，所以结果就地留在页头（§3.11）——一次写用 `run` 包住。
 const { saving, saved, error, run } = useSaveState({
   feedback: 'inline',
   messages: { failed: t('account.notifications.saveFailed') },
-  describeError: () => t('account.notifications.saveFailed'),
+  describeError: (e) => (e instanceof PushNotEnabled ? e.message : t('account.notifications.saveFailed')),
 })
 
 /** 上一次保存，还没落地时非空。 */
@@ -95,13 +99,43 @@ async function persist(key: NotificationChangeKey, next: NotificationPreferences
   }
 }
 
-async function setField(key: NotificationField, value: string | boolean) {
-  // 关掉推送＝退订这台电脑；打开＝问权限、订阅、把订阅交给后端。两件都在用户点
-  // 开关的这一下做（浏览器只在一次手势里才肯弹权限框），所以排在队列前面。
-  if (key === 'pushEnabled') {
-    if (value === true) await enablePush()
-    else await disablePush()
+/** 推送没开成时说的那一句，按没开成的原因。 */
+const PUSH_NOT_ENABLED: Record<Exclude<PushOutcome, 'enabled'>, string> = {
+  unsupported: 'account.notifications.pushNotEnabled.unsupported',
+  unavailable: 'account.notifications.pushNotEnabled.unavailable',
+  denied: 'account.notifications.pushNotEnabled.denied',
+  failed: 'account.notifications.pushNotEnabled.failed',
+}
+
+/** 打开推送＝问权限、订阅、把订阅交给后端。要在用户点开关的这一下做（浏览器只在一次
+ *  手势里才肯弹权限框），所以排在保存队列前面。开关先按「开」画出来、转着圈；没开成
+ *  就放回原位、在页头说为什么，不把「开」存下去。 */
+async function turnPushOn() {
+  const before = prefs.value
+  if (!before) return
+  prefs.value = { ...before, pushEnabled: true }
+  pending.value = 'pushEnabled'
+  const outcome = await enablePush()
+  pending.value = null
+  if (outcome !== 'enabled') {
+    if (prefs.value) prefs.value = { ...prefs.value, pushEnabled: before.pushEnabled }
+    const reason = t(PUSH_NOT_ENABLED[outcome])
+    await settled()
+    await run(async () => {
+      throw new PushNotEnabled(reason)
+    })
+    return
   }
+  await settled()
+  const current = prefs.value
+  if (!current) return
+  await persist('pushEnabled', { ...current, pushEnabled: true }, { ...current, pushEnabled: before.pushEnabled })
+}
+
+async function setField(key: NotificationField, value: string | boolean) {
+  if (key === 'pushEnabled' && value === true) return turnPushOn()
+  // 关掉推送＝退订这台电脑，同样在这一下做。
+  if (key === 'pushEnabled') await disablePush()
   await settled()
   const current = prefs.value
   if (!current) return

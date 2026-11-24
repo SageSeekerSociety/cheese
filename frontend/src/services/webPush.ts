@@ -55,20 +55,24 @@ export async function pushAvailable(): Promise<boolean> {
   }
 }
 
+/** 开推送的结果：开成了，或者没开成的原因——这个浏览器没有这套能力、这个部署没配
+ *  推送、浏览器没给权限、或者订阅那几步里出了错。 */
+export type PushOutcome = 'enabled' | 'unsupported' | 'unavailable' | 'denied' | 'failed'
+
 /**
- * 问权限、订阅、把订阅交给后端。返回有没有成到。
+ * 问权限、订阅、把订阅交给后端。返回开成了没有，没成是为什么。
  *
  * 必须由一次用户手势触发（点了「开启通知」那个按钮）—— 浏览器只在那种时候才肯弹
  * 权限框。
  */
-export async function enablePush(): Promise<boolean> {
-  if (!pushSupported()) return false
+export async function enablePush(): Promise<PushOutcome> {
+  if (!pushSupported()) return 'unsupported'
   try {
     const { key, available } = await pushPublicKey()
-    if (!available || !key) return false
+    if (!available || !key) return 'unavailable'
 
     const permission = await Notification.requestPermission()
-    if (permission !== 'granted') return false
+    if (permission !== 'granted') return 'denied'
 
     const registration = await navigator.serviceWorker.ready
     // 已经订阅过就沿用那一个：重复 subscribe 会因为 applicationServerKey 不同而
@@ -90,10 +94,10 @@ export async function enablePush(): Promise<boolean> {
       auth: encodeKey(subscription, 'auth'),
       user_agent: navigator.userAgent.slice(0, 255),
     })
-    return true
+    return 'enabled'
   } catch {
     // 推送是个附加渠道：开不起来不该让调用它的那个界面出错。站内通知和邮件照旧。
-    return false
+    return 'failed'
   }
 }
 
