@@ -419,13 +419,61 @@ def test_a_platform_admin_does_not_seat_themselves_in_a_space(client, people):
     assert me not in {a["user"]["id"] for a in held["admins"]}
 
 
-def test_a_platform_admin_gets_no_space_join_link(client, people):
+def test_a_platform_admin_reads_switches_and_resets_a_space_join_link(client, people):
+    """A space's link is handed out by whoever runs it, a platform admin
+    included: they pass it on when the owner cannot (unlike a team's link)."""
     space_id = _space(client, people)
     base = f"/spaces/{space_id}/join-link"
+    as_me = people[OVERSEER]
 
-    _refused_as_way_in(client.get(base, headers=people[OVERSEER]))
-    _refused_as_way_in(client.post(f"{base}/reset", headers=people[OVERSEER]))
-    assert client.get(base, headers=people[OWNER]).status_code == 200
+    read = client.get(base, headers=as_me)
+    assert read.status_code == 200, read.text
+    first = read.json()["data"]["token"]
+    assert first == client.get(base, headers=people[OWNER]).json()["data"]["token"]
+
+    switched = client.patch(base, json={"approval": True}, headers=as_me)
+    assert switched.status_code == 200, switched.text
+    assert switched.json()["data"]["approval"] is True
+
+    reset = client.post(f"{base}/reset", headers=as_me)
+    assert reset.status_code == 200, reset.text
+    assert reset.json()["data"]["token"] not in (None, first)
+    assert (
+        client.get(base, headers=people[OWNER]).json()["data"]["token"]
+        == (reset.json()["data"]["token"])
+    )
+
+
+def test_a_space_review_has_not_cleared_has_no_join_link_for_a_platform_admin(
+    client, people
+):
+    """Until review clears the space nothing under it opens, the link included;
+    the admin reviews it first, and then the link is theirs to pass on."""
+    made = client.post(
+        "/spaces",
+        json={"name": "待审的课", "intro": "每周练习", "avatarId": 1},
+        headers=people[OWNER],
+    )
+    assert made.status_code == 201, made.text
+    space_id = made.json()["data"]["space"]["id"]
+    base = f"/spaces/{space_id}/join-link"
+
+    assert client.get(base, headers=people[OVERSEER]).status_code == 404
+    # The space itself opens to them, saying it waits for review: the page
+    # sends them on to review it instead of «you do not manage this».
+    detail = client.get(f"/spaces/{space_id}", headers=people[OVERSEER])
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["data"]["space"]["reviewStatus"] == "PENDING"
+    outsider = client.get(f"/spaces/{space_id}", headers=people[OUTSIDER])
+    assert outsider.status_code == 404, outsider.text
+
+    reviewed = client.post(
+        f"/admin/spaces/{space_id}/review",
+        json={"approved": True},
+        headers=people[OVERSEER],
+    )
+    assert reviewed.status_code == 200, reviewed.text
+    assert client.get(base, headers=people[OVERSEER]).status_code == 200
 
 
 def test_a_platform_admin_does_not_answer_their_own_request_to_join_a_space(

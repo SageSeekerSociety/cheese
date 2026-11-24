@@ -35,7 +35,7 @@ const { setDynamicTitle } = usePageTitle()
 
 const spaceStore = useSpaceStore()
 const spaceData = useSpaceData()
-const { currentSpace: space, currentSpaceId, isManager } = storeToRefs(spaceStore)
+const { currentSpace: space, currentSpaceId, isManager, myRole } = storeToRefs(spaceStore)
 
 const routeSpaceId = computed(() => Number(route.params.spaceId))
 /** 详情已经回来（成功或失败）的那块板。 */
@@ -74,9 +74,14 @@ async function onAcknowledge() {
 const getSpace = async (spaceId: number) => {
   await spaceData.fetchSpace(spaceId)
   settledId.value = spaceId
-  // 还没过审的空间只有申请人自己读得到，里面每一页都还打不开：换到这份申请上。
+  // 还没过审的空间只有申请人自己和平台管理员读得到，里面每一页都还打不开：申请人换到
+  // 这份申请上；不在名单里的是平台管理员，换到「空间申请」去审它。
   if (underReview.value) {
-    void router.replace({ name: 'HomeSpaceApplication', params: { spaceId: String(spaceId) } })
+    void router.replace(
+      myRole.value !== 'MEMBER'
+        ? { name: 'HomeSpaceApplication', params: { spaceId: String(spaceId) } }
+        : { name: 'AdminSpaces' }
+    )
     return
   }
   spaceData.fetchCategories()

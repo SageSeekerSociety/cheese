@@ -46,6 +46,7 @@ import { useSpaceData } from '@/composables/useSpaceData'
 
 import MembersView from './MembersView.vue'
 
+import { ApiError } from '@/api/http'
 import { SpacesApi } from '@/api/spaces'
 import { useDialog } from '@/plugins/dialog'
 import { useSpaceStore } from '@/stores/space'
@@ -161,8 +162,10 @@ async function runJoinLink(action: () => Promise<void>) {
   joinError.value = ''
   try {
     await action()
-  } catch {
-    joinError.value = t('spaces.members.joinLink.failed')
+  } catch (error) {
+    // 服务端拒绝时说了原因（没权限、空间还没过审……），照它说的写；网络断了、服务端出错才写笼统那句。
+    const refused = error instanceof ApiError && error.status >= 400 && error.status < 500 && error.message
+    joinError.value = refused || t('spaces.members.joinLink.failed')
   } finally {
     joinBusy.value = false
   }
