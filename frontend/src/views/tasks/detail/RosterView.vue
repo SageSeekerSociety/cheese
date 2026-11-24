@@ -246,7 +246,9 @@
       v-model="deadlineOpen"
       :title="t('tasks.roster.deadlineTitle')"
       :primary-label="t('tasks.roster.save')"
-      :primary-disabled="!deadlineValue"
+      :primary-disabled="!deadlineValue || saving"
+      :primary-loading="saving"
+      :close-disabled="saving"
       size="sm"
       @primary="saveDeadline"
     >
@@ -259,6 +261,7 @@
         :min="minDeadline"
         hide-details
       />
+      <p v-if="saveError" role="alert" class="t-body c-danger rs__dialog-error">{{ saveError }}</p>
     </AdaptiveDialog>
 
     <AdaptiveDialog
@@ -266,6 +269,9 @@
       :title="t('tasks.roster.rejectTitle')"
       :primary-label="t('tasks.roster.reject')"
       primary-danger
+      :primary-loading="saving"
+      :primary-disabled="saving"
+      :close-disabled="saving"
       size="sm"
       @primary="confirmReject"
     >
@@ -279,6 +285,7 @@
         counter="200"
         maxlength="200"
       />
+      <p v-if="saveError" role="alert" class="t-body c-danger rs__dialog-error">{{ saveError }}</p>
     </AdaptiveDialog>
   </div>
 </template>
@@ -384,12 +391,14 @@ const props = defineProps<{
   busyId: number | null
   /** 正在排「重新评测全部最新提交」。 */
   rejudging?: boolean
+  /** 拒绝一份领取、设截止：返回 null 是成了，否则是没成的原因。对话框等它回来，
+   *  成了才关，没成留着填的东西、把原因写在框里。 */
+  reject: (id: number, reason: string) => Promise<string | null>
+  deadline: (id: number, at: number) => Promise<string | null>
 }>()
 
 const emit = defineEmits<{
   approve: [id: number]
-  reject: [id: number, reason: string]
-  deadline: [id: number, at: number]
   review: [who: { id: number; name: string }]
   retry: []
   rejudge: []
@@ -583,16 +592,34 @@ const selected = ref<Row | null>(null)
 const rejectOpen = ref(false)
 const rejectReason = ref('')
 
+/** 拒绝或设截止的请求在路上；没成时的原因。两张框不会同时开着，共用这一份。 */
+const saving = ref(false)
+const saveError = ref('')
+
+/** 等请求回来：成了返回 true（由调用的一方关框），没成把原因留在框里。 */
+async function settle(send: () => Promise<string | null>): Promise<boolean> {
+  saving.value = true
+  saveError.value = ''
+  try {
+    const failed = await send()
+    saveError.value = failed ?? ''
+    return !failed
+  } finally {
+    saving.value = false
+  }
+}
+
 function openReject(row: Row) {
   selected.value = row
   rejectReason.value = ''
+  saveError.value = ''
   rejectOpen.value = true
 }
 
-function confirmReject() {
-  if (!selected.value) return
-  emit('reject', selected.value.id, rejectReason.value)
-  rejectOpen.value = false
+async function confirmReject() {
+  const row = selected.value
+  if (!row || saving.value) return
+  if (await settle(() => props.reject(row.id, rejectReason.value))) rejectOpen.value = false
 }
 
 const deadlineOpen = ref(false)
@@ -613,13 +640,15 @@ function rowActions(row: Row): MenuAction[] {
 function openDeadline(row: Row) {
   selected.value = row
   deadlineValue.value = dayjs(row.deadline ?? dayjs().add(1, 'day').hour(23).minute(59)).format('YYYY-MM-DDTHH:mm')
+  saveError.value = ''
   deadlineOpen.value = true
 }
 
-function saveDeadline() {
-  if (!selected.value || !deadlineValue.value) return
-  emit('deadline', selected.value.id, dayjs(deadlineValue.value).valueOf())
-  deadlineOpen.value = false
+async function saveDeadline() {
+  const row = selected.value
+  if (!row || !deadlineValue.value || saving.value) return
+  const at = dayjs(deadlineValue.value).valueOf()
+  if (await settle(() => props.deadline(row.id, at))) deadlineOpen.value = false
 }
 </script>
 
@@ -845,6 +874,9 @@ function saveDeadline() {
 .rs__dialog-lead {
   margin: 0 0 12px;
   color: var(--text);
+}
+.rs__dialog-error {
+  margin: 12px 0 0;
 }
 .rs__rejudge {
   display: flex;

@@ -41,6 +41,8 @@ function mount(
     denied?: boolean
     failed?: boolean
     failureReason?: string | null
+    reject?: (id: number, reason: string) => Promise<string | null>
+    deadline?: (id: number, at: number) => Promise<string | null>
   } = {}
 ) {
   return render(RosterView, {
@@ -53,9 +55,37 @@ function mount(
       failed: opts.failed ?? false,
       failureReason: opts.failureReason ?? null,
       busyId: null,
+      reject: opts.reject ?? (async () => null),
+      deadline: opts.deadline ?? (async () => null),
     },
     global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
+}
+
+/** 框里所有提醒的字（输入框自己也有一个空的提醒位置）。 */
+function alertsIn(el: HTMLElement): string {
+  return within(el)
+    .getAllByRole('alert')
+    .map((a) => a.textContent ?? '')
+    .join('\n')
+}
+
+/** 开着的那张对话框。 */
+async function openDialog(): Promise<HTMLElement> {
+  return waitFor(() => {
+    const el = document.querySelector('.v-overlay--active .v-card') as HTMLElement | null
+    expect(el).not.toBeNull()
+    return el!
+  })
+}
+
+/** 菜单里字正好是这一句的那一项。 */
+function menuItem(label: string): HTMLElement {
+  const item = Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"], .v-list-item')).find(
+    (el) => el.textContent?.trim() === label
+  )
+  expect(item).toBeTruthy()
+  return item!
 }
 
 function row(view: ReturnType<typeof mount>, name: string): HTMLElement {
@@ -108,19 +138,48 @@ describe('领取者页签', () => {
   })
 
   it('拒绝要先在对话框里确认，带上填的原因', async () => {
-    const view = mount({ participants: PEOPLE, latest: LATEST })
+    const rejected: [number, string][] = []
+    const view = mount({
+      participants: PEOPLE,
+      latest: LATEST,
+      reject: async (id, reason) => {
+        rejected.push([id, reason])
+        return null
+      },
+    })
 
     await fireEvent.click(within(row(view, '林小满')).getByText(t('tasks.roster.reject')))
-    expect(view.emitted('reject')).toBeUndefined()
+    expect(rejected).toEqual([])
 
-    const dialog = await waitFor(() => {
-      const el = document.querySelector('.v-overlay--active .v-card') as HTMLElement | null
-      expect(el).not.toBeNull()
-      return el!
-    })
+    const dialog = await openDialog()
     await fireEvent.update(within(dialog).getByRole('textbox'), '人数够了')
     await fireEvent.click(within(dialog).getByRole('button', { name: t('tasks.roster.reject') }))
-    expect(view.emitted('reject')).toEqual([[1, '人数够了']])
+    expect(rejected).toEqual([[1, '人数够了']])
+  })
+
+  it('拒绝没成：对话框留着，填的原因还在，框里说出为什么', async () => {
+    const view = mount({ participants: PEOPLE, latest: LATEST, reject: async () => '这份领取已经被处理过了' })
+
+    await fireEvent.click(within(row(view, '林小满')).getByText(t('tasks.roster.reject')))
+    const dialog = await openDialog()
+    await fireEvent.update(within(dialog).getByRole('textbox'), '人数够了')
+    await fireEvent.click(within(dialog).getByRole('button', { name: t('tasks.roster.reject') }))
+
+    await waitFor(() => expect(alertsIn(dialog)).toContain('这份领取已经被处理过了'))
+    expect(document.querySelector('.v-overlay--active .v-card')).toBe(dialog)
+    expect((within(dialog).getByRole('textbox') as HTMLTextAreaElement).value).toBe('人数够了')
+  })
+
+  it('设截止没成：对话框留着，框里说出为什么', async () => {
+    const view = mount({ participants: PEOPLE, latest: LATEST, deadline: async () => '截止时间不能早于现在' })
+
+    await fireEvent.click(within(row(view, '周舟')).getByRole('button', { name: t('tasks.roster.more') }))
+    await fireEvent.click(await waitFor(() => menuItem(t('tasks.roster.setDeadline'))))
+    const dialog = await openDialog()
+    await fireEvent.click(within(dialog).getByRole('button', { name: t('tasks.roster.save') }))
+
+    await waitFor(() => expect(alertsIn(dialog)).toContain('截止时间不能早于现在'))
+    expect(document.querySelector('.v-overlay--active .v-card')).toBe(dialog)
   })
 
   it('交了没判的那一行才有评审；没交的没有', async () => {
@@ -211,6 +270,8 @@ function mountWith(rubric: unknown[], participants: unknown[]) {
       failed: false,
       failureReason: null,
       busyId: null,
+      reject: async () => null,
+      deadline: async () => null,
     },
     global: { plugins: [createVuetify({ components, directives }), i18n] },
   })
@@ -351,6 +412,8 @@ describe('名单里的测试点', () => {
         failed: false,
         failureReason: null,
         busyId: null,
+        reject: async () => null,
+        deadline: async () => null,
       },
       global: { plugins: [createVuetify({ components, directives }), i18n] },
     })
