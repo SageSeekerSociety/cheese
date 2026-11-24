@@ -96,9 +96,6 @@ const emit = defineEmits<{
       :comparison-loading="props.comparisonLoading"
       :comparison-error="props.comparisonError"
       @toggle-compare="emit('toggle-compare')"
-      @comment="(d) => void props.review?.add(d)"
-      @edit-comment="(id, b, s) => void props.review?.edit(id, b, s)"
-      @remove-comment="(id) => void props.review?.remove(id)"
     />
   </div>
   <!-- Per-file diff: one section per file, additions and deletions coloured.

@@ -9,7 +9,7 @@
 // 修订待审阅时只看不改：接受或拒绝会改动文件本身，哪一处不要，写一条批注。
 import type { DocumentRevisionsBundle } from '@/composables/useDocumentRevisions'
 import type { FileKind } from '@/lib/fileKind'
-import type { DiffReview, OfficeComparison, ReviewComment, ReviewCommentDraft } from '@/types/reviewComment'
+import type { OfficeComparison, ReviewBundle, ReviewComment, ReviewWriteResult } from '@/types/reviewComment'
 
 import { computed, ref, watch } from 'vue'
 
@@ -32,7 +32,7 @@ const props = withDefaults(
     docBytes: ArrayBuffer | null
     revs: DocumentRevisionsBundle
     revisionPath?: string | null
-    review?: DiffReview | null
+    review?: ReviewBundle | null
     /** 能不能和上一版比（任务里的 Word、表格、幻灯片）。 */
     canCompare?: boolean
     comparing?: boolean
@@ -53,9 +53,6 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   (e: 'toggle-compare'): void
-  (e: 'comment', draft: ReviewCommentDraft): void
-  (e: 'edit-comment', id: string, body: string, suggestion: string | null): void
-  (e: 'remove-comment', id: string): void
 }>()
 
 const kind = computed(() => placeKind(props.path))
@@ -84,10 +81,12 @@ function onCell(payload: { address: string; value: string; sheet: string }) {
   picked.value = { place, text: payload.value, label: place }
 }
 
-function submit(body: string, suggestion: string | null) {
+// 写、改、删都等服务器答应了才收框（见 `ReviewCommentBox`）；没有批注可写时不会走到这里。
+const unavailable = async () => t('work.room.review.saveFailed')
+async function submit(body: string, suggestion: string | null): ReviewWriteResult {
   const at = picked.value
-  if (!at) return
-  emit('comment', {
+  if (!at || !props.review) return unavailable()
+  const failed = await props.review.add({
     path: props.path,
     line_start: 0,
     line_end: 0,
@@ -96,7 +95,14 @@ function submit(body: string, suggestion: string | null) {
     body,
     suggestion,
   })
-  picked.value = null
+  if (!failed && picked.value === at) picked.value = null
+  return failed
+}
+function editComment(id: string, body: string, suggestion: string | null): ReviewWriteResult {
+  return props.review ? props.review.edit(id, body, suggestion) : unavailable()
+}
+function removeComment(id: string): ReviewWriteResult {
+  return props.review ? props.review.remove(id) : unavailable()
 }
 
 const mine = computed(() => (props.review?.comments ?? []).filter((c) => c.path === props.path))
@@ -104,8 +110,9 @@ const topLevel = computed(() => mine.value.filter((c) => !c.parent_id))
 function repliesOf(id: string) {
   return mine.value.filter((c) => c.parent_id === id)
 }
-function reply(parent: ReviewComment, body: string) {
-  emit('comment', {
+function reply(parent: ReviewComment, body: string): ReviewWriteResult {
+  if (!props.review) return unavailable()
+  return props.review.add({
     path: parent.path,
     line_start: parent.line_start,
     line_end: parent.line_end,
@@ -165,7 +172,7 @@ const compareLabel = computed(() =>
               :line-text="picked.text"
               :submit-label="t('work.room.review.add')"
               :busy="review.busy"
-              @submit="submit"
+              :send="submit"
               @cancel="picked = null"
             />
           </div>
@@ -179,9 +186,9 @@ const compareLabel = computed(() =>
             :writable="review.writable"
             :agent-name="review.agentName"
             :busy="review.busy"
-            @edit="(id, b, s) => emit('edit-comment', id, b, s)"
-            @remove="(id) => emit('remove-comment', id)"
-            @reply="(_id, body) => reply(c, body)"
+            :edit="editComment"
+            :remove="removeComment"
+            :reply="(_id, body) => reply(c, body)"
           />
           <p v-if="!topLevel.length && !picked" class="t-meta review-doc__empty">
             {{ t('work.room.review.noComments') }}

@@ -6,7 +6,7 @@
  * - 不在待审阅时，选中文字不会冒出写批注的框。
  * - 「对比上一版」把这一版换成对比；被退回过的说明比的是退回时那一版。
  */
-import type { DiffReview, OfficeComparison } from '@/types/reviewComment'
+import type { OfficeComparison, ReviewBundle, ReviewCommentDraft } from '@/types/reviewComment'
 
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
@@ -47,8 +47,32 @@ vi.mock('@/components/panels/preview/PreviewSheet.vue', () => ({
 const PAGES = { label: 'Word', icon: 'mdi-file-word', view: 'pages' as const }
 const SHEET = { label: 'Excel', icon: 'mdi-file-excel', view: 'sheet' as const, sheet: 'workbook' as const }
 
-function review(writable = true): DiffReview {
-  return { comments: [], writable, me: 'alice', busy: false, agentName: '芝士' }
+/** 等送出那一下走完（服务器的答复是一个微任务之后的事）。 */
+const settle = () => new Promise((r) => setTimeout(r, 0))
+
+/** 写下去的批注记在 `sent` 里；`refuse` 给了就当服务器拒了，说的是这一句。 */
+const sent: ReviewCommentDraft[] = []
+let refuse: string | null = null
+beforeEach(() => {
+  sent.length = 0
+  refuse = null
+})
+
+function review(writable = true): ReviewBundle {
+  return {
+    comments: [],
+    writable,
+    me: 'alice',
+    busy: false,
+    agentName: '芝士',
+    add: async (d) => {
+      if (refuse) return refuse
+      sent.push(d)
+      return null
+    },
+    edit: async () => null,
+    remove: async () => null,
+  }
 }
 
 function mount(props: Record<string, unknown>) {
@@ -59,10 +83,6 @@ function mount(props: Record<string, unknown>) {
   })
 }
 
-function firstComment(emitted: Record<string, unknown[]>): unknown {
-  return (emitted.comment as unknown[][] | undefined)?.[0]?.[0]
-}
-
 async function writeIt(text: string) {
   const field = document.querySelector('.comment-box textarea') as HTMLTextAreaElement
   await fireEvent.update(field, text)
@@ -71,11 +91,11 @@ async function writeIt(text: string) {
 
 describe('指着一处写批注', () => {
   it('Word 上选中的字，记成第几页和那段字', async () => {
-    const { emitted } = mount({ path: 'docs/报告.docx', documentType: PAGES })
+    mount({ path: 'docs/报告.docx', documentType: PAGES })
     await fireEvent.click(document.querySelector('.stub-pages')!)
     await writeIt('和问卷汇总表对不上')
 
-    expect(firstComment(emitted())).toMatchObject({
+    expect(sent[0]).toMatchObject({
       path: 'docs/报告.docx',
       place: 'p3',
       line_text: '98 人',
@@ -84,19 +104,40 @@ describe('指着一处写批注', () => {
   })
 
   it('幻灯片上选中的字，记成第几页幻灯片', async () => {
-    const { emitted } = mount({ path: 'docs/答辩.pptx', documentType: PAGES })
+    mount({ path: 'docs/答辩.pptx', documentType: PAGES })
     await fireEvent.click(document.querySelector('.stub-slides')!)
     await writeIt('结果页要加样本量')
 
-    expect(firstComment(emitted())).toMatchObject({ place: 's2', line_text: '实验结果' })
+    expect(sent[0]).toMatchObject({ place: 's2', line_text: '实验结果' })
   })
 
   it('表格里点的格子，记成「表!格」和格子里的值', async () => {
-    const { emitted } = mount({ path: 'docs/问卷汇总.xlsx', documentType: SHEET })
+    mount({ path: 'docs/问卷汇总.xlsx', documentType: SHEET })
     await fireEvent.click(document.querySelector('.stub-sheet')!)
     await writeIt('合计不对')
 
-    expect(firstComment(emitted())).toMatchObject({ place: '汇总!C5', line_text: '96' })
+    expect(sent[0]).toMatchObject({ place: '汇总!C5', line_text: '96' })
+  })
+
+  it('服务器没收下：框和字都留着，说出原因', async () => {
+    refuse = '任务已不在待审阅'
+    mount({ path: 'docs/报告.docx', documentType: PAGES })
+    await fireEvent.click(document.querySelector('.stub-pages')!)
+    await writeIt('和问卷汇总表对不上')
+    await settle()
+
+    const field = document.querySelector('.comment-box textarea') as HTMLTextAreaElement | null
+    expect(field?.value).toBe('和问卷汇总表对不上')
+    expect(screen.getByRole('alert').textContent).toContain('任务已不在待审阅')
+  })
+
+  it('收下了才收起框', async () => {
+    mount({ path: 'docs/报告.docx', documentType: PAGES })
+    await fireEvent.click(document.querySelector('.stub-pages')!)
+    await writeIt('和问卷汇总表对不上')
+    await settle()
+
+    expect(document.querySelector('.comment-box')).toBeNull()
   })
 
   it('不在待审阅时，选中文字不会冒出写批注的框', async () => {
