@@ -476,7 +476,6 @@ export type LearningClassPointDetail = {
   tasks: string[]
   mastery: { mastered: number; shaky: number; weak: number; untouched: number } | null
   misconceptions: LearningClassMisconception[]
-  hiddenMisconceptions: number
   advice: { text: string; generatedAt: number | null } | null
   /** 做过巩固题的人里几人升了档（第 4 步）；不足 3 人为空。 */
   practice?: { practiced: number; improved: number } | null
