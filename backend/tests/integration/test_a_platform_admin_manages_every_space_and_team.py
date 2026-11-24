@@ -444,6 +444,27 @@ def test_a_platform_admin_reads_switches_and_resets_a_space_join_link(client, pe
     )
 
 
+def test_a_platform_admin_does_not_join_a_space_through_the_link_they_hold(
+    client, people
+):
+    """Holding the link is for passing it on: with approval off the link
+    seats whoever opens it, and oversight never seats the overseer."""
+    space_id = _space(client, people)
+    me = _id_of(client, people, OVERSEER)
+    base = f"/spaces/{space_id}/join-link"
+    off = client.patch(base, json={"approval": False}, headers=people[OVERSEER])
+    assert off.status_code == 200, off.text
+    token = off.json()["data"]["token"]
+
+    _refused_as_own_seat(
+        client.post(f"/space-invites/{token}/join", headers=people[OVERSEER])
+    )
+    assert me not in _members(client, people, space_id)
+    joined = client.post(f"/space-invites/{token}/join", headers=people[OUTSIDER])
+    assert joined.status_code == 200, joined.text
+    assert joined.json()["data"]["joinStatus"] == "member"
+
+
 def test_a_space_review_has_not_cleared_has_no_join_link_for_a_platform_admin(
     client, people
 ):

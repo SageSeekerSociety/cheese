@@ -268,6 +268,19 @@ async def join_space_by_join_link(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
+    # A platform admin holds the link to pass it on. With approval off,
+    # opening it seats them at once — through oversight, which never seats the
+    # overseer. With approval on they only ask, and the owner or an admin
+    # answers (never they themselves, ``approve_space_join_request``).
+    linked = await service.space_for_join_token(token)
+    if not linked.join_approval:
+        await SPACE.refuse_own_seat(
+            db,
+            linked.id,
+            auth_user.user_id,
+            SpacePermission.manage_members,
+            seats=auth_user.user_id,
+        )
     space, join_status = await service.join_by_link(
         token=token, user_id=auth_user.user_id
     )
