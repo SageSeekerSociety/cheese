@@ -300,6 +300,9 @@ export function useChatComposer(deps: ChatComposerDeps) {
     summon: boolean
     expectsAgent?: boolean
   }) {
+    // 还有一枚在传或在取（资料库里挑的那份也要等后端取来）：这时发出去，那一枚的占位会
+    // 被下面的 `clearPendingAtts` 一起清掉，消息就少了它。等它到了再发。
+    if (attsUploading.value || pendingAtts.value.some((a) => a.uploading)) return
     if (pendingAtts.value.some((a) => a.error)) {
       errorMsg.value = t('work.room.attachments.sendBlocked')
       return

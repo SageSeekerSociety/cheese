@@ -1,5 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+/** 资料库里那一份：`fetching` 里每一份等到 `arrive` 才回来。 */
+const fetching: (() => void)[] = []
+const arrive = () => fetching.splice(0).forEach((go) => go())
+vi.mock('../api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../api')>()),
+  attachLibraryFile: (_topic: string, path: string) =>
+    new Promise((resolve) => fetching.push(() => resolve({ path: `library/${path}`, mime: 'application/pdf' }))),
+}))
+
 import { pastedImageName, pastedTextName, uploaded, usePendingAttachments } from './attachments'
 
 import { setLocale } from '@/i18n'
@@ -271,6 +280,31 @@ describe('chat attachments', () => {
 
     await retry(0)
     expect(pending.value).toHaveLength(0)
+  })
+})
+
+describe('a file picked from the library', () => {
+  it('holds sending back while it is still being fetched, and lets go once it has arrived', async () => {
+    const atts = usePendingAttachments(() => 't1')
+    const adding = atts.addLibraryFile('课程/大纲.pdf')
+
+    expect(atts.uploading.value).toBe(true)
+    arrive()
+    await adding
+
+    expect(atts.uploading.value).toBe(false)
+    expect(uploaded(atts.pending.value)).toEqual([{ path: 'library/课程/大纲.pdf', mime: 'application/pdf' }])
+  })
+
+  it('an upload that finishes first does not let sending go while the library file is still coming', async () => {
+    const atts = usePendingAttachments(() => 't1')
+    const adding = atts.addLibraryFile('课程/大纲.pdf')
+    await atts.addFiles([file('a.png', 'image/png')])
+
+    expect(atts.uploading.value).toBe(true)
+    arrive()
+    await adding
+    expect(atts.uploading.value).toBe(false)
   })
 })
 
