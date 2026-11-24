@@ -487,6 +487,7 @@ export type WsServerFrame =
   // `at`/`stream`：它在这个后端进程发出的帧里排第几（`room_state` 同一套数）。
   | { type: 'run_record'; record: Block; at: number; stream: string }
   | import('./types/live').LiveFrame
+  | import('./types/live').LandedFrame
   | import('./types/roomSocket').RoomStateFrame
   | import('./types/threads').ThreadActivityFrame
 

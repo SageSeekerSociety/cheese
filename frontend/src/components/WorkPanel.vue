@@ -49,7 +49,10 @@ import type { WorkLayout, WorkTabMeta } from './work/workLayout'
 import { computed, defineAsyncComponent, nextTick, reactive, ref, useId, useSlots, watch } from 'vue'
 import { useQuery } from '@tanstack/vue-query'
 
+import { avatarColor } from '@/utils/avatar'
+
 import { provideAcceptCard } from '../composables/useAcceptCard'
+import { useFollowEdits } from '../composables/useFollowEdits'
 import { usePanelChanges } from '../composables/usePanelChanges'
 import { useRoomFileProbe } from '../composables/useRoomFileProbe'
 import { useTaskFiles } from '../composables/useTaskFiles'
@@ -79,6 +82,7 @@ import RoutinePanelHost from './routine/RoutinePanelHost.vue'
 import DeliveryReviewHead from './work/DeliveryReviewHead.vue'
 import EditorPart, { type EditorTab } from './work/EditorPart.vue'
 import { diffKey, diffPath, FILE_TABS, paneOfCentre, useEditorTabs } from './work/editorTabs'
+import FollowButton from './work/FollowButton.vue'
 import PanelChangesHost from './work/PanelChangesHost.vue'
 import PanelPreviewHost from './work/PanelPreviewHost.vue'
 import PanelSiteHost from './work/PanelSiteHost.vue'
@@ -695,6 +699,49 @@ const taskFiles = useTaskFiles({
   refreshTick: () => refreshTick.value,
 })
 const taskTree = useTaskFileTree(taskFiles)
+
+// 跟随：AI 队友改文件时，编辑器跟到它在改的那份、看着改动一个字一个字写出来（`useFollowEdits`）。
+// 一处改动落到磁盘上，正开着的那份就重读，跟不跟随都一样；读者在编辑器里点、敲、滚，就不再跟随。
+const follow = useFollowEdits({
+  listed: () => taskFiles.files.value.map((file) => file.path),
+  landed: (file) => {
+    if (taskFiles.openPath.value === file) void taskFiles.open(file)
+  },
+})
+watch(
+  () => props.taskId,
+  () => follow.reset()
+)
+/** 跟随时要看的那一份：换到「文件」那一格，打开它。 */
+async function showFollowed(file: string) {
+  if (!shown('code') && !(await setTab('code', { guard: false }))) return
+  if (taskFiles.openPath.value !== file) await taskFiles.open(file)
+}
+watch(
+  () => (follow.following.value ? follow.current.value?.file ?? null : null),
+  (file) => file && void showFollowed(file)
+)
+const agentEdit = computed(() => {
+  const edit = follow.current.value
+  if (!edit) return null
+  return {
+    file: edit.file,
+    mark: {
+      name: props.agentName,
+      color: avatarColor(edit.agent),
+      old: edit.old,
+      oldPending: edit.oldPending,
+      text: edit.text,
+      state: edit.state === 'landed' ? ('landed' as const) : ('writing' as const),
+      follow: follow.following.value,
+    },
+  }
+})
+const followColor = computed(() => avatarColor(follow.current.value?.agent ?? props.agentName))
+function toggleFollow() {
+  if (follow.following.value) follow.stop()
+  else follow.start()
+}
 // 左栏「搜索」：搜这件任务的文件里的字。
 const taskSearch = useTaskSearch({ projectId: () => projectId.value, taskId: () => props.taskId })
 const searchFocusTick = ref(0)
@@ -1569,6 +1616,7 @@ function siteBlock(block: Block) {
 // 面板此刻在画哪一格。地址不一定写得出来——平板横放里自动挑中的那一格就没写进地址，
 // 而收起浮层再打开要回到它，所以这里是那份记忆的出处（TopicView 打开浮层时来问）。
 defineExpose({
+  agentFrame: follow.frame,
   showOverview,
   openFile,
   openDocument,
@@ -1634,6 +1682,14 @@ defineExpose({
         <WorkPaneHead :target="layout?.head('code')">
           <template #title><TaskFilePicker :files="taskFiles" @pick="pickFile" /></template>
           <template v-if="taskFiles.committedCopy.value" #after-title><CommittedCopyMark /></template>
+          <FollowButton
+            v-if="!changesReadOnly"
+            :name="agentName"
+            :color="followColor"
+            :on="follow.following.value"
+            :editing="follow.active.value"
+            @toggle="toggleFollow"
+          />
           <BaseButton kind="ghost" size="sm" class="block-head__action" @click="emit('open-editor', 'code')">
             {{ t('work.task.form.openInEditor') }}
           </BaseButton>
@@ -1688,8 +1744,17 @@ defineExpose({
             @keep="keepTab"
             @body="centreBody = $event"
           >
-            <template v-if="centreShown === FILE_TABS && taskFiles.openPath.value" #end>
+            <template #end>
+              <FollowButton
+                v-if="!changesReadOnly"
+                :name="agentName"
+                :color="followColor"
+                :on="follow.following.value"
+                :editing="follow.active.value"
+                @toggle="toggleFollow"
+              />
               <BaseButton
+                v-if="centreShown === FILE_TABS && taskFiles.openPath.value"
                 kind="ghost"
                 size="sm"
                 icon="mdi-dock-right"
@@ -1908,7 +1973,9 @@ defineExpose({
               :light="blocks"
               :framed="editorForm"
               :language="taskLanguage"
+              :agent-edit="agentEdit"
               @open-beside="openBeside"
+              @person="follow.stop()"
             />
             <template v-if="docked === 'code'" #dock><slot name="dock" /></template>
           </WorkPane>

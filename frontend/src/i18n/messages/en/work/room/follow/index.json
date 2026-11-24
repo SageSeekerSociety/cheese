@@ -1,0 +1,6 @@
+{
+  "label": "Follow",
+  "start": "Follow {name}'s edits",
+  "stop": "Stop following",
+  "editing": "{name} is editing a file"
+}

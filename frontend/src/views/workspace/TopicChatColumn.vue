@@ -1,5 +1,13 @@
 <script setup lang="ts">
-import type { AgentControlState, Block, ChatAttachment, ProjectMemberRow, RoomTask, Topic } from '@/cx_types'
+import type {
+  AgentControlState,
+  Block,
+  ChatAttachment,
+  ProjectMemberRow,
+  RoomTask,
+  Topic,
+  WsServerFrame,
+} from '@/cx_types'
 import type { AgentFailureLine } from '@/lib/agentFailures'
 import type { DocReviewRequest } from '@/lib/docReview'
 import type { OpenedDocument } from '@/lib/docReview'
@@ -94,6 +102,7 @@ const emit = defineEmits<{
   // 现场时间线上新到或变了的一行、在跑的轮次各自的开始时间：一路透传给现场那格。
   // 漏掉不报错，只是现场又回到「打开才刷新」。
   (e: 'site-block', block: Block): void
+  (e: 'agent-frame', frame: WsServerFrame): void
   (e: 'site-turns', turns: Record<string, number>): void
   // 谁在这个房间里忙：现场那一格画同一份。
   (e: 'activity', lines: MemberActivityLine[]): void
@@ -290,6 +299,7 @@ defineExpose({
       @working="emit('working', $event)"
       @agent-control="emit('agent-control', $event)"
       @site-block="emit('site-block', $event)"
+      @agent-frame="emit('agent-frame', $event)"
       @site-turns="emit('site-turns', $event)"
       @activity="onActivity"
       @failures="agentFailureLines = $event"

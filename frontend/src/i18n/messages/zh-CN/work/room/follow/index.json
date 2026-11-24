@@ -1,0 +1,6 @@
+{
+  "label": "跟随",
+  "start": "跟随{name}改文件",
+  "stop": "停止跟随",
+  "editing": "{name}正在改文件"
+}

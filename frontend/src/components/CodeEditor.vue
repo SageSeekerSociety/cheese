@@ -2,6 +2,27 @@
 import type * as Monaco from 'monaco-editor'
 import type { LanguageLink } from '../lib/lsp/link'
 
+/**
+ * The AI teammate's change to the file shown (跟随): the passage it replaces and what it puts
+ * there, as written so far. While `writing`, the file is unchanged: the passage is struck through
+ * and the new text grows under it, never in the text itself (that is the person's, and is saved).
+ * Once `landed`, the file shown already holds the change, which is marked for a moment.
+ */
+export interface AgentEditMark {
+  /** Who is writing it, as its label says. */
+  name: string
+  /** Its avatar colour: a fixed-lightness hex the same in both themes (`avatarColor`). */
+  color: string
+  /** The passage replaced; null for a write of the whole file. */
+  old: string | null
+  /** The passage replaced is still being written: where the change goes is not known yet. */
+  oldPending: boolean
+  text: string
+  state: 'writing' | 'landed'
+  /** The person follows it: the editor keeps the change in view. */
+  follow: boolean
+}
+
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { useAppTheme } from '../theme'
@@ -146,14 +167,18 @@ const props = withDefaults(
      * tabs: going back to one finds its undo history and where it was scrolled as it left them.
      */
     keep?: readonly string[]
+    /** The AI teammate's change to this file, while it is written and just after it lands. */
+    agent?: AgentEditMark | null
   }>(),
-  { filename: '', readonly: false, lines: null, language: null, keep: () => [] }
+  { filename: '', readonly: false, lines: null, language: null, keep: () => [], agent: null }
 )
 const emit = defineEmits<{
   (e: 'update:modelValue', v: string): void
   (e: 'save'): void
   /** ⌘/Ctrl-P inside the editor: find a file by name (the browser's print dialog is not wanted). */
   (e: 'quick-open'): void
+  /** The person clicked, typed or scrolled in the editor: following ends. */
+  (e: 'person'): void
 }>()
 
 const host = ref<HTMLElement | null>(null)
@@ -312,9 +337,137 @@ onMounted(async () => {
   // ⌘/Ctrl-S saves without the browser's save dialog.
   editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => emit('save'))
   editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyP, () => emit('quick-open'))
+  editor.onMouseDown(() => emit('person'))
+  editor.onKeyDown(() => emit('person'))
+  editor.onMouseWheel(() => emit('person'))
+  agentMarks = editor.createDecorationsCollection()
   if (linkedFiles) showLinkedModel()
   showLines()
+  drawAgent()
 })
+
+// ---- the AI teammate's change (`agent`, 跟随) ----
+let agentMarks: Monaco.editor.IEditorDecorationsCollection | null = null
+let agentZone: string | null = null
+/** What the zone shows, so a frame that changed nothing redraws nothing. */
+let agentZoneKey = ''
+/** Where following last brought the change into view: it is not scrolled to again. */
+let agentShown = ''
+
+function clearAgentZone() {
+  if (!editor || agentZone === null) return
+  const id = agentZone
+  editor.changeViewZones((zones) => zones.removeZone(id))
+  agentZone = null
+  agentZoneKey = ''
+}
+
+/** The zone under the replaced passage: the new text as written so far, the caret after it. */
+function agentZoneNode(mark: AgentEditMark): HTMLElement {
+  const node = document.createElement('div')
+  node.className = 'agent-zone'
+  const text = document.createElement('pre')
+  text.className = 'agent-zone__text'
+  // One line of the zone is one line of the editor: its height is counted in them.
+  // Set in the editor's own type, so the new text stands in its columns.
+  if (editor && monaco) {
+    const font = editor.getOption(monaco.editor.EditorOption.fontInfo)
+    text.style.lineHeight = `${font.lineHeight}px`
+    text.style.fontFamily = font.fontFamily
+    text.style.fontSize = `${font.fontSize}px`
+  }
+  text.textContent = mark.text
+  const caret = document.createElement('span')
+  caret.className = 'agent-zone__caret'
+  const flag = document.createElement('span')
+  flag.className = 'agent-zone__flag'
+  flag.textContent = mark.name
+  text.append(caret, flag)
+  node.append(text)
+  return node
+}
+
+function drawAgent() {
+  const mark = props.agent
+  const model = editor?.getModel()
+  if (!editor || !monaco || !model || !agentMarks) return
+  host.value?.style.setProperty('--agent', mark?.color ?? 'transparent')
+  if (!mark) {
+    agentMarks.clear()
+    clearAgentZone()
+    agentShown = ''
+    return
+  }
+  const content = model.getValue()
+  if (mark.state === 'landed') {
+    clearAgentZone()
+    const at = mark.text ? content.indexOf(mark.text) : -1
+    if (at < 0) {
+      agentMarks.clear()
+      return
+    }
+    const start = model.getPositionAt(at)
+    const end = model.getPositionAt(at + mark.text.length)
+    const range = new monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column)
+    agentMarks.set([{ range, options: { inlineClassName: 'agent-landed', linesDecorationsClassName: 'agent-line' } }])
+    revealAgent(`landed:${at}`, start.lineNumber, end.lineNumber)
+    return
+  }
+  // Writing: where it goes is the passage it replaces (the whole file for a write).
+  let from = 0
+  let to = content.length
+  if (mark.old !== null) {
+    const at = mark.old ? content.indexOf(mark.old) : -1
+    if (at < 0) {
+      agentMarks.clear()
+      clearAgentZone()
+      return
+    }
+    from = at
+    to = at + mark.old.length
+  } else if (mark.oldPending) {
+    agentMarks.clear()
+    clearAgentZone()
+    return
+  }
+  const start = model.getPositionAt(from)
+  const end = model.getPositionAt(to)
+  agentMarks.set(
+    to > from
+      ? [
+          {
+            range: new monaco.Range(start.lineNumber, start.column, end.lineNumber, end.column),
+            options: { inlineClassName: 'agent-replaced', linesDecorationsClassName: 'agent-line' },
+          },
+        ]
+      : []
+  )
+  const after = to > from ? end.lineNumber : Math.max(0, start.lineNumber - 1)
+  const lines = Math.max(1, mark.text.split('\n').length)
+  const key = `${after}:${lines}:${mark.name}:${mark.text}`
+  if (key !== agentZoneKey) {
+    clearAgentZone()
+    const node = agentZoneNode(mark)
+    editor.changeViewZones((zones) => {
+      agentZone = zones.addZone({ afterLineNumber: after, heightInLines: lines, domNode: node })
+    })
+    agentZoneKey = key
+  }
+  revealAgent(`writing:${from}:${lines}`, start.lineNumber, after + lines)
+}
+
+/** Following: bring the change into view, once for each place it moves to. */
+function revealAgent(where: string, first: number, last: number) {
+  if (!editor || !monaco || !props.agent?.follow || where === agentShown) return
+  agentShown = where
+  editor.revealRangeInCenterIfOutsideViewport(new monaco.Range(first, 1, last, 1), monaco.editor.ScrollType.Smooth)
+}
+
+watch(
+  () => [props.agent, props.modelValue, props.filename] as const,
+  () => drawAgent(),
+  { flush: 'post' }
+)
 
 function showLines() {
   const lines = props.lines
@@ -387,6 +540,53 @@ onBeforeUnmount(() => {
 <template>
   <div ref="host" class="code-editor" />
 </template>
+
+<!-- Monaco draws these outside the component's own elements: they cannot be scoped. The agent's
+     colour is its avatar's, a fixed-lightness hex the same in both themes (`--agent`, set on the
+     editor), so the washes mixed from it do not follow the theme either; the text over them is
+     the editor's own and does. -->
+<style>
+.code-editor .agent-replaced {
+  text-decoration: line-through;
+  opacity: 0.55;
+}
+.code-editor .agent-landed {
+  background: color-mix(in srgb, var(--agent) 22%, transparent);
+}
+.code-editor .agent-line {
+  width: 3px !important;
+  margin-left: 3px;
+  background: var(--agent);
+}
+.code-editor .agent-zone {
+  background: color-mix(in srgb, var(--agent) 12%, transparent);
+}
+.code-editor .agent-zone__text {
+  margin: 0;
+  color: var(--text);
+  font-variant-ligatures: none;
+  white-space: pre;
+}
+.code-editor .agent-zone__caret {
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  background: var(--agent);
+}
+.code-editor .agent-zone__flag {
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: var(--radius-sm);
+  background: var(--agent);
+  color: var(--avatar-ink);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 600;
+  vertical-align: text-bottom;
+}
+</style>
 
 <style scoped>
 .code-editor {
