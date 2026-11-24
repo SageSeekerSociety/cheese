@@ -187,7 +187,7 @@ function confirmRemove() {
             :loading="connecting"
             @click="emit('reconnect', connection)"
           >
-            {{ mine === 'connected' ? t('integrations.team.reconnect') : t('integrations.team.connect') }}
+            {{ mine === 'pending' ? t('integrations.team.connect') : t('integrations.team.reconnect') }}
           </BaseButton>
         </div>
       </div>
