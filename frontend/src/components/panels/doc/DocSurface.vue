@@ -29,6 +29,8 @@ import { scrollBehavior } from '@/utils/motion'
 
 import { useDocRefMenu } from '../../../composables/useDocRefMenu'
 import { useDocSlashMenu } from '../../../composables/useDocSlashMenu'
+import { clickedInAppHref } from '../../../composables/useInAppLinks'
+import { useNavigation } from '../../../composables/useNavigation'
 import { BUBBLE_META } from '../../../lib/docBubble'
 import { renderCaret } from '../../../lib/docCaret'
 import { placeOf, spotAt } from '../../../lib/docCommentSpots'
@@ -141,6 +143,9 @@ const emit = defineEmits<{
   (e: 'error', message: string): void
 }>()
 
+// 正文里指向站内页面的链接在应用里翻页，不整页重载（useInAppLinks）。
+const nav = useNavigation()
+
 // Flash a set of editor blocks. We draw transient overlay rectangles positioned
 // over the targets rather than styling the blocks — ProseMirror owns and defends
 // its editable DOM, so any class we add there is reverted instantly. Overlays live
@@ -230,9 +235,11 @@ function onDocClick(e: MouseEvent) {
     emit('locate-comment', ca.dataset.comment)
     return
   }
-  // Links: in READ mode the rendered <a target=_blank> navigates natively; in
-  // EDIT mode a plain click places the caret and ⌘/Ctrl-click opens the link
-  // (the editor-standard gesture, same as VS Code / Feishu).
+  // Links: in READ mode a link out lands in another window and a link into the
+  // app turns a page here (the mark carries no `target` for it — see
+  // docSchema/extensions.ts). In EDIT mode a plain click places the caret and
+  // ⌘/Ctrl-click opens the link (the editor-standard gesture, same as VS Code /
+  // Feishu).
   const a = target?.closest('.doc-editor a[href]') as HTMLAnchorElement | null
   if (a && props.editable && editor.value) {
     e.preventDefault()
@@ -243,6 +250,12 @@ function onDocClick(e: MouseEvent) {
       const link = captureDocLink(editor.value, position)
       if (link) openLink(link)
     }
+    return
+  }
+  const href = clickedInAppHref(e, nav?.router)
+  if (href && nav) {
+    e.preventDefault()
+    void nav.router.push(href)
     return
   }
   const el = target?.closest('.mention, .name-ref') as HTMLElement | null

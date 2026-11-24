@@ -13,6 +13,7 @@ import Blockquote from '@tiptap/extension-blockquote'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import Document from '@tiptap/extension-document'
 import Image from '@tiptap/extension-image'
+import { Link } from '@tiptap/extension-link'
 import { BulletList, ListItem, OrderedList, TaskItem, TaskList } from '@tiptap/extension-list'
 import { Table, TableCell, TableHeader, TableKit } from '@tiptap/extension-table'
 import { Markdown } from '@tiptap/markdown'
@@ -348,6 +349,35 @@ const DocOrderedList = OrderedList.extend({
   },
 })
 
+// ---- A link opens in another window only when it leaves this site.
+//
+// tiptap's link mark carries `target="_blank"` on every link it draws. For a
+// link into the app that is wrong twice over: the reader is sent to a second
+// window for a page of the same app, and in the desktop app that window is the
+// system browser — its webview sends every `_blank` there
+// (desktop/src-tauri/src/main.rs `on_new_window`), so a link to a challenge's
+// own requirements page left the app entirely. The page a `/spaces/…` link
+// names opens in place, like any other page of the app.
+//
+// Which links leave: an `http(s):` or `mailto:` address. Everything else the
+// schema keeps is relative to this site (`safeDocHref`, ../docLinks), so it
+// opens here. Same rule the link callout already draws by, and the same one the
+// desktop shell applies to a click.
+const DocLink = Link.extend({
+  renderHTML(props) {
+    // The parent draws the `<a>` and is where the `javascript:` guard lives, so
+    // it always runs; this only takes the `_blank` back off a link that stays.
+    // A config that extends another always has that parent (`this.parent`).
+    const dom = this.parent!(props)
+    const opensHere = !/^(?:https?:|mailto:)/i.test(String(props.mark.attrs.href ?? ''))
+    if (!opensHere || !Array.isArray(dom) || !dom[1] || typeof dom[1] !== 'object') return dom
+    const attrs = { ...(dom[1] as Record<string, unknown>) }
+    delete attrs.target
+    delete attrs.rel
+    return [dom[0], attrs, ...dom.slice(2)]
+  },
+})
+
 /** The full extension list for the living-doc editor (and its tests). */
 export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
   const extensions: AnyExtension[] = [
@@ -369,15 +399,19 @@ export function docExtensions(opts: DocExtensionsOptions = {}): AnyExtension[] {
       trailingNode: opts.standalone ? undefined : false,
       listItem: false,
       orderedList: false,
-      link: {
-        // No click-through plugin: in edit mode a plain click just places the
-        // caret (⌘-click opens via DocPanel's delegated handler); in read
-        // mode the rendered <a target=_blank> navigates natively.
-        openOnClick: false,
-        autolink: true,
-        linkOnPaste: true,
-        HTMLAttributes: { target: '_blank', rel: 'noopener noreferrer' },
-      },
+      // Replaced by DocLink below, which opens a link into the app in place.
+      link: false,
+    }),
+    DocLink.configure({
+      // No click-through plugin: in edit mode a plain click just places the
+      // caret (⌘-click opens via DocPanel's delegated handler); in read mode
+      // the rendered <a> navigates natively.
+      openOnClick: false,
+      autolink: true,
+      linkOnPaste: true,
+      // A link out carries these; DocLink takes them back off a link that
+      // stays. Same values the editor has always drawn.
+      HTMLAttributes: { target: '_blank', rel: 'noopener noreferrer' },
     }),
     // The cast: @tiptap/markdown types this option as the marked MODULE, but
     // reads only Lexer/defaults/use/lexer/setOptions off it — all present on an
