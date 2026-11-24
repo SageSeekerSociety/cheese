@@ -16,8 +16,10 @@ import { finishOnboarding, uploadAttachment } from '@/api'
 import { t } from '@/i18n'
 import { storageSetJson } from '@/lib/browserStorage'
 import { saveComposerDraft } from '@/lib/composerDrafts'
+import { toast } from '@/lib/toast'
 import { refreshProjects } from '@/query/projects'
 import AccountService from '@/services/account'
+import errorHandler from '@/services/ErrorHandler'
 
 defineProps<{ again?: boolean }>()
 const router = useRouter()
@@ -28,25 +30,42 @@ const failure = ref('')
 async function finish({ answers, skipAll, draft, files }: WelcomeFinish) {
   busy.value = true
   failure.value = ''
+  let done: Awaited<ReturnType<typeof finishOnboarding>>
   try {
-    const done = await finishOnboarding(answers)
-    rememberOnAccount(answers, skipAll)
-    const room = done.root_topic_id
-    if (room) {
-      const atts = []
-      for (const file of files) atts.push(await uploadAttachment(room, file))
-      // 第一句点名建好的项目里实际的默认队友：直接回车只发给成员，没被点名的队友不会接。
-      const said = draft ? `@${done.teammate} ${draft}` : ''
-      if (said || atts.length) saveComposerDraft(room, { draft: said, reply: null, atts })
+    done = await finishOnboarding(answers)
+  } catch (e) {
+    // 服务端说了为什么就说那一句；断网、未知错误没有原因可说，只说没建成。
+    const reason = await errorHandler.explain(e as Error, '')
+    failure.value = reason ? t('welcome.failed', { reason }) : t('welcome.failedRetry')
+    busy.value = false
+    return
+  }
+  // 项目已经建好了：之后哪一步没成，都不再说「项目创建失败」，照样进项目。
+  rememberOnAccount(answers, skipAll)
+  const room = done.root_topic_id
+  if (room) {
+    const atts = []
+    const missed: string[] = []
+    for (const file of files) {
+      try {
+        atts.push(await uploadAttachment(room, file))
+      } catch {
+        missed.push(file.name)
+      }
     }
+    // 第一句点名建好的项目里实际的默认队友：直接回车只发给成员，没被点名的队友不会接。
+    const said = draft ? `@${done.teammate} ${draft}` : ''
+    if (said || atts.length) saveComposerDraft(room, { draft: said, reply: null, atts })
+    if (missed.length)
+      toast.warning(t('welcome.attachmentsFailed', { files: missed.join(t('welcome.preview.listSep')) }))
+  }
+  try {
     await refreshProjects()
     await router.replace(
       room
         ? { name: 'workspace-topic', params: { projectId: done.project_id, topicId: room } }
         : { name: 'workspace-project', params: { projectId: done.project_id } }
     )
-  } catch (e) {
-    failure.value = t('welcome.failed', { reason: e instanceof Error ? e.message : String(e) })
   } finally {
     busy.value = false
   }

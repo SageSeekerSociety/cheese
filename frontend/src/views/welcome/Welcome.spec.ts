@@ -7,6 +7,7 @@ import * as directives from 'vuetify/directives'
 import { fireEvent, render } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { ApiError } from '@/api/http'
 import i18n, { setLocale } from '@/i18n'
 
 const finishOnboarding = vi.fn()
@@ -15,6 +16,8 @@ vi.mock('@/api', () => ({
   finishOnboarding: (a: unknown) => finishOnboarding(a),
   uploadAttachment: (...a: unknown[]) => uploadAttachment(...a),
 }))
+const warned = vi.fn()
+vi.mock('@/lib/toast', () => ({ toast: { warning: (...a: unknown[]) => warned(...a), error: vi.fn() } }))
 const saveComposerDraft = vi.fn()
 vi.mock('@/lib/composerDrafts', () => ({ saveComposerDraft: (...a: unknown[]) => saveComposerDraft(...a) }))
 vi.mock('@/query/projects', () => ({ refreshProjects: vi.fn().mockResolvedValue(undefined) }))
@@ -190,11 +193,31 @@ describe('新手引导', () => {
   })
 
   it('says why the project was not made and stays on the page', async () => {
-    finishOnboarding.mockRejectedValue(new Error('代码仓库服务响应超时'))
+    finishOnboarding.mockRejectedValue(new ApiError(504, '代码仓库服务响应超时', 'RepoTimeout'))
     const view = mount()
     await fireEvent.click(view.getByRole('button', { name: '跳过引导' }))
     expect(await view.findByRole('alert')).toBeTruthy()
     expect(view.getByRole('alert').textContent).toContain('代码仓库服务响应超时')
     expect(replace).not.toHaveBeenCalled()
+  })
+
+  it('a project made whose attachment did not upload still opens, and does not say the project failed', async () => {
+    uploadAttachment.mockRejectedValue(new Error('upload timed out'))
+    const view = mount()
+    await fireEvent.click(view.getByRole('button', { name: /上课、做课程项目/ }))
+    await next(view)
+    await fireEvent.click(view.getByRole('button', { name: '自己写第一件事' }))
+    const picker = view.container.querySelector('input[type="file"]') as HTMLInputElement
+    const file = new File(['x'], '选题说明.pdf', { type: 'application/pdf' })
+    Object.defineProperty(picker, 'files', { value: [file] })
+    await fireEvent.change(picker)
+    await fireEvent.click(view.getByRole('button', { name: /写课程报告或论文初稿/ }))
+    await fireEvent.click(view.getByRole('button', { name: '建好项目' }))
+
+    await vi.waitFor(() =>
+      expect(replace).toHaveBeenCalledWith({ name: 'workspace-topic', params: { projectId: 'p1', topicId: 'general' } })
+    )
+    expect(view.queryByRole('alert')).toBeNull()
+    expect(warned.mock.calls.map(([text]) => text).join()).toContain('选题说明.pdf')
   })
 })

@@ -179,6 +179,8 @@
   "finish": "Create project",
   "finishing": "Creating…",
   "failed": "The project was not created: {reason}",
+  "failedRetry": "The project was not created. Try again later",
+  "attachmentsFailed": "The project was created, but {files} could not be uploaded. Add them again in the message box",
   "tour": {
     "aria": "Interface tour",
     "next": "Next",
