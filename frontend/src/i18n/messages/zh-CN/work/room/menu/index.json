@@ -7,7 +7,7 @@
   "markRead": "标为已读",
   "more": "更多",
   "newTask": "新建任务",
-  "newTaskFailed": "未能新建任务，稍后重试",
+  "newTaskFailed": "新建任务失败，稍后重试",
   "noUsage": "暂无数据",
   "notifyFailed": "通知设置保存失败",
   "rename": "重命名",

@@ -153,7 +153,7 @@ def letter_for(item: dict[str, Any], names: dict[str, str] | None = None) -> Let
             subject=f"{agent} 问你：{_clip(question, _SUBJECT_LIMIT)}"
             if question
             else f"{agent} 有一个问题待你回答",
-            eyebrow=f"{agent} 在等你回答，你回答后它接着做",
+            eyebrow=f"{agent} 待你回答，回答后继续",
             headline=question or "有一个问题待你回答",
             details=(("频道", room),) if room else (),
             action="去回答",

@@ -29,9 +29,9 @@ const TASK: TaskLine = {
     label: '待审阅',
     live: false,
     attention: null,
-    line: '等你',
-    parts: ['等你'],
-    waits: '等你',
+    line: '待你处理',
+    parts: ['待你处理'],
+    waits: '待你处理',
     tip: '',
   },
   mine: true,
@@ -73,7 +73,7 @@ describe('消息头上的任务标签', () => {
     mount({ taskTag: TASK, taskTagFull: true })
     const tag = screen.getByRole('button', { name: t('work.room.taskTag.open', { title: TASK.title }) })
     expect(tag.textContent).toContain('待审阅')
-    expect(tag.textContent).toContain('等你')
+    expect(tag.textContent).toContain('待你处理')
   })
 
   it('早先的那一条只写任务名', () => {

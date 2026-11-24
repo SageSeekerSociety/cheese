@@ -78,7 +78,7 @@ export function taskLine(
     owner: task.owner_handle ?? null,
     creator: task.created_by ?? task.owner_handle ?? null,
     teammate: task.teammate ?? null,
-    state: pr ? { ...state, line: joined([state.line, pr]) } : state,
+    state: pr ? { ...state, line: joined([state.line, pr]), parts: [...state.parts, pr] } : state,
     mine,
     accepted: open && n > 0 ? t('work.room.taskCard.acceptedTimes', { n }) : null,
     at: task.last_message?.created_at ?? task.updated_at,

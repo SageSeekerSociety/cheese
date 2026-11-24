@@ -105,7 +105,7 @@
     "open": "搜索和跳转",
     "placeholder": "搜索或跳转",
     "empty": "暂无结果",
-    "awaiting": "等你处理",
+    "awaiting": "待你处理",
     "archived": "已归档",
     "recent": "最近去过",
     "best": "最匹配",
@@ -206,7 +206,7 @@
   "switcher": {
     "search": "搜索项目",
     "empty": "没有叫「{q}」的项目",
-    "othersAwaiting": "别的项目里有 {n} 件等你处理",
+    "othersAwaiting": "其他项目有 {n} 件待你处理",
     "actions": "{name} 的操作"
   }
 }

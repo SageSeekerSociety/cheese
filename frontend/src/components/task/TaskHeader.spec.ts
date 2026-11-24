@@ -191,15 +191,15 @@ describe('任务页头', () => {
     const mine = mount({ waiting_on: 'alice', needs_my_action: true })
     expect(mine.getByTestId('task-phrase').textContent).toBe('待审阅')
     expect(mine.queryByTestId('task-progress-note')).toBeNull()
-    expect(await stateFacts(mine.container)).toContain('等你')
+    expect(await stateFacts(mine.container)).toContain('待你处理')
     mine.unmount()
     document.body.innerHTML = ''
 
     const theirs = mount({ owner_handle: 'bob', waiting_on: 'bob' })
     expect(theirs.getByTestId('task-phrase').textContent).toBe('待审阅')
     const facts = await stateFacts(theirs.container)
-    expect(facts).toContain('等bob')
-    expect(facts).not.toContain('等你')
+    expect(facts).toContain('待 bob 处理')
+    expect(facts).not.toContain('待你处理')
   })
 
   it('关注人不被写成实际答题人', async () => {
@@ -210,8 +210,8 @@ describe('任务页头', () => {
       needs_my_action: false,
     })
     const facts = await stateFacts(view.container)
-    expect(facts).not.toContain('等你')
-    expect(facts).toContain('等bob')
+    expect(facts).not.toContain('待你处理')
+    expect(facts).toContain('待 bob 处理')
   })
 
   it('多人问题的实际被问者看到等你', async () => {
@@ -221,7 +221,7 @@ describe('任务页头', () => {
       awaits_me: true,
       needs_my_action: true,
     })
-    expect(await stateFacts(view.container)).toContain('等你')
+    expect(await stateFacts(view.container)).toContain('待你处理')
   })
 
   it('待审阅的几样事各占一格，不连成一句', async () => {
@@ -231,7 +231,7 @@ describe('任务页头', () => {
       card: { id: 'c1', status: 'pending', version: 2, reviewer: 'alice' },
     } as Partial<RoomTask>)
     const facts = await stateFacts(view.container)
-    expect(facts).toEqual(['等你', '第 2 版'])
+    expect(facts).toEqual(['待你处理', '第 2 版'])
   })
 
   // 队友报的那一句是看板这一格的出处：照说，会话走了也不改它，只在旁边说一声。

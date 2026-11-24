@@ -419,7 +419,7 @@ it('加一位进来，名册当场多他一行，不用重开房间', async () =
   await fireEvent.click(dave)
   await settle()
   const add = Array.from(document.querySelectorAll('.roster__add button')).find(
-    (b) => b.textContent?.trim() === '加入'
+    (b) => b.textContent?.trim() === '添加'
   ) as HTMLElement
   await fireEvent.click(add)
 

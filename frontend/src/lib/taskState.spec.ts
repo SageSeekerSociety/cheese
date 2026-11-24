@@ -91,19 +91,19 @@ describe('待审阅', () => {
 
   it('等的是看的人：后面那一行说「等你」', () => {
     const state = taskState(task('awaiting_review', { waiting_on: 'chenmo', needs_my_action: true, card }), ctx)
-    expect(state.line).toContain('等你')
+    expect(state.line).toContain('待你处理')
     expect(state.line).toContain('第 3 版')
   })
 
   it('等的是别人：写出是谁', () => {
     const state = taskState(task('awaiting_review', { waiting_on: 'linxiao', card }), ctx)
-    expect(state.line).toContain('等林晓')
-    expect(state.line).not.toContain('等你')
+    expect(state.line).toContain('待 林晓 处理')
+    expect(state.line).not.toContain('待你处理')
   })
 
   it('卡上缺的几样不写', () => {
     const state = taskState(task('awaiting_review', { waiting_on: 'linxiao', card: { id: 'c1', status: 'x' } }), ctx)
-    expect(state.line).toBe('等林晓')
+    expect(state.line).toBe('待 林晓 处理')
   })
 
   it('卡还在跑检查、修检查时下一步在平台手上，不说在等谁审阅', () => {
@@ -115,7 +115,7 @@ describe('待审阅', () => {
       'updating_branch',
     ] as const) {
       const state = taskState(task(phrase, { reviewer_handle: 'chenmo', card: { ...card, reviewer: 'chenmo' } }), ctx)
-      expect(state.line).not.toContain('等你')
+      expect(state.line).not.toContain('待你处理')
     }
   })
 
@@ -123,8 +123,8 @@ describe('待审阅', () => {
     // 项目级列表和侧栏的行不带 waiting_on，只有卡上的审阅人说得准。
     const row = task('awaiting_review', { reviewer_handle: 'chenmo', card: { ...card, reviewer: 'linxiao' } })
     const state = taskState(row, ctx)
-    expect(state.line).toContain('等林晓')
-    expect(state.line).not.toContain('等你')
+    expect(state.line).toContain('待 林晓 处理')
+    expect(state.line).not.toContain('待你处理')
   })
 
   it('卡在检查那几步时，状态词是待审阅，下面那一行说到了哪一步', () => {
@@ -144,14 +144,14 @@ describe('待审阅', () => {
 
   it('检查没过时下一步在负责人手上，不说在等谁审阅', () => {
     const state = taskState(task('checks_failed', { reviewer_handle: 'linxiao', card }), ctx)
-    expect(state.line).not.toContain('等林晓')
+    expect(state.line).not.toContain('待 林晓 处理')
   })
 
   it('检查没过、芝士清不掉：写等负责人，是看的人就写等你', () => {
     const theirs = taskState(task('checks_failed', { owner_handle: 'linxiao', card }), ctx)
-    expect(theirs.line).toContain('检查未通过，等林晓')
+    expect(theirs.line).toContain('检查未通过，待 林晓 处理')
     const mine = taskState(task('checks_failed', { owner_handle: 'chenmo', needs_my_action: true, card }), ctx)
-    expect(mine.line).toContain('检查未通过，等你')
+    expect(mine.line).toContain('检查未通过，待你处理')
   })
 })
 
@@ -194,20 +194,20 @@ describe('当前行动人和关注人', () => {
     const mine = taskState(task(phrase, { waiting_on: 'chenmo', needs_my_action: true }), ctx)
     expect(mine.icon).toBe('mdi-help-circle')
     expect(mine.tone).toBe('warn')
-    expect(mine.line).toContain('等你')
+    expect(mine.line).toContain('待你处理')
     const theirs = taskState(task(phrase, { waiting_on: 'linxiao', awaits_me: true, needs_my_action: false }), ctx)
     expect(theirs.tone).not.toBe('warn')
-    expect(theirs.line).toContain('等林晓')
+    expect(theirs.line).toContain('待 林晓 处理')
   })
   it.each(['awaiting_answer', 'awaiting_review'] as const)('关注提醒不代表要本人执行：%s', (phrase) => {
     const state = taskState(task(phrase, { waiting_on: 'linxiao', awaits_me: true, needs_my_action: false }), ctx)
-    expect(state.line).not.toContain('等你')
+    expect(state.line).not.toContain('待你处理')
     expect(state.line).toContain('林晓')
   })
 
   it('多人问题没有单个人名时，实际被问者仍看到等你', () => {
     const state = taskState(task('awaiting_answer', { waiting_on: null, awaits_me: true, needs_my_action: true }), ctx)
-    expect(state.line).toContain('等你')
+    expect(state.line).toContain('待你处理')
   })
 })
 
@@ -256,8 +256,10 @@ describe('七个状态词', () => {
   })
 
   it('待回答：等的是看的人就说「等你」', () => {
-    expect(taskState(task('awaiting_answer', { waiting_on: 'chenmo', needs_my_action: true }), ctx).line).toBe('等你')
-    expect(taskState(task('awaiting_answer', { waiting_on: 'linxiao' }), ctx).line).toBe('等林晓')
+    expect(taskState(task('awaiting_answer', { waiting_on: 'chenmo', needs_my_action: true }), ctx).line).toBe(
+      '待你处理'
+    )
+    expect(taskState(task('awaiting_answer', { waiting_on: 'linxiao' }), ctx).line).toBe('待 林晓 处理')
   })
 
   it('被退回、平台把它放回进行中：写谁退回的，修改中', () => {
@@ -363,7 +365,7 @@ describe('在做：进度很久没变 / 可能已断线', () => {
   it('会话在跑、那一句话超过 30 分钟没变：橙点、图标不转', () => {
     const s = taskState(working({ session_running: true, progress_set_at: minutesAgo(45) }), ctx)
     expect(s.stale).toBe(true)
-    expect(s.tip).toContain('进度很久没变')
+    expect(s.tip).toContain('进度长时间未更新')
     expect(s.tip).toContain('在跑 e2e 全套')
   })
 
@@ -429,7 +431,7 @@ describe('搁置：很久没人理会', () => {
       }),
       ctx
     )
-    expect(s.tip).toContain('在等人处理')
+    expect(s.tip).toContain('待处理')
   })
 
   it('没带 neglect 的行、已关闭的行：不画月亮', () => {

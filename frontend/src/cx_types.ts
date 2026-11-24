@@ -310,6 +310,8 @@ export interface RoomTask {
   id: string
   project_id: string
   room_id: string // 它挂在哪个房间里；任务不嵌套
+  /** 它在项目地址里的编号（`/projects/<项目>/tasks/<编号>`）。 */
+  number?: number | null
   title: string
   // 标题是谁定的：placeholder = 还叫「新任务」；auto = 平台或芝士起的（方向变了会再改）；human = 人定的（平台不再动它）。见 backend room_task/naming.py。
   title_source?: 'placeholder' | 'auto' | 'human'

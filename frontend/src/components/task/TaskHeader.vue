@@ -41,6 +41,7 @@ import UserRef from '@/components/common/UserRefLink.vue'
 import EnvironmentMenu from '@/components/EnvironmentMenu.vue'
 import PanelToggle from '@/components/room/PanelToggle.vue'
 import CloseTaskDialog from '@/components/task/CloseTaskDialog.vue'
+import TaskStateFacts from '@/components/task/TaskStateFacts.vue'
 import TaskStateMark from '@/components/task/TaskStateMark.vue'
 import { workPaneId } from '@/components/work/workLayout'
 import { t } from '@/i18n'
@@ -390,14 +391,14 @@ function actionTestId(id: string): string | undefined {
           :emphasis="task?.needs_my_action === true"
           :size="13"
         />
-        <span
-          v-if="state?.line && !mdAndUp"
+        <TaskStateFacts
+          v-if="state?.parts.length && !mdAndUp"
           class="task-header__note"
           data-testid="task-progress-note"
           :data-user-content="progressNote ? '' : undefined"
-          :title="progressTitle ?? state?.line"
-          >{{ state?.line }}</span
-        >
+          :title="progressTitle ?? state.line"
+          :parts="state.parts"
+        />
         <a
           v-if="isOpen && task?.deploy_blocked_url"
           class="task-header__run"
@@ -663,7 +664,7 @@ function actionTestId(id: string): string | undefined {
           <div class="task-details__row">
             <dt>{{ t('work.task.info.number') }}</dt>
             <dd class="task-details__pair">
-              <span class="task-details__mono" :title="task.id">#{{ shortId }}</span>
+              <span class="task-details__mono" :title="task.id">#{{ task.number ?? shortId }}</span>
               <button v-if="copyLink" type="button" class="task-details__edit" @click="copyLink">
                 {{ t('work.room.menu.copyLink') }}
               </button>

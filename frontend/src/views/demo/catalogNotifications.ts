@@ -200,9 +200,9 @@ export const NOTIFICATION_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '没有要处理的',
-        note: '一件都没有时只说一句「暂无等你处理的事项」。',
+        note: '一件都没有时只说一句「暂无待你处理的事项」。',
         props: { items: [] },
-        expect: '暂无等你处理的事项',
+        expect: '暂无待你处理的事项',
       },
     ],
   },

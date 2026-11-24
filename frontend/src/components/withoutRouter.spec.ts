@@ -119,7 +119,7 @@ const CASES: Case[] = [
     name: 'AdminActionList',
     component: AdminActionList as unknown as Component,
     props: {
-      title: '等你处理',
+      title: '待你处理',
       empty: '今天没有卡住的事',
       rows: [
         {

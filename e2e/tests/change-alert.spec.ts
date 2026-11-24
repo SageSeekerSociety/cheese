@@ -74,7 +74,7 @@ test.describe('变更提醒', () => {
 
     // 不是只从这一页上摘掉：重新读一遍，它也不在了。
     await page.reload();
-    await expect(page.getByRole('heading', { name: '等你处理' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '待你处理' })).toBeVisible();
     await expect(page.getByText(title)).toHaveCount(0);
   });
 

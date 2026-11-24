@@ -16,6 +16,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChannelOverviewPins from '@/components/channel/ChannelOverviewPins.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
+import TaskStateFacts from '@/components/task/TaskStateFacts.vue'
 import TaskStateMark from '@/components/task/TaskStateMark.vue'
 import { t } from '@/i18n'
 import { replyBlock, replySnippet, threadHeading } from '@/lib/blockDisplay'
@@ -154,12 +155,9 @@ function add(key: 'threads' | 'files' | 'routines') {
 }
 /** 一件进行中的任务那一行只有一行：最后说的一句和谁负责在悬停里。 */
 function taskHint(task: RoomTask): string {
-  const owner = t('work.channel.overview.owner', {
-    name: nameOf(task.owner_handle ?? ''),
-    when: relTime(movedAt(task)),
-  })
+  const owner = t('work.channel.overview.owner', { name: nameOf(task.owner_handle ?? '') })
   const second = secondOf(task)
-  return [taskTitle(task), second, owner].filter(Boolean).join('\n')
+  return [taskTitle(task), second, owner, relTime(movedAt(task))].filter(Boolean).join('\n')
 }
 
 // 状态那一格和频道里的卡是同一个记号（`lib/taskState.ts`）；它下面那一行有话要说时写它，
@@ -256,7 +254,12 @@ async function save() {
           <span class="co-task__title t-body">{{ taskTitle(task) }}</span>
           <TaskStateMark class="co-task__state t-meta" :state="stateOf(task)" :emphasis="true" />
         </span>
-        <span v-if="stateOf(task).line" class="co-task__latest t-meta">{{ stateOf(task).line }}</span>
+        <TaskStateFacts
+          v-if="stateOf(task).parts.length"
+          class="co-task__facts t-meta"
+          :parts="stateOf(task).parts"
+          wrap
+        />
       </button>
     </section>
     <section v-if="general" class="co-section co-section--overview" data-testid="project-overview">
@@ -691,6 +694,9 @@ async function save() {
   -webkit-line-clamp: 2;
   line-clamp: 2;
   -webkit-box-orient: vertical;
+  color: var(--text);
+}
+.co-task__facts {
   color: var(--text);
 }
 .co-done {

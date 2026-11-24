@@ -84,7 +84,7 @@ test('统计页打的是各自那条接口，各页各自出数', async ({ page 
   // 请求 200 而页面仍然写「加载失败」是可能的（比如形状对不上）。
   await expect(page.getByRole('heading', { name: '交付流水线' })).toBeVisible();
   await expect(page.getByText('数据加载失败')).toHaveCount(0);
-  await expect(page.locator('.ad__kpis').getByText('等你处理')).toBeVisible();
+  await expect(page.locator('.ad__kpis').getByText('待你处理')).toBeVisible();
 
   // 2. 切到反馈趋势：打的是那一条反馈接口，待分诊那一张卡出数。
   await sideLink(page, '反馈趋势').click();
@@ -123,7 +123,7 @@ test('切走再切回来不再打接口，也不会把上一页的内容画在�
 
   await page.goto('/admin/pipeline');
   await expect.poll(() => seen.find((r) => r.path === '/api/admin/stats/pipeline'), { timeout: 30_000 }).toBeTruthy();
-  const pipelineKpi = page.locator('.ad__kpis').getByText('等你处理');
+  const pipelineKpi = page.locator('.ad__kpis').getByText('待你处理');
   await expect(pipelineKpi).toBeVisible();
 
   await sideLink(page, '用量').click();
@@ -209,7 +209,7 @@ test('统计拉取失败：错误块显示服务端原话，「重试」真重�
 
   await page.getByRole('button', { name: '重试' }).click();
   // 第二次放行之后交付那一屏正常渲染，错误块整个消失。
-  await expect(page.locator('.ad__kpis').getByText('等你处理')).toBeVisible();
+  await expect(page.locator('.ad__kpis').getByText('待你处理')).toBeVisible();
   await expect(page.getByText('数据加载失败')).toHaveCount(0);
 
   expect(unexpectedNoise('/api/admin/stats/pipeline?days=7'), '除测试注入的 500 外，浏览器控制台不该有报错').toEqual([]);

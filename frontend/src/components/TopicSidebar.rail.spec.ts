@@ -504,7 +504,7 @@ describe('C6 等你的那一盏黄灯', () => {
     const mine = rowOf(container, 'mine').querySelector('.row-light--yellow')
     expect(mine).not.toBeNull()
     // 悬停和读屏都靠它：这一盏说的是「有事等你」，不是看板那一列的名字
-    expect(mine?.getAttribute('title')).toBe('有事等你')
+    expect(mine?.getAttribute('title')).toBe('有事项待你处理')
     expect(rowOf(container, 'theirs').querySelector('.row-light')).toBeNull()
     expect(rowOf(container, 'busy').querySelector('.row-light')).toBeNull()
   })
@@ -513,7 +513,7 @@ describe('C6 等你的那一盏黄灯', () => {
     const { container } = mount({ topics: rooms() })
     const row = rowOf(container, 'answered').querySelector('.row-light--yellow')
     expect(row).not.toBeNull()
-    expect(row?.getAttribute('title')).toBe('有事等你')
+    expect(row?.getAttribute('title')).toBe('有事项待你处理')
   })
 
   it('看板状态不再以任何记号出现在标题里', () => {
