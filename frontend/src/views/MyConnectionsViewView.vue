@@ -296,7 +296,13 @@ function save() {
           >
             {{ t('integrations.member.connect') }}
           </BaseButton>
-          <BaseButton v-if="!feishuMissing && !feishuAsking" kind="ghost" size="sm" @click="ownApp = true">
+          <BaseButton
+            v-if="!feishuMissing && !feishuAsking"
+            kind="secondary"
+            size="sm"
+            prepend-icon="mdi-office-building-outline"
+            @click="ownApp = true"
+          >
             {{ t('integrations.member.ownApp.open') }}
           </BaseButton>
         </div>
@@ -402,54 +408,9 @@ function save() {
       @update:model-value="ownApp = false"
       @primary="saveOwnApp"
     >
+      <!-- 字段在前、怎么建应用在后：打开就能填，已经建好应用的人不用先滚过五步说明。 -->
       <template v-if="ownApp">
-        <p class="t-body">{{ t('integrations.member.ownApp.why') }}</p>
-        <ol class="conn-steps t-body">
-          <li>{{ t('integrations.member.ownApp.step1', { console: consoleUrl }) }}</li>
-          <li>
-            {{ t('integrations.member.ownApp.step2') }}
-            <div v-if="feishuRedirectUri" class="conn-copy">
-              <pre class="conn-code">{{ feishuRedirectUri }}</pre>
-              <BaseButton
-                kind="ghost"
-                size="sm"
-                icon="mdi-content-copy"
-                :aria-label="t('integrations.member.ownApp.copyRedirect')"
-                :title="t('integrations.member.ownApp.copyRedirect')"
-                @click="emit('copy', feishuRedirectUri)"
-              />
-            </div>
-          </li>
-          <li>
-            {{ t('integrations.member.ownApp.step3') }}
-            <div class="conn-copy">
-              <pre class="conn-code">{{ FEISHU_SCOPES_IMPORT }}</pre>
-              <BaseButton
-                kind="ghost"
-                size="sm"
-                icon="mdi-content-copy"
-                :aria-label="t('integrations.member.ownApp.copyScopes')"
-                :title="t('integrations.member.ownApp.copyScopes')"
-                @click="emit('copy', FEISHU_SCOPES_IMPORT)"
-              />
-            </div>
-          </li>
-          <li>
-            {{ t('integrations.member.ownApp.step4') }}
-            <div class="conn-copy">
-              <pre class="conn-code">{{ t('integrations.member.ownApp.reason') }}</pre>
-              <BaseButton
-                kind="ghost"
-                size="sm"
-                icon="mdi-content-copy"
-                :aria-label="t('integrations.member.ownApp.copyReason')"
-                :title="t('integrations.member.ownApp.copyReason')"
-                @click="emit('copy', t('integrations.member.ownApp.reason'))"
-              />
-            </div>
-          </li>
-          <li>{{ t('integrations.member.ownApp.step5') }}</li>
-        </ol>
+        <p class="t-body mb-4">{{ t('integrations.member.ownApp.why') }}</p>
         <v-select
           v-model="ownAppForm.domain"
           autocomplete="off"
@@ -466,7 +427,52 @@ function save() {
           type="password"
           :label="t('integrations.admin.appSecret')"
         />
-        <p v-if="ownAppError" role="alert" class="t-body c-danger mt-2">{{ ownAppError }}</p>
+        <p v-if="ownAppError" role="alert" class="t-body c-danger mb-3">{{ ownAppError }}</p>
+        <details class="conn-setup t-body" open>
+          <summary>{{ t('integrations.member.ownApp.setupTitle') }}</summary>
+          <ol class="conn-steps">
+            <li>{{ t('integrations.member.ownApp.step1', { console: consoleUrl }) }}</li>
+            <li>
+              {{ t('integrations.member.ownApp.step2') }}
+              <!-- 一行只读输入框 + 复制，和团队加入链接（TeamJoinLinkCard）同一种画法：地址
+                   不折行，长了在框里横向滚，不会被看成两段。 -->
+              <div v-if="feishuRedirectUri" class="conn-link">
+                <v-text-field
+                  autocomplete="off"
+                  :model-value="feishuRedirectUri"
+                  :aria-label="t('integrations.member.ownApp.redirectLabel')"
+                  readonly
+                  hide-details
+                  density="compact"
+                  variant="outlined"
+                  class="conn-link__field"
+                />
+                <BaseButton kind="secondary" size="sm" @click="emit('copy', feishuRedirectUri)">
+                  {{ t('integrations.member.ownApp.copy') }}
+                </BaseButton>
+              </div>
+            </li>
+            <li>
+              {{ t('integrations.member.ownApp.step3') }}
+              <div class="conn-copy">
+                <pre class="conn-code">{{ FEISHU_SCOPES_IMPORT }}</pre>
+                <BaseButton kind="secondary" size="sm" @click="emit('copy', FEISHU_SCOPES_IMPORT)">
+                  {{ t('integrations.member.ownApp.copy') }}
+                </BaseButton>
+              </div>
+            </li>
+            <li>
+              {{ t('integrations.member.ownApp.step4') }}
+              <div class="conn-copy">
+                <pre class="conn-code">{{ t('integrations.member.ownApp.reason') }}</pre>
+                <BaseButton kind="secondary" size="sm" @click="emit('copy', t('integrations.member.ownApp.reason'))">
+                  {{ t('integrations.member.ownApp.copy') }}
+                </BaseButton>
+              </div>
+            </li>
+            <li>{{ t('integrations.member.ownApp.step5') }}</li>
+          </ol>
+        </details>
       </template>
     </AdaptiveDialog>
 
@@ -661,18 +667,42 @@ function save() {
   justify-content: flex-end;
 }
 
+.conn-setup summary {
+  color: var(--ink);
+  font-weight: 600;
+  cursor: pointer;
+}
+
 .conn-steps {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  margin: 8px 0 16px;
+  margin: 8px 0 0;
   padding-left: 20px;
   color: var(--text);
 }
 
+.conn-link {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.conn-link__field {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 地址和下面两段代码块同一套等宽小字，长出框的部分在框里横向滚。 */
+.conn-link__field :deep(input) {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
 .conn-copy {
   display: flex;
-  gap: 4px;
+  gap: 8px;
   align-items: flex-start;
   margin-top: 4px;
 }

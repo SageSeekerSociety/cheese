@@ -152,10 +152,10 @@ describe('「连接飞书」这颗按钮', () => {
     await screen.findByText('管理员还没配置平台的飞书应用，可以用你公司自己的飞书应用连接')
     await fireEvent.click(await readyConnectButton())
     // 要填进自己那个应用的回调地址就写在表单上。
-    expect(await screen.findByText('https://okcheese.com/api/integrations/feishu/callback')).toBeTruthy()
+    expect(await screen.findByDisplayValue('https://okcheese.com/api/integrations/feishu/callback')).toBeTruthy()
     await fireEvent.update(screen.getByLabelText('App ID'), 'cli_other')
     await fireEvent.update(screen.getByLabelText('App Secret'), 'other-secret')
-    await fireEvent.click(screen.getByRole('button', { name: '保存并去飞书授权' }))
+    await fireEvent.click(screen.getByRole('button', { name: '保存并授权' }))
 
     await vi.waitFor(() => expect(navigatedTo).toBe('https://open.feishu.cn/authorize?own=1'))
     expect(connectFeishu).toHaveBeenCalledWith({ domain: 'feishu', app_id: 'cli_other', app_secret: 'other-secret' })
@@ -170,7 +170,7 @@ describe('「连接飞书」这颗按钮', () => {
     await fireEvent.click(await readyConnectButton())
     await fireEvent.update(await screen.findByLabelText('App ID'), 'cli_other')
     await fireEvent.update(screen.getByLabelText('App Secret'), 'typo')
-    await fireEvent.click(screen.getByRole('button', { name: '保存并去飞书授权' }))
+    await fireEvent.click(screen.getByRole('button', { name: '保存并授权' }))
 
     expect(await screen.findByText('以应用身份取令牌：飞书返回 10014 app secret invalid')).toBeTruthy()
     expect(navigatedTo).toBe('')
