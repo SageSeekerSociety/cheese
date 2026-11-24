@@ -97,6 +97,12 @@ async function mount(url = '/') {
           template:
             '<div v-if="modelValue"><h2>{{ title }}</h2><slot /><button @click="$emit(\'primary\')">{{ primaryLabel }}</button></div>',
         },
+        ConfirmDialog: {
+          props: ['modelValue', 'title', 'confirmLabel'],
+          emits: ['confirm'],
+          template:
+            '<div v-if="modelValue" role="dialog"><h2>{{ title }}</h2><slot /><button @click="$emit(\'confirm\')">{{ confirmLabel }}</button></div>',
+        },
       },
     },
   })
@@ -164,6 +170,19 @@ describe('「连接飞书」', () => {
     await fillAndSave('other-secret')
     await vi.waitFor(() => expect(navigatedTo).toBe('https://open.feishu.cn/authorize?x=1'))
   })
+
+  it('问不到回调地址时表单上说出来，并能再问一次', async () => {
+    feishuSetup.mockRejectedValueOnce(new Error('网络断了'))
+    await mount()
+
+    await fireEvent.click(await screen.findByRole('button', { name: '连接飞书' }))
+    expect(await screen.findByText('没能取到重定向 URL（网络断了）')).toBeTruthy()
+    expect(screen.queryByDisplayValue(REDIRECT)).toBeNull()
+
+    await fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    expect(await screen.findByDisplayValue(REDIRECT)).toBeTruthy()
+    expect(screen.queryByText('没能取到重定向 URL（网络断了）')).toBeNull()
+  })
 })
 
 describe('已经有的连接', () => {
@@ -173,6 +192,18 @@ describe('已经有的连接', () => {
 
     expect(await screen.findByText('还没连接飞书')).toBeTruthy()
     expect(screen.getAllByText('授权个人账号（用于搜索）')).toHaveLength(1)
+  })
+
+  it('两家公司的飞书应用各成一行，列表和删除确认都说得出是哪一个', async () => {
+    const other = { ...FEISHU_ROW, id: 'feishu-other', label: 'Lark', config: { app_id: 'cli_other', domain: 'lark' } }
+    listMyIntegrations.mockResolvedValue({ data: [FEISHU_ROW, other] })
+    await mount()
+
+    expect(await screen.findByText('飞书 · cli_own')).toBeTruthy()
+    expect(screen.getByText('Lark · cli_other')).toBeTruthy()
+
+    await fireEvent.click(screen.getAllByRole('button', { name: '删除' })[1]!)
+    expect(await screen.findByText('删除「Lark · cli_other」')).toBeTruthy()
   })
 })
 

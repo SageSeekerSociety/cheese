@@ -26,6 +26,7 @@ from email.message import EmailMessage
 
 import httpx
 from sqlalchemy import inspect, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.config import settings
@@ -70,13 +71,26 @@ def mail_settings(row: Integration) -> MailSettings:
     )
 
 
+#: Failures only the connection's owner can mend — authorize again, or bring
+#: app credentials Feishu accepts. The row is marked failed and waits for them.
+NEEDS_OWNER = frozenset({"auth_failed", "credentials_invalid"})
+
+
 def feishu_settings(row: Integration) -> FeishuSettings:
     """The app credentials and the owner's tokens this connection is used with:
     the self-built app its owner brought (``config.app_id``, the sealed
-    ``app_secret``), and whatever authorization the owner gave it."""
+    ``app_secret``), and whatever authorization the owner gave it.
+
+    A row without an ``app_id`` was made under the platform-wide app, which no
+    longer exists: there is nothing to call Feishu with, and its owner is told
+    to connect again with their own company's app.
+    """
+    app_id = row.config.get("app_id")
+    if not app_id:
+        raise IntegrationError("credentials_invalid", say("feishuNeedsOwnApp"))
     secret = unseal(row)
     return FeishuSettings(
-        app_id=row.config["app_id"],
+        app_id=app_id,
         app_secret=secret.get("app_secret") or "",
         domain=row.config.get("domain", "feishu"),
         user_access_token=secret.get("user_access_token"),
@@ -147,7 +161,7 @@ async def _renewed(
     try:
         await FeishuClient(settings).refresh_user_token()
     except IntegrationError as exc:
-        if exc.kind == "auth_failed":
+        if exc.kind in NEEDS_OWNER:
             row.status, row.last_error = "auth_failed", str(exc.args[0])
             await session.flush()
         raise
@@ -176,10 +190,11 @@ async def renew_feishu(sessions: async_sessionmaker[AsyncSession]) -> None:
             try:
                 await _renewed(session, row, _refresh_lapses)
             except IntegrationError as exc:
-                # A failed one is marked so (kept below); one Feishu did not
-                # answer for is tried again the next hour.
-                if exc.kind != "auth_failed":
+                # One Feishu did not answer for is tried again the next hour.
+                if exc.kind not in NEEDS_OWNER:
                     continue
+                # A failed one is marked so and kept; the scan goes on.
+                row.status, row.last_error = "auth_failed", str(exc.args[0])
             await session.commit()
 
 
@@ -352,6 +367,7 @@ class IntegrationService:
         except IntegrationError as exc:
             row.status = {
                 "auth_failed": "auth_failed",
+                "credentials_invalid": "auth_failed",
                 "unreachable": "unreachable",
             }.get(exc.kind, "error")
             row.last_error = str(exc.args[0])
@@ -400,26 +416,69 @@ class IntegrationService:
 
         A self-built app is usable only inside its own Feishu tenant, so each
         member builds one in their company and brings its credentials. They are
-        proved here (a tenant token is asked for) so a wrong App Secret is said
-        now, not after the authorization page. The same App ID entered again
-        updates that row rather than adding a second one.
+        proved here, exactly as typed (a tenant token is asked for with them),
+        so a wrong App Secret is said now, not after the authorization page.
+
+        The same App ID entered again is that connection, not a second one
+        (``uq_integrations_owner_feishu_app``): the credentials just proved
+        replace the stored ones on it, whether or not the owner's earlier
+        authorization still works — they authorize again next. Two connects
+        racing for the same App ID meet at that index, and the one that lost
+        becomes such a replacement.
         """
         if domain not in ("feishu", "lark"):
             raise ValidationError(say("feishuDomainInvalid"))
-        for row in await self.owned(owner_user_id):
-            if row.provider == "feishu" and row.config.get("app_id") == app_id:
-                return await self.update(
-                    row, config={"domain": domain}, secret={"app_secret": app_secret}
-                )
-        return await self.connect(
+        await FeishuClient(
+            FeishuSettings(app_id=app_id, app_secret=app_secret, domain=domain)
+        ).tenant_token()
+        existing = await self._feishu_connection(owner_user_id, app_id)
+        if existing is not None:
+            return await self._keep_feishu_app(existing, app_secret, domain)
+        row = Integration(
+            id=uuid.uuid4(),
             owner_user_id=owner_user_id,
             owner_handle=owner_handle,
             provider="feishu",
             label="飞书" if domain == "feishu" else "Lark",
             config={"app_id": app_id, "domain": domain, "folders": []},
-            secret={"app_secret": app_secret},
             grants=[],
+            status="ok",
+            last_error="",
+            last_checked_at=_now(),
         )
+        seal(row, {"app_secret": app_secret})
+        try:
+            async with self._session.begin_nested():
+                self._session.add(row)
+                await self._session.flush()
+        except IntegrityError:
+            existing = await self._feishu_connection(owner_user_id, app_id)
+            if existing is None:
+                raise
+            return await self._keep_feishu_app(existing, app_secret, domain)
+        return row
+
+    async def _feishu_connection(
+        self, owner_user_id: int, app_id: str
+    ) -> Integration | None:
+        return await self._session.scalar(
+            select(Integration).where(
+                Integration.owner_user_id == owner_user_id,
+                Integration.provider == "feishu",
+                Integration.config["app_id"].astext == app_id,
+            )
+        )
+
+    async def _keep_feishu_app(
+        self, row: Integration, app_secret: str, domain: str
+    ) -> Integration:
+        """Store app credentials already proved on ``row``, the owner's tokens
+        left as they are, and say the row works as far as the app goes."""
+        row.config = {**row.config, "domain": domain}
+        seal(row, {**unseal(row), "app_secret": app_secret})
+        row.status, row.last_error, row.last_checked_at = "ok", "", _now()
+        await self._session.flush()
+        return row
 
     async def update(
         self, row: Integration, *, grants=None, config=None, secret=None, label=None
@@ -428,6 +487,20 @@ class IntegrationService:
             row.grants = [str(g) for g in grants]
         if label:
             row.label = label
+        if row.provider == "feishu" and secret and secret.get("app_secret"):
+            # A new App Secret is proved by itself, before it is kept: proving
+            # it through ``_check`` would refresh the owner's authorization
+            # first, with the old secret, and fail on a lapsed one.
+            settings = feishu_settings(row)
+            await FeishuClient(
+                FeishuSettings(
+                    app_id=settings.app_id,
+                    app_secret=secret["app_secret"],
+                    domain=settings.domain,
+                )
+            ).tenant_token()
+            await self._keep_feishu_app(row, secret["app_secret"], settings.domain)
+            secret = {k: v for k, v in secret.items() if k != "app_secret"}
         recheck = False
         if config:
             row.config = {**row.config, **config}
@@ -436,6 +509,9 @@ class IntegrationService:
             seal(row, {**unseal(row), **secret})
             recheck = True
         if recheck:
+            # Flushed first: checking a Feishu row may lock and read it again
+            # (``_renewed``), which would otherwise drop these changes.
+            await self._session.flush()
             await self._check(row)
         await self._session.flush()
         return row
@@ -647,12 +723,18 @@ class IntegrationService:
     async def feishu(self, row: Integration, action):
         if row.provider != "feishu":
             raise ValidationError(say("integrationNotFeishu"))
-        settings = await _renewed(self._session, row, _access_lapses)
+        try:
+            settings = await _renewed(self._session, row, _access_lapses)
+        except IntegrationError as exc:
+            if exc.kind in NEEDS_OWNER:
+                row.status, row.last_error = "auth_failed", str(exc.args[0])
+                await self._session.flush()
+            raise
         client = FeishuClient(settings)
         try:
             return await action(client)
         except IntegrationError as exc:
-            if exc.kind == "auth_failed":
+            if exc.kind in NEEDS_OWNER:
                 row.status, row.last_error = "auth_failed", str(exc.args[0])
             raise
         finally:

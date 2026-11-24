@@ -33,7 +33,14 @@ SENT_FOLDERS = ("Sent", "Sent Messages", "已发送", "[Gmail]/Sent Mail", "INBO
 class IntegrationError(BaseError):
     """A mailbox or Feishu call that did not do what was asked, and why."""
 
-    STATUS = {"auth_failed": 401, "forbidden": 403, "not_found": 404}
+    #: ``credentials_invalid`` is credentials a person just typed and the
+    #: service refused: the request is what is wrong, so it is a 422.
+    STATUS = {
+        "auth_failed": 401,
+        "forbidden": 403,
+        "not_found": 404,
+        "credentials_invalid": 422,
+    }
 
     def __init__(self, kind: str, message: str, reply: str = "") -> None:
         super().__init__(self.STATUS.get(kind, 502), message, {"kind": kind})

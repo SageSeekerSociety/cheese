@@ -59,7 +59,7 @@ export const INTEGRATIONS: Integration[] = [
   integration({
     id: 'i-feishu-1',
     provider: 'feishu',
-    label: '课程小队的飞书',
+    label: '飞书',
     // 应用凭据是这个人公司的，个人授权还没回来：读得了分享给应用的文档，搜不了。
     config: { app_id: 'cli_a1b2c3d4e5', domain: 'feishu' },
     user_authorized: false,

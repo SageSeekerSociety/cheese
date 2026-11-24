@@ -11,7 +11,6 @@
   "check": "Test connection",
   "connectFailed": "Connection failed",
   "discard": "Discard",
-  "feishu": "Feishu",
   "feishuAuthorized": "Feishu authorized",
   "feishuOutcome": {
     "deleted": "The connection has been deleted",

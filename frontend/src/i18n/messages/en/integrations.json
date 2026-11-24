@@ -16,6 +16,8 @@
       "copied": "Copied",
       "setupTitle": "No app yet? Create one in your company's Feishu with these steps",
       "redirectLabel": "Redirect URL",
+      "redirectFailed": "Could not load the redirect URL ({error})",
+      "retry": "Retry",
       "copy": "Copy",
       "domain": "Domain",
       "appId": "App ID",

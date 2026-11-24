@@ -59,9 +59,11 @@ API 分成两半，`backend/app/api/routes/integrations.py` 开头就写明：`/
 
 **应用是成员自己公司的。** 企业自建应用只在它自己那家企业的飞书里能用，所以平台不持有飞书应用：每个飞书连接带着成员自己公司的应用。成员点「连接飞书」打开一张表单，先填「版本」（飞书 / Lark）、App ID、App Secret；下面一段可折叠的说明写了在自己公司的飞书里建应用的几步：在开放平台创建企业自建应用；在「安全设置」里添加重定向 URL（`GET /me/integrations/feishu` 回的 `redirect_uri`，即 `{frontend_url}/api/integrations/feishu/callback`）并打开「刷新 user_access_token」；在「权限管理 → 批量导入/导出权限」里粘贴权限配置；创建版本时可用范围只选自己、填申请理由，等公司的飞书管理员审核。重定向 URL、权限配置、申请理由都能一键复制。
 
-保存时 `POST /me/integrations/feishu` 带着这三项落一行：凭据存在这一行上（`config.app_id`、`config.domain`，Secret 封在 `secret` 里、从不回显），落库前先拿它换一次 tenant token，Secret 不对当场报错、不建行；同一个 App ID 再提交一次是改那一行，不是再建一行。随后 `GET /me/integrations/{id}/feishu/authorize` 拿授权地址跳过去，回调把 `user_access_token` / `refresh_token` 写进**这一行**。`feishu_settings(row)` 只从这一行取凭据，授权、换 token、续期都用它。
+保存时 `POST /me/integrations/feishu` 带着这三项落一行：凭据存在这一行上（`config.app_id`、`config.domain`，Secret 封在 `secret` 里、从不回显），落库前先拿填的这一套原样换一次 tenant token，飞书不认（换令牌这一步只带应用凭据，被拒就是凭据不对）当场回 422 和飞书的原话、不建行。同一个 App ID 再提交一次是那一行：新凭据验过之后直接换上，不先刷新旧的用户授权（旧授权可能早就失效，成员接着重新授权）；在那一行上改 `app_secret`（`PATCH /me/integrations/{id}`）走同一条路。一个人一个 App ID 只有一行，由部分唯一索引 `uq_integrations_owner_feishu_app`（`owner_user_id` + `config ->> 'app_id'`，只管 `provider = 'feishu'`）保证；两次提交同时到，后插入的撞上索引，转成对先建那一行的更新。
 
-错误码按「调用方还能做什么」分类：`AUTH_CODES` / `FORBIDDEN_CODES` / `NOT_FOUND_CODES` → `IntegrationError` 的 kind；刷新令牌被拒（无效、过期、撤销、已用过）都算 `auth_failed`。
+平台应用时代建的行 `config` 里没有 `app_id`：`feishu_settings` 对它抛 `credentials_invalid`，说明要删掉它、用自己公司的应用重新连接；每小时的续期把它标成 `auth_failed` 后接着处理别的行。`feishu_apps` 表这一版不再读写、仍留在库里，按两次发布的规矩由下一个 PR 删。随后 `GET /me/integrations/{id}/feishu/authorize` 拿授权地址跳过去，回调把 `user_access_token` / `refresh_token` 写进**这一行**。`feishu_settings(row)` 只从这一行取凭据，授权、换 token、续期都用它。
+
+错误码按「调用方还能做什么」分类：`AUTH_CODES` / `FORBIDDEN_CODES` / `NOT_FOUND_CODES` → `IntegrationError` 的 kind；刷新令牌被拒（无效、过期、撤销、已用过）都算 `auth_failed`；换 tenant token 被拒（10003、10014、10015 这类）是 `credentials_invalid`，回 422。
 
 **刷新令牌只能用一次，大约一周过期。** 由此有三条：
 

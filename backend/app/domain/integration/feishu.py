@@ -3,9 +3,10 @@
 Two ways in, both through the self-built app the connection's owner brought
 from their own company: the app itself (app_id + app_secret, tenant token —
 sees the documents shared with the app), or the owner's user authorization
-(sees what the owner sees, and is the only way the search API answers). Every failure becomes ``IntegrationError`` with a kind:
-expired or missing authorization, no permission on that document, not found, or
-the service failing.
+(sees what the owner sees, and is the only way the search API answers). Every
+failure becomes ``IntegrationError`` with a kind: app credentials Feishu does
+not accept, expired or missing authorization, no permission on that document,
+not found, or the service failing.
 """
 
 from __future__ import annotations
@@ -163,8 +164,29 @@ class FeishuClient:
                 "unreachable", say("feishuUnreachable", error=str(exc))
             ) from exc
         body = response.json() if response.content else {}
-        if response.status_code >= 400 or body.get("code", 0) != 0:
+        if response.status_code >= 500:
             _raise(response.status_code, body, say("feishuActionTenantToken"))
+        if response.status_code >= 400 or body.get("code", 0) != 0:
+            # This call carries nothing but the app's own credentials, so a
+            # refusal of it (10003, 10014, 10015 and the like) is Feishu saying
+            # the App ID or App Secret is not one it accepts.
+            code = body.get("code")
+            msg = body.get("msg") or body.get("message") or ""
+            reply = (
+                f"{code if code is not None else response.status_code} {msg}".strip()
+            )
+            raise IntegrationError(
+                "credentials_invalid",
+                say(
+                    "feishuAppCredentialsRefused",
+                    detail=say(
+                        "feishuReplied",
+                        action=say("feishuActionTenantToken"),
+                        reply=reply,
+                    ),
+                ),
+                reply,
+            )
         token = body["tenant_access_token"]
         self._tenant = (token, time.time() + int(body.get("expire", 7200)))
         return token

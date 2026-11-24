@@ -11,7 +11,7 @@ mailbox without its owner confirming the exact draft that was written.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, String, Text, Uuid
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String, Text, Uuid, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -21,6 +21,17 @@ from app.domain.common import Timestamps, UuidPk
 
 class Integration(UuidPk, Timestamps, Base):
     __tablename__ = "integrations"
+    __table_args__ = (
+        # One Feishu connection per owner and app: the same App ID entered
+        # again is that connection (``IntegrationService.connect_feishu``).
+        Index(
+            "uq_integrations_owner_feishu_app",
+            "owner_user_id",
+            text("(config ->> 'app_id')"),
+            unique=True,
+            postgresql_where=text("provider = 'feishu'"),
+        ),
+    )
 
     owner_user_id: Mapped[int] = mapped_column(BigInteger, index=True)
     owner_handle: Mapped[str] = mapped_column(String(64))

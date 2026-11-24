@@ -11,7 +11,6 @@
   "check": "测试连接",
   "connectFailed": "连接失败",
   "discard": "丢弃",
-  "feishu": "飞书",
   "feishuAuthorized": "飞书授权成功",
   "feishuOutcome": {
     "deleted": "连接已删除",

@@ -238,7 +238,8 @@ class FeishuAppIn(BaseModel):
 
     app_id: str = Field(min_length=1, max_length=64)
     app_secret: str = Field(min_length=1, max_length=256)
-    domain: str = "feishu"
+    #: feishu | lark — which of the two open platforms the app was built on.
+    domain: str = Field(min_length=1, max_length=16)
 
 
 @router.post("/me/integrations/feishu", dependencies=[ROUTE_DECIDES])

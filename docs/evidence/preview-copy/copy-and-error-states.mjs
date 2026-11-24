@@ -1,14 +1,14 @@
-// 取证：出错态文案的「现状 / 建议」对照页，以及七个后台页读失败的**真实调用点**渲染。
+// 取证：出错态文案的「现状 / 建议」对照页，以及六个后台页读失败的**真实调用点**渲染。
 //
 // 为什么要单独取证：出错态文案的差别是**结构性**的（原话当标题 / 原话只在悬停 / 原话被丢了），
 // 纸上写「建议改成某某」看不出来。对照页用真实组件把现状 props 和建议 props 并排渲染出来；
-// 七页那一步走的是**产品自己的路由和调用点**（`#/admin/...`，不是对照页），从 DOM 读回
+// 六页那一步走的是**产品自己的路由和调用点**（`#/admin/...`，不是对照页），从 DOM 读回
 // 标题 / 说明行 / 按钮，证明文案真的接进了产品，而不是只在预览页里画着好看。
 //
 // 判据只认 DOM 读回，不认像素：
 //   1. 对照页每一行都有两个 `.cp__stage`，各自的 `.bes__title` / `.bes__desc` / `.bes__btn`
 //      文本读回来，等于脚本里写的期望值；
-//   2. 七页实机上，`.bes` 块的 title 是中性句式、desc 是服务端原话、按钮是「重试」——
+//   2. 六页实机上，`.bes` 块的 title 是中性句式、desc 是服务端原话、按钮是「重试」——
 //      三条都要成立，缺一条都算没接上（只改 i18n 不传 `desc` 会在这里现形）；
 //   3. 「原话是否可见」看 `document.body.innerText` 里有没有那句原话；
 //   4. 队列那层壳的 `title` 属性读回来必须是空的：产品不再把原话挂在那里（对照页那两行
@@ -59,12 +59,6 @@ const ROUTES = [
   },
   { key: 'spaces', label: '空间申请', hash: '#/admin/spaces', titles: ['空间申请加载失败'] },
   { key: 'members', label: '成员管理', hash: '#/admin/members', titles: ['成员加载失败'] },
-  {
-    key: 'integrations',
-    label: '飞书应用',
-    hash: '#/admin/integrations',
-    titles: ['飞书应用加载失败'],
-  },
 ]
 
 const browser = await chromium.launch({ executablePath: '/usr/bin/chromium', args: ['--no-sandbox'] })
@@ -157,7 +151,7 @@ async function openPage() {
   await ctx.close()
 }
 
-// ── 2) 七页读失败实机（现状，真实页面上下文） ───────────────────────────
+// ── 2) 六页读失败实机（现状，真实页面上下文） ───────────────────────────
 for (const r of ROUTES) {
   const { ctx, page, net } = await openPage()
   const url = `${BASE}?fail=1${r.hash}`
@@ -248,7 +242,7 @@ for (const row of cmp.dom.rows) {
   console.log(`     建议  ${JSON.stringify(next)}`)
 }
 console.log(`写失败横幅 ${cmp.dom.writeRows.length} 行: ${cmp.dom.writeRows.map((r) => r[0]).join(' ')}`)
-console.log(`\n== 七页实机读失败（产品调用点） ==`)
+console.log(`\n== 六页实机读失败（产品调用点） ==`)
 let allPass = cmp.verdict.pass
 for (const r of results.filter((x) => x.name.startsWith('err-'))) {
   if (!r.verdict.pass) allPass = false

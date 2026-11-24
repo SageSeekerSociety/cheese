@@ -33,10 +33,14 @@ const props = defineProps<{
   busy: string
   /** 授权回调地址，自己公司的应用要把它填进「重定向 URL」；`''` 表示没问到。 */
   feishuRedirectUri: string
+  /** 问回调地址失败时那句原话；`''` 表示没失败。 */
+  feishuSetupError: string
 }>()
 
 const emit = defineEmits<{
   refresh: []
+  /** 再问一次回调地址。 */
+  'retry-feishu-setup': []
   discard: [draft: MailDraft]
   send: [draft: MailDraft]
   /** 成员自己公司的应用；`done` 带回成没成、以及没成时那句话。 */
@@ -54,6 +58,15 @@ const emit = defineEmits<{
 const pending = computed(() => props.drafts.filter((d) => d.status === 'drafted'))
 
 const statusLabel = (status: Integration['status']) => t(`account.connections.status.${status}`)
+
+/** 一行连接叫什么：邮箱是它的地址；飞书是它用的那个应用的 App ID —— 同一个人可以连好几家
+ *  公司的应用，光写「飞书」分不出哪一行是哪一家。平台应用时代留下、没有 App ID 的那种只剩
+ *  「飞书」。 */
+function rowName(row: Integration): string {
+  if (row.provider === 'mail') return `${t('account.connections.mail')} · ${row.label}`
+  const appId = typeof row.config.app_id === 'string' ? row.config.app_id : ''
+  return appId ? `${row.label} · ${appId}` : row.label
+}
 
 const PRESETS = [
   {
@@ -289,10 +302,7 @@ function save() {
       <div v-for="row in integrations" :key="row.id" class="conn-row" :data-integration="row.id">
         <div class="conn-row__head">
           <div class="conn-row__id">
-            <div class="conn-row__name">
-              {{ row.provider === 'mail' ? t('account.connections.mail') : t('account.connections.feishu') }} ·
-              {{ row.label }}
-            </div>
+            <div class="conn-row__name">{{ rowName(row) }}</div>
             <div v-if="row.last_error" class="conn-row__sub c-danger">{{ row.last_error }}</div>
             <!-- 飞书那一行在授权回来之前搜不了（搜索只认个人授权），所以这里说的是「连结上
                  了没有」，不是「工作正常」—— 旁边那个状态在授权之前说的「正常」只到「应用
@@ -358,7 +368,7 @@ function save() {
 
     <ConfirmDialog
       :model-value="!!removing"
-      :title="t('account.connections.removeTitle', { label: removing?.label ?? '' })"
+      :title="t('account.connections.removeTitle', { label: removing ? rowName(removing) : '' })"
       :confirm-label="t('account.connections.remove')"
       danger
       @update:model-value="removing = null"
@@ -406,7 +416,15 @@ function save() {
               {{ t('integrations.member.ownApp.step2') }}
               <!-- 一行只读输入框 + 复制，和团队加入链接（TeamJoinLinkCard）同一种画法：地址
                    不折行，长了在框里横向滚，不会被看成两段。 -->
-              <div v-if="feishuRedirectUri" class="conn-link">
+              <div v-if="feishuSetupError" class="conn-link">
+                <p role="alert" class="c-danger conn-link__error">
+                  {{ t('integrations.member.ownApp.redirectFailed', { error: feishuSetupError }) }}
+                </p>
+                <BaseButton kind="secondary" size="sm" @click="emit('retry-feishu-setup')">
+                  {{ t('integrations.member.ownApp.retry') }}
+                </BaseButton>
+              </div>
+              <div v-else-if="feishuRedirectUri" class="conn-link">
                 <v-text-field
                   autocomplete="off"
                   :model-value="feishuRedirectUri"
@@ -662,6 +680,12 @@ function save() {
 .conn-link__field {
   flex: 1 1 auto;
   min-width: 0;
+}
+
+.conn-link__error {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
 }
 
 /* 地址和下面两段代码块同一套等宽小字，长出框的部分在框里横向滚。 */

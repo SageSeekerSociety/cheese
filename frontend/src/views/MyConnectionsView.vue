@@ -39,8 +39,9 @@ const integrations = ref<Integration[]>([])
 const drafts = ref<MailDraft[]>([])
 const projects = ref<Project[]>([])
 /** 成员自己公司的应用要填的授权回调地址（「连接飞书」那张表单上的重定向 URL）。读不到
- *  就是空的：表单照样能填，只是那一格不画。 */
+ *  时 `feishuSetupError` 是那句原话：表单照样能填，那一格换成报错和「重试」。 */
 const feishuRedirectUri = ref('')
+const feishuSetupError = ref('')
 const loading = ref(false)
 const error = ref('')
 /** 从飞书授权回来时地址栏里的结果（`?feishu=`）：一个结果码，或者平台那句拒绝的
@@ -69,10 +70,7 @@ async function load() {
   loading.value = true
   error.value = ''
   // 回调地址与下面三项并行发起，但单独结算：问不到不该把整页的连接一起掀掉。
-  const setupRead = feishuSetup().then(
-    (got) => got.redirect_uri,
-    () => ''
-  )
+  const setupRead = loadFeishuSetup()
   try {
     const [mine, waiting, projectList] = await Promise.all([
       listMyIntegrations(),
@@ -87,7 +85,17 @@ async function load() {
   } finally {
     loading.value = false
   }
-  feishuRedirectUri.value = await setupRead
+  await setupRead
+}
+
+async function loadFeishuSetup() {
+  feishuSetupError.value = ''
+  try {
+    feishuRedirectUri.value = (await feishuSetup()).redirect_uri
+  } catch (e) {
+    feishuRedirectUri.value = ''
+    feishuSetupError.value = e instanceof Error ? e.message : t('account.connections.loadFailed')
+  }
 }
 
 function replace(row: Integration) {
@@ -213,7 +221,9 @@ onMounted(async () => {
     :error="error"
     :busy="busy"
     :feishu-redirect-uri="feishuRedirectUri"
+    :feishu-setup-error="feishuSetupError"
     @refresh="load"
+    @retry-feishu-setup="loadFeishuSetup"
     @discard="discard"
     @send="send"
     @connect-feishu="connectFeishuAccount"

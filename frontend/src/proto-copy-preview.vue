@@ -2,12 +2,12 @@
 /**
  * 出错态文案的「现状 / 建议」对照页（预览专用，只挂在 `proto-feedback.ts` 那个入口上）。
  *
- * 为什么要有这一页：出错态的文案在七个页面里各写各的，而且**不是一处小差别** ——
- * 有的把服务端原话当标题，有的把原话挂在悬停上，有三处干脆把原话丢了换成一句固定话。
+ * 为什么要有这一页：出错态的文案在六个页面里各写各的，而且**不是一处小差别** ——
+ * 有的把服务端原话当标题，有的把原话挂在悬停上，有两处干脆把原话丢了换成一句固定话。
  * 只在纸上写「建议改成某某」看不出来这些结构差别，所以这里把**真实组件**摆出来，
  * 左边按现状传 props、右边按建议传 props，一眼看出差别在哪。
  *
- * 组件一行没改：`AdminEmptyState` 是七页（含队列那两视图、模型那三段）实际用的那一件，
+ * 组件一行没改：`AdminEmptyState` 是六页（含队列那两视图、模型那三段）实际用的那一件，
  * `AdminQueueEmpty` 是队列专用的四态壳（它把服务端原话挂在外层 `title` 上）。这里只是
  * 换了传进去的 props，所以「建议」长什么样，就是产品改完之后长什么样。
  *
@@ -38,7 +38,7 @@ type Slot = {
   diff: string
 }
 
-/** 读失败：十处结构，全部有「重试」按钮。 */
+/** 读失败：九处结构，全部有「重试」按钮。 */
 const LOAD: Slot[] = [
   {
     id: '#1',
@@ -130,16 +130,6 @@ const LOAD: Slot[] = [
     rawFate: '当标题显示',
     diff: '标题换成中性「成员加载失败」，原话移到说明行。',
   },
-  {
-    id: '#10',
-    where: '飞书应用',
-    shape: 'AdminEmptyState（整块）',
-    now: { title: '无法读取', action: '重试' },
-    next: { title: '飞书应用加载失败', desc: RAW, action: '重试' },
-    button: '有「重试」',
-    rawFate: '丢了 —— 页面只存一个布尔 loadError',
-    diff: '标题改成中性句式并说清是哪一页；新增说明行显示原话。要改组件：布尔换成字符串。',
-  },
 ]
 
 /** 写失败横幅：五处，都没有「重试」按钮 —— 别在这里新加入口。 */
@@ -204,7 +194,7 @@ const descCount = computed(() => LOAD.filter((s) => s.rawFate.startsWith('直接
         </li>
         <li>
           服务端原话去向：<strong>丢了 {{ lostCount }}</strong
-          >（#4 #8 #10）· <strong>当标题 {{ titleIsRawCount }}</strong
+          >（#4 #8）· <strong>当标题 {{ titleIsRawCount }}</strong
           >（#5 #6 #7 #9）· <strong>只在悬停 {{ shellCount }}</strong
           >（#1 #2）· <strong>作说明行 {{ descCount }}</strong
           >（#3）。四类相加 {{ lostCount + titleIsRawCount + shellCount + descCount }}，与 {{ loadCount }} 对得上。

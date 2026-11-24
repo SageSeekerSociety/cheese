@@ -16,6 +16,8 @@
       "copied": "已复制",
       "setupTitle": "还没有这个应用？照这几步在你公司的飞书里建一个",
       "redirectLabel": "重定向 URL",
+      "redirectFailed": "没能取到重定向 URL（{error}）",
+      "retry": "重试",
       "copy": "复制",
       "domain": "版本",
       "appId": "App ID",
