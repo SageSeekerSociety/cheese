@@ -273,7 +273,9 @@ async def join_space_by_join_link(
     # overseer. With approval on they only ask, and the owner or an admin
     # answers (never they themselves, ``approve_space_join_request``).
     linked = await service.space_for_join_token(token)
-    if not linked.join_approval:
+    # Someone already in (or already asking) is only told where they stand.
+    standing = await service.join_status(space_id=linked.id, user_id=auth_user.user_id)
+    if not linked.join_approval and standing == "none":
         await SPACE.refuse_own_seat(
             db,
             linked.id,

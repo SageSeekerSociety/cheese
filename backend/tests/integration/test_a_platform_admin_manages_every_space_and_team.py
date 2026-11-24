@@ -464,6 +464,15 @@ def test_a_platform_admin_does_not_join_a_space_through_the_link_they_hold(
     assert joined.status_code == 200, joined.text
     assert joined.json()["data"]["joinStatus"] == "member"
 
+    # Seated by the owner instead, reopening the link only says where they stand.
+    added = client.post(
+        f"/spaces/{space_id}/members", json={"userId": me}, headers=people[OWNER]
+    )
+    assert added.status_code in (200, 201), added.text
+    again = client.post(f"/space-invites/{token}/join", headers=people[OVERSEER])
+    assert again.status_code == 200, again.text
+    assert again.json()["data"]["joinStatus"] == "member"
+
 
 def test_a_space_review_has_not_cleared_has_no_join_link_for_a_platform_admin(
     client, people
