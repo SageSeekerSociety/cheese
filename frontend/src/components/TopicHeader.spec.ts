@@ -9,7 +9,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/vue'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/vue'
 import { createPinia } from 'pinia'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -178,7 +178,10 @@ describe('频道详情', () => {
   it('「设置」里改通知，选的是同一份档位', async () => {
     mountHeader({ joined: true })
     await openDetails('设置')
-    await fireEvent.click(await screen.findByRole('button', { name: '更改' }))
+    // 「设置」里环境那一行也有一颗「更改」：这里点的是通知那一行的。
+    const level = await screen.findByTestId('details-notify-level')
+    const row = level.parentElement?.parentElement as HTMLElement
+    await fireEvent.click(within(row).getByRole('button', { name: '更改' }))
     await fireEvent.click(await screen.findByRole('menuitemradio', { name: /所有新消息/ }))
     await waitFor(() => expect(setTopicNotifyLevel).toHaveBeenCalledWith('topic-1', 'all', null))
   })
