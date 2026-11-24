@@ -1,0 +1,18 @@
+{
+  "title": "Run history",
+  "named": "Pinned commands",
+  "ran": "Commands {name} ran",
+  "run": "Run again",
+  "pin": "Pin",
+  "remove": "Remove “{name}”",
+  "nameLabel": "Name",
+  "save": "Save",
+  "nameFailed": "Couldn't save",
+  "failed": "Failed",
+  "running": "Running",
+  "background": "Ran in the background; its output isn't here",
+  "loading": "Loading",
+  "empty": "No runs yet",
+  "readFailed": "Couldn't load",
+  "older": "Older commands"
+}

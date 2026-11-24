@@ -26,6 +26,7 @@ import { UI } from './needs'
 import PanelChangesView from '@/components/panels/PanelChangesView.vue'
 import PanelDocView from '@/components/panels/PanelDocView.vue'
 import PanelPreviewView from '@/components/panels/PanelPreviewView.vue'
+import RunRecordsMenu from '@/components/work/RunRecordsMenu.vue'
 
 /** 一份很长的网页源码：正文行数超过一个窗口（`PreviewCode` 的 1000 行），底下那条
  * 「还能接着看」因此露出来。内容不重要，行数才重要。 */
@@ -366,6 +367,77 @@ export const PANEL_VIEW_ENTRIES: CatalogEntry[] = [
         note: '只读由凭证决定：横条上写着只读，点不回编辑，⋯ 里也没有那一项。',
         props: docPanelProps({ session: docSession('只能看，不能改。'), editable: false, readOnly: true }),
         expect: '只读',
+      },
+    ],
+  },
+  {
+    id: 'run-records-menu',
+    title: 'RunRecordsMenu',
+    about: '终端栏上的运行记录：项目里固定的命令在上，AI 队友在这个任务里跑过的命令在下，每条能再运行。',
+    file: 'src/components/work/RunRecordsMenu.vue',
+    component: RunRecordsMenu,
+    needs: ['vuetify', 'i18n'],
+    // 列表是浮层，画在 body 上。
+    teleport: true,
+    args: {
+      named: [],
+      ran: [],
+      more: false,
+      loading: false,
+      failed: false,
+      nameFailed: false,
+      canName: true,
+      agentName: AGENT_NAME,
+    },
+    states: [
+      {
+        name: '固定的命令和跑过的命令',
+        note: '固定的在上，跑过的按时间从新到旧；失败的那一条带「失败」，点一条看它的输出。',
+        props: {
+          named: [
+            {
+              id: 'n1',
+              name: '评分',
+              command: 'make grade',
+              fixed_by: 'user-1',
+              fixed_at: '2026-11-20T08:00:00+00:00',
+            },
+          ],
+          ran: [
+            {
+              call_id: 'c4',
+              command: 'make grade',
+              description: '',
+              background: false,
+              output: 'test_fork: FAIL\nscore 40/100',
+              failed: true,
+              at: '2026-11-24T05:12:00+00:00',
+              turn_id: null,
+              agent_handle: 'cheese',
+            },
+            {
+              call_id: 'c1',
+              command: 'make qemu-nox CPUS=1',
+              description: '编译内核并在模拟器里启动',
+              background: false,
+              output: 'xv6 kernel is booting\ninit: starting sh',
+              failed: false,
+              at: '2026-11-24T05:09:00+00:00',
+              turn_id: null,
+              agent_handle: 'cheese',
+            },
+          ],
+          more: true,
+        },
+        click: 'run-records-open',
+        expect: '编译内核并在模拟器里启动',
+      },
+      {
+        name: '还没有跑过命令',
+        note: '这个任务里还没有命令：说「暂无运行记录」。',
+        props: {},
+        click: 'run-records-open',
+        expect: '暂无运行记录',
       },
     ],
   },

@@ -6,9 +6,13 @@
 // is said as every surface of the task page says it (`TaskEnvironmentNote`), with how long it has
 // waited; a failure says what failed with 「重试」; a shell whose environment is gone offers to open
 // a new one.
+//
+// A command the page hands over (`run`, from 运行记录's 「再运行」) is typed into the shell and run
+// once the shell is open: a tab opened for it waits until it is there, and the same hand-over is
+// never run twice.
 import type { TaskTerminalReason } from '../../composables/useTaskTerminal'
 
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
 import { useTaskTerminal } from '../../composables/useTaskTerminal'
 import { t } from '../../i18n'
@@ -16,7 +20,13 @@ import BaseButton from '../base/BaseButton.vue'
 import TaskEnvironmentNote from '../common/TaskEnvironmentNote.vue'
 import PanelTerminal from '../panels/PanelTerminal.vue'
 
-const props = defineProps<{ taskId: string; terminalId: string; active: boolean }>()
+const props = defineProps<{
+  taskId: string
+  terminalId: string
+  active: boolean
+  /** A command to run in this shell; `seq` tells one hand-over from the next. */
+  run?: { command: string; seq: number } | null
+}>()
 const emit = defineEmits<{ named: [name: { number?: number; program: string | null }] }>()
 
 const screen = ref<InstanceType<typeof PanelTerminal> | null>(null)
@@ -58,6 +68,17 @@ const cover = computed(() => {
 })
 const placeholder = computed(() => (state.value === 'refused' && reason.value ? t(REFUSALS[reason.value]) : null))
 const note = computed(() => (state.value === 'ended' ? t('work.room.terminal.ended') : null))
+
+let ran = 0
+watch(
+  [() => props.run, state],
+  ([run, now]) => {
+    if (!run || run.seq <= ran || now !== 'open') return
+    ran = run.seq
+    type(`${run.command}\r`)
+  },
+  { immediate: true }
+)
 
 onMounted(() => void start())
 </script>

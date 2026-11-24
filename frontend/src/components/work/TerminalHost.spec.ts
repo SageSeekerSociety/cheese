@@ -76,7 +76,10 @@ class FakeSocket {
   constructor(public url: string) {
     FakeSocket.all.push(this)
   }
-  send() {}
+  sent: string[] = []
+  send(data: unknown) {
+    if (data instanceof Uint8Array) this.sent.push(new TextDecoder().decode(data))
+  }
   close() {
     this.readyState = 3
   }
@@ -105,9 +108,9 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-function mount() {
+function mount(extra: Record<string, unknown> = {}) {
   return render(TerminalHost as unknown as Component, {
-    props: { taskId: 'task-1', terminalId: 't1', active: true },
+    props: { taskId: 'task-1', terminalId: 't1', active: true, ...extra },
     global: { plugins: [vuetify] },
   })
 }
@@ -172,5 +175,20 @@ describe('a 终端 tab with no shell to show yet', () => {
     await fireEvent.click(screen.getByRole('button', { name: '打开终端' }))
     expect(await screen.findByText('正在准备环境')).toBeTruthy()
     await waitFor(() => expect(env.prepares).toBe(1))
+  })
+})
+
+describe('a command handed to the 终端 from 运行记录', () => {
+  it('runs once the shell is open, and the same hand-over never runs twice', async () => {
+    const view = mount({ run: { command: 'make grade', seq: 1 } })
+    await waitFor(() => expect(FakeSocket.all).toHaveLength(1))
+    // Not there yet: nothing is typed into a shell that is still being reached.
+    expect(last().sent).toEqual([])
+    last().say({ type: 'attached', ended: false })
+    await waitFor(() => expect(last().sent).toEqual(['make grade\r']))
+
+    await view.rerender({ taskId: 'task-1', terminalId: 't1', active: false, run: { command: 'make grade', seq: 1 } })
+    await view.rerender({ taskId: 'task-1', terminalId: 't1', active: true, run: { command: 'make', seq: 2 } })
+    await waitFor(() => expect(last().sent).toEqual(['make grade\r', 'make\r']))
   })
 })

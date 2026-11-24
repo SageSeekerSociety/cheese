@@ -17,6 +17,7 @@ import uuid
 from datetime import datetime
 
 from app.domain.session_record.preview import (
+    SHELL_TOOLS,
     _is_platform_tool,
     _short_tool_name,
     tool_preview,
@@ -355,6 +356,54 @@ def lines(items: list[dict]) -> list[dict]:
         )
         for item in items
     ]
+
+
+def commands(items: list[dict]) -> list[dict]:
+    """The shell commands a page of records ran, each with what it printed.
+
+    A command is a shell tool's call (`SHELL_TOOLS`) and its output is the
+    result that answers it by call id, wherever on the page that lands. A call
+    whose result is not on the page (still running, or answered past the page's
+    end) is kept with `output` null; `answer_to` finds it further on. A command
+    that drives the platform's own CLI is left out: it acted as the teammate,
+    and a person's shell cannot.
+    """
+    found: dict[str, dict] = {}
+    order: list[str] = []
+    for item in items:
+        for part in parts(item["record"]):
+            call = part.get("call_id") or ""
+            if part["kind"] == "tool":
+                if part["name"] not in SHELL_TOOLS or part["platform"] or not call:
+                    continue
+                command = str(part["input"].get("command") or "").strip()
+                if not command:
+                    continue
+                found[call] = {
+                    "call_id": call,
+                    "command": command,
+                    "description": str(part["input"].get("description") or ""),
+                    "background": bool(part["input"].get("run_in_background")),
+                    "output": None,
+                    "failed": False,
+                    "at": item["at"],
+                    "turn_id": item["turn_id"],
+                    "agent_handle": item["agent_handle"],
+                }
+                order.append(call)
+            elif part["kind"] == "output" and call in found:
+                found[call]["output"] = part["text"]
+                found[call]["failed"] = bool(part["failed"])
+    return [found[call] for call in order]
+
+
+def answer_to(items: list[dict], call: str) -> dict | None:
+    """What a page of records says came back from the call `call`, if it does."""
+    for item in items:
+        for part in parts(item["record"]):
+            if part["kind"] == "output" and part.get("call_id") == call:
+                return {"output": part["text"], "failed": bool(part["failed"])}
+    return None
 
 
 def _images(content) -> list[dict]:

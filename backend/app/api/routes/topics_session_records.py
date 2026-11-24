@@ -5,6 +5,9 @@ sessions journaled (Claude Code's stream-json lines, Codex's app-server
 notifications, pi's entries), scrubbed of credentials and otherwise as the
 harness wrote them, oldest first and paged. `turn_id` narrows it to one turn.
 
+`GET /topics/{topic_id}/commands`: the shell commands in that record, each
+with its output, newest first: what a person reruns in their own terminal.
+
 `POST /topics/{topic_id}/session-records`: one status record the machine
 itself reports for 现场 (a sync that failed). It is not a harness journal
 entry; `harness` keeps it apart from every agent's run. It joins the turn the
@@ -35,7 +38,7 @@ from app.core.work_context import current_work_id
 from app.domain.conversation.services import rooms_of_inner
 from app.domain.project_permissions import Permission
 from app.domain.room_task.place import place_or_404
-from app.domain.session_record import service
+from app.domain.session_record import service, views
 from app.domain.session_record.views import lines
 
 router = APIRouter(prefix="/topics", tags=["topics"])
@@ -233,6 +236,92 @@ async def session_record(
     ) != (at.isoformat(), harness, agent, sequence):
         raise NotFoundError(say("cursorEventNotFound"))
     return JSONResponse(ok(result.items[0]))
+
+
+class CommandOut(BaseModel):
+    """One shell command a teammate ran, as the 运行记录 lists it."""
+
+    call_id: str
+    command: str
+    #: The teammate's one-line account of the command, when it gave one.
+    description: str
+    #: Started to run on its own: what it printed later is not here.
+    background: bool
+    #: What came back; null while it runs.
+    output: str | None
+    failed: bool
+    at: str
+    turn_id: str | None
+    agent_handle: str
+
+
+class CommandsOut(BaseModel):
+    #: Newest first.
+    items: list[CommandOut]
+    #: Where the next, older page starts, while there is one.
+    next: str | None
+
+
+#: How many records one page of commands reads through.
+COMMAND_RECORDS_PER_PAGE = 400
+
+
+@router.get("/{topic_id}/commands", **typed_response(CommandsOut))
+async def commands(
+    topic_id: uuid.UUID,
+    db: DbSession,
+    resolver: ActorResolverDep,
+    before: str | None = Query(None, max_length=512),
+) -> JSONResponse:
+    """The shell commands the conversation's teammates ran, newest first, each
+    with its output: a page of the raw record read through `views.commands`,
+    behind the same door as the record itself. A page can hold no command and
+    still have an older one (`next`).
+
+    A command whose output lands past the page's newest record — answered on
+    the page after it — is looked up there, so a command never reads as
+    unanswered only because a page boundary fell between the two."""
+    place = await place_or_404(db, topic_id)
+    if place.room.deleted_at is not None:
+        raise NotFoundError(say("topicNotFound"))
+    actor = await _actor_in_place(resolver, place)
+    try:
+        end = service.decode_cursor(before) if before is not None else None
+    except ValueError:
+        raise NotFoundError(say("cursorEventNotFound")) from None
+    page = await service.read(
+        db,
+        place.conversation_id,
+        before=end,
+        newest=True,
+        limit=COMMAND_RECORDS_PER_PAGE,
+        reader=actor.handle,
+    )
+    found = views.commands(page.items)
+    if end is not None and page.items:
+        last = page.items[-1]
+        newest = (
+            datetime.fromisoformat(last["at"]),
+            last["harness"],
+            last["agent_handle"],
+            last["sequence"],
+        )
+        for command in found:
+            if command["output"] is not None or command["background"]:
+                continue
+            later = await service.read(
+                db,
+                place.conversation_id,
+                after=newest,
+                search=command["call_id"],
+                limit=1,
+                reader=actor.handle,
+            )
+            answer = views.answer_to(later.items, command["call_id"])
+            if answer is not None:
+                command.update(answer)
+    found.reverse()
+    return JSONResponse(ok({"items": found, "next": page.next}))
 
 
 class MachineRecordIn(BaseModel):
