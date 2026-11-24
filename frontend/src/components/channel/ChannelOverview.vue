@@ -166,6 +166,11 @@ function stateOf(task: RoomTask): TaskState {
   const agentName = (task.agent_handle && props.memberNames[task.agent_handle]) || props.agentName
   return taskState(task, { viewer: ME, nameOf, agentName })
 }
+/** 「待你处理」那一段里的一件：这一段的标题已经说了待谁处理，下面不再说一遍。 */
+function waitingFacts(task: RoomTask): string[] {
+  const state = stateOf(task)
+  return state.parts.filter((part) => part !== state.waits)
+}
 function secondOf(task: RoomTask): string | null {
   return stateOf(task).line || latest(task)
 }
@@ -255,9 +260,9 @@ async function save() {
           <TaskStateMark class="co-task__state t-meta" :state="stateOf(task)" :emphasis="true" />
         </span>
         <TaskStateFacts
-          v-if="stateOf(task).parts.length"
+          v-if="waitingFacts(task).length"
           class="co-task__facts t-meta"
-          :parts="stateOf(task).parts"
+          :parts="waitingFacts(task)"
           wrap
         />
       </button>
