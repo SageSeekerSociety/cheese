@@ -163,6 +163,23 @@ PRIVATE_INSTRUCTIONS = (
     "through cheese show. Scratch files can disappear when execution "
     "is released; they are not permanent storage. No project checkout is mounted."
 )
+# Where the runner has the bootstrap mark its steps for the platform's log
+# (`claude_code.runner.LAUNCH_MARKS_FILE`, which this file cannot import).
+LAUNCH_MARKS_FILE = "CHEESE_LAUNCH_MARKS_FILE"
+
+
+def mark_launch(phase: str) -> None:
+    """Note that the bootstrap reached ``phase``: a name and the time, never
+    anything else. Nothing to do outside a launch the runner started, and a
+    mark that cannot be written is only a gap in a log line."""
+    path = os.environ.get(LAUNCH_MARKS_FILE)
+    if not path:
+        return
+    try:
+        with open(path, "a", encoding="utf-8") as marks:
+            marks.write(f"{time.time():.6f} {phase}\n")
+    except OSError:
+        pass
 
 
 def write_plugin(plugin: Path, target: dict, platform_tools: list, target_path) -> Path:
@@ -270,6 +287,7 @@ def prepare(
         raise RuntimeError(
             f"Remote execution requires Claude Code {PINNED_VERSION}; found {version}"
         )
+    mark_launch("bootstrap_version_checked")
     directory = Path(directory).resolve()
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     if target.get("kind") == "private":
@@ -282,6 +300,7 @@ def prepare(
         ensure(target, directory, os.environ)
     if target.get("kind") == "deferred" and target["workspace"] != DEFERRED_WORKSPACE:
         target = _take_leased_machine(target)
+        mark_launch("bootstrap_lease_taken")
     unavailable = target.get("kind") in {"unavailable", "deferred"}
     forwarded = target.get("kind") not in {"private", "unavailable"}
     device_forwarded = target.get("kind") in {"device", "deferred"}
@@ -319,6 +338,7 @@ def prepare(
     temporary.mkdir(exist_ok=True, mode=0o700)
     client = RemoteClient(target)
     info = {"workspace": target["workspace"]} if unavailable else client.call("ping")
+    mark_launch("bootstrap_executor_answered")
     # The credential the lease handed a session that took its machine here; it
     # is kept beside the target, never in it, which the plugin is given.
     execution_token = target.pop("execution_token", None)
@@ -421,10 +441,12 @@ def prepare(
         token_path.chmod(0o600)
     if forwarded:
         context_tree = sync_context(target_path, context_tree)
+        mark_launch("bootstrap_context_synced")
     if forwarded and not local:
         failure = take_view(directory, target_path, workspace)
         if failure is not None:
             raise RuntimeError("Forwarded project mount failed: " + failure)
+        mark_launch("bootstrap_view_taken")
     if forwarded or unavailable:
         link_forwarded_user_context(
             directory,
@@ -1306,11 +1328,14 @@ def main():
             config_override=config_dir,
             workspace_override=os.environ["CHEESE_WORK"],
         )
+        mark_launch("bootstrap_prepared")
         os.chdir(launch["cwd"])
-        run_in_place(
-            launch["command"],
-            with_gateway(launch["execution"], dict(os.environ, **launch["env"])),
-        )
+        # The marks are the runner's to report, not the session's to inherit.
+        env = dict(os.environ, **launch["env"])
+        env.pop(LAUNCH_MARKS_FILE, None)
+        env = with_gateway(launch["execution"], env)
+        mark_launch("bootstrap_gateway_started")
+        run_in_place(launch["command"], env)
     elif args.mode == "context":
         sync_context(args.config)
     elif args.mode == "catch-up":

@@ -51,11 +51,13 @@ async def ensure(
     needs_place: bool = True,
     keeps_nothing: bool = False,
     phases: dict[str, float] | None = None,
+    notes: dict[str, object] | None = None,
 ) -> Live:
     """The seat's session, started where the room's placement puts it if it
     has to be. ``keeps_nothing``: a 支线's session, whose work stays on the
     machine and never reaches the project. ``phases``, when given, receives
-    how long each step took (`send` logs it)."""
+    how long each step took (`send` logs it), and ``notes`` whether this
+    started the session's process (``cold``)."""
     mark = Stopwatch(phases)
     seat = svc._seat_of(session)
     if svc._draining(seat):
@@ -162,6 +164,8 @@ async def ensure(
         mark("ensure_prepare")
         status = await svc.host.start(ref, spec, access)
         mark("ensure_start")
+        if notes is not None:
+            notes["cold"] = status.started
     attached = await svc._attach(
         Live(
             session,

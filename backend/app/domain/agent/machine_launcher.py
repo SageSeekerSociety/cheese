@@ -572,8 +572,14 @@ REAL_HOME="$HOME"
 [ -z "${{CHEESE_RUNTIME_PATH:-}}" ] || export PATH="$CHEESE_RUNTIME_PATH:$PATH"
 # Bash exposes this clock without spawning date. Other shells skip diagnostics.
 # Append across relaunches; only phase names and timestamps enter this file.
+# The same marks of THIS launch also travel to the runner in its environment
+# (`CHEESE_LAUNCH_MARKS`), which reports them to the platform's log with its own
+# (`claude_code.runner.Runner.launch_timing`): the file is the room's and keeps
+# every launch, this variable is reset here and holds only this one.
+CHEESE_LAUNCH_MARKS=""
 cheese_launch_phase() {{
   [ -n "${{EPOCHREALTIME:-}}" ] || return 0
+  export CHEESE_LAUNCH_MARKS="${{CHEESE_LAUNCH_MARKS:-}}$EPOCHREALTIME $1;"
   [ -d "$REAL_HOME/${{CHEESE_PROFILE_ROOT:-.cheese}}/launch" ] || return 0
   printf '%s %s\\n' "$EPOCHREALTIME" "$1" \\
     >> "$REAL_HOME/${{CHEESE_PROFILE_ROOT:-.cheese}}/launch/$CHEESE_TOPIC.timing" 2>/dev/null || :

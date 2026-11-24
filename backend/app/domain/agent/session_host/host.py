@@ -383,7 +383,7 @@ class SessionHost:
 
     async def send(
         self, ref: SessionRef, prompt: Prompt, *, work_id: uuid.UUID
-    ) -> None:
+    ) -> dict[str, float | bool]:
         return await speaking.send(self, ref, prompt, work_id=work_id)
 
     async def steer(

@@ -20,6 +20,7 @@ from pathlib import Path
 
 from app.domain.agent.harness.claude_code.runner import (
     LAUNCH,
+    LAUNCH_MARKS,
     RETIRED_ENV,
     Runner,
     ended,
@@ -31,7 +32,9 @@ COMMAND = "CHEESE_CLAUDE_COMMAND"
 async def serve(state: Path) -> None:
     env = dict(os.environ)
     command = env.pop(COMMAND)
-    runner = Runner(state, launch=env.pop(LAUNCH, ""))
+    # The launch's marks are the runner's to report, not the session's to
+    # inherit.
+    runner = Runner(state, launch=env.pop(LAUNCH, ""), marks=env.pop(LAUNCH_MARKS, ""))
     stopped = asyncio.Event()
     loop = asyncio.get_running_loop()
     if sys.platform == "win32":

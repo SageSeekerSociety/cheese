@@ -93,7 +93,8 @@ async def start(
             replacing.relaunching = True
         try:
             launched = await driver.launch(svc._wire(), host, ref, spec, access, known)
-            if launched is not known:
+            started_now = launched is not known
+            if started_now:
                 logger.info(
                     "session started on the host harness=%s home=%s in %.2fs",
                     ref.harness,
@@ -135,6 +136,7 @@ async def start(
             working=False,
             model=spec.model,
             conversation=launched.conversation,
+            started=started_now,
         )
 
 

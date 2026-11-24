@@ -113,6 +113,7 @@ async def send(
             needs_place=needs_place,
             keeps_nothing=keeps_nothing,
             phases=mark.phases,
+            notes=mark.notes,
         )
         mark.lap()
         said = message
@@ -176,7 +177,7 @@ async def send(
         await register_input(identity)
         mark("register")
         try:
-            await svc._submit(
+            took = await svc._submit(
                 live,
                 identity,
                 Prompt(
@@ -193,6 +194,11 @@ async def send(
                 register_input=register_input,
             )
             mark("submit")
+            # The runner's own share of the submit, as it said it
+            # (`claude_code.runner.Runner.send`): absent from a runner that
+            # does not say.
+            for part, value in (took or {}).items():
+                mark.notes[f"submit_{part}"] = value
         finally:
             # A lost acknowledgement does not mean the session stopped working.
             svc._listen(seat)
@@ -288,11 +294,13 @@ async def _submit(
     *,
     steer: bool,
     register_input: InputRegistrar,
-) -> None:
+) -> dict[str, float | bool]:
+    """Hand ``prompt`` to the host; what the runner said its own side of
+    taking it cost, {} when it said nothing (a steer, an older runner)."""
     accepted = False
     try:
         say_it = svc.host.steer if steer else svc.host.send
-        await say_it(live.ref, prompt, work_id=identity.work_id)
+        took = await say_it(live.ref, prompt, work_id=identity.work_id)
         accepted = True
         # Only a harness whose acceptance *is* the read reports here. A
         # harness that says when its session read the input (Claude Code)
@@ -300,6 +308,7 @@ async def _submit(
         # must never gate the send that admits it.
         if svc.host.reads_on_accept(live.ref):
             await svc._hear_receipt(InputReceipt(identity, "accepted"))
+        return took if isinstance(took, dict) else {}
     except SessionError as exc:
         if accepted or isinstance(exc, InputUnconfirmed):
             raise InputOutcomeUnconfirmed(identity, accepted=accepted) from exc

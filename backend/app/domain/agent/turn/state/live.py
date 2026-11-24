@@ -9,6 +9,7 @@ hand out is held in Valkey until the turn lets it go.
 
 import asyncio
 import logging
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -21,6 +22,9 @@ logger = logging.getLogger(__name__)
 
 #: 现场状态查表的键：一间房 + 这一轮。
 TurnKey = tuple[uuid.UUID, uuid.UUID]
+#: How many messages ``received_at`` holds a clock for at most: the oldest goes
+#: first, so a message whose turn never shows anything cannot keep its entry.
+RECEIVED_KEPT = 256
 
 #: 写穿回调：确认库里那行开着的 `AgentTurn` 就是这一轮（`turn/state/authority.py`
 #: 的 `confirm_open`：只读、不发明一行）。签名的两个参数就是标记自己的那两个
@@ -155,6 +159,12 @@ class LiveWork:
         # Liveness only, keyed by conversation then durable input UUID.
         # Settlement never depends on this process cache.
         self.unread_inputs: dict[uuid.UUID, dict[uuid.UUID, float]] = {}
+        # When each message that may open a turn was taken (`receive_message`),
+        # by the turn id it opens, until the room is first shown the session
+        # writing for that turn (`writing_shown`) or the turn is let go. Only
+        # for the log; trimmed from the front past `RECEIVED_KEPT`, since a
+        # message folded into another turn never shows anything of its own.
+        self.received_at: dict[uuid.UUID, float] = {}
 
     def lock_for(self, topic_id: uuid.UUID) -> Lease:
         """The room's lease for operations that are nobody's turn."""
@@ -241,6 +251,27 @@ class LiveWork:
         finally:
             self.forget_active(topic_id, work_id)
 
+    def note_received(self, turn_id: uuid.UUID, at: float) -> None:
+        """A person's message that may open turn ``turn_id`` was taken at
+        ``at`` (``time.monotonic``)."""
+        self.received_at[turn_id] = at
+        while len(self.received_at) > RECEIVED_KEPT:
+            del self.received_at[next(iter(self.received_at))]
+
+    def writing_shown(self, topic_id: uuid.UUID, turn_id: uuid.UUID) -> None:
+        """The room was shown the session writing for ``turn_id``: the first
+        time, one line says how long after the message was taken — the wait a
+        person sees between sending and the first words appearing."""
+        taken = self.received_at.pop(turn_id, None)
+        if taken is None:
+            return
+        logger.info(
+            "chat_first_live_timing topic=%s turn=%s elapsed_ms=%.1f since=receive",
+            topic_id,
+            turn_id,
+            (time.monotonic() - taken) * 1000,
+        )
+
     def forget_active(self, topic_id: uuid.UUID, work_id: uuid.UUID) -> None:
         """Drop the cache mark with no durable hop.
 
@@ -248,6 +279,8 @@ class LiveWork:
         orphan sweep let go of a turn it ended, so there is nothing to write
         (`retire_unheard`).
         """
+        # A turn let go before it showed anything has no first words to time.
+        self.received_at.pop(work_id, None)
         active = self.active_turn_ids.get(topic_id)
         if active is None:
             return

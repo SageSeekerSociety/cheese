@@ -13,6 +13,7 @@ read by ``driven.reporting``: its events, and its records shown in the room.
 import asyncio
 import base64
 import functools
+import logging
 import time
 import uuid
 from collections.abc import Awaitable, Callable
@@ -28,7 +29,7 @@ from app.domain.agent.harness.claude_code import (
     ended,
 )
 from app.domain.agent.harness.driven import lifecycle
-from app.domain.agent.harness.driven.reporting import Reading, Whose
+from app.domain.agent.harness.driven.reporting import Reading, Whose, launch_phases
 from app.domain.agent.session_host.contract import (
     Access,
     Image,
@@ -45,6 +46,8 @@ from app.domain.agent.session_host.driver import (
 
 if TYPE_CHECKING:
     from app.domain.agent.device_provider import DeviceChannel
+
+logger = logging.getLogger(__name__)
 
 # How long a first call waits for the runner to bind its socket, and how often
 # it asks. The screen reports ready as soon as the machine has a program
@@ -173,6 +176,16 @@ class ClaudeCodeDriver:
             )
             screen = await screen_for(runner_alive=False)
             status = await self._greet(wire, host, ref, name)
+        if (phases := launch_phases(status.get("launch_timing"))) is not None:
+            # How the launch came up as far as the greeting: the host's share
+            # of starting a session, which only its runner sees. The rest
+            # follows once Claude Code is ready (``Reading.drain``).
+            logger.info(
+                "session_launch_timing topic=%s seat=%s stage=greeted phases_ms=%s",
+                owner.place_id,
+                owner.name,
+                phases,
+            )
         return Launched(
             status["session_id"],
             frozenset(status.get("capabilities") or ()),

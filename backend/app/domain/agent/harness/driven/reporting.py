@@ -174,6 +174,21 @@ def result_of(
     )
 
 
+def launch_phases(value: object) -> dict[str, float] | None:
+    """A runner's account of how its launch came up (its ``launch_timing``:
+    each phase's milliseconds since the launch began), kept to names and
+    numbers for the log. None when it gave none: an older runner, or a host
+    where nothing could be marked."""
+    if not isinstance(value, dict):
+        return None
+    phases = {
+        str(phase)[:40]: round(float(ms), 1)
+        for phase, ms in value.items()
+        if isinstance(ms, int | float) and not isinstance(ms, bool)
+    }
+    return phases or None
+
+
 def _uuid(value: object) -> uuid.UUID | None:
     try:
         return uuid.UUID(str(value)) if value else None
@@ -270,6 +285,15 @@ class Reading:
             self.heard = {k: v for k, v in answer.items() if k in ("alive", "live")}
             if live := self.heard.get("live"):
                 self.live_mark = live.get("mark")
+            if (phases := launch_phases(answer.get("launch_timing"))) is not None:
+                # Said once by a runner whose session has just come up: the
+                # whole launch, past the greeting that saw only its start.
+                logger.info(
+                    "session_launch_timing topic=%s seat=%s stage=ready phases_ms=%s",
+                    self.whose.conversation_id,
+                    self.whose.agent_handle,
+                    phases,
+                )
             state = answer.get("state")
             moved = False
             if isinstance(state, dict):
