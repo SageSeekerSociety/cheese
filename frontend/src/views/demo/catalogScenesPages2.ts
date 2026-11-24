@@ -16,6 +16,7 @@ import {
   CONNECTION_PROJECTS,
   FEATURE,
   feedback,
+  FEISHU_TEAMS,
   INTEGRATIONS,
   MAIL_DRAFTS,
   PRIVATE_FEEDBACK,
@@ -28,6 +29,7 @@ import AdminFeaturePageView from '@/views/admin/AdminFeaturePageView.vue'
 import FeedbackDetailPageView from '@/views/feedback/FeedbackDetailPageView.vue'
 import MyConnectionsViewView from '@/views/MyConnectionsViewView.vue'
 import ProjectSkillsViewView from '@/views/ProjectSkillsViewView.vue'
+import FeishuView from '@/views/teams/detail/FeishuView.vue'
 
 /** 四件都要 Vuetify 的画法和一套语言包（页框、按钮、状态药丸、下拉、抽屉都在 Vuetify 上）。 */
 const UI_T: CatalogNeed[] = ['vuetify', 'i18n']
@@ -113,10 +115,8 @@ export const SCENES_PAGES2_ENTRIES: CatalogEntry[] = [
       loading: false,
       error: '',
       busy: '',
-      feishuRedirectUri: 'https://okcheese.com/api/integrations/feishu/callback',
-      feishuSetupError: '',
+      feishuTeams: FEISHU_TEAMS,
       refresh: noop,
-      'retry-feishu-setup': noop,
       discard: noop,
       send: noop,
       'connect-feishu': noop,
@@ -124,7 +124,6 @@ export const SCENES_PAGES2_ENTRIES: CatalogEntry[] = [
       recheck: noop,
       authorize: noop,
       remove: noop,
-      copy: noop,
       save: (_body: Record<string, unknown>, done: (ok: boolean, message?: string) => void) => done(true),
     },
     states: [
@@ -142,9 +141,15 @@ export const SCENES_PAGES2_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '连着两个账号，飞书那个还没授权',
-        note: '一条邮箱、一条填了自己公司应用的飞书：飞书那条在个人授权回来之前搜不了，所以它那一行说的是「还没连接飞书」，而不是旁边那颗「正常」药丸的意思。',
+        note: '一条邮箱、一条用团队应用的飞书：飞书那条在个人授权回来之前搜不了，所以它那一行说的是「还没连接飞书」，而不是旁边那颗「正常」药丸的意思。',
         props: { integrations: INTEGRATIONS },
         expect: '还没连接飞书',
+      },
+      {
+        name: '还没有团队设飞书应用',
+        note: '只有个人团队、它也还没设应用：点「连接飞书」，选单说还没有可用的应用，并指到个人设置里去设。',
+        props: { feishuTeams: [FEISHU_TEAMS[0]] },
+        expect: '暂无待发送的邮件',
       },
       {
         name: '读失败',
@@ -157,6 +162,74 @@ export const SCENES_PAGES2_ENTRIES: CatalogEntry[] = [
         note: '还在路上：页头那颗刷新转着，两格先按空的样子摆着。',
         props: { loading: true },
         expectSelector: '.v-progress-circular',
+      },
+    ],
+  },
+  {
+    id: 'team-feishu-view',
+    title: 'FeishuView',
+    about:
+      '团队设置「飞书应用」那一栏的画面（个人设置里个人团队的那一栏也是它）：这个团队连接成员飞书用的企业自建应用，能改团队设置的人填 App ID / Secret / 版本，下面是在飞书里建这个应用的几步，重定向 URL、权限配置、申请理由都能复制。取数、保存、删除、复制都在容器 `teams/detail/Feishu.vue` 里。',
+    file: 'src/views/teams/detail/FeishuView.vue',
+    component: FeishuView,
+    needs: UI_T,
+    args: {
+      personal: false,
+      app: {
+        configured: true,
+        app_id: 'cli_a1b2c3d4e5',
+        domain: 'feishu',
+        updated_by: 'course-lead',
+        updated_at: '2026-11-20T09:00:00Z',
+        redirect_uri: 'https://okcheese.com/api/integrations/feishu/callback',
+      },
+      loading: false,
+      loadError: '',
+      canManage: true,
+      save: (_body: unknown, done: (ok: boolean, message?: string) => void) => done(true),
+      remove: noop,
+      copy: noop,
+      retry: noop,
+    },
+    states: [
+      {
+        name: '团队设好了应用',
+        note: '状态一行写着已设置和 App ID；Secret 那一格空着，提示留空表示不改。',
+        props: {},
+        expect: '已设置 · cli_a1b2c3d4e5 · feishu',
+      },
+      {
+        name: '团队还没设',
+        note: '没设时状态写「还没设置」，表单空着，下面是建应用的几步。',
+        props: {
+          app: {
+            configured: false,
+            app_id: '',
+            domain: 'feishu',
+            updated_by: '',
+            updated_at: null,
+            redirect_uri: 'https://okcheese.com/api/integrations/feishu/callback',
+          },
+        },
+        expect: '还没设置',
+      },
+      {
+        name: '个人团队',
+        note: '个人设置里的那一栏：说的是「你自己连接飞书用的应用」，可用范围只选自己。',
+        props: { personal: true },
+        expect: '可用范围只选你自己',
+      },
+      {
+        name: '不是管理员',
+        note: '团队成员看得到这一栏，但只有管理员能设：不画表单和步骤。',
+        props: { canManage: false },
+        expect: '只有团队管理员能设置飞书应用。',
+      },
+      {
+        name: '读失败',
+        note: '读不到时那句话挂在上面，带「重试」。',
+        props: { loadError: '飞书应用加载失败' },
+        expect: '飞书应用加载失败',
       },
     ],
   },

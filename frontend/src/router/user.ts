@@ -73,6 +73,12 @@ export default {
           component: () => import('@/views/teams/detail/Credits.vue'),
         },
         {
+          // 个人团队的飞书应用：自己用的企业自建应用，页面和团队设置里那一栏是同一份。
+          path: 'feishu',
+          name: 'UserSettingsFeishu',
+          component: () => import('@/views/teams/detail/Feishu.vue'),
+        },
+        {
           // 芝士替这个人用的邮箱和飞书。
           path: 'connections',
           name: 'UserSettingsConnections',

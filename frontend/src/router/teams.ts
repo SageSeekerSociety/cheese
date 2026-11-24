@@ -94,6 +94,13 @@ export default {
           meta: { settingsOverlay: true, hideTabs: true },
         },
         {
+          // 这个团队连接成员飞书用的企业自建应用；个人团队的那一份在个人设置里。
+          path: 'feishu',
+          name: 'TeamsDetailFeishu',
+          component: () => import('@/views/teams/detail/Feishu.vue'),
+          meta: { settingsOverlay: true, hideTabs: true },
+        },
+        {
           // Credits belong to the team, including the personal team.
           path: 'credits',
           name: 'TeamsDetailCredits',

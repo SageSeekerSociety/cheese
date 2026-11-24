@@ -38,8 +38,10 @@ from app.domain.integration.mail import IntegrationError
 from app.domain.integration.models import Integration, MailDraft
 from app.domain.integration.service import (
     IntegrationService,
+    TeamFeishuAppService,
     draft_view,
-    feishu_settings,
+    feishu_redirect_uri,
+    feishu_settings_for,
     keep_feishu_tokens,
     public,
 )
@@ -106,7 +108,6 @@ class IntegrationPatch(BaseModel):
     label: str | None = None
     grants: list[str] | None = None
     password: str | None = None
-    app_secret: str | None = None
     folders: list[str] | None = None
     #: The Feishu authorization this browser came back with
     #: (`feishu_callback`): claimed by the connection's owner, it finishes
@@ -224,42 +225,36 @@ async def connect_mail(body: MailIn, db: DbSession, resolver: ActorResolverDep) 
 
 
 @router.get("/me/integrations/feishu")
-async def feishu_setup(resolver: ActorResolverDep) -> dict:
-    """成员建自己公司的飞书应用时要用到的回调地址：要填进那个应用的「重定向 URL」。
+async def feishu_choices(db: DbSession, resolver: ActorResolverDep) -> dict:
+    """「连接飞书」能用哪些应用：本人所在的每个团队（个人团队在前），各带它设的飞书
+    应用（没设就是空的）和本人能不能去设。一个都没设时，页面据此指到能设的地方。"""
+    actor = await _person(resolver)
+    assert actor.user_id is not None
+    teams = await TeamFeishuAppService(db).choices_for(actor.user_id)
+    await db.commit()
+    return ok({"teams": teams, "redirect_uri": feishu_redirect_uri()})
 
-    这是成员自己的页面，所以要本人。
-    """
-    await _person(resolver)
-    return ok({"redirect_uri": _redirect_uri()})
 
+class FeishuConnectIn(BaseModel):
+    """用哪个团队的飞书应用连接。"""
 
-class FeishuAppIn(BaseModel):
-    """成员自己公司的企业自建应用。企业自建应用只在它自己那家企业的飞书里能用。"""
-
-    app_id: str = Field(min_length=1, max_length=64)
-    app_secret: str = Field(min_length=1, max_length=256)
-    #: feishu | lark — which of the two open platforms the app was built on.
-    domain: str = Field(min_length=1, max_length=16)
+    team_id: int = Field(ge=1)
 
 
 @router.post("/me/integrations/feishu", dependencies=[ROUTE_DECIDES])
 async def connect_feishu(
-    body: FeishuAppIn, db: DbSession, resolver: ActorResolverDep
+    body: FeishuConnectIn, db: DbSession, resolver: ActorResolverDep
 ) -> dict:
-    """「连接飞书」按下的第一步：先有自己那一行，再跳去飞书授权页。
+    """「连接飞书」选好一个团队的应用之后的第一步：先有自己那一行，再跳去飞书授权页。
 
     行在这里就落库，因为回调用 `state` 里的 id 找到它、把 token 写进去（见
-    `feishu_callback`）。App ID / Secret 是成员自己公司的应用，存在这一行上，授权和
-    续期都用它。授予哪些项目之后在这个连接那一行上勾选。
+    `feishu_callback`）。这一行只记是哪个团队的应用，应用的凭据每次调用时从团队读；
+    授权是本人自己的飞书账号。授予哪些项目之后在这个连接那一行上勾选。
     """
     actor = await _person(resolver)
     assert actor.user_id is not None
     row = await _service(db).connect_feishu(
-        owner_user_id=actor.user_id,
-        owner_handle=actor.handle,
-        app_id=body.app_id.strip(),
-        app_secret=body.app_secret.strip(),
-        domain=body.domain,
+        owner_user_id=actor.user_id, owner_handle=actor.handle, team_id=body.team_id
     )
     await db.commit()
     return ok(public(row))
@@ -279,11 +274,7 @@ async def update_integration(
     if body.feishu_handoff is not None:
         outcome = await _claim_feishu(db, row, body.feishu_handoff)
         return ok({**public(row), "authorization": outcome})
-    secret = {
-        k: v
-        for k, v in (("password", body.password), ("app_secret", body.app_secret))
-        if v
-    }
+    secret = {k: v for k, v in (("password", body.password),) if v}
     row = await service.update(
         row,
         grants=body.grants,
@@ -330,7 +321,7 @@ def _state(integration_id: uuid.UUID, *, in_app: bool) -> str:
 
 
 def _redirect_uri() -> str:
-    return f"{settings.frontend_url}/api/integrations/feishu/callback"
+    return feishu_redirect_uri()
 
 
 @router.get("/me/integrations/{integration_id}/feishu/authorize")
@@ -343,7 +334,7 @@ async def feishu_authorize(
     actor = await _person(resolver)
     assert actor.user_id is not None
     row = await _service(db).get_owned(integration_id, actor.user_id)
-    settings = feishu_settings(row)
+    settings = await feishu_settings_for(db, row)
     url = FeishuClient(settings).authorize_url(
         _redirect_uri(), _state(row.id, in_app=started_in_app(request))
     )
@@ -433,7 +424,7 @@ async def _finish_feishu(
         return query
 
     try:
-        config = feishu_settings(row)
+        config = await feishu_settings_for(db, row)
         await FeishuClient(config).exchange_code(code, _redirect_uri())
     except Exception as exc:  # the person reads why, on the page
         # Feishu's answer goes by Feishu's own words, under the code the page

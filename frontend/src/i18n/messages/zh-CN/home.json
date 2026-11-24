@@ -83,6 +83,7 @@
     "teamLibrary": "资料库",
     "teamSettings": "设置",
     "teamModels": "模型",
+    "teamFeishu": "飞书应用",
     "spaceReview": {
       "PENDING": "待审核",
       "REJECTED": "已驳回"

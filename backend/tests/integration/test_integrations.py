@@ -32,6 +32,7 @@ from tests.integration.conftest import (
     room_agent_seat,
     session_auth_headers,
 )
+from tests.integration.test_team_membership import team_of
 
 OWNER = "user-1"
 #: The App Secret a member types for their own company's app; it must never
@@ -487,12 +488,36 @@ def feishu_stub(monkeypatch):
     return stub
 
 
-OWN_APP = {"app_id": "cli_own", "app_secret": APP_SECRET, "domain": "feishu"}
+APP = {"app_id": "cli_own", "app_secret": APP_SECRET, "domain": "feishu"}
 
 
-def _connect_feishu(client, person, app=OWN_APP) -> dict:
-    """「连接飞书」的第一步：带上成员自己公司应用的 App ID / Secret，落自己那一行。"""
-    r = client.post("/me/integrations/feishu", json=app, headers=person)
+def _choices(client, person) -> list[dict]:
+    r = client.get("/me/integrations/feishu", headers=person)
+    assert r.status_code == 200, r.text
+    return r.json()["data"]["teams"]
+
+
+def _personal_team(client, person) -> int:
+    (personal,) = [t for t in _choices(client, person) if t["personal"]]
+    return personal["team_id"]
+
+
+def _set_app(client, person, team_id, app=APP):
+    """团队设置里的「飞书应用」：能改团队设置的人填一次。"""
+    r = client.put(f"/teams/{team_id}/feishu-app", json=app, headers=person)
+    assert r.status_code == 200, r.text
+    return r.json()["data"]
+
+
+def _connect_feishu(client, person, team_id=None) -> dict:
+    """「连接飞书」的第一步：选一个团队的应用（默认自己的个人团队，先给它设上），
+    落自己那一行。"""
+    if team_id is None:
+        team_id = _personal_team(client, person)
+        _set_app(client, person, team_id)
+    r = client.post(
+        "/me/integrations/feishu", json={"team_id": team_id}, headers=person
+    )
     assert r.status_code == 200, r.text
     return r.json()["data"]
 
@@ -530,9 +555,9 @@ def _claim(client, person, location: str) -> dict:
     return r.json()["data"]["authorization"]
 
 
-def _own_app_connection(client, person, project):
-    """一个人的连接：填自己公司的应用 → 回调 → 勾选项目。"""
-    row = _connect_feishu(client, person)
+def _own_app_connection(client, person, project, team_id=None):
+    """一个人的连接：选团队的应用（默认个人团队的）→ 回调 → 勾选项目。"""
+    row = _connect_feishu(client, person, team_id)
     _authorize(client, person, row["id"])
     client.patch(
         f"/me/integrations/{row['id']}", json={"grants": [project]}, headers=person
@@ -540,17 +565,13 @@ def _own_app_connection(client, person, project):
     return row
 
 
-def _seed_own_app_connection(
-    client, handle, grants, *, app_id="cli_own", app_secret="own-secret", token=None
-):
-    """一条自带凭据的连接，直接落库，可以带一份已经拿到的用户 token。
-
-    成员在页面上填自己公司的应用、经路由建出这一行的那条路，由
-    `test_a_member_connects_with_their_own_companys_app` 测；这里要的只是这一行本身。
-    """
+def _seed_connection(client, person, handle, grants, *, token=None):
+    """一条已经授权过的连接，直接落库：个人团队设好应用，这一行指向它，带一份本人的
+    token。经路由建出这一行的那条路由 `test_a_member_connects_through_a_team_app` 测。"""
+    team_id = _personal_team(client, person)
+    _set_app(client, person, team_id)
 
     async def _seed() -> str:
-        user = None
         async with client.test_factory() as s:
             user = await UserRepository(s).get_by_username(handle)
             assert user is not None
@@ -559,12 +580,12 @@ def _seed_own_app_connection(
                 owner_user_id=user.id,
                 owner_handle=handle,
                 provider="feishu",
-                label="飞书",
-                config={"app_id": app_id, "domain": "feishu", "folders": []},
+                label="个人",
+                config={"team_id": team_id, "folders": []},
                 grants=[str(g) for g in grants],
                 status="ok",
             )
-            secret: dict = {"app_secret": app_secret}
+            secret: dict = {}
             if token:
                 secret |= {
                     "user_access_token": token,
@@ -594,28 +615,64 @@ def _expire_user_token(client, row_id):
     asyncio.run(_expire())
 
 
-# ── 平台管理员配的那一个应用 ───────────────────────────────────────────────
+# ── 团队的飞书应用 ─────────────────────────────────────────────────────────
 
 
-def test_connecting_without_an_app_is_refused(client, feishu_stub):
-    """Every connection brings its own company's app; there is no platform app to
-    fall back on, so a connect with no App ID saves nothing."""
+def _team(client, *, owner, admins=(), members=()):
+    return team_of(client, owner=owner, admins=admins, members=members)
+
+
+def test_only_who_may_change_team_settings_sets_its_feishu_app(client, feishu_stub):
     person, _project, _room = _setup(client)
-    r = client.post("/me/integrations/feishu", headers=person)
-    assert r.status_code == 400, r.text
-    no_domain = {k: v for k, v in OWN_APP.items() if k != "domain"}
-    r = client.post("/me/integrations/feishu", json=no_domain, headers=person)
-    assert r.status_code == 400, r.text
-    assert client.get("/me/integrations", headers=person).json()["data"]["data"] == []
+    tid = _team(client, owner="fs_owner", admins=("fs_admin",), members=(OWNER,))
+    member = person
+    admin = {"Authorization": f"Bearer {seed_user(client, 'fs_admin')}"}
+
+    refused = client.put(f"/teams/{tid}/feishu-app", json=APP, headers=member)
+    assert refused.status_code == 403, refused.text
+    assert client.get(f"/teams/{tid}/feishu-app", headers=member).status_code == 403
+    assert client.delete(f"/teams/{tid}/feishu-app", headers=member).status_code == 403
+
+    saved = _set_app(client, admin, tid)
+    assert saved["configured"] is True and saved["app_id"] == "cli_own"
+    # The member sees the app to connect with, and that they cannot change it.
+    (team,) = [t for t in _choices(client, member) if t["team_id"] == tid]
+    assert team["app"] == {"app_id": "cli_own", "domain": "feishu"}
+    assert team["can_manage"] is False
 
 
-def test_a_refused_connect_does_not_echo_the_app_secret(client, feishu_stub):
+def test_the_app_secret_never_comes_back(client, feishu_stub):
+    person, project, _room = _setup(client)
+    tid = _personal_team(client, person)
+    saved = client.put(f"/teams/{tid}/feishu-app", json=APP, headers=person)
+    read = client.get(f"/teams/{tid}/feishu-app", headers=person)
+    choices = client.get("/me/integrations/feishu", headers=person)
+    row = _own_app_connection(client, person, project)
+    listed = client.get("/me/integrations", headers=person)
+    for r in (saved, read, choices, listed):
+        assert r.status_code == 200, r.text
+        assert APP_SECRET not in r.text, "the secret came back"
+    assert row["config"] == {"team_id": tid, "folders": []}
+
+    # Saving without retyping the secret keeps the stored one: the token
+    # exchange below still carries it.
+    again = client.put(
+        f"/teams/{tid}/feishu-app",
+        json={"app_id": "cli_own", "domain": "lark"},
+        headers=person,
+    )
+    assert again.status_code == 200, again.text
+    assert feishu_stub.app_credentials[-1] == ("cli_own", APP_SECRET)
+
+
+def test_a_refused_team_app_save_does_not_echo_the_app_secret(client, feishu_stub):
     """A form refused for a missing field must not send the App Secret typed
     next to it back in the error: it would land in the browser's tools and in
     any log of the response."""
     person, _project, _room = _setup(client)
-    r = client.post(
-        "/me/integrations/feishu",
+    tid = _personal_team(client, person)
+    r = client.put(
+        f"/teams/{tid}/feishu-app",
         json={"app_secret": APP_SECRET, "domain": "feishu"},
         headers=person,
     )
@@ -624,92 +681,86 @@ def test_a_refused_connect_does_not_echo_the_app_secret(client, feishu_stub):
     assert APP_SECRET not in r.text
 
 
-def test_a_member_connects_with_their_own_companys_app(client, feishu_stub):
-    """企业自建应用只在它自己那家企业的飞书里能用，所以成员填自己公司的应用：
-    授权、换 token、续期都用那套凭据，Secret 不会回到页面上。"""
-    person, project, room = _setup(client)
-    assert (
-        client.get("/me/integrations/feishu", headers=person)
-        .json()["data"]["redirect_uri"]
-        .endswith("/api/integrations/feishu/callback")
+def test_a_wrong_app_secret_is_said_and_nothing_is_kept(client, feishu_stub):
+    person, _project, _room = _setup(client)
+    tid = _personal_team(client, person)
+    feishu_stub.bad_secrets.add("typo")
+
+    r = client.put(
+        f"/teams/{tid}/feishu-app",
+        json={"app_id": "cli_own", "app_secret": "typo"},
+        headers=person,
     )
-    own = {"app_id": "cli_other", "app_secret": "other-secret", "domain": "lark"}
+    assert r.status_code >= 400, r.text
+    assert "10014" in r.text
+    assert (
+        client.get(f"/teams/{tid}/feishu-app", headers=person).json()["data"][
+            "configured"
+        ]
+        is False
+    )
 
-    r = client.post("/me/integrations/feishu", json=own, headers=person)
-    assert r.status_code == 200, r.text
-    row = r.json()["data"]
-    assert row["config"]["app_id"] == "cli_other"
-    assert "other-secret" not in r.text
-    assert feishu_stub.app_credentials[-1] == ("cli_other", "other-secret")
 
+def test_a_member_sees_only_their_own_teams_apps(client, feishu_stub):
+    person, _project, _room = _setup(client)
+    mine = _team(client, owner="fs_lead", members=(OWNER,))
+    theirs = _team(client, owner="fs_other")
+    lead = {"Authorization": f"Bearer {seed_user(client, 'fs_lead')}"}
+    other = {"Authorization": f"Bearer {seed_user(client, 'fs_other')}"}
+    _set_app(client, lead, mine, {**APP, "app_id": "cli_mine"})
+    _set_app(client, other, theirs, {**APP, "app_id": "cli_theirs"})
+
+    choices = _choices(client, person)
+    assert choices[0]["personal"] is True and choices[0]["app"] is None
+    assert choices[0]["can_manage"] is True
+    ids = {t["team_id"] for t in choices}
+    assert mine in ids and theirs not in ids
+    assert "cli_theirs" not in str(choices)
+
+    # Nor can they connect through a team they are not on.
+    r = client.post("/me/integrations/feishu", json={"team_id": theirs}, headers=person)
+    assert r.status_code == 404, r.text
+
+
+def test_a_member_connects_through_a_team_app(client, feishu_stub):
+    """团队设了应用，成员选它：授权地址用团队应用的 App ID 和域名，换 code、刷新都用
+    团队应用的凭据，授权是成员自己的账号；连接那一行不带应用的 Secret。"""
+    person, project, room = _setup(client)
+    tid = _team(client, owner="fs_lead2", members=(OWNER,))
+    lead = {"Authorization": f"Bearer {seed_user(client, 'fs_lead2')}"}
+    _set_app(
+        client,
+        lead,
+        tid,
+        {"app_id": "cli_team", "app_secret": "team-secret", "domain": "lark"},
+    )
+
+    row = _connect_feishu(client, person, tid)
+    assert row["config"] == {"team_id": tid, "folders": []}
     url = _authorize(client, person, row["id"])
-    assert "cli_other" in url and "open.larksuite.com" in url
-    assert feishu_stub.tokens[-1]["client_id"] == "cli_other"
-    assert feishu_stub.tokens[-1]["client_secret"] == "other-secret"
+    assert "cli_team" in url and "open.larksuite.com" in url
+    assert feishu_stub.tokens[-1]["client_id"] == "cli_team"
+    assert feishu_stub.tokens[-1]["client_secret"] == "team-secret"
 
     client.patch(
         f"/me/integrations/{row['id']}", json={"grants": [project]}, headers=person
     )
-    _expire_user_token(client, row["id"])
     read = client.get(f"/integrations/{row['id']}/feishu/docs/doc-ok?topic={room}")
     assert read.status_code == 200, read.text
-    assert feishu_stub.tokens[-1]["grant_type"] == "refresh_token"
-    assert feishu_stub.tokens[-1]["client_id"] == "cli_other"
-    assert feishu_stub.tokens[-1]["client_secret"] == "other-secret"
+    assert feishu_stub.bearers[-1] == "u1", "the member's own token was not used"
 
-    # Entering the same app again (say, after a mistyped secret) is the same
-    # connection, not a second one.
-    again = client.post("/me/integrations/feishu", json=own, headers=person)
-    assert again.status_code == 200, again.text
-    assert again.json()["data"]["id"] == row["id"]
-    listed = client.get("/me/integrations", headers=person).json()["data"]["data"]
-    assert [x["id"] for x in listed] == [row["id"]]
-    assert "other-secret" not in str(listed)
+    # The same team again is the same connection.
+    assert _connect_feishu(client, person, tid)["id"] == row["id"]
 
 
-def test_a_wrong_own_app_secret_is_said_before_authorizing(client, feishu_stub):
-    person, _project, _room = _setup(client)
-    feishu_stub.bad_secrets.add("typo")
-
-    r = client.post(
-        "/me/integrations/feishu",
-        json={"app_id": "cli_other", "app_secret": "typo", "domain": "feishu"},
-        headers=person,
-    )
-    # The person typed something wrong: a refusal of the request, carrying
-    # Feishu's own answer, not a failure of the service.
-    assert r.status_code == 422, r.text
-    assert "10014" in r.text
-    assert "app secret invalid" in r.text
-    assert client.get("/me/integrations", headers=person).json()["data"]["data"] == []
-
-
-def _secret_of(client, row_id) -> dict:
-    async def _read() -> dict:
-        async with client.test_factory() as s:
-            row = await s.get(Integration, uuid.UUID(row_id))
-            assert row is not None
-            return unseal(row)
-
-    return asyncio.run(_read())
-
-
-def test_a_new_secret_for_a_connected_app_is_kept_and_used(client, feishu_stub):
-    """Entering a connected app again with its rotated secret keeps the new one:
-    the next refresh of the owner's authorization goes out with it."""
+def test_a_rotated_team_secret_reaches_existing_connections(client, feishu_stub):
     person, project, room = _setup(client)
-    row = _own_app_connection(client, person, project)
+    tid = _team(client, owner="fs_lead3", members=(OWNER,))
+    lead = {"Authorization": f"Bearer {seed_user(client, 'fs_lead3')}"}
+    _set_app(client, lead, tid, {**APP, "app_id": "cli_team"})
+    row = _own_app_connection(client, person, project, tid)
 
-    again = client.post(
-        "/me/integrations/feishu",
-        json={**OWN_APP, "app_secret": "rotated"},
-        headers=person,
-    )
-    assert again.status_code == 200, again.text
-    assert again.json()["data"]["id"] == row["id"]
-    assert feishu_stub.app_credentials[-1] == ("cli_own", "rotated")
-    assert _secret_of(client, row["id"])["app_secret"] == "rotated"
-
+    _set_app(client, lead, tid, {**APP, "app_id": "cli_team", "app_secret": "rotated"})
     _expire_user_token(client, row["id"])
     read = client.get(f"/integrations/{row['id']}/feishu/docs/doc-ok?topic={room}")
     assert read.status_code == 200, read.text
@@ -717,156 +768,48 @@ def test_a_new_secret_for_a_connected_app_is_kept_and_used(client, feishu_stub):
     assert feishu_stub.tokens[-1]["client_secret"] == "rotated"
 
 
-def test_a_wrong_secret_for_a_connected_app_changes_nothing(client, feishu_stub):
-    person, project, _room = _setup(client)
-    row = _own_app_connection(client, person, project)
-    before = _secret_of(client, row["id"])
-    feishu_stub.bad_secrets.add("typo")
-
-    for attempt in (
-        lambda: client.post(
-            "/me/integrations/feishu",
-            json={**OWN_APP, "app_secret": "typo"},
-            headers=person,
-        ),
-        lambda: client.patch(
-            f"/me/integrations/{row['id']}",
-            json={"app_secret": "typo"},
-            headers=person,
-        ),
-    ):
-        r = attempt()
-        assert r.status_code == 422, r.text
-        assert "10014" in r.text
-        assert _secret_of(client, row["id"]) == before
-    listed = client.get("/me/integrations", headers=person).json()["data"]["data"]
-    assert [(x["id"], x["status"]) for x in listed] == [(row["id"], "ok")]
-
-
-def test_a_new_secret_is_kept_when_the_old_authorization_has_lapsed(
+def test_removing_a_team_app_makes_its_connections_say_to_reconnect(
     client, feishu_stub
 ):
-    """The owner whose authorization lapsed brings the app again — from the
-    connect form or by changing the secret on the row — and it is kept; they
-    authorize again next. The lapsed authorization is not asked to work first."""
-    person, project, _room = _setup(client)
-    row = _own_app_connection(client, person, project)
-    feishu_stub.expired.add("r-u1")
-
-    again = client.post(
-        "/me/integrations/feishu",
-        json={**OWN_APP, "app_secret": "rotated"},
-        headers=person,
-    )
-    assert again.status_code == 200, again.text
-    assert _secret_of(client, row["id"])["app_secret"] == "rotated"
-
-    patched = client.patch(
-        f"/me/integrations/{row['id']}",
-        json={"app_secret": "rotated-again"},
-        headers=person,
-    )
-    assert patched.status_code == 200, patched.text
-    assert _secret_of(client, row["id"])["app_secret"] == "rotated-again"
-
-    _authorize(client, person, row["id"])
-    assert feishu_stub.tokens[-1]["client_secret"] == "rotated-again"
-
-
-def test_two_connects_for_the_same_app_at_once_make_one_connection(client, feishu_stub):
-    """The form submitted twice in a row (a double click, two tabs) is one
-    connection, not two indistinguishable ones."""
-    person, _project, _room = _setup(client)
-
-    async def connect_once() -> str:
-        async with client.test_factory() as s:
-            user = await UserRepository(s).get_by_username(OWNER)
-            assert user is not None
-            service = IntegrationService(s, None, None)  # type: ignore[arg-type]
-            row = await service.connect_feishu(
-                owner_user_id=user.id, owner_handle=OWNER, **OWN_APP
-            )
-            await s.commit()
-            return str(row.id)
-
-    async def both() -> list:
-        return await asyncio.gather(
-            connect_once(), connect_once(), return_exceptions=True
-        )
-
-    results = asyncio.run(both())
-    assert all(isinstance(r, str) for r in results), results
-    listed = client.get("/me/integrations", headers=person).json()["data"]["data"]
-    assert [x["id"] for x in listed] == [results[0]]
-    assert results[0] == results[1]
-
-
-def _seed_platform_app_connection(client, handle) -> str:
-    """A row as the platform-wide app made them: no app of its own (``config``
-    empty), only the owner's tokens once they had authorized."""
-
-    async def _seed() -> str:
-        async with client.test_factory() as s:
-            user = await UserRepository(s).get_by_username(handle)
-            assert user is not None
-            row = Integration(
-                id=uuid.uuid4(),
-                owner_user_id=user.id,
-                owner_handle=handle,
-                provider="feishu",
-                label="飞书",
-                config={},
-                grants=[],
-                status="ok",
-            )
-            seal(
-                row,
-                {
-                    "user_access_token": "platform-token",
-                    "user_token_expires_at": time.time() + 3600,
-                    "refresh_token": "platform-refresh",
-                    "refresh_token_expires_at": time.time() + 3600,
-                },
-            )
-            s.add(row)
-            await s.commit()
-            return str(row.id)
-
-    return asyncio.run(_seed())
-
-
-def test_a_connection_made_under_the_platform_app_asks_to_connect_again(
-    client, feishu_stub
-):
-    """A row the platform-wide app made has no app to call Feishu with. It says
-    so — its owner connects again with their own company's app — and the
-    hourly renewal marks it and goes on to everyone else's."""
-    from app.domain.integration.service import renew_feishu
-
     person, project, room = _setup(client)
-    stale = _seed_platform_app_connection(client, OWNER)
-    row = _own_app_connection(client, person, project)
-    _set_secret(client, row["id"], refresh_token_expires_at=time.time() + 3600)
+    tid = _team(client, owner="fs_lead4", members=(OWNER,))
+    lead = {"Authorization": f"Bearer {seed_user(client, 'fs_lead4')}"}
+    _set_app(client, lead, tid)
+    row = _own_app_connection(client, person, project, tid)
 
-    asyncio.run(renew_feishu(client.test_factory))
-
-    # The scan reached the working connection and renewed it.
-    assert feishu_stub.tokens[-1]["grant_type"] == "refresh_token"
-    assert _secret_of(client, row["id"])["refresh_token"] != "r-u1"
-    listed = {
-        x["id"]: x
-        for x in client.get("/me/integrations", headers=person).json()["data"]["data"]
-    }
-    assert listed[row["id"]]["status"] == "ok"
-    assert listed[stale]["status"] == "auth_failed"
-    assert "你公司自己的应用重新连接" in listed[stale]["last_error"]
-
-    authorize = client.get(f"/me/integrations/{stale}/feishu/authorize", headers=person)
-    assert authorize.status_code == 422, authorize.text
-    assert "你公司自己的应用重新连接" in authorize.text
-    checked = client.post(f"/me/integrations/{stale}/check", headers=person)
+    removed = client.delete(f"/teams/{tid}/feishu-app", headers=lead)
+    assert removed.status_code == 200, removed.text
+    r = client.get(f"/integrations/{row['id']}/feishu/docs/doc-ok?topic={room}")
+    assert r.status_code == 401, r.text
+    assert "飞书应用已移除" in r.text and "重新连接飞书" in r.text
+    checked = client.post(f"/me/integrations/{row['id']}/check", headers=person)
     assert checked.status_code == 200, checked.text
     assert checked.json()["data"]["status"] == "auth_failed"
+    assert "飞书应用已移除" in checked.json()["data"]["last_error"]
+
+
+def test_connecting_through_a_team_without_an_app_is_refused(client, feishu_stub):
+    person, _project, _room = _setup(client)
+    tid = _personal_team(client, person)
+    r = client.post("/me/integrations/feishu", json={"team_id": tid}, headers=person)
+    assert r.status_code == 422, r.text
+    assert "还没有设置飞书应用" in r.text
+    assert client.get("/me/integrations", headers=person).json()["data"]["data"] == []
+
+
+def test_a_shared_team_app_never_acts_as_the_app_for_a_member(client, feishu_stub):
+    """团队的应用读得到分享给它的文档；成员没授权自己的账号时，不能借它的身份去读。"""
+    person, project, room = _setup(client)
+    tid = _team(client, owner="fs_lead5", members=(OWNER,))
+    lead = {"Authorization": f"Bearer {seed_user(client, 'fs_lead5')}"}
+    _set_app(client, lead, tid)
+    row = _connect_feishu(client, person, tid)
+    client.patch(
+        f"/me/integrations/{row['id']}", json={"grants": [project]}, headers=person
+    )
+    r = client.get(f"/integrations/{row['id']}/feishu/docs/doc-ok?topic={room}")
+    assert r.status_code == 401, r.text
+    assert "t" not in feishu_stub.bearers
 
 
 def _feishu_landing(client, **params) -> dict[str, list[str]]:
@@ -1080,20 +1023,13 @@ def test_checking_a_lapsed_authorization_says_it_lapsed(
     assert checked.json()["data"]["status"] == "auth_failed", checked.text
 
 
-def test_a_connection_with_its_own_app_credentials_still_works(
+def test_an_authorized_connection_on_a_personal_team_app_reads_and_searches(
     client, feishu_stub, monkeypatch
 ):
-    """一行已经带着凭据和用户 token 的连接（生产上 09-27 建的那一行就是这样）照样读、
-    写、搜 —— 它自带的那套凭据说了算。"""
+    """一行已经授权过、指向个人团队应用的连接（生产上 09-27 那一行迁移后就是这样）照样
+    读、写、搜 —— 用的是本人的 token。"""
     person, project, room = _setup(client)
-    fid = _seed_own_app_connection(
-        client,
-        OWNER,
-        [project],
-        app_id="cli_own",
-        app_secret="own-secret",
-        token="own-token",
-    )
+    fid = _seed_connection(client, person, OWNER, [project], token="own-token")
 
     read = client.get(f"/integrations/{fid}/feishu/docs/doc-ok?topic={room}")
     assert read.status_code == 200, read.text
@@ -1106,13 +1042,6 @@ def test_a_connection_with_its_own_app_credentials_still_works(
     assert found.status_code == 200, found.text
     assert found.json()["data"]["documents"][0]["document_id"] == "doc-ok"
 
-    listed = [
-        r
-        for r in client.get("/me/integrations", headers=person).json()["data"]["data"]
-        if r["id"] == fid
-    ]
-    assert listed[0]["config"]["app_id"] == "cli_own"
-
 
 def test_an_app_only_connection_cannot_search_and_says_which_way(
     client, feishu_stub, monkeypatch
@@ -1123,7 +1052,7 @@ def test_an_app_only_connection_cannot_search_and_says_which_way(
     所以这里宁可回一句「差的是个人授权」。连接照旧能用（读、写、按文件夹列）。
     """
     _person, project, room = _setup(client)
-    fid = _seed_own_app_connection(client, OWNER, [project])
+    fid = _seed_connection(client, _person, OWNER, [project])
 
     read = client.get(f"/integrations/{fid}/feishu/docs/doc-ok?topic={room}")
     assert read.status_code == 200, read.text

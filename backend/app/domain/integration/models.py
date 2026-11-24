@@ -1,8 +1,8 @@
 """A person's own mailbox or Feishu account, lent to the AI teammates of the
-projects they name, and the mail drafts those teammates write into it. A Feishu
-connection carries the app it is used with: a self-built app of its owner's own
-company (``config.app_id``, ``config.domain``; the App Secret sealed in
-``secret``).
+projects they name, the mail drafts those teammates write into it, and the
+Feishu app a team connects its members through (``TeamFeishuApp``). A Feishu
+connection names its team (``config.team_id``) and keeps only its owner's
+tokens.
 
 The secret is sealed at rest and bound to its row. Nothing is sent from a
 mailbox without its owner confirming the exact draft that was written.
@@ -78,3 +78,35 @@ class MailDraft(UuidPk, Timestamps, Base):
     sent_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+
+class TeamFeishuApp(Timestamps, Base):
+    """The Feishu app a team connects its members' Feishu accounts through.
+
+    A self-built Feishu app lives in one Feishu tenant, and a team is the unit
+    that has one: a company's team sets its company's app, and a person on their
+    own sets one on their personal team. A team holds at most one. Each member
+    still authorizes with their own Feishu account; their ``Integration`` row
+    names the team (``config.team_id``) and keeps only their own tokens, so a
+    rotated secret reaches every member at their next call.
+
+    ``app_id`` is not a secret; ``app_secret`` is sealed like a connection's
+    secret (``Purpose.INTEGRATION_SECRET``), bound to the team.
+    """
+
+    __tablename__ = "team_feishu_apps"
+
+    team_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "team.id", ondelete="CASCADE", name="fk_team_feishu_apps_team_id_team"
+        ),
+        primary_key=True,
+    )
+    app_id: Mapped[str] = mapped_column(String(64))
+    #: feishu | lark
+    domain: Mapped[str] = mapped_column(String(16), default="feishu")
+    #: {"app_secret": …}, sealed.
+    secret: Mapped[str] = mapped_column(Text)
+    #: The handle of whoever last saved it.
+    updated_by: Mapped[str] = mapped_column(String(64))

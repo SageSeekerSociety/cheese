@@ -1,12 +1,12 @@
 /**
- * 「我的连接」上的飞书那一半：一颗「连接飞书」，打开一张填成员自己公司应用凭据的表单。
+ * 「我的连接」上的飞书那一半：一颗「连接飞书」，打开一张选单 —— 本人所在团队设的飞书应用，
+ * 选一个就跳去飞书授权；一个都没设时，指到能设的地方。
  *
  * 这一份钉住几件事，每一件都是「坏了也不会有人立刻发现」的那种：
  *
- * 1. **填完真的把人送到飞书**：先建自己那一行（`POST /me/integrations/feishu`，带上 App
- *    ID / Secret），再拿那一行的授权地址跳过去。少了前一步，回调没法知道是谁授权的；少了
- *    后一步，就永远停在原地。
- * 2. **凭据不对时服务端那句话留在表单上**，不跳走、不关表单。
+ * 1. **选一个团队的应用真的把人送到飞书**：先建自己那一行（`POST /me/integrations/feishu`，
+ *    带团队 id），再拿那一行的授权地址跳过去。
+ * 2. **一个都没设时不是一张空白**：说清楚，并指到个人设置里个人团队的那一栏。
  * 3. **已经连上的飞书那一行有自己的「授权个人账号」**：没授权完或过期了从那里再走一次。
  */
 import type { Component } from 'vue'
@@ -21,7 +21,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const listMyIntegrations = vi.fn()
 const listMyMailDrafts = vi.fn()
 const listProjects = vi.fn()
-const feishuSetup = vi.fn()
+const feishuChoices = vi.fn()
 const connectFeishu = vi.fn()
 const feishuAuthorizeUrl = vi.fn()
 const claimFeishuHandoff = vi.fn()
@@ -36,8 +36,8 @@ vi.mock('../api', async () => ({
 // 飞书那几个函数住它们自己的模块（`../api/feishu`），所以按模块分别挡。
 vi.mock('../api/feishu', async () => ({
   ...(await vi.importActual<typeof import('../api/feishu')>('../api/feishu')),
-  feishuSetup: () => feishuSetup(),
-  connectFeishu: (app: unknown) => connectFeishu(app),
+  feishuChoices: () => feishuChoices(),
+  connectFeishu: (teamId: unknown) => connectFeishu(teamId),
   feishuAuthorizeUrl: (id: string) => feishuAuthorizeUrl(id),
   claimFeishuHandoff: (integration: string, handoff: string) => claimFeishuHandoff(integration, handoff),
 }))
@@ -69,19 +69,32 @@ const FEISHU_ROW = {
   provider: 'feishu',
   label: '飞书',
   owner_handle: 'user-1',
-  config: { app_id: 'cli_own', domain: 'feishu' },
+  config: { team_id: 12, folders: [] },
   grants: [],
   status: 'ok',
   last_error: '',
   last_checked_at: null,
   user_authorized: false,
 }
-const REDIRECT = 'https://okcheese.com/api/integrations/feishu/callback'
+const PERSONAL = { team_id: 11, team_name: '个人', team_handle: '', personal: true, can_manage: true, app: null }
+const TEAM = {
+  team_id: 12,
+  team_name: '课程小队',
+  team_handle: 'course-team',
+  personal: false,
+  can_manage: false,
+  app: { app_id: 'cli_team', domain: 'feishu' },
+}
 
 async function mount(url = '/') {
   const router = createRouter({
     history: createMemoryHistory(),
-    routes: [{ path: '/', component: { template: '<div />' } }],
+    routes: [
+      { path: '/', component: { template: '<div />' } },
+      // Where the empty state points to set a Feishu app up.
+      { path: '/settings/feishu', name: 'UserSettingsFeishu', component: { template: '<div />' } },
+      { path: '/teams/:handle/feishu', name: 'TeamsDetailFeishu', component: { template: '<div />' } },
+    ],
   })
   await router.push(url)
   await router.isReady()
@@ -108,21 +121,13 @@ async function mount(url = '/') {
   })
 }
 
-/** 点「连接飞书」，在表单上填好一套凭据，按「保存并授权」。 */
-async function fillAndSave(secret: string) {
-  await fireEvent.click(await screen.findByRole('button', { name: '连接飞书' }))
-  await fireEvent.update(await screen.findByLabelText('App ID'), 'cli_other')
-  await fireEvent.update(screen.getByLabelText('App Secret'), secret)
-  await fireEvent.click(screen.getByRole('button', { name: '保存并授权' }))
-}
-
 beforeEach(() => {
   setLocale('zh-CN')
   stubLocation()
   listMyIntegrations.mockReset().mockResolvedValue({ data: [] })
   listMyMailDrafts.mockReset().mockResolvedValue({ data: [] })
   listProjects.mockReset().mockResolvedValue({ data: [] })
-  feishuSetup.mockReset().mockResolvedValue({ redirect_uri: REDIRECT })
+  feishuChoices.mockReset().mockResolvedValue({ teams: [PERSONAL, TEAM], redirect_uri: 'r' })
   connectFeishu.mockReset()
   feishuAuthorizeUrl.mockReset()
   sonner.success.mockReset()
@@ -132,43 +137,36 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('「连接飞书」', () => {
-  it('打开表单，表单上写着要填的回调地址；填完先建自己那一行，再去飞书的授权页', async () => {
+  it('列出团队设的应用，选一个：先建自己那一行，再去飞书的授权页', async () => {
     connectFeishu.mockResolvedValue(FEISHU_ROW)
-    feishuAuthorizeUrl.mockResolvedValue({ url: 'https://open.feishu.cn/authorize?own=1', redirect_uri: 'r' })
+    feishuAuthorizeUrl.mockResolvedValue({ url: 'https://open.feishu.cn/authorize?team=1', redirect_uri: 'r' })
     await mount()
 
     await fireEvent.click(await screen.findByRole('button', { name: '连接飞书' }))
-    expect(await screen.findByDisplayValue(REDIRECT)).toBeTruthy()
-    await fireEvent.update(screen.getByLabelText('App ID'), 'cli_other')
-    await fireEvent.update(screen.getByLabelText('App Secret'), 'other-secret')
-    await fireEvent.click(screen.getByRole('button', { name: '保存并授权' }))
+    expect(await screen.findByText('cli_team · feishu')).toBeTruthy()
+    await fireEvent.click(screen.getByRole('button', { name: '用这个连接' }))
 
-    await vi.waitFor(() => expect(navigatedTo).toBe('https://open.feishu.cn/authorize?own=1'))
-    expect(connectFeishu).toHaveBeenCalledWith({ domain: 'feishu', app_id: 'cli_other', app_secret: 'other-secret' })
+    await vi.waitFor(() => expect(navigatedTo).toBe('https://open.feishu.cn/authorize?team=1'))
+    expect(connectFeishu).toHaveBeenCalledWith(12)
     expect(feishuAuthorizeUrl).toHaveBeenCalledWith('feishu-own')
   })
 
-  it('凭据不对时，服务端那句话留在表单上，不跳走', async () => {
-    connectFeishu.mockRejectedValue(new Error('以应用身份取令牌：飞书返回 10014 app secret invalid'))
+  it('一个都没设时说清楚，并指到个人设置里去设', async () => {
+    feishuChoices.mockResolvedValue({ teams: [PERSONAL], redirect_uri: 'r' })
     await mount()
 
-    await fillAndSave('typo')
-
-    expect(await screen.findByText('以应用身份取令牌：飞书返回 10014 app secret invalid')).toBeTruthy()
-    expect(navigatedTo).toBe('')
-    expect(feishuAuthorizeUrl).not.toHaveBeenCalled()
+    await fireEvent.click(await screen.findByRole('button', { name: '连接飞书' }))
+    expect(await screen.findByText('你所在的团队都还没设置飞书应用。')).toBeTruthy()
+    expect(await screen.findByText('在个人设置里设置')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '用这个连接' })).toBeNull()
   })
 
-  it('问不到回调地址也照样能连，不把整页连接一起掀掉', async () => {
+  it('问不到团队的应用也不把整页连接一起掀掉', async () => {
     listMyIntegrations.mockResolvedValue({ data: [FEISHU_ROW] })
-    feishuSetup.mockRejectedValue(new Error('读不到'))
-    connectFeishu.mockResolvedValue(FEISHU_ROW)
-    feishuAuthorizeUrl.mockResolvedValue({ url: 'https://open.feishu.cn/authorize?x=1', redirect_uri: 'r' })
+    feishuChoices.mockRejectedValue(new Error('读不到'))
     await mount()
 
     expect(await screen.findByText('还没连接飞书')).toBeTruthy()
-    await fillAndSave('other-secret')
-    await vi.waitFor(() => expect(navigatedTo).toBe('https://open.feishu.cn/authorize?x=1'))
   })
 
   it('问不到回调地址时表单上说出来，并能再问一次', async () => {

@@ -68,7 +68,12 @@ const groups = computed(() => settingsGroups())
 
 // 设备、模型和额度三栏是这个人名下那个单人团队的：页面和团队设置里的是同一份，团队从这里
 // 递下去（团队设置里是 `teams/Detail.vue` 递）。读到之前那三栏不画。
-const OWN_TEAM_PAGES = new Set(['UserSettingsCompute', 'UserSettingsModels', 'UserSettingsCredits'])
+const OWN_TEAM_PAGES = new Set([
+  'UserSettingsCompute',
+  'UserSettingsModels',
+  'UserSettingsCredits',
+  'UserSettingsFeishu',
+])
 const needsOwnTeam = computed(() => OWN_TEAM_PAGES.has(String(route.name)))
 const ownTeam = ref<Team>()
 provide(teamDataInjectionKey, ownTeam)

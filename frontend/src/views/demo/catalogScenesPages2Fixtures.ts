@@ -9,6 +9,7 @@
  * `catalogScenesPages2.ts`。
  */
 import type { Integration, MailDraft } from '@/api'
+import type { FeishuTeamChoice } from '@/api/feishu'
 import type { FeedbackComment, FeedbackDetail, FeedbackTimelineEntry, Project } from '@/cx_types'
 import type { FeatureView } from '@/views/admin/features/registry'
 
@@ -53,17 +54,30 @@ export function integration(over: Partial<Integration> = {}): Integration {
   }
 }
 
-/** 两张卡上都有的两条：一条正常的邮箱、一条填了自己公司应用、还没授权的飞书。 */
+/** 两张卡上都有的两条：一条正常的邮箱、一条用团队应用、还没授权的飞书。 */
 export const INTEGRATIONS: Integration[] = [
   integration(),
   integration({
     id: 'i-feishu-1',
     provider: 'feishu',
-    label: '飞书',
-    // 应用凭据是这个人公司的，个人授权还没回来：读得了分享给应用的文档，搜不了。
-    config: { app_id: 'cli_a1b2c3d4e5', domain: 'feishu' },
+    label: '课程小队',
+    // 用「课程小队」那个团队设的应用，个人授权还没回来：搜不了，也读不了。
+    config: { team_id: 12, folders: [] },
     user_authorized: false,
   }),
+]
+
+/** 「连接飞书」那张选单：个人团队还没设应用（本人能设），一个团队设了。 */
+export const FEISHU_TEAMS: FeishuTeamChoice[] = [
+  { team_id: 11, team_name: '个人', team_handle: '', personal: true, can_manage: true, app: null },
+  {
+    team_id: 12,
+    team_name: '课程小队',
+    team_handle: 'course-team',
+    personal: false,
+    can_manage: false,
+    app: { app_id: 'cli_a1b2c3d4e5', domain: 'feishu' },
+  },
 ]
 
 /** 一封等着发出去的邮件：`api/integrations.ts` 的 `MailDraft`。 */

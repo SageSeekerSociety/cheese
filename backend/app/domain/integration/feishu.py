@@ -1,12 +1,12 @@
 """Feishu / Lark documents over the open platform API.
 
-Two ways in, both through the self-built app the connection's owner brought
-from their own company: the app itself (app_id + app_secret, tenant token —
-sees the documents shared with the app), or the owner's user authorization
-(sees what the owner sees, and is the only way the search API answers). Every
-failure becomes ``IntegrationError`` with a kind: app credentials Feishu does
-not accept, expired or missing authorization, no permission on that document,
-not found, or the service failing.
+Two ways in, both through a team's self-built app: the app itself (app_id +
+app_secret, tenant token — sees the documents shared with the app), or the
+owner's user authorization (sees what the owner sees, and is the only way the
+search API answers). On a shared team only the second is used for a member.
+Every failure becomes ``IntegrationError`` with a kind: app credentials Feishu
+does not accept, expired or missing authorization, no permission on that
+document, not found, or the service failing.
 """
 
 from __future__ import annotations
@@ -62,9 +62,10 @@ BLOCK_KEY = {
 #: What the owner is asked to grant: keeping the authorization past the access
 #: token's two hours (``offline_access`` — without it Feishu issues no refresh
 #: token), searching their documents, and reading and writing them. The
-#: owner's app has to have each of these enabled in Feishu's developer console,
-#: or the authorization page refuses them (20027). The import JSON the
-#: connections page offers (``MyConnectionsViewView.vue``) lists the same three.
+#: team's app has to have each of these enabled in Feishu's developer console,
+#: or the authorization page refuses them (20027). The import JSON the team's
+#: Feishu settings offer (``views/teams/detail/FeishuView.vue``) lists the same
+#: three.
 USER_SCOPES = ("offline_access", "search:docs:read", "docx:document")
 
 
@@ -82,6 +83,9 @@ class FeishuSettings:
     refresh_token_expires_at: float | None = None
     #: Folders the app may list when there is no user authorization to search with.
     folders: list[str] = field(default_factory=list)
+    #: Never fall back to the app's own identity: a member of a shared team acts
+    #: only as themselves, not as the team's app.
+    user_only: bool = False
 
     @property
     def base(self) -> str:
@@ -193,6 +197,8 @@ class FeishuClient:
 
     async def token(self) -> str:
         """The owner's own authorization when there is one, else the app's."""
+        if self.settings.user_only and not self.settings.user_access_token:
+            raise IntegrationError("auth_failed", say("feishuAuthExpired"))
         if self.settings.user_access_token:
             if (self.settings.user_token_expires_at or 0) <= time.time() + 60:
                 await self.refresh_user_token()

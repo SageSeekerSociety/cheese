@@ -96,6 +96,7 @@ const GROUPS = [
     items: [
       { name: 'TeamsDetailCompute', label: 'home.nav.teamCompute', icon: 'mdi-laptop' },
       { name: 'TeamsDetailModels', label: 'home.nav.teamModels', icon: 'mdi-creation-outline' },
+      { name: 'TeamsDetailFeishu', label: 'home.nav.teamFeishu', icon: 'mdi-link-variant' },
       { name: 'TeamsDetailCredits', label: 'home.nav.teamCredits', icon: 'mdi-wallet-outline' },
     ],
   },
@@ -140,6 +141,7 @@ const settings = computed(() => {
 const PERSONAL: Record<string, string> = {
   TeamsDetailCompute: 'UserSettingsCompute',
   TeamsDetailModels: 'UserSettingsModels',
+  TeamsDetailFeishu: 'UserSettingsFeishu',
   TeamsDetailCredits: 'UserSettingsCredits',
 }
 

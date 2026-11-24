@@ -6,7 +6,7 @@
 
 <script setup lang="ts">
 import type { Integration, MailDraft } from '../api'
-import type { FeishuOwnApp } from '../api/feishu'
+import type { FeishuTeamChoice } from '../api/feishu'
 import type { Project } from '../cx_types'
 
 import { computed, reactive, ref } from 'vue'
@@ -16,6 +16,7 @@ import AdaptiveDialog from '../components/common/AdaptiveDialog.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import NavLink from '@/components/common/NavLink.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 
@@ -31,26 +32,20 @@ const props = defineProps<{
   error: string
   /** 正在飞的那个动作（`<id>:<动作>`），用来只把点过的那颗按钮画成在转。 */
   busy: string
-  /** 授权回调地址，自己公司的应用要把它填进「重定向 URL」；`''` 表示没问到。 */
-  feishuRedirectUri: string
-  /** 问回调地址失败时那句原话；`''` 表示没失败。 */
-  feishuSetupError: string
+  /** 本人所在的团队和它们设的飞书应用，个人团队在前；没读到时是空的。 */
+  feishuTeams: FeishuTeamChoice[]
 }>()
 
 const emit = defineEmits<{
   refresh: []
-  /** 再问一次回调地址。 */
-  'retry-feishu-setup': []
   discard: [draft: MailDraft]
   send: [draft: MailDraft]
-  /** 成员自己公司的应用；`done` 带回成没成、以及没成时那句话。 */
-  'connect-feishu': [app: FeishuOwnApp, done: (ok: boolean, message?: string) => void]
+  /** 用这个团队的飞书应用连接：页面建好那一行就跳去飞书授权。 */
+  'connect-feishu': [teamId: number]
   'set-grants': [row: Integration, grants: string[]]
   recheck: [row: Integration]
   authorize: [row: Integration]
   remove: [row: Integration]
-  /** 表单上那几段要贴进飞书后台的内容；复制和提示在页面里。 */
-  copy: [text: string]
   /** 表单已经按服务端认的样子拼好了；`done` 带回成没成、以及没成时那句话。 */
   save: [body: Record<string, unknown>, done: (ok: boolean, message?: string) => void]
 }>()
@@ -58,15 +53,6 @@ const emit = defineEmits<{
 const pending = computed(() => props.drafts.filter((d) => d.status === 'drafted'))
 
 const statusLabel = (status: Integration['status']) => t(`account.connections.status.${status}`)
-
-/** 一行连接叫什么：邮箱是它的地址；飞书是它用的那个应用的 App ID —— 同一个人可以连好几家
- *  公司的应用，光写「飞书」分不出哪一行是哪一家。平台应用时代留下、没有 App ID 的那种只剩
- *  「飞书」。 */
-function rowName(row: Integration): string {
-  if (row.provider === 'mail') return `${t('account.connections.mail')} · ${row.label}`
-  const appId = typeof row.config.app_id === 'string' ? row.config.app_id : ''
-  return appId ? `${row.label} · ${appId}` : row.label
-}
 
 const PRESETS = [
   {
@@ -139,9 +125,9 @@ function confirmRemove() {
 }
 
 // ── 接入 ───────────────────────────────────────────────────────────────────
-// 两张表单：邮箱，和「连接飞书」。企业自建应用只在它那家企业的飞书里能用，所以飞书那张
-// 表单填的是成员自己公司的应用；保存后页面（`connectFeishuAccount`）直接跳去飞书授权。
-// 表单自己那份草稿住在这一半：每一个字段都是这个文件里的一个元素。
+// 邮箱是一张表单；「连接飞书」是一张选单：本人所在团队设的飞书应用，选一个就跳去飞书授权
+// （页面里的 `connectFeishuAccount`）。一个都没设时，指到能设的地方（个人设置里的个人团队，
+// 以及本人管着的团队的设置）。表单自己那份草稿住在这一半：每一个字段都是这个文件里的一个元素。
 const adding = ref(false)
 const saving = ref(false)
 const formError = ref('')
@@ -169,34 +155,12 @@ function applyPreset(title: string) {
   })
 }
 
-/** 粘进飞书开发者后台「权限管理 → 批量导入/导出权限」的那份 JSON：只要用户身份权限，
- *  和后端 `feishu.USER_SCOPES` 一一对应，改一处就改另一处。 */
-const FEISHU_SCOPES_IMPORT = JSON.stringify(
-  { scopes: { tenant: [], user: ['offline_access', 'search:docs:read', 'docx:document'] } },
-  null,
-  2
-)
-const ownApp = ref(false)
-const ownAppSaving = ref(false)
-const ownAppError = ref('')
-const ownAppForm = reactive({ domain: 'feishu', app_id: '', app_secret: '' })
-const consoleUrl = computed(() =>
-  ownAppForm.domain === 'lark' ? 'https://open.larksuite.com/app' : 'https://open.feishu.cn/app'
-)
-
-function saveOwnApp() {
-  if (ownAppSaving.value) return
-  ownAppSaving.value = true
-  ownAppError.value = ''
-  emit('connect-feishu', { ...ownAppForm }, (ok: boolean, message?: string) => {
-    ownAppSaving.value = false
-    if (ok) {
-      ownApp.value = false
-      return
-    }
-    ownAppError.value = message ?? ''
-  })
-}
+const picking = ref(false)
+const feishuApps = computed(() => props.feishuTeams.filter((team) => team.app))
+const feishuSetUp = computed(() => props.feishuTeams.filter((team) => !team.app && team.can_manage))
+const teamLabel = (team: FeishuTeamChoice) => (team.personal ? t('integrations.member.pick.personal') : team.team_name)
+const settingsOf = (team: FeishuTeamChoice) =>
+  team.personal ? { name: 'UserSettingsFeishu' } : { name: 'TeamsDetailFeishu', params: { handle: team.team_handle } }
 
 /** 表单上只填地址，账号名跟着它走（填了账号名的老表单才会不一样）；`preset` 是这一页
  *  自己的东西，服务端不认识它。拼好之后连结果一起交给页面，请求在那一半。 */
@@ -288,7 +252,7 @@ function save() {
           <BaseButton kind="secondary" size="sm" prepend-icon="mdi-email-plus-outline" @click="adding = true">
             {{ t('account.connections.addMail') }}
           </BaseButton>
-          <BaseButton kind="secondary" size="sm" prepend-icon="mdi-link-variant-plus" @click="ownApp = true">
+          <BaseButton kind="secondary" size="sm" prepend-icon="mdi-link-variant-plus" @click="picking = true">
             {{ t('integrations.member.connect') }}
           </BaseButton>
         </div>
@@ -302,7 +266,10 @@ function save() {
       <div v-for="row in integrations" :key="row.id" class="conn-row" :data-integration="row.id">
         <div class="conn-row__head">
           <div class="conn-row__id">
-            <div class="conn-row__name">{{ rowName(row) }}</div>
+            <div class="conn-row__name">
+              {{ row.provider === 'mail' ? t('account.connections.mail') : t('account.connections.feishu') }} ·
+              {{ row.label }}
+            </div>
             <div v-if="row.last_error" class="conn-row__sub c-danger">{{ row.last_error }}</div>
             <!-- 飞书那一行在授权回来之前搜不了（搜索只认个人授权），所以这里说的是「连结上
                  了没有」，不是「工作正常」—— 旁边那个状态在授权之前说的「正常」只到「应用
@@ -368,7 +335,7 @@ function save() {
 
     <ConfirmDialog
       :model-value="!!removing"
-      :title="t('account.connections.removeTitle', { label: removing ? rowName(removing) : '' })"
+      :title="t('account.connections.removeTitle', { label: removing?.label ?? '' })"
       :confirm-label="t('account.connections.remove')"
       danger
       @update:model-value="removing = null"
@@ -377,90 +344,49 @@ function save() {
       {{ t('account.connections.removeBody') }}
     </ConfirmDialog>
 
-    <!-- 飞书「用自己公司的应用」：先照着几步在自己公司的飞书里建好应用，再填凭据。
-         保存时服务端拿它换一次应用令牌，成了就直接跳去飞书授权页。 -->
+    <!-- Connect Feishu: the Feishu apps of the teams this person is on; picking one
+         goes to Feishu's authorization page. With none set yet, where to set one. -->
     <AdaptiveDialog
-      :model-value="ownApp"
-      :title="t('integrations.member.ownApp.title')"
-      :primary-label="t('integrations.member.ownApp.submit')"
-      :primary-loading="ownAppSaving"
+      :model-value="picking"
+      :title="t('integrations.member.pick.title')"
       :max-width="560"
-      @update:model-value="ownApp = false"
-      @primary="saveOwnApp"
+      @update:model-value="picking = false"
     >
-      <!-- 字段在前、怎么建应用在后：打开就能填，已经建好应用的人不用先滚过五步说明。 -->
-      <template v-if="ownApp">
-        <p class="t-body mb-4">{{ t('integrations.member.ownApp.why') }}</p>
-        <v-select
-          v-model="ownAppForm.domain"
-          autocomplete="off"
-          :items="[
-            { title: t('integrations.member.ownApp.feishu'), value: 'feishu' },
-            { title: 'Lark', value: 'lark' },
-          ]"
-          :label="t('integrations.member.ownApp.domain')"
-        />
-        <v-text-field v-model="ownAppForm.app_id" autocomplete="off" :label="t('integrations.member.ownApp.appId')" />
-        <v-text-field
-          v-model="ownAppForm.app_secret"
-          autocomplete="new-password"
-          type="password"
-          :label="t('integrations.member.ownApp.appSecret')"
-        />
-        <p v-if="ownAppError" role="alert" class="t-body c-danger mb-3">{{ ownAppError }}</p>
-        <details class="conn-setup t-body" open>
-          <summary>{{ t('integrations.member.ownApp.setupTitle') }}</summary>
-          <ol class="conn-steps">
-            <li>{{ t('integrations.member.ownApp.step1', { console: consoleUrl }) }}</li>
-            <li>
-              {{ t('integrations.member.ownApp.step2') }}
-              <!-- 一行只读输入框 + 复制，和团队加入链接（TeamJoinLinkCard）同一种画法：地址
-                   不折行，长了在框里横向滚，不会被看成两段。 -->
-              <div v-if="feishuSetupError" class="conn-link">
-                <p role="alert" class="c-danger conn-link__error">
-                  {{ t('integrations.member.ownApp.redirectFailed', { error: feishuSetupError }) }}
-                </p>
-                <BaseButton kind="secondary" size="sm" @click="emit('retry-feishu-setup')">
-                  {{ t('integrations.member.ownApp.retry') }}
-                </BaseButton>
-              </div>
-              <div v-else-if="feishuRedirectUri" class="conn-link">
-                <v-text-field
-                  autocomplete="off"
-                  :model-value="feishuRedirectUri"
-                  :aria-label="t('integrations.member.ownApp.redirectLabel')"
-                  readonly
-                  hide-details
-                  density="compact"
-                  variant="outlined"
-                  class="conn-link__field"
-                />
-                <BaseButton kind="secondary" size="sm" @click="emit('copy', feishuRedirectUri)">
-                  {{ t('integrations.member.ownApp.copy') }}
-                </BaseButton>
-              </div>
-            </li>
-            <li>
-              {{ t('integrations.member.ownApp.step3') }}
-              <div class="conn-copy">
-                <pre class="conn-code">{{ FEISHU_SCOPES_IMPORT }}</pre>
-                <BaseButton kind="secondary" size="sm" @click="emit('copy', FEISHU_SCOPES_IMPORT)">
-                  {{ t('integrations.member.ownApp.copy') }}
-                </BaseButton>
-              </div>
-            </li>
-            <li>
-              {{ t('integrations.member.ownApp.step4') }}
-              <div class="conn-copy">
-                <pre class="conn-code">{{ t('integrations.member.ownApp.reason') }}</pre>
-                <BaseButton kind="secondary" size="sm" @click="emit('copy', t('integrations.member.ownApp.reason'))">
-                  {{ t('integrations.member.ownApp.copy') }}
-                </BaseButton>
-              </div>
-            </li>
-            <li>{{ t('integrations.member.ownApp.step5') }}</li>
-          </ol>
-        </details>
+      <template v-if="picking">
+        <template v-if="feishuApps.length">
+          <p class="t-body mb-3">{{ t('integrations.member.pick.lede') }}</p>
+          <div v-for="team in feishuApps" :key="team.team_id" class="conn-pick" :data-team="team.team_id">
+            <div class="conn-pick__id">
+              <div class="conn-row__name">{{ teamLabel(team) }}</div>
+              <div class="conn-row__sub">{{ team.app?.app_id }} · {{ team.app?.domain }}</div>
+            </div>
+            <BaseButton
+              kind="primary"
+              size="sm"
+              :loading="busy === `feishu:${team.team_id}`"
+              @click="emit('connect-feishu', team.team_id)"
+            >
+              {{ t('integrations.member.pick.use') }}
+            </BaseButton>
+          </div>
+        </template>
+        <template v-else>
+          <p class="t-body mb-1">{{ t('integrations.member.pick.none') }}</p>
+          <p class="t-body c-muted mb-3">{{ t('integrations.member.pick.noneHint') }}</p>
+        </template>
+        <div v-for="team in feishuSetUp" :key="team.team_id" class="conn-pick" :data-setup="team.team_id">
+          <div class="conn-pick__id">
+            <div class="conn-row__name">{{ teamLabel(team) }}</div>
+            <div class="conn-row__sub">{{ t('integrations.member.pick.unset') }}</div>
+          </div>
+          <NavLink :to="settingsOf(team)" class="conn-pick__link">
+            {{
+              team.personal
+                ? t('integrations.member.pick.setUpPersonal')
+                : t('integrations.member.pick.setUpTeam', { team: team.team_name })
+            }}
+          </NavLink>
+        </div>
       </template>
     </AdaptiveDialog>
 
@@ -655,63 +581,23 @@ function save() {
   justify-content: flex-end;
 }
 
-.conn-setup summary {
-  color: var(--ink);
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.conn-steps {
+.conn-pick {
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin: 8px 0 0;
-  padding-left: 20px;
-  color: var(--text);
-}
-
-.conn-link {
-  display: flex;
-  gap: 8px;
+  gap: 12px;
   align-items: center;
-  margin-top: 4px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
 }
 
-.conn-link__field {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.conn-link__error {
-  flex: 1 1 auto;
-  min-width: 0;
-  margin: 0;
-}
-
-/* 地址和下面两段代码块同一套等宽小字，长出框的部分在框里横向滚。 */
-.conn-link__field :deep(input) {
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
-
-.conn-copy {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
-  margin-top: 4px;
-}
-
-.conn-code {
+.conn-pick__id {
   flex: 1;
   min-width: 0;
-  margin: 0;
-  padding: 6px 8px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  font-family: var(--font-mono);
-  font-size: 12px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+}
+
+.conn-pick__link {
+  color: var(--accent-ink);
+  font-size: 13px;
+  white-space: nowrap;
 }
 
 .conn-form-row {

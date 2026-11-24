@@ -6,6 +6,7 @@ covers:
   - backend/app/domain/integration/
   - backend/app/domain/webhook/
   - backend/app/api/routes/integrations.py
+  - backend/app/api/routes/team_feishu_app.py
   - backend/app/api/routes/webhooks.py
   - backend/app/core/webhook_auth.py
 ---
@@ -46,7 +47,7 @@ API 分成两半，`backend/app/api/routes/integrations.py` 开头就写明：`/
 
 芝士起草时，房间会收到一条事件块和一条给主人的通知（`EVENT_MAIL_DRAFTED`，标题「邮件草稿待你确认：…」），草稿状态走 `drafted → sent | failed | discarded`。
 
-## 飞书：应用是成员公司的，授权是个人的 {#feishu}
+## 飞书：应用设在团队上，授权是个人的 {#feishu}
 
 `backend/app/domain/integration/feishu.py` 支持两种身份：
 
@@ -55,11 +56,13 @@ API 分成两半，`backend/app/api/routes/integrations.py` 开头就写明：`/
 | 应用 | `app_id` + `app_secret` → tenant token | 分享给这个应用的那些文档 |
 | 用户授权 | OAuth 拿到的 `user_access_token` + `refresh_token` | 这个人看得见的；**搜索 API 只在这条路上有答案** |
 
-授权页地址带着 `scope`（`feishu.USER_SCOPES`）。少了 `offline_access`，飞书就不发 `refresh_token`，授权两小时后作废；反过来，代码里请求了应用后台没开通的权限，授权页对所有人报 20027。所以这张清单和「连接飞书」表单里的批量导入 JSON（`MyConnectionsViewView.vue` 的 `FEISHU_SCOPES_IMPORT`）要一一对应，改一处就改另一处。
+授权页地址带着 `scope`（`feishu.USER_SCOPES`）。少了 `offline_access`，飞书就不发 `refresh_token`，授权两小时后作废；反过来，代码里请求了应用后台没开通的权限，授权页对所有人报 20027。所以这张清单和团队设置「飞书应用」里的批量导入 JSON（`views/teams/detail/FeishuView.vue` 的 `FEISHU_SCOPES_IMPORT`）要一一对应，改一处就改另一处。
 
-**应用是成员自己公司的。** 企业自建应用只在它自己那家企业的飞书里能用，所以平台不持有飞书应用：每个飞书连接带着成员自己公司的应用。成员点「连接飞书」打开一张表单，先填「版本」（飞书 / Lark）、App ID、App Secret；下面一段可折叠的说明写了在自己公司的飞书里建应用的几步：在开放平台创建企业自建应用；在「安全设置」里添加重定向 URL（`GET /me/integrations/feishu` 回的 `redirect_uri`，即 `{frontend_url}/api/integrations/feishu/callback`）并打开「刷新 user_access_token」；在「权限管理 → 批量导入/导出权限」里粘贴权限配置；创建版本时可用范围只选自己、填申请理由，等公司的飞书管理员审核。重定向 URL、权限配置、申请理由都能一键复制。
+**应用设在团队上。** 企业自建应用只在它自己那家企业的飞书里能用，所以平台不持有飞书应用，应用由团队持有：`TeamFeishuApp`（`team_feishu_apps` 表，主键就是 `team_id`，一个团队至多一个），公司的团队设公司的应用，一个人自己用就设在他的个人团队上（`TeamService.ensure_personal_team`，和个人的设备、模型同一个团队）。团队设置里「飞书应用」那一栏（`GET/PUT/DELETE /teams/{teamId}/feishu-app`，门是 `Can(TeamPermission.edit_settings)`：团队管理员，个人团队是它的主人；个人团队的那一栏挂在个人设置里）填版本（飞书 / Lark）、App ID、App Secret；下面写着在飞书里建应用的几步：在开放平台创建企业自建应用；在「安全设置」里添加重定向 URL（`redirect_uri`，即 `{frontend_url}/api/integrations/feishu/callback`）并打开「刷新 user_access_token」；在「权限管理 → 批量导入/导出权限」里粘贴权限配置；创建版本、填申请理由（个人团队提示可用范围只选自己），等公司的飞书管理员审核。重定向 URL、权限配置、申请理由都能一键复制。保存前先拿这套凭据换一次 tenant token，Secret 不对当场报错、什么也不存；Secret 封在这一行上（绑在团队上）、从不回显，空着保存表示不改。
 
-保存时 `POST /me/integrations/feishu` 带着这三项落一行：凭据存在这一行上（`config.app_id`、`config.domain`，Secret 封在 `secret` 里、从不回显），落库前先拿填的这一套原样换一次 tenant token，飞书不认（换令牌这一步只带应用凭据，被拒就是凭据不对）当场回 422 和飞书的原话、不建行。同一个 App ID 再提交一次是那一行：新凭据验过之后直接换上，不先刷新旧的用户授权（旧授权可能早就失效，成员接着重新授权）；在那一行上改 `app_secret`（`PATCH /me/integrations/{id}`）走同一条路。一个人一个 App ID 只有一行，由部分唯一索引 `uq_integrations_owner_feishu_app`（`owner_user_id` + `config ->> 'app_id'`，只管 `provider = 'feishu'`）保证；两次提交同时到，后插入的撞上索引，转成对先建那一行的更新。
+成员点「连接飞书」（`GET /me/integrations/feishu`）看到本人所在每个团队（个人团队在前）和它设的应用；选一个，`POST /me/integrations/feishu`（`{team_id}`，只认本人所在、且设了应用的团队）落一行：这一行只记 `config.team_id`，不复制应用的任何凭据；同一个团队再选一次是同一行。随后 `GET /me/integrations/{id}/feishu/authorize` 拿授权地址跳过去，用的是本人自己的飞书账号，回调把 `user_access_token` / `refresh_token` 写进**这一行**。一个都没设时，选单指到能设的地方：个人设置里的个人团队，以及本人管着的团队。
+
+`feishu_settings_for(session, row)` 每次调用时从团队读应用：换了 Secret，所有连接下一次调用就用新的；团队删了应用，或者主人已不在这个团队，连接当场报 `auth_failed`、说清楚到「我的连接」重新连接。共享团队的应用对成员只走本人授权，不借应用自己的身份（`FeishuSettings.user_only`），所以只持有一个连接、没授权的人读不到分享给团队应用的文档；个人团队的应用是本人自己的，照旧可以用。
 
 平台应用时代建的行 `config` 里没有 `app_id`：`feishu_settings` 对它抛 `credentials_invalid`，说明要删掉它、用自己公司的应用重新连接；每小时的续期把它标成 `auth_failed` 后接着处理别的行。`feishu_apps` 表这一版不再读写、仍留在库里，按两次发布的规矩由下一个 PR 删。随后 `GET /me/integrations/{id}/feishu/authorize` 拿授权地址跳过去，回调把 `user_access_token` / `refresh_token` 写进**这一行**。`feishu_settings(row)` 只从这一行取凭据，授权、换 token、续期都用它。
 

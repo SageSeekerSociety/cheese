@@ -5,7 +5,7 @@
 // 画的那一半在 `MyConnectionsViewView.vue`：这里只留下请求、地址和 toast，画面只收
 // props、只 emit。邮箱表单的那份草稿跟着画面走 —— 每个字段都是那边的元素。
 import type { Integration, MailDraft } from '../api'
-import type { FeishuOwnApp } from '../api/feishu'
+import type { FeishuTeamChoice } from '../api/feishu'
 import type { Project } from '../cx_types'
 
 import { onMounted, ref } from 'vue'
@@ -21,11 +21,10 @@ import {
   sendMailDraft,
   updateIntegration,
 } from '../api'
-import { claimFeishuHandoff, connectFeishu, feishuAuthorizeUrl, feishuSetup } from '../api/feishu'
+import { claimFeishuHandoff, connectFeishu, feishuAuthorizeUrl, feishuChoices } from '../api/feishu'
 
 import MyConnectionsViewView from './MyConnectionsViewView.vue'
 
-import { copyText } from '@/commands/copy'
 import { t } from '@/i18n'
 import { goAuthorize } from '@/lib/desktopApp'
 import { renderNoticeMessage } from '@/lib/noticeText'
@@ -38,10 +37,9 @@ const router = useRouter()
 const integrations = ref<Integration[]>([])
 const drafts = ref<MailDraft[]>([])
 const projects = ref<Project[]>([])
-/** 成员自己公司的应用要填的授权回调地址（「连接飞书」那张表单上的重定向 URL）。读不到
- *  时 `feishuSetupError` 是那句原话：表单照样能填，那一格换成报错和「重试」。 */
-const feishuRedirectUri = ref('')
-const feishuSetupError = ref('')
+/** 本人所在的团队和它们设的飞书应用（「连接飞书」那张选单）。读不到就是空的：选单说
+ *  还没有可用的应用。 */
+const feishuTeams = ref<FeishuTeamChoice[]>([])
 const loading = ref(false)
 const error = ref('')
 /** 从飞书授权回来时地址栏里的结果（`?feishu=`）：一个结果码，或者平台那句拒绝的
@@ -69,8 +67,11 @@ const busy = ref('')
 async function load() {
   loading.value = true
   error.value = ''
-  // 回调地址与下面三项并行发起，但单独结算：问不到不该把整页的连接一起掀掉。
-  const setupRead = loadFeishuSetup()
+  // 飞书应用与下面三项并行发起，但单独结算：问不到不该把整页的连接一起掀掉。
+  const feishuRead = feishuChoices().then(
+    (got) => got.teams,
+    () => [] as FeishuTeamChoice[]
+  )
   try {
     const [mine, waiting, projectList] = await Promise.all([
       listMyIntegrations(),
@@ -85,17 +86,7 @@ async function load() {
   } finally {
     loading.value = false
   }
-  await setupRead
-}
-
-async function loadFeishuSetup() {
-  feishuSetupError.value = ''
-  try {
-    feishuRedirectUri.value = (await feishuSetup()).redirect_uri
-  } catch (e) {
-    feishuRedirectUri.value = ''
-    feishuSetupError.value = e instanceof Error ? e.message : t('account.connections.loadFailed')
-  }
+  feishuTeams.value = await feishuRead
 }
 
 function replace(row: Integration) {
@@ -134,19 +125,13 @@ async function authorize(row: Integration) {
 /**
  * 「连接飞书」：两跳一步。
  *
- * 先要自己那一行（`POST /me/integrations/feishu`，带上成员自己公司应用的 App ID / Secret），
- * 再拿它的授权地址跳去飞书 —— 回调要靠行 id 找回它是谁（见 `feishu_callback` 的 `state`），
- * 所以顺序不能反过来。表单的结果用 `done` 带回去：没成时把服务端那句话留在表单底下。
+ * 先要自己那一行（`POST /me/integrations/feishu`，记的是选了哪个团队的应用），再拿它的授权
+ * 地址跳去飞书 —— 回调要靠行 id 找回它是谁（见 `feishu_callback` 的 `state`），所以顺序不能
+ * 反过来。授权是本人自己的飞书账号。
  */
-async function connectFeishuAccount(app: FeishuOwnApp, done: (ok: boolean, message?: string) => void) {
-  let row: Integration
-  try {
-    row = await connectFeishu(app)
-  } catch (e) {
-    done(false, e instanceof Error ? e.message : t('account.connections.connectFailed'))
-    return
-  }
-  done(true)
+async function connectFeishuAccount(teamId: number) {
+  const row = await act(`feishu:${teamId}`, () => connectFeishu(teamId))
+  if (!row) return
   if (integrations.value.some((x) => x.id === row.id)) replace(row)
   else integrations.value = [...integrations.value, row]
   await authorize(row)
@@ -220,10 +205,8 @@ onMounted(async () => {
     :loading="loading"
     :error="error"
     :busy="busy"
-    :feishu-redirect-uri="feishuRedirectUri"
-    :feishu-setup-error="feishuSetupError"
+    :feishu-teams="feishuTeams"
     @refresh="load"
-    @retry-feishu-setup="loadFeishuSetup"
     @discard="discard"
     @send="send"
     @connect-feishu="connectFeishuAccount"
@@ -231,7 +214,6 @@ onMounted(async () => {
     @recheck="recheck"
     @authorize="authorize"
     @remove="remove"
-    @copy="(text: string) => copyText(text, t('integrations.member.ownApp.copied'))"
     @save="save"
   />
 </template>
