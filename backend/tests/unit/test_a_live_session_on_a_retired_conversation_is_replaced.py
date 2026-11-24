@@ -7,6 +7,7 @@ running that conversation would otherwise take the next message into it.
 """
 
 import uuid
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -28,11 +29,13 @@ class _Host:
     """One seat's screen on a session host: the conversation its runner is
     on, whether it is working, and the screens that have been opened."""
 
-    def __init__(self, *, working: bool):
+    def __init__(self, *, working: bool, told: dict | None = None):
         self.conversation = OLD
         self.working = working
         self.opened = 0
         self.closed = 0
+        # What else its ping says beyond the handshake.
+        self.told = told or {}
 
     # --- the device channel ---------------------------------------------
 
@@ -56,6 +59,7 @@ class _Host:
             "session_id": self.conversation,
             "working": self.working,
             "lifecycle": lifecycle.PROTOCOL,
+            **self.told,
         }
 
 
@@ -90,3 +94,24 @@ async def test_a_working_session_on_a_retired_conversation_is_left_to_finish():
     host = _Host(working=True)
     launched = await _launch(host)
     assert launched.conversation == OLD
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "timeline",
+    [
+        {"started": 0.0, "runner_up": 812.5, "greeted": 1490.0},
+        "not a timeline",
+        {"started": "soon", "path": True, "nested": {"a": 1}},
+    ],
+)
+async def test_how_a_runner_says_its_launch_went_changes_nothing_about_its_start(
+    timeline,
+):
+    """A runner may add how its launch came up to the greeting's ping (for the
+    log); an older one says nothing of it. Whatever it says, or however
+    malformed, the session is started exactly as from one that says nothing."""
+    plain = await _launch(_Host(working=False))
+    telling = await _launch(_Host(working=False, told={"launch_timing": timeline}))
+    # The name is new on every start, whoever says what.
+    assert replace(telling, name=None) == replace(plain, name=None)

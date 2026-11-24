@@ -361,6 +361,11 @@ class ChatService(
         (`runner_reports.projected`)."""
         await runner_reports.projected(self, report)
 
+    def writing_shown(self, topic_id: uuid.UUID, work_id: uuid.UUID) -> None:
+        """The room was shown the session writing for ``work_id``
+        (`live.writing_shown`, which times the first)."""
+        self.live.writing_shown(topic_id, work_id)
+
     async def confirm_work_abandoned(self, work_id: uuid.UUID) -> None:
         """End the inputs of a work whose session died inside it. See turn_inputs."""
         await turn_inputs.end_inputs_of_abandoned_work(self._sessions, work_id)

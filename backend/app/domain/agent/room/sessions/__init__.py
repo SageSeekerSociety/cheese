@@ -402,6 +402,7 @@ class RoomSessions:
         needs_place: bool = True,
         keeps_nothing: bool = False,
         phases: dict[str, float] | None = None,
+        notes: dict[str, object] | None = None,
     ) -> Live:
         return await _starting.ensure(
             self,
@@ -415,6 +416,7 @@ class RoomSessions:
             needs_place=needs_place,
             keeps_nothing=keeps_nothing,
             phases=phases,
+            notes=notes,
         )
 
     async def send(
@@ -512,7 +514,7 @@ class RoomSessions:
         *,
         steer: bool,
         register_input: InputRegistrar,
-    ) -> None:
+    ) -> dict[str, float | bool]:
         return await _speaking._submit(
             self,
             live,

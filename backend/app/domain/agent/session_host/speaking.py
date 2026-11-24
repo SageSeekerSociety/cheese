@@ -44,13 +44,17 @@ class _NotThere(Exception):
 
 async def send(
     svc: SessionHost, ref: SessionRef, prompt: Prompt, *, work_id: uuid.UUID
-) -> None:
+) -> dict[str, float | bool]:
     """Say ``prompt`` to the session, as work ``work_id``: what it does
     about it is read (``read``). Raises ``InputUnconfirmed`` when the
-    runner may have taken it and did not say so."""
+    runner may have taken it and did not say so.
+
+    Answers what the runner said its own side of taking it cost (its
+    ``timing``: names and numbers, for the log); {} from a runner that says
+    nothing of it."""
     running = svc._started(ref)
     try:
-        await _say(
+        answer = await _say(
             svc,
             ref,
             running,
@@ -72,10 +76,18 @@ async def send(
         running = svc._started(ref)
         try:
             text = await _text(svc, ref, running, prompt)
-            await _say(svc, ref, running, "send", prompt, text, work_id)
+            answer = await _say(svc, ref, running, "send", prompt, text, work_id)
         except _NotThere as exc:
             raise InputUnconfirmed(accepted=False) from exc.__cause__
     running.spoken_to = True
+    timing = answer.get("timing") if isinstance(answer, dict) else None
+    if not isinstance(timing, dict):
+        return {}
+    return {
+        str(name)[:40]: value
+        for name, value in timing.items()
+        if isinstance(value, int | float)
+    }
 
 
 async def _text(
@@ -122,7 +134,7 @@ async def _say(
     prompt: Prompt,
     text: str,
     work_id: uuid.UUID,
-) -> None:
+) -> dict:
     params: dict[str, Any] = {
         "input_id": str(prompt.id),
         "work_id": str(work_id),
@@ -166,7 +178,7 @@ async def _say(
         # before must not be read as this one's (`delivery.receipts.hand_to`).
         await svc._handing(ref, running, prompt.id)
     try:
-        await svc._call(running, ref, method, params, **waits)
+        return await svc._call(running, ref, method, params, **waits)
     except (DeviceOffline, DeviceCallError) as exc:
         # Nothing on the host took it: the host is not connected, or the
         # runner is not there to answer.

@@ -206,6 +206,9 @@ class RunnerIntake:
         )
         if duplicate:
             return turn_id
+        # From here to the room first seeing the session write for this turn
+        # (`chat_first_live_timing`).
+        chat_service.live.note_received(turn_id, received_at)
         self._schedule_message(
             chat_service,
             topic_id,

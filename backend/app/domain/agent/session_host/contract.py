@@ -313,6 +313,8 @@ class SessionStatus:
     #: How the runner's last few works ended (its ping's ``endings``): how a
     #: runner this release does not read says what its work came to.
     endings: tuple[Ending, ...] = ()
+    #: ``start`` started the session's process rather than finding it running.
+    started: bool = False
 
 
 class InputUnconfirmed(SessionError):

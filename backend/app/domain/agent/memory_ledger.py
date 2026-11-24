@@ -14,6 +14,7 @@
 
 import asyncio
 import logging
+import time
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, replace
@@ -223,6 +224,7 @@ class MemoryLedger:
         一次对账是跨机的一次往返，所以中间不持有事务：先把数据库这一份读出来、
         放开，再问会话，最后在一个短事务里写回、把改动说进房间。
         """
+        began = time.monotonic()
         topic_id = session.topic_id
         seat = (session.conversation_id, session.agent_handle)
         scopes = self._scopes(seat)
@@ -251,14 +253,24 @@ class MemoryLedger:
         # in it (#3830): its session reads the project's shared memory but does
         # not write it.
         read_only = frozenset({"team"}) if seats_only(topic) else frozenset()
+        read_at = time.monotonic()
         answer = await self._compute.memory(
             session,
             {"scopes": stored.scopes, "views": sorted(stored.views), "people": people},
         )
+        asked_at = time.monotonic()
+        # Where a reconciliation's time goes: the platform's copy read, the
+        # round trip to the session (its runner's own share, ``runner_ms``,
+        # when it says), and what came back written.
+        phases = {
+            "read": round((read_at - began) * 1000, 1),
+            "host": round((asked_at - read_at) * 1000, 1),
+        }
         if answer is None:
             # 这间房现在没有能对账的会话：没有活着的会话，或者这个 harness 的会话
             # 不落记忆文件。两种都只是「这里没有这件事」，不是失败。
             return
+        runner_ms = answer.get("runner_ms")
         if (
             turn is not None
             and turn.pointed
@@ -341,6 +353,7 @@ class MemoryLedger:
             # 事件是给人扫一眼的，而每一轮都发一条「没变」等于把它淹没。
             if said:
                 await db.commit()
+        phases["apply"] = round((time.monotonic() - asked_at) * 1000, 1)
         if acked:
             # 只有会话那一侧答了「这几份已经不在了」（`runner.acknowledge` 的
             # ``dropped``），平台这边的记录才删：设备调用失败、座位上已经没有活
@@ -357,6 +370,16 @@ class MemoryLedger:
                         )
                     )
                     await db.commit()
+            phases["ack"] = round(
+                (time.monotonic() - asked_at) * 1000 - phases["apply"], 1
+            )
+        logger.info(
+            "memory_sync_timing topic=%s seat=%s runner_ms=%s phases_ms=%s",
+            session.conversation_id,
+            session.agent_handle,
+            runner_ms if isinstance(runner_ms, int | float) else None,
+            phases,
+        )
 
     # --- dream：平台自己过一遍这个项目的记忆 --------------------------------
 

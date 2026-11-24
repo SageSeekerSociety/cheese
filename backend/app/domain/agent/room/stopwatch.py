@@ -9,10 +9,13 @@ from collections.abc import Iterator
 class Stopwatch:
     """Splits elapsed time into named steps: each call charges the time since
     the last call (or ``lap``) to ``name``, in ms. A caller and a callee can
-    share one ``phases`` dict, so their steps land in the same line."""
+    share one ``phases`` dict, so their steps land in the same line.
+    ``notes`` are what else the line says of the block that is not a step's
+    time: a flag, or a part of a step another process timed."""
 
     def __init__(self, phases: dict[str, float] | None = None) -> None:
         self.phases = phases
+        self.notes: dict[str, object] = {}
         self._start = self._last = time.monotonic()
 
     def __call__(self, name: str) -> None:
@@ -33,15 +36,18 @@ class Stopwatch:
 
 @contextlib.contextmanager
 def timed(logger: logging.Logger, event: str, **fields: object) -> Iterator[Stopwatch]:
-    """One ``event`` line when the block ends, however it ends: its fields, the
-    outcome, the total and each step the block charged to the stopwatch."""
+    """One ``event`` line when the block ends, however it ends: its fields and
+    notes, the outcome, the total and each step the block charged to the
+    stopwatch."""
     mark = Stopwatch({})
     outcome = "failed"
     try:
         yield mark
         outcome = "ok"
     finally:
-        named = " ".join(f"{key}={value}" for key, value in fields.items())
+        named = " ".join(
+            f"{key}={value}" for key, value in {**fields, **mark.notes}.items()
+        )
         logger.info(
             "%s %s outcome=%s elapsed_ms=%.1f phases_ms=%s",
             event,

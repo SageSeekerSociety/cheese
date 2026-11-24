@@ -150,6 +150,30 @@ RECORDS_TAKEN = "records_taken"
 # `executor_transport.SESSION_SOCKET`, which reads it: that file ships to the
 # session host on its own and cannot import this one.
 SESSION_SOCKET = "CHEESE_SESSION_SOCKET"
+#: The launch script's marks of its own steps, ``"<epoch seconds> <phase>;"``
+#: each, this launch's only (`machine_launcher`'s ``cheese_launch_phase``).
+LAUNCH_MARKS = "CHEESE_LAUNCH_MARKS"
+#: Where the executor client's bootstrap appends its marks, one
+#: ``"<epoch seconds> <phase>"`` per line. The same name as
+#: `remote_execution.client.LAUNCH_MARKS_FILE`, which ships on its own.
+LAUNCH_MARKS_FILE = "CHEESE_LAUNCH_MARKS_FILE"
+#: What a phase may be called: a mark is a name and a time, never a path or text.
+_PHASE = re.compile(r"[a-z0-9_]{1,40}")
+
+
+def launch_marks(lines: list[str]) -> list[tuple[float, str]]:
+    """The ``(epoch seconds, phase)`` marks in ``lines``; anything else is
+    skipped. Bash writes its clock with the locale's decimal separator."""
+    marks = []
+    for line in lines:
+        at, _, phase = line.strip().partition(" ")
+        if not _PHASE.fullmatch(phase):
+            continue
+        try:
+            marks.append((float(at.replace(",", ".")), phase))
+        except ValueError:
+            continue
+    return marks
 
 
 def ended(launch: str) -> str:
@@ -672,11 +696,22 @@ class Runner(runner.Runner[Journal]):
         *,
         idle_exit_s: float = runner.IDLE_EXIT_S,
         launch: str = "",
+        marks: str = "",
     ):
         super().__init__(state, Journal, "records.sqlite", idle_exit_s=idle_exit_s)
         # Names this process in what it reports of its own ending; a runner
         # started by hand has none from the platform, and still needs one.
         self.launch = launch or uuid.uuid4().hex
+        # How this launch came up, for the platform's log only
+        # (``launch_timing``): the launch script's marks (``LAUNCH_MARKS``),
+        # this runner's own, and the bootstrap's in ``marks_file``. Told with
+        # the greeting's ping, and once more in the first read after Claude
+        # Code said it is ready (``read``).
+        self.timeline = launch_marks(marks.split(";"))
+        self.timeline.append((time.time(), "runner_up"))
+        self.marks_file = state / "launch.marks"
+        self.greeted = False
+        self.launch_told = False
         self.write_lock = asyncio.Lock()
         self.controls: dict[str, asyncio.Future] = {}
         self.commands: dict[str, asyncio.Future] = {}
@@ -850,6 +885,10 @@ class Runner(runner.Runner[Journal]):
         # reports it for it (`_report_left_exit`).
         self.journal.remember(LIVE_LAUNCH, self.launch)
         self.journal.remember(LIVE_EPOCH, str(self.outbox.epoch or ""))
+        # The bootstrap's marks of this start only (``launch_timing``).
+        with contextlib.suppress(OSError):
+            self.marks_file.write_text("")
+        self._mark("session_spawned")
         self.process = await asyncio.create_subprocess_exec(
             # CreateProcess looks in System32 before PATH; Git Bash's sh is on PATH.
             shutil.which("sh") or "sh" if sys.platform == "win32" else "sh",
@@ -857,7 +896,13 @@ class Runner(runner.Runner[Journal]):
             f"exec {command} {flag}",
             # The session's own helpers reach this runner here, to change the
             # session while it runs (`executor_transport.register_project_hooks`).
-            env=self.agent_env({**env, SESSION_SOCKET: runner.socket_path(self.state)}),
+            env=self.agent_env(
+                {
+                    **env,
+                    SESSION_SOCKET: runner.socket_path(self.state),
+                    LAUNCH_MARKS_FILE: str(self.marks_file),
+                }
+            ),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=self.errors,
@@ -874,7 +919,25 @@ class Runner(runner.Runner[Journal]):
             runner.watched(self._expire()),
         ]
         await self.listen(LINE_LIMIT)
+        self._mark("runner_listening")
         return self.session_id
+
+    def _mark(self, phase: str) -> None:
+        self.timeline.append((time.time(), phase))
+
+    def launch_timing(self) -> dict[str, float]:
+        """How this launch came up: each phase's milliseconds since the
+        earliest mark (the launch script's ``started``, where there is one),
+        in the order they happened. Only names and numbers, for the
+        platform's log; a phase nobody marked is absent."""
+        marks = list(self.timeline)
+        with contextlib.suppress(OSError, UnicodeDecodeError):
+            marks += launch_marks(self.marks_file.read_text().splitlines())
+        if not marks:
+            return {}
+        marks.sort()
+        origin = marks[0][0]
+        return {phase: round((at - origin) * 1000, 1) for at, phase in marks}
 
     def agent_env(self, env: dict[str, str]) -> dict[str, str]:
         """The build asks a model that ends its turn with no visible text to
@@ -1182,6 +1245,8 @@ class Runner(runner.Runner[Journal]):
                 continue
             if not isinstance(record, dict):
                 continue
+            if not self.ran:
+                self._mark("claude_first_record")
             self.ran = True
             self._note_frame(record)
             kind = record.get("type")
@@ -1436,6 +1501,8 @@ class Runner(runner.Runner[Journal]):
         if main:
             compaction.note(self, record)
         if kind == "system" and record.get("subtype") == "init":
+            if not self.proven:
+                self._mark("claude_init")
             self.proven = True
             self.ready = {
                 key: record.get(key)
@@ -2146,14 +2213,25 @@ class Runner(runner.Runner[Journal]):
 
         async def submit() -> dict:
             said, private_said = text, private
+            # What this side of taking the input cost, for the platform's log
+            # (`room_send_timing`): only names and numbers.
+            timing: dict = {}
             if not steering and not self.working:
-                await self._catch_up()
-                if await compaction.when_cold(self, compact_if_cold):
+                began = time.monotonic()
+                changed = await self._catch_up()
+                caught_up = time.monotonic()
+                timing["catch_up_ms"] = round((caught_up - began) * 1000, 1)
+                if changed is not None:
+                    timing["catch_up_changed"] = changed
+                compacted = await compaction.when_cold(self, compact_if_cold)
+                timing["cold_ms"] = round((time.monotonic() - caught_up) * 1000, 1)
+                timing["compacted"] = compacted
+                if compacted:
                     said = compact_if_cold["text"]  # type: ignore[index]
                     told = compact_if_cold.get("private")  # type: ignore[union-attr]
                     private_said = told or private
             await self._put(identifier, work_id, said, images or [], how, private_said)
-            return {"input_id": identifier}
+            return {"input_id": identifier, **({"timing": timing} if timing else {})}
 
         return await self.accept(
             identifier,
@@ -2168,7 +2246,7 @@ class Runner(runner.Runner[Journal]):
             owes_reply=owes_reply,
         )
 
-    async def _catch_up(self) -> None:
+    async def _catch_up(self) -> bool | None:
         """A new turn starts on the project's skills as they are on the machine.
 
         Plain Claude Code watches its skill directories and picks up a skill
@@ -2180,9 +2258,11 @@ class Runner(runner.Runner[Journal]):
         here and not through the session's own context service: that one
         listens inside the session's namespace, whose `/tmp` is its own. A
         failure costs the turn nothing: it starts on what the session has.
+        Whether anything changed, for the platform's log; None when there was
+        nothing to synchronize or it failed.
         """
         if not self.execution:
-            return
+            return None
         try:
             helper = json.loads(Path(self.execution).read_text())["helper"]
             process = await asyncio.create_subprocess_exec(
@@ -2203,14 +2283,17 @@ class Runner(runner.Runner[Journal]):
                 raise
             if process.returncode:
                 raise RuntimeError(err.decode(errors="replace")[-600:])
-            if json.loads(out or b"{}").get("changed"):
+            changed = bool(json.loads(out or b"{}").get("changed"))
+            if changed:
                 await self.command("/reload-skills")
+            return changed
         except Exception as error:  # the turn goes on regardless
             print(
                 f"project context not synchronized before the turn: {error!r}",
                 file=sys.stderr,
                 flush=True,
             )
+            return None
 
     async def control(self, request: dict, timeout: float = CONTROL_TIMEOUT_S) -> dict:
         identifier = f"cheese-{uuid.uuid4().hex}"
@@ -2279,7 +2362,7 @@ class Runner(runner.Runner[Journal]):
             # after it can still tell whether this runner is at work, drain it
             # before replacing it, and know how the work it drained ended and
             # what it read.
-            return {
+            status = {
                 "pid": os.getpid(),
                 "lifecycle": lifecycle.PROTOCOL,
                 "launch": self.launch,
@@ -2293,6 +2376,17 @@ class Runner(runner.Runner[Journal]):
                 "starting": self.starting(),
                 "capabilities": list(self.capabilities),
             }
+            if not self.greeted:
+                # Until the answer that greets this runner (`_greet` takes the
+                # first that is alive and no longer starting): how the launch
+                # came up so far, for the platform's log. Not a field anything
+                # decides by; an older runner has none.
+                if status["alive"] and not status["starting"]:
+                    self.greeted = True
+                    self._mark("greeted")
+                if timing := self.launch_timing():
+                    status["launch_timing"] = timing
+            return status
         if method == "apply_hooks":
             # The session's own helper (`executor_transport.register_project_
             # hooks`), not the platform: it holds no registration.
@@ -2373,7 +2467,12 @@ class Runner(runner.Runner[Journal]):
         if method == "memory":
             # 不是 accept 那种一次性输入：对账是幂等的（同样的三方合出同样的结
             # 果），重来一次不会多出一条记忆，所以不需要按 id 去重。
-            return self.sync_memory(params)
+            began = time.monotonic()
+            answer = self.sync_memory(params)
+            # How long this side took, so the platform's log can tell it apart
+            # from the round trip (`memory_sync_timing`).
+            answer["runner_ms"] = round((time.monotonic() - began) * 1000, 1)
+            return answer
         raise ValueError(f"Unknown Claude Code session operation: {method}")
 
     async def read(self, params: dict) -> dict:
@@ -2394,10 +2493,16 @@ class Runner(runner.Runner[Journal]):
             after = int(after)
             self.journal.remember(RECORDS_TAKEN, str(after))
         news = await self.news_for(after, params)
-        return {
+        answer = {
             "worker_epoch": self.outbox.epoch,
             "events": self.outbox.pending(),
             "records": self.records(after),
             "state": self.standing(),
             **news,
         }
+        if self.proven and not self.launch_told:
+            # Once, in the first answer after Claude Code said it is ready: the
+            # launch as a whole, which the greeting came too early to see.
+            self.launch_told = True
+            answer["launch_timing"] = self.launch_timing()
+        return answer

@@ -92,6 +92,8 @@ class RoomBooks(Protocol):
 
     async def context_compacted(self, session: SessionRef) -> None: ...
 
+    def writing_shown(self, topic_id: uuid.UUID, work_id: uuid.UUID) -> None: ...
+
     async def _set_hook_activity(
         self,
         project_id: uuid.UUID,
@@ -149,6 +151,8 @@ def reader(chat: RoomBooks) -> RoomReader:
                 event.author or session.agent_handle,
                 list(event.blocks),
             )
+            if work is not None and event.blocks:
+                chat.writing_shown(session.conversation_id, work)
         else:
             assert work is not None, "a room's session says nothing outside work"
             if isinstance(event, Working):
