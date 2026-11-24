@@ -132,7 +132,13 @@ const canMakePublic = computed(
 </script>
 
 <template>
-  <AdaptiveDialog v-model="open" size="md" :title="topic.title" :title-icon="channelGlyph(topic)">
+  <AdaptiveDialog
+    v-model="open"
+    size="md"
+    :title="topic.title"
+    :title-icon="channelGlyph(topic)"
+    :cancel-label="t('global.close')"
+  >
     <div role="tablist" class="details__tabs">
       <button
         v-for="name in TABS"

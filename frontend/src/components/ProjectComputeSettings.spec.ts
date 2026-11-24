@@ -71,16 +71,23 @@ function mount(state: ProjectComputeConfigs | null, props: { error?: string; bus
   })
 }
 
+/** How many AI teammates the distribution says run in the environment called `name`. */
+function runningIn(name: string): string | null | undefined {
+  const row = within(screen.getByTestId('project-distribution'))
+    .getAllByRole('listitem')
+    .find((item) => within(item).queryByText(name))
+  return row && within(row).queryByText(/AI 队友|agents?$/)?.textContent
+}
+
 beforeEach(() => setLocale('zh-CN'))
 afterEach(cleanup)
 
 describe('project environment settings', () => {
   it('shows the default for new agents separately from started agents', () => {
     mount(configs())
-    expect(screen.getByTestId('project-default').textContent).toContain('沙箱 · 标准')
-    const distribution = within(screen.getByTestId('project-distribution'))
-    expect(distribution.getByText(/沙箱 · 标准 · 3 个 AI 队友/)).toBeTruthy()
-    expect(distribution.getByText(/实验室工作站 · 2 个 AI 队友/)).toBeTruthy()
+    expect(screen.getByTestId('project-default').textContent).toContain('标准')
+    expect(runningIn('标准')).toBe('3 个 AI 队友')
+    expect(runningIn('实验室工作站')).toBe('2 个 AI 队友')
   })
 
   it('counts sandboxes of each spec apart', () => {
@@ -95,9 +102,8 @@ describe('project environment settings', () => {
         },
       })
     )
-    const distribution = within(screen.getByTestId('project-distribution'))
-    expect(distribution.getByText(/沙箱 · 标准 · 1 个 AI 队友/)).toBeTruthy()
-    expect(distribution.getByText(/沙箱 · 虚拟机 · 2 个 AI 队友/)).toBeTruthy()
+    expect(runningIn('标准')).toBe('1 个 AI 队友')
+    expect(runningIn('虚拟机')).toBe('2 个 AI 队友')
   })
 
   it('counts one agent as one in English', () => {
@@ -113,10 +119,9 @@ describe('project environment settings', () => {
         },
       })
     )
-    const distribution = within(screen.getByTestId('project-distribution'))
-    expect(distribution.getByText('Sandbox · Standard · 1 agent')).toBeTruthy()
-    expect(distribution.getByText('Lab · 1 agent')).toBeTruthy()
-    expect(distribution.getByText('Rig · 2 agents')).toBeTruthy()
+    expect(runningIn('Standard')).toBe('1 agent')
+    expect(runningIn('Lab')).toBe('1 agent')
+    expect(runningIn('Rig')).toBe('2 agents')
   })
 
   it('says so when no agent has started', () => {

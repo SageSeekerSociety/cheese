@@ -382,7 +382,7 @@ describe('名册上每条会话的执行环境', () => {
     })
     await settle()
     const row = document.querySelector('[data-testid="future-machine"]')!
-    expect(row.textContent).toContain('新 AI 队友默认：沙箱 · 标准')
+    expect(row.textContent).toContain('新 AI 队友默认：标准')
     expect(row.textContent).toContain('项目默认')
     await fireEvent.click(row.querySelector('.env-action')!)
     await pickSpec('vm')

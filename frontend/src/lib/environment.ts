@@ -7,7 +7,7 @@ export function specLabel(spec: string, specs: SandboxSpec[] = []): string {
   return specs.find((s) => s.spec === spec)?.label ?? spec
 }
 
-/** 「沙箱 · 标准」「沙箱 · 张三的设备」「实验室工作站」: a self-hosted machine by its own name. */
+/** 「标准沙箱」「团队设备」「实验室工作站」: a sandbox by the name the platform gives its spec, a self-hosted machine by its own. */
 export function environmentName(
   env: Environment,
   devices: EnvironmentDevice[] = [],
@@ -16,7 +16,7 @@ export function environmentName(
   if (env.kind === 'self_hosted') {
     return devices.find((d) => d.device_id === env.device_id)?.name ?? t('compute.env.removedDevice')
   }
-  return t('compute.env.sandboxOf', { spec: specLabel(env.spec, specs) })
+  return specLabel(env.spec, specs)
 }
 
 export function sameEnvironment(a: Environment | null | undefined, b: Environment | null | undefined): boolean {

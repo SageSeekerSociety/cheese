@@ -383,7 +383,7 @@ const outletRef = outletRefs(outlets)
 // 有自己标题栏的那几块（`titled`）：标题栏里页面那一段的落点。
 const headOutletRef = outletRefs(pageHost.headOutlets)
 /** 布局区记住摆法用的版本：格子的种类或默认摆法变了就加一，旧的摆法不再读。 */
-const AREA_VERSION = 6
+const AREA_VERSION = 7
 const pageClaim = computed(() => pageHost.claim.value?.spec ?? null)
 const areaKey = computed(() => `cheesex.area.${pageClaim.value?.key ?? 'page'}`)
 const areaPanels = computed<LayoutPanel[]>(() => [

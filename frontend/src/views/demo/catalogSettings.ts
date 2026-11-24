@@ -312,7 +312,7 @@ export const SETTINGS_ENTRIES: CatalogEntry[] = [
     states: [
       {
         name: '标准沙箱',
-        note: '默认选中沙箱 · 标准；每种规格旁边是接口给的说明和每小时价格（这里的价格是示例）；团队管理员可以指定两台团队设备，其中一台离线。',
+        note: '默认选中标准沙箱；每种规格旁边是接口给的说明和每小时价格（这里的价格是示例）；团队管理员可以指定两台团队设备，其中一台离线。',
         props: {
           current: { kind: 'sandbox', spec: 'standard' },
           devices: COMPUTE_DEVICES.map((device) => ({ ...device, owned: true })),

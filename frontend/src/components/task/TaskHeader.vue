@@ -442,11 +442,11 @@ function actionTestId(id: string): string | undefined {
       >
         <UserAvatar :size="mdAndUp ? 20 : 14" :name="ownerName" :avatar="avatarOf(task?.owner_handle)" />
         <span v-if="!mdAndUp" class="task-header__owner-name">{{ t('work.task.ownerChip', { name: ownerName }) }}</span>
-        <span v-if="collaborators.length && !mdAndUp" class="task-header__helpers" aria-hidden="true">
+        <span v-if="collaborators.length" class="task-header__helpers" aria-hidden="true">
           <UserAvatar
             v-for="handle in collaborators.slice(0, 3)"
             :key="handle"
-            :size="14"
+            :size="mdAndUp ? 20 : 14"
             :name="nameOf(handle)"
             :avatar="avatarOf(handle)"
             class="task-header__helper"
@@ -466,7 +466,13 @@ function actionTestId(id: string): string | undefined {
       @update:model-value="(value: 'chat' | 'editor') => value !== form && emit('form', value)"
     />
 
-    <AdaptiveDialog v-if="task?.owner_handle" v-model="detailsOpen" size="md" :title="taskTitle(task)">
+    <AdaptiveDialog
+      v-if="task?.owner_handle"
+      v-model="detailsOpen"
+      size="md"
+      :title="taskTitle(task)"
+      :cancel-label="t('global.close')"
+    >
       <div class="task-details">
         <dl class="task-details__list">
           <div class="task-details__row">
