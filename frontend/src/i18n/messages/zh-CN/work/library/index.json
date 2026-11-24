@@ -19,7 +19,7 @@
   "downloadOnly": "此格式暂不支持预览，可下载查看",
   "dropHint": "把文件拖到这里即可上传",
   "empty": "暂无资料",
-  "folderEmpty": "暂无文件",
+  "folderEmpty": "暂无文件，放入文件后这个文件夹才会保留",
   "folderField": "文件夹",
   "folderMeta": "{n} 份文件 · {when}",
   "headOnly": "只摆了 {path} 的开头，整份请下载",
