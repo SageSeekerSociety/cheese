@@ -404,7 +404,7 @@
     },
     "learning": {
       "title": "成员学得怎么样",
-      "lede": "按学情分析里对 {people} 位成员、{points} 个知识点的判断，绘成下面这一条。",
+      "subline": "{people} 位成员 · {points} 个知识点 · {judged} 条判断",
       "offTitle": "还没有成员的作答情况",
       "offDesc": "空间管理员在「设置 › 学情分析」里开启之后，成员在题目里说的话会被按知识点判断掌握程度，这里就能看到全班学得怎么样。",
       "tooFew": "能报数的知识点还没有（每个知识点至少 {n} 人，才不会把某一个人暴露出来）。",
@@ -413,8 +413,9 @@
         "shaky": "不稳",
         "weak": "薄弱"
       },
-      "judged": "{n} 条判断",
-      "weakTitle": "最薄弱的几个知识点",
+      "fewTitle": "人数还不够，先不出数",
+      "weakHint": "点开看是谁卡在哪",
+      "weakTitle": "最薄弱的知识点",
       "weakEmpty": "目前没有明显薄弱的知识点。",
       "weakStuck": "{stuck} / {involved} 人卡住",
       "open": "看完整的学情分析"
