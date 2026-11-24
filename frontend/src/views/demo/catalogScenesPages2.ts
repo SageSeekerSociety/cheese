@@ -215,6 +215,12 @@ export const SCENES_PAGES2_ENTRIES: CatalogEntry[] = [
         expect: '已连接',
       },
       {
+        name: '成员，还没连',
+        note: '不是管理员、自己还没连：看得到团队用的应用，按钮是「连接我的飞书账号」。',
+        props: { canManage: false },
+        expect: '还没连接',
+      },
+      {
         name: '成员，团队还没设',
         note: '团队还没设应用：写「还没设置」，并说管理员设好之后就能连接。',
         props: {
