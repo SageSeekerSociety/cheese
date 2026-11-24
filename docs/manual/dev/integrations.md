@@ -6,7 +6,6 @@ covers:
   - backend/app/domain/integration/
   - backend/app/domain/webhook/
   - backend/app/api/routes/integrations.py
-  - backend/app/api/routes/admin_integrations.py
   - backend/app/api/routes/webhooks.py
   - backend/app/core/webhook_auth.py
 ---
