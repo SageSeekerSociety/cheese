@@ -336,22 +336,27 @@ def _text_of(response: dict) -> str:
 MESSAGE_TOOLS = ("chat_send", "cheese_ask")
 
 
-async def agent_turn(client, ep: Endpoint, case: Case, variant: str) -> dict:
+async def agent_turn(
+    client, ep: Endpoint, case: Case, variant: str, messages: list[dict] | None = None
+) -> dict:
     """Run the session until it says something to a person, or stops.
 
-    Returns what it sent (each `chat_send` / `cheese_ask` call in order), what
-    else it called, and the token use."""
+    ``messages`` continues a conversation (`then_says`); by default the case's
+    own. Returns what it sent (each `chat_send` / `cheese_ask` call in order),
+    what else it called, the last response and the token use."""
     system = system_for(case, variant)
-    messages = messages_for(case, variant)
+    messages = messages or messages_for(case, variant)
     tools = tools_for(case, variant)
     sent: list[dict] = []
     other: list[dict] = []
+    last: list[dict] = []
     usage = {"input_tokens": 0, "output_tokens": 0}
     for _ in range(4):
         response = await call(client, ep, system=system, messages=messages, tools=tools)
         for k in usage:
             usage[k] += int(response.get("usage", {}).get(k, 0) or 0)
-        uses = [b for b in response.get("content", []) if b.get("type") == "tool_use"]
+        last = response.get("content", [])
+        uses = [b for b in last if b.get("type") == "tool_use"]
         for use in uses:
             (sent if use["name"] in MESSAGE_TOOLS else other).append(
                 {"tool": use["name"], "input": use["input"]}
@@ -380,8 +385,32 @@ async def agent_turn(client, ep: Endpoint, case: Case, variant: str) -> dict:
         },
         "sent": sent,
         "other": other,
+        "last": last,
         "usage": usage,
     }
+
+
+def then_says(turn: dict, sent: list[dict], who: str, text: str) -> list[dict]:
+    """The conversation after ``turn``, with ``sent`` as what went out (the
+    rewriter's version where there is one) and a person answering ``text``."""
+    queue = list(sent)
+    content = []
+    for block in turn["last"]:
+        if block.get("type") == "tool_use" and block["name"] in MESSAGE_TOOLS and queue:
+            block = {**block, "input": queue.pop(0)["input"]}
+        content.append(block)
+    results = [
+        {"type": "tool_result", "tool_use_id": b["id"], "content": "已发出"}
+        for b in content
+        if b.get("type") == "tool_use"
+    ]
+    return turn["request"]["messages"] + [
+        {"role": "assistant", "content": content},
+        {
+            "role": "user",
+            "content": results + [{"type": "text", "text": f"[id=m9] {who}：{text}"}],
+        },
+    ]
 
 
 def shown(sent: list[dict]) -> str:

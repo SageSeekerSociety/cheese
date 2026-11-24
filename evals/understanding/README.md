@@ -61,3 +61,13 @@ uv run --project backend python evals/understanding/run.py \
 1. 跑 `baseline`，只看调整用的题的失败，读消息原文和判分理由。
 2. 先想能不能靠结构解决（比如把读者的记录带进房间），再改 `run.py` 里 `ASK_RULE`、`EXPLAIN_RULE` 那几行字；原则优先，做不到再补最少的话。
 3. 重跑，调整用的题变好、留出题没有变差，才把同样的字改进 `backend/app/domain/prompts/` 和 `cheese_ask` 的说明。
+
+## 原型
+
+`prototype.html` 是做法一（写给读者）的任务页原型，芝士的位置留空。`prototype.py` 用真实模型把它填上：同一道题（默认 a1）分别用 main 上的规矩和改后的规矩跑两步，芝士先问，人回「没看懂」后芝士再答，页面顶上可以切换「现在」「改后」对比。
+
+```bash
+uv run --project backend python evals/understanding/prototype.py --model glm-5.2 --variant memory
+```
+
+生成的页面和完整请求写在 `evals/results/prototype-<时间>.html` / `.json`。

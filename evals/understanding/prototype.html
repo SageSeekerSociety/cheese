@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>理解 · 写给读者</title>
+    <!--
+      「理解」做法一（写给读者）的原型。手写单文件，照 frontend/topic-entry-proto.html 的做法：
+      令牌照抄 src/style.css，任务页、消息行、提问卡照着 room-row.css、RoomMessage、
+      AskQuickReplies 的真样式复刻。它不是产品代码。
+
+      芝士说的每一句都来自真实模型：evals/understanding/prototype.py 跑模型，把结果写进
+      下面 id="proto-data" 那一段。没跑过时那一段是 null，页面上芝士的位置显示「尚未生成」。
+      人说的话（任务说明、「没看懂」）是题目里写定的。
+    -->
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #191a1c;
+        --text: #36383c;
+        --muted: #5a5e66;
+        --faint: #747a82;
+        --line: #ecedef;
+        --line-2: #e2e3e6;
+        --fill: #f4f5f7;
+        --fill-2: #eeeff1;
+        --canvas: #f7f8fa;
+        --surface: #ffffff;
+        --raised: #ffffff;
+        --accent: #f57f17;
+        --accent-ink: #9a5413;
+        --accent-wash: #fdf1e2;
+        --warn-ink: #8f5406;
+        --warn-wash: #faf0dc;
+        --agent-ink: #fff7ea;
+        --agent-tone: #221e1a;
+        --person: #4a6fa5;
+        --radius-sm: 6px;
+        --radius-md: 8px;
+        --radius-lg: 12px;
+        --radius-pill: 999px;
+        --shadow-2: 0 8px 24px rgba(16, 17, 20, 0.12), 0 2px 6px rgba(16, 17, 20, 0.06);
+        --font: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Segoe UI', sans-serif;
+        --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme='light']) {
+          color-scheme: dark;
+          --ink: #f3f4f6;
+          --text: #d3d6db;
+          --muted: #aeb4bd;
+          --faint: #888ea0;
+          --line: #2b2e33;
+          --line-2: #3a3e45;
+          --fill: #212429;
+          --fill-2: #282c31;
+          --canvas: #141517;
+          --surface: #1b1d20;
+          --raised: #212429;
+          --accent: #ffa733;
+          --accent-ink: #ffc670;
+          --accent-wash: #2e2216;
+          --warn-ink: #f7c078;
+          --warn-wash: #2a2114;
+          --agent-ink: #f6efe4;
+          --agent-tone: #4a443d;
+          --person: #6f93c9;
+        }
+      }
+      :root[data-theme='dark'] {
+        color-scheme: dark;
+        --ink: #f3f4f6;
+        --text: #d3d6db;
+        --muted: #aeb4bd;
+        --faint: #888ea0;
+        --line: #2b2e33;
+        --line-2: #3a3e45;
+        --fill: #212429;
+        --fill-2: #282c31;
+        --canvas: #141517;
+        --surface: #1b1d20;
+        --raised: #212429;
+        --accent: #ffa733;
+        --accent-ink: #ffc670;
+        --accent-wash: #2e2216;
+        --warn-ink: #f7c078;
+        --warn-wash: #2a2114;
+        --agent-ink: #f6efe4;
+        --agent-tone: #4a443d;
+        --person: #6f93c9;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; }
+      body { display: flex; flex-direction: column; }
+      body { font-family: var(--font); font-size: 14px; line-height: 20px; color: var(--text); background: var(--canvas); }
+      button { font: inherit; color: inherit; }
+
+      /* ===== 原型自己的控制条，不是产品界面 ===== */
+      .demo { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 8px 16px; border-bottom: 1px dashed var(--line-2); background: var(--surface); font-size: 13px; line-height: 19px; color: var(--muted); }
+      .demo b { color: var(--ink); font-weight: 600; }
+      .seg { display: inline-flex; border: 1px solid var(--line-2); border-radius: var(--radius-md); overflow: hidden; }
+      .seg button { padding: 4px 12px; background: none; border: 0; cursor: pointer; color: var(--muted); }
+      .seg button[aria-pressed='true'] { background: var(--fill-2); color: var(--ink); font-weight: 600; }
+      .demo .src { margin-left: auto; }
+
+      /* ===== 产品：任务页（对话那一种摆法） ===== */
+      .app { flex: 1; min-height: 0; display: grid; grid-template-columns: 232px minmax(0, 1fr); }
+      .side { border-right: 1px solid var(--line); background: var(--surface); padding: 12px 8px; overflow: auto; }
+      .side h2 { margin: 4px 8px 12px; font-size: 15px; line-height: 21px; font-weight: 600; color: var(--ink); }
+      .side .eyebrow { margin: 16px 8px 4px; font-size: 12px; line-height: 18px; font-weight: 600; color: var(--muted); }
+      .nav { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; border-radius: var(--radius-md); color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .nav--on { background: var(--line-2); color: var(--ink); font-weight: 600; }
+      .nav .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex: none; margin-left: auto; }
+      .page { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; background: var(--surface); }
+      .head { display: flex; align-items: center; gap: 12px; height: 48px; padding: 0 16px; border-bottom: 1px solid var(--line); }
+      .head h1 { margin: 0; font-size: 15px; line-height: 21px; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .state { font-size: 12px; line-height: 18px; padding: 0 6px; border-radius: var(--radius-sm); background: var(--warn-wash); color: var(--warn-ink); white-space: nowrap; }
+      .head .sp { flex: 1; }
+      .hbtn { height: 28px; padding: 0 10px; border: 0; border-radius: var(--radius-md); background: none; color: var(--muted); cursor: pointer; }
+      .hbtn[aria-pressed='true'] { background: var(--fill-2); color: var(--ink); }
+      .hbtn:hover { background: var(--fill); }
+      .body { display: grid; grid-template-columns: minmax(0, 1fr) 0; min-height: 0; }
+      .body--side { grid-template-columns: minmax(0, 1fr) minmax(280px, 34%); }
+      .chat { display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 0; }
+      .stream { overflow: auto; padding: 8px 0 24px; }
+      .block { display: none; border-left: 1px solid var(--line); min-height: 0; overflow: auto; }
+      .body--side .block { display: block; }
+      .block__bar { display: flex; align-items: center; height: 40px; padding: 0 8px 0 16px; border-bottom: 1px solid var(--line); font-size: 13px; font-weight: 600; color: var(--ink); }
+      .block__bar .sp { flex: 1; }
+      .block__in { padding: 16px; }
+      .kv { display: grid; grid-template-columns: 72px 1fr; gap: 8px 12px; margin: 0 0 16px; font-size: 13px; line-height: 19px; }
+      .kv dt { color: var(--muted); }
+      .kv dd { margin: 0; color: var(--text); }
+
+      /* 消息行：room-row.css */
+      .im-row { position: relative; display: flex; align-items: flex-start; gap: 10px; padding: 4px 16px; margin-top: 16px; }
+      .im-row:hover { background: var(--fill); }
+      .av { width: 28px; height: 28px; flex: 0 0 28px; display: inline-flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; }
+      .av--p { border-radius: var(--radius-pill); background: var(--person); color: #fff; }
+      .av--a { border-radius: 9px; background: var(--agent-tone); color: var(--agent-ink); }
+      .im-main { min-width: 0; flex: 1 1 auto; }
+      .im-meta { display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px; }
+      .im-name { font-size: 14px; font-weight: 600; color: var(--ink); }
+      .im-time { font-family: var(--font-mono); font-size: 12px; color: var(--muted); }
+      .im-text { font-size: 15px; line-height: 24px; color: var(--text); overflow-wrap: anywhere; }
+      .im-text p { margin: 0 0 8px; }
+      .im-text p:last-child { margin-bottom: 0; }
+      .im-text code { font-family: var(--font-mono); font-size: 13px; padding: 0 4px; background: var(--fill-2); border-radius: var(--radius-sm); }
+      .im-quick { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+      .chip { height: 28px; padding: 0 10px; border: 1px solid var(--line-2); border-radius: var(--radius-pill); background: var(--surface); cursor: pointer; font-size: 13px; }
+      .chip:hover { background: var(--fill); }
+      .pending { color: var(--muted); font-size: 14px; }
+
+      /* 提问卡：AskQuickReplies.vue */
+      .ask { --ask-pad: 16px; margin-top: 4px; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface); }
+      .ask__head { display: flex; align-items: flex-start; gap: 8px; padding: 12px 8px 12px var(--ask-pad); }
+      .ask__who { margin: 0 0 4px; font-size: 13px; line-height: 19px; color: var(--muted); }
+      .ask__who b { font-weight: 500; color: var(--text); }
+      .ask__q { font-size: 15px; line-height: 24px; font-weight: 500; color: var(--ink); overflow-wrap: anywhere; white-space: pre-wrap; }
+      .ask__x { flex: none; width: 28px; height: 28px; margin-top: -4px; border: 0; background: none; color: var(--muted); border-radius: var(--radius-md); cursor: pointer; }
+      .ask__opt, .ask__other, .ask__row { border-top: 1px solid var(--line); }
+      .ask__opt { display: grid; grid-template-columns: 16px minmax(0, 1fr); column-gap: 8px; align-items: start; width: 100%; min-height: 44px; padding: 12px var(--ask-pad); text-align: left; background: none; border-left: 0; border-right: 0; border-bottom: 0; cursor: pointer; }
+      .ask__opt:hover:not(:disabled) { background: var(--fill); }
+      .ask__opt:disabled { cursor: default; }
+      .ask__num { font-size: 13px; line-height: 20px; color: var(--muted); }
+      .ask__body { display: flex; flex-direction: column; min-width: 0; }
+      .ask__label { font-size: 14px; line-height: 20px; color: var(--ink); overflow-wrap: anywhere; }
+      .ask__tag { display: inline-block; margin-left: 8px; padding: 0 4px; font-size: 13px; line-height: 19px; color: var(--muted); background: var(--fill); border-radius: var(--radius-sm); }
+      .ask__ex { font-size: 13px; line-height: 19px; color: var(--muted); overflow-wrap: anywhere; }
+      .ask__other { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; column-gap: 8px; padding: 8px 8px 8px calc(var(--ask-pad) + 24px); }
+      .ask__other textarea { width: 100%; padding: 4px 0; font: inherit; font-size: 14px; line-height: 20px; color: var(--ink); background: transparent; border: 0; outline: none; resize: none; }
+      .ask__other textarea::placeholder { color: var(--muted); }
+      .ask__send { width: 28px; height: 28px; border: 0; border-radius: var(--radius-md); background: none; color: var(--muted); cursor: pointer; }
+      .ask__row { margin: 0; padding: 12px var(--ask-pad); font-size: 14px; line-height: 20px; color: var(--text); }
+
+      /* 输入框 */
+      .composer { margin: 0 16px 16px; border: 1px solid var(--line); border-radius: var(--radius-lg); display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; padding: 8px 8px 8px 12px; background: var(--surface); }
+      .composer textarea { border: 0; outline: none; resize: none; font: inherit; font-size: 15px; line-height: 24px; background: transparent; color: var(--ink); }
+      .composer textarea::placeholder { color: var(--muted); }
+      .send { width: 32px; height: 32px; border: 0; border-radius: var(--radius-md); background: var(--accent); color: #fff8e1; cursor: pointer; }
+
+      /* 选中一段后的「问芝士」（AgentSelectionAsk） */
+      .sel-ask { position: fixed; z-index: 10; transform: translateX(-50%); height: 32px; padding: 0 12px; border: 1px solid var(--line-2); border-radius: var(--radius-md); background: var(--raised); box-shadow: var(--shadow-2); color: var(--ink); cursor: pointer; font-size: 13px; }
+      .panel-chip { display: inline-flex; gap: 6px; max-width: 100%; padding: 2px 8px; border-radius: var(--radius-sm); background: var(--fill-2); font-size: 13px; line-height: 19px; color: var(--text); }
+      .panel-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .note { margin-top: 16px; padding: 12px; border: 1px dashed var(--line-2); border-radius: var(--radius-md); font-size: 13px; line-height: 19px; color: var(--muted); }
+
+      @media (max-width: 599.98px) {
+        .app { grid-template-columns: 1fr; }
+        .side { display: none; }
+        .body--side { grid-template-columns: 1fr 0; }
+        .body--side .block { display: none; }
+        .ask { --ask-pad: 12px; }
+        .demo .src { margin-left: 0; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="demo" role="region" aria-label="原型控制">
+      <b>原型</b>
+      <span>芝士的说话规矩</span>
+      <div class="seg" role="group" aria-label="对比">
+        <button type="button" data-v="before" aria-pressed="true">现在</button>
+        <button type="button" data-v="after" aria-pressed="false">改后</button>
+      </div>
+      <button type="button" class="chip" id="reset">从头再来</button>
+      <span id="hint"></span>
+      <span class="src" id="src"></span>
+    </div>
+    <div class="app">
+      <nav class="side" aria-label="项目">
+        <h2 id="proj"></h2>
+        <div class="eyebrow">频道</div>
+        <div class="nav">综合</div>
+        <div class="eyebrow">任务</div>
+        <div class="nav nav--on" id="nav-task"></div>
+      </nav>
+      <main class="page">
+        <header class="head">
+          <h1 id="title"></h1>
+          <span class="state" id="state">待回答</span>
+          <span class="sp"></span>
+          <button type="button" class="hbtn" id="overview" aria-pressed="false">概览</button>
+        </header>
+        <div class="body" id="body">
+          <section class="chat" aria-label="对话">
+            <div class="stream" id="stream"></div>
+            <div class="composer">
+              <textarea id="composer" rows="1" placeholder="发消息"></textarea>
+              <button type="button" class="send" id="send" aria-label="发送">↑</button>
+            </div>
+          </section>
+          <aside class="block" id="block" aria-label="侧边">
+            <div class="block__bar"><span id="block-title">概览</span><span class="sp"></span><button type="button" class="hbtn" id="close-block" aria-label="关闭">✕</button></div>
+            <div class="block__in" id="block-in"></div>
+          </aside>
+        </div>
+      </main>
+    </div>
+    <button type="button" class="sel-ask" id="sel-ask" hidden>问芝士</button>
+
+    <script id="proto-data" type="application/json">null</script>
+    <script id="proto-case" type="application/json">null</script>
+    <script>
+      const DATA = JSON.parse(document.getElementById('proto-data').textContent)
+      const CASE = JSON.parse(document.getElementById('proto-case').textContent) || {
+        project: '社团活动管理系统',
+        title: '报名规则挪到各社团设置页',
+        person: '周雨',
+        brief: '现在每个社团的报名规则都在一个总的页面里改，社长们老找不到。改成每个社团在自己的设置页里改自己的规则。',
+        said: [['周雨', '开始吧，改完我拿给社联的老师看。']],
+        trigger: ['周雨', '你那边怎么样了？'],
+        follow: '你问的什么东西，没看懂，再问一次',
+      }
+      let version = 'before'
+      let step = 0 // 0：芝士刚问完；1：人点了选项；2：人说了没看懂，芝士回了
+
+      const $ = (id) => document.getElementById(id)
+      const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c])
+      function md(text) {
+        return String(text)
+          .split(/\n{2,}/)
+          .map((p) => '<p>' + esc(p).replace(/`([^`]+)`/g, '<code>$1</code>').replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>') + '</p>')
+          .join('')
+      }
+
+      function row(who, inner, agent, time) {
+        return `<div class="im-row"><span class="av ${agent ? 'av--a' : 'av--p'}" aria-hidden="true">${agent ? '芝' : esc(name2(who))}</span>
+          <div class="im-main"><div class="im-meta"><span class="im-name">${esc(who)}</span><span class="im-time">${time}</span></div>${inner}</div></div>`
+      }
+      const name2 = (n) => n.slice(0, 1)
+      const person = (text, time) => row(CASE.person, `<div class="im-text">${md(text)}</div>`, false, time)
+
+      function askCard(q, answered) {
+        const opts = (q.options || [])
+          .map((o, i) => {
+            const rec = o.text.endsWith(' (Recommended)')
+            const label = rec ? o.text.slice(0, -14) : o.text
+            return `<button type="button" class="ask__opt" data-pick="${esc(label)}" ${answered ? 'disabled' : ''}>
+              <span class="ask__num">${i + 1}</span>
+              <span class="ask__body"><span class="ask__label">${esc(label)}${rec ? '<span class="ask__tag">推荐</span>' : ''}</span>${o.explain ? `<span class="ask__ex">${esc(o.explain)}</span>` : ''}</span></button>`
+          })
+          .join('')
+        const tail = answered
+          ? `<p class="ask__row">${esc(CASE.person)}：${esc(answered)}</p>`
+          : `${opts}<div class="ask__other"><textarea rows="1" class="other" placeholder="其他回答" aria-label="其他回答"></textarea><button type="button" class="ask__send" aria-label="发送">↑</button></div>`
+        return `<section class="ask"><header class="ask__head"><div style="flex:1;min-width:0"><p class="ask__who"><b>芝士</b> 问你</p><div class="ask__q">${esc(q.question)}</div></div>${answered ? '' : '<button type="button" class="ask__x" aria-label="跳过这道题">✕</button>'}</header>${tail}</section>`
+      }
+
+      function agentSays(sent, time, answered) {
+        if (!sent) return row('芝士', `<div class="im-text pending">尚未生成：跑 evals/understanding/prototype.py 后填入真实模型的话</div>`, true, time)
+        if (!sent.length) return row('芝士', `<div class="im-text pending">这次芝士没有发消息</div>`, true, time)
+        return sent
+          .map((item) => {
+            if (item.tool === 'cheese_ask') return (item.input.questions || []).map((q) => row('芝士', `<div class="im-text"></div>${askCard(q, answered)}`, true, time)).join('')
+            const quick = (item.input.replies || []).map((r) => `<button type="button" class="chip" data-pick="${esc(r)}">${esc(r)}</button>`).join('')
+            return row('芝士', `<div class="im-text">${md(item.input.content || '')}</div>${quick && !answered ? `<div class="im-quick">${quick}</div>` : ''}`, true, time)
+          })
+          .join('')
+      }
+
+      let picked = ''
+      function render() {
+        const flow = DATA && DATA.flows ? DATA.flows[version] : null
+        $('proj').textContent = CASE.project
+        $('nav-task').textContent = CASE.title
+        $('title').textContent = CASE.title
+        $('state').textContent = step === 1 ? '进行中' : '待回答'
+        let html = person(CASE.brief, '09:12')
+        CASE.said.forEach(([, text]) => (html += person(text, '09:13')))
+        if (CASE.trigger && CASE.trigger[0] !== 'self') html += person(CASE.trigger[1], '10:40')
+        html += agentSays(flow ? flow.first : null, '10:41', step === 1 ? picked : step === 2 ? CASE.follow : '')
+        if (step === 2) {
+          if (!(flow && flow.first && flow.first.some((s) => s.tool === 'cheese_ask'))) html += person(CASE.follow, '10:43')
+          html += agentSays(flow ? flow.reply : null, '10:43', '')
+        }
+        $('stream').innerHTML = html
+        document.querySelectorAll('[data-pick]').forEach((b) => b.addEventListener('click', () => answer(b.dataset.pick)))
+        document.querySelectorAll('.ask__other').forEach((box) => {
+          const ta = box.querySelector('textarea')
+          ta.value = ''
+          box.querySelector('.ask__send').addEventListener('click', () => ta.value.trim() && answer(ta.value.trim()))
+          ta.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+              e.preventDefault()
+              if (ta.value.trim()) answer(ta.value.trim())
+            }
+          })
+        })
+        $('hint').textContent = '点选项，或在卡下回「' + CASE.follow + '」'
+        $('src').textContent = DATA ? `芝士的话：${DATA.model}，${version === 'before' ? '现在的规矩' : DATA.label}，${DATA.generated_at} 生成` : '芝士的话尚未生成'
+        }
+
+      function answer(text) {
+        if (text === CASE.follow || /没看懂|什么意思|说人话/.test(text)) {
+          step = 2
+        } else {
+          picked = text
+          step = 1
+        }
+        render()
+      }
+
+      document.querySelectorAll('.seg button').forEach((b) =>
+        b.addEventListener('click', () => {
+          version = b.dataset.v
+          document.querySelectorAll('.seg button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)))
+          step = 0
+          render()
+        }),
+      )
+      $('reset').addEventListener('click', () => {
+        step = 0
+        render()
+      })
+      $('send').addEventListener('click', () => {
+        const v = $('composer').value.trim()
+        if (!v) return
+        $('composer').value = ''
+        answer(v)
+      })
+      $('composer').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+          e.preventDefault()
+          $('send').click()
+        }
+      })
+
+      function openBlock(title, html) {
+        $('block-title').textContent = title
+        $('block-in').innerHTML = html
+        $('body').classList.add('body--side')
+        $('overview').setAttribute('aria-pressed', String(title === '概览'))
+      }
+      $('overview').addEventListener('click', () => {
+        if ($('overview').getAttribute('aria-pressed') === 'true') return closeBlock()
+        openBlock('概览', `<dl class="kv"><dt>状态</dt><dd>${step === 1 ? '进行中' : '待回答，等你'}</dd><dt>负责人</dt><dd>${esc(CASE.person)}</dd><dt>AI 队友</dt><dd>芝士</dd></dl><div class="im-text">${md(CASE.brief)}</div>`)
+      })
+      function closeBlock() {
+        $('body').classList.remove('body--side')
+        $('overview').setAttribute('aria-pressed', 'false')
+      }
+      $('close-block').addEventListener('click', closeBlock)
+
+      // 选中一段字，旁边出「问芝士」，点了打开个人芝士面板，选中的字成为一枚标签（PR #4796 的现有行为）
+      let selected = ''
+      document.addEventListener('mouseup', () =>
+        setTimeout(() => {
+          const s = window.getSelection()
+          const text = s ? s.toString().trim() : ''
+          const inside = s && s.anchorNode && $('stream').contains(s.anchorNode)
+          if (!text || !inside) return ($('sel-ask').hidden = true)
+          const r = s.getRangeAt(0).getBoundingClientRect()
+          selected = text
+          Object.assign($('sel-ask').style, { top: Math.max(r.top - 40, 8) + 'px', left: r.left + r.width / 2 + 'px' })
+          $('sel-ask').hidden = false
+        }, 10),
+      )
+      $('sel-ask').addEventListener('click', () => {
+        $('sel-ask').hidden = true
+        openBlock(
+          '芝士',
+          `<div class="panel-chip"><b>选中</b><span>${esc(selected.slice(0, 60))}</span></div>
+           <div class="composer" style="margin:12px 0 0"><textarea rows="2" placeholder="问芝士"></textarea><button type="button" class="send" aria-label="发送">↑</button></div>
+           <div class="note">原型说明：这里是已有的个人芝士面板。它的回答不在这次评测里，原型不生成。</div>`,
+        )
+      })
+
+      render()
+    </script>
+  </body>
+</html>
