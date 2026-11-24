@@ -1,12 +1,21 @@
 {
   "archive": "Archive channel",
   "archiveHint": "No new messages can be sent once archived; its history stays readable and searchable. A channel with open tasks can't be archived",
+  "change": "Change",
   "created": "Created",
-  "members": "Members",
-  "membersOpen": "View members",
+  "environment": "Environment",
+  "number": "ID",
   "open": "Details of “{name}”",
   "speakers": "Who can post",
   "speakersEveryone": "Everyone",
   "speakersSome": "Chosen roles",
-  "threadsOpen": "Let everyone reply in threads"
+  "threadsOpen": "Let everyone reply in threads",
+  "title": "Channel details",
+  "usage": {
+    "turns": "Runs",
+    "tokens": "Tokens",
+    "input": "Input",
+    "output": "Output",
+    "cost": "Cost"
+  }
 }

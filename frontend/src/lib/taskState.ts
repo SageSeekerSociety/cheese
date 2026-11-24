@@ -70,6 +70,8 @@ export interface TaskState {
   attention: string | null
   /** 标签下面那一行；没有就空串。 */
   line: string
+  /** 那一行拆开的几段（在等谁、第几版、什么时候提交……），各自成一格的地方用它。 */
+  parts: string[]
   /** 在等谁（「等你」「等林老师」）：只在等人审阅或回答时有。主线上任务标签只写这一句，
    *  整行留给有地方放的列表。 */
   waits?: string
@@ -270,6 +272,12 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
   let tone = look.tone
   const label = statusLabel(status)
   let line = ''
+  let parts: string[] = []
+  /** 下面那一行由这几段连成：各段留着，给拆开显示的地方。 */
+  const setLine = (pieces: (string | null | undefined | false)[]) => {
+    parts = pieces.filter((piece): piece is string => !!piece)
+    line = joined(parts)
+  }
   let waits = ''
   let tip = ''
   let stale = false
@@ -292,28 +300,28 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
       }
       // 卡被退回，平台把任务放回进行中、队友还没说自己在改什么：写谁退回的，修改中。
       if (!note && row.card?.status === 'rejected') {
-        line = joined([returnedBy(row.card, nameOf), t('work.taskState.revising')])
+        setLine([returnedBy(row.card, nameOf), t('work.taskState.revising')])
         break
       }
       // 那句话和那个时刻只在它报的就是在做时属于这一格：它报了在等、需要协助，会话又跑
       // 起来了（后端照会话判成进行中），那句说的是在等什么、卡在哪，写在下面就是假话。
       if (row.progress_state !== 'working') break
       const time = waitedFor(row.progress_set_at, now)
-      line = joined([note, time && t('work.taskState.workedFor', { time })])
+      setLine([note, time && t('work.taskState.workedFor', { time })])
       break
     }
     case 'waiting': {
       const time = waitedFor(row.progress_set_at, now)
-      line = joined([note, time && t('work.taskState.waitedFor', { time })])
+      setLine([note, time && t('work.taskState.waitedFor', { time })])
       break
     }
     case 'blocked':
-      line = note || t('work.taskState.blockedFallback', { name: ctx.agentName })
+      setLine([note || t('work.taskState.blockedFallback', { name: ctx.agentName })])
       break
     case 'asking': {
       const mine = row.needs_my_action === true
       if (!mine) tone = 'neutral'
-      line = waitsOn(row.waiting_on, mine) ?? ''
+      setLine([waitsOn(row.waiting_on, mine)])
       waits = line
       break
     }
@@ -341,13 +349,11 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
       // 检查没过、芝士清不掉：下一步在负责人手上，写等谁。
       const step =
         phrase === 'checks_failed'
-          ? joined([t('work.taskState.checksFailed'), waitsOn(row.owner_handle, row.needs_my_action === true)])
-          : REVIEW_STEP[phrase]
-            ? phraseLabel(phrase, ctx.agentName)
-            : waitsOn(reviewer, mine)
+          ? [t('work.taskState.checksFailed'), waitsOn(row.owner_handle, row.needs_my_action === true)]
+          : [REVIEW_STEP[phrase] ? phraseLabel(phrase, ctx.agentName) : waitsOn(reviewer, mine)]
       if (phrase === 'awaiting_review') waits = waitsOn(reviewer, mine) ?? ''
-      line = joined([
-        step,
+      setLine([
+        ...step,
         card?.subject,
         card?.version ? t('work.taskState.version', { n: card.version }) : null,
         since && t('work.taskState.submitted', { time: since }),
@@ -359,18 +365,18 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
       // 部署时换成警示色，那一句说卡在哪；红的那次 run 的链接在任务页头。
       if (phrase === 'deploy_blocked') tone = 'warn'
       tip = phraseLabel(phrase, ctx.agentName)
-      line = tip
+      setLine([tip])
       break
     case 'bounced':
       // 退回或检查没过之后没人在改：只写发生了什么，不写修改中。
-      line = returnedBy(row.card, nameOf) ?? ''
+      setLine([returnedBy(row.card, nameOf)])
       break
     case 'closed':
       if (status === 'done') {
         icon = ACCEPTED_ICON
         tone = 'okMark'
         const decider = row.card?.status === 'accepted' ? row.card.decided_by : null
-        if (phrase === 'accepted' && decider) line = t('work.taskState.acceptedBy', { name: nameOf(decider) })
+        if (phrase === 'accepted' && decider) setLine([t('work.taskState.acceptedBy', { name: nameOf(decider) })])
       }
       break
     default:
@@ -383,7 +389,7 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
     tone = 'faint'
     const days = Math.max(1, Math.ceil((Date.parse(row.neglect.close_at) - now) / 86_400_000))
     const quiet = waitedFor(row.neglect.since, now)
-    line = joined([line, t('work.taskState.neglect.closeIn', { days })])
+    setLine([...parts, t('work.taskState.neglect.closeIn', { days })])
     tip = [
       t('work.taskState.neglect.title'),
       t(row.neglect.waiting_on_someone ? 'work.taskState.neglect.waiting' : 'work.taskState.neglect.quiet', {
@@ -404,6 +410,7 @@ export function taskState(row: StateRow, ctx: StateContext): TaskState {
     live,
     attention: kind === 'blocked' || kind === 'asking' ? `${row.id}:${phrase}:${row.progress_set_at ?? ''}` : null,
     line,
+    parts,
     waits,
     tip,
   }

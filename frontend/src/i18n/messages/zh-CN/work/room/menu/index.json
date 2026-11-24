@@ -1,14 +1,11 @@
 {
   "allTasks": "全部任务",
-  "archive": "归档",
   "copyLink": "复制链接",
   "delete": "删除频道",
-  "files": "文件",
   "markAllRead": "全部标为已读",
   "markAllReadFailed": "全部标为已读失败",
   "markRead": "标为已读",
   "more": "更多",
-  "mute": "静音",
   "newTask": "新建任务",
   "newTaskFailed": "未能新建任务，稍后重试",
   "noUsage": "暂无数据",
@@ -18,9 +15,6 @@
   "thisTopic": "本频道",
   "topicName": "频道名称",
   "unarchive": "取消归档",
-  "unmute": "取消静音",
   "usage": "用量",
-  "usageLine": "{turns} 次运行 · {tokens} token · {cost}",
-  "usageSplit": "输入 {input} · 输出 {output}",
   "wholeProject": "全项目"
 }

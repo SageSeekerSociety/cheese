@@ -27,6 +27,7 @@ import { seedProject, seedProjects } from '@/test/seedQueries'
 const searchProject = vi.hoisted(() => vi.fn())
 const archiveTopic = vi.hoisted(() => vi.fn())
 const setTopicTitle = vi.hoisted(() => vi.fn())
+const setTopicNotifyLevel = vi.hoisted(() => vi.fn(async () => ({})))
 // 归档之后 store 会重新拉一次话题表。
 const listTopics = vi.hoisted(() => vi.fn(async () => ({ data: [], total: 0 })))
 // 别的项目里的话题只有名字。
@@ -46,6 +47,7 @@ vi.mock('@/api', async (original) => ({
   ...(await original<object>()),
   archiveTopic,
   setTopicTitle,
+  setTopicNotifyLevel,
   listTopics,
   listTopicNames,
 }))
@@ -466,13 +468,18 @@ describe('命令面板：更多操作', () => {
     await press('Enter')
   }
 
-  it('在一个话题上按 Tab，归档的是这个话题，页面不动', async () => {
+  // 和侧栏右键是同一份：「通知」点开换成档位那一层，选的是这个频道的。
+  it('在一个频道上按 Tab，「通知」换成档位那一层，选了改的是这个频道，页面不动', async () => {
     const { router } = await mount()
     await open()
     await type('原型')
     await press('Tab')
-    await choose(t('work.room.menu.archive'))
-    await waitFor(() => expect(archiveTopic).toHaveBeenCalledWith('t2'))
+    await waitFor(() => expect(actions().some((name) => name.startsWith(t('work.channel.notify.title')))).toBe(true))
+    const notify = actions().findIndex((name) => name.startsWith(t('work.channel.notify.title')))
+    for (let i = 0; i < notify; i++) await press('ArrowDown')
+    await press('Enter')
+    await choose(t('work.channel.notify.all'))
+    await waitFor(() => expect(setTopicNotifyLevel).toHaveBeenCalledWith('t2', 'all', null))
     expect(router.currentRoute.value.path).toBe('/projects/p1')
     await waitFor(() => expect(field()).toBeNull())
   })

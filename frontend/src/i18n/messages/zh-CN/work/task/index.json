@@ -19,6 +19,12 @@
   "handOver": "转交",
   "handOverTitle": "转交给谁？",
   "handOverTo": "选择新的负责人",
+  "info": {
+    "state": "状态",
+    "channel": "所在频道",
+    "number": "编号",
+    "created": "创建时间"
+  },
   "leaveCollaboration": "退出协作",
   "loadFailed": "无法加载这个任务",
   "machine": "环境",

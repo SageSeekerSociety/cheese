@@ -60,6 +60,17 @@ function mount(props: Partial<Record<string, unknown>> = {}) {
 }
 
 describe('进行中的任务', () => {
+  it('能新建任务的频道，那一段旁边一颗「新建任务」，点了交给外面去建', async () => {
+    const ui = mount({ canCreateTask: true })
+    await fireEvent.click(ui.getByRole('button', { name: t('work.room.menu.newTask') }))
+    expect(ui.emitted()['new-task']).toHaveLength(1)
+  })
+
+  it('不能新建任务（已归档）就没有那一颗', () => {
+    const ui = mount({ canCreateTask: false })
+    expect(ui.queryByRole('button', { name: t('work.room.menu.newTask') })).toBeNull()
+  })
+
   it('只列最近 7 天有动静的，其余从「全部任务」进', async () => {
     const ui = mount({
       tasks: [task('t1', '登录页改版', 1), task('t2', '八月的探针', 40), task('t3', '账单对账', 3)],

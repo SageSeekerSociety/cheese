@@ -30,6 +30,7 @@ const TASK: TaskLine = {
     live: false,
     attention: null,
     line: '等你',
+    parts: ['等你'],
     waits: '等你',
     tip: '',
   },

@@ -399,8 +399,11 @@ describe('C5 行操作', () => {
         n.textContent?.trim()
       )
       expect(items).toEqual([
+        expect.stringContaining(t('work.channel.notify.title')),
+        t('work.room.menu.copyLink'),
         t('work.room.menu.newTask'),
         t('work.room.menu.allTasks'),
+        t('work.channelDetails.title'),
         t('work.room.menu.rename'),
         t('work.channel.leave'),
       ])
@@ -410,7 +413,7 @@ describe('C5 行操作', () => {
   })
 
   // 综合不能改名或退出，不为凑够四项而扩大权限。
-  it('综合那一行也有 ⋯，只保留它有权使用的新建任务和全部任务', async () => {
+  it('综合那一行也有 ⋯：前两组和频道详情，没有改名和退出', async () => {
     const { container } = mount()
     const row = container.querySelector('[data-row-actions="root"]') as HTMLElement
     if (!row) throw new Error('没有找到「综合」那一行')
@@ -421,7 +424,13 @@ describe('C5 行操作', () => {
       const items = Array.from(document.querySelectorAll('.v-overlay .v-list-item-title')).map((n) =>
         n.textContent?.trim()
       )
-      expect(items).toEqual([t('work.room.menu.newTask'), t('work.room.menu.allTasks')])
+      expect(items).toEqual([
+        expect.stringContaining(t('work.channel.notify.title')),
+        t('work.room.menu.copyLink'),
+        t('work.room.menu.newTask'),
+        t('work.room.menu.allTasks'),
+        t('work.channelDetails.title'),
+      ])
     })
   })
 
@@ -652,8 +661,11 @@ describe('整页形态', () => {
         item.textContent?.trim()
       )
       expect(items).toEqual([
+        expect.stringContaining(t('work.channel.notify.title')),
+        t('work.room.menu.copyLink'),
         t('work.room.menu.newTask'),
         t('work.room.menu.allTasks'),
+        t('work.channelDetails.title'),
         t('work.room.menu.rename'),
         t('work.channel.leave'),
       ])

@@ -89,9 +89,29 @@ export const RAIL_MARKS = {
 
 /** 一行的 ⋯ 里那几项（`commands/topicActions.ts` 在真环境里给的就是这个形状）。 */
 export const RAIL_ACTIONS: MenuCommand[] = [
-  { id: 'topic.rename', title: '重命名', icon: 'mdi-pencil', run: () => {} },
+  {
+    id: 'topic.notify',
+    title: '通知',
+    icon: 'mdi-bell-outline',
+    value: '@我和我参与的讨论串',
+    children: [
+      { id: 'notify.all', title: '所有新消息', checked: false, run: () => {} },
+      { id: 'notify.mentions', title: '@我和我参与的讨论串', checked: true, run: () => {} },
+      { id: 'notify.mute', title: '静音', checked: false, run: () => {} },
+    ],
+  },
   { id: 'topic.copyLink', title: '复制链接', icon: 'mdi-link-variant', run: () => {} },
-  { id: 'topic.archive', title: '归档', icon: 'mdi-archive-outline', run: () => {} },
+  {
+    id: 'topic.newTask',
+    title: '新建任务',
+    icon: 'mdi-checkbox-marked-circle-plus-outline',
+    divider: true,
+    run: () => {},
+  },
+  { id: 'topic.allTasks', title: '全部任务', icon: 'mdi-format-list-checks', run: () => {} },
+  { id: 'topic.details', title: '频道详情', icon: 'mdi-information-outline', divider: true, run: () => {} },
+  { id: 'topic.rename', title: '重命名', icon: 'mdi-pencil-outline', run: () => {} },
+  { id: 'topic.leave', title: '退出频道', icon: 'mdi-logout-variant', divider: true, run: () => {} },
 ]
 
 /** 项目本体（全局房间）：置顶那一行，也是项目名的落点。 */

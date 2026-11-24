@@ -407,8 +407,12 @@ test("workspace: inbox, overview, tasks, room, accept card, library, project set
       path: `${project}/topics/${roomId}`,
       ready: visible(".members-mini"),
       act: async (page) => {
+        // The faces open the channel details on the members page; the channel's default
+        // environment is on its settings page.
         await page.locator(".members-mini").first().click();
-        await page.locator(".env-action").first().click();
+        await page.getByRole("tab", { name: "Members" }).waitFor();
+        await page.getByRole("tab", { name: "Settings" }).click();
+        await page.locator('[data-testid="future-machine"] .env-action').click();
         await page.locator(".env-menu").waitFor();
       },
     },

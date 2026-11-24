@@ -19,6 +19,12 @@
   "handOver": "Hand over",
   "handOverTitle": "Hand over to whom?",
   "handOverTo": "Choose the new owner",
+  "info": {
+    "state": "Status",
+    "channel": "Channel",
+    "number": "ID",
+    "created": "Created"
+  },
   "leaveCollaboration": "Leave",
   "loadFailed": "Couldn't load this task",
   "machine": "Environment",

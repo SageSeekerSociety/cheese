@@ -1,15 +1,23 @@
 <script setup lang="ts">
-// 频道详情：点频道页头的频道名打开。「关于」是名称、说明、管理者和创建时间，「设置」是我的
-// 通知、谁能在主线发言（#4795）、私密、归档。频道里的人都能看，只有管理者能改（后端按同一条规则再判一次）；
-// 成员在页头那一串头像里。动作都交给外面做。
-import type { Topic } from '@/cx_types'
+// 频道详情：点频道页头的频道名（或那一串头像，或菜单里的「频道详情」）打开。三页：
+// 「关于」是名称、说明、管理者、创建时间、编号和用量；「成员」是名册（TopicRoster）；
+// 「设置」是我的通知、谁能在主线发言（#4795）、新 AI 队友的默认环境、私密、归档、退出和
+// 删除。频道里的人都能看，只有管理者能改（后端按同一条规则再判一次）。动作都交给外面做。
+import type { ChannelDetailsTab } from '@/commands/channelDetails'
+import type { MenuAction } from '@/components/common/menuAction'
+import type { ProjectMemberRow, Topic, UsageStats } from '@/cx_types'
 import type { ChannelSpeakers, TopicNotifyLevel } from '@/types/channels'
 
 import { computed, ref, watch } from 'vue'
 
+import { menuActionOf } from '@/commands'
+import { notifyChoices, notifyLevelName } from '@/commands/notifyChoices'
 import BaseButton from '@/components/base/BaseButton.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
-import ChannelNotifyMenu from '@/components/room/ChannelNotifyMenu.vue'
+import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import TopicDefaultEnvironment from '@/components/TopicDefaultEnvironment.vue'
+import TopicRoster from '@/components/TopicRoster.vue'
+import TopicUsageSummary from '@/components/TopicUsageSummary.vue'
 import { t } from '@/i18n'
 import { relTime } from '@/lib/relTime'
 import { channelGlyph } from '@/lib/topicState'
@@ -29,6 +37,18 @@ const props = defineProps<{
   mutedUntil: string | null
   /** 项目的角色，选「谁能发言」用：key 和名字。 */
   roles: { key: string; name: string }[]
+  /** 打开时落在哪一页。 */
+  initialTab?: ChannelDetailsTab
+  /** 频道的短编号；「综合」没有。 */
+  shortId: string | null
+  /** 用量：本频道、全项目两份，打开「关于」时取。 */
+  usageLoading: boolean
+  topicUsage: UsageStats | null
+  projectUsage: UsageStats | null
+  /** 「成员」那一页要的：项目名册、我是谁、我能不能拉人进来。 */
+  projectMembers: ProjectMemberRow[]
+  me: string
+  canInvite: boolean
 }>()
 const open = defineModel<boolean>({ required: true })
 const emit = defineEmits<{
@@ -38,10 +58,9 @@ const emit = defineEmits<{
   (e: 'archive'): void
   (e: 'unarchive'): void
   (e: 'leave'): void
-  /** 「删除频道」（清单第 2 条）：这里只把确认框叫起来，真正的删除由页头做。 */
+  /** 「删除频道」：这里只把确认框叫起来，真正的删除由页头做。 */
   (e: 'delete'): void
-  /** 「成员」（清单第 5 条）：开的是页头那串头像点开的同一份名单，这里不另造一份。 */
-  (e: 'open-members'): void
+  (e: 'copy-link'): void
   (e: 'notify', level: TopicNotifyLevel, until: string | null): void
   /** 谁能在主线发言（空着是所有人），以及支线是否人人能回。 */
   (e: 'speakers', roles: string[] | null, threadsOpen: boolean): void
@@ -59,14 +78,19 @@ function pick(keys: unknown) {
   if (next.length) emit('speakers', next, threadsOpen.value)
 }
 
-type Tab = 'about' | 'settings'
-const tab = ref<Tab>('about')
+const TABS: ChannelDetailsTab[] = ['about', 'members', 'settings']
+const tab = ref<ChannelDetailsTab>(props.initialTab ?? 'about')
 watch(open, (now) => {
   if (now) {
-    tab.value = 'about'
+    tab.value = props.initialTab ?? 'about'
     editing.value = null
   }
 })
+
+// 通知：「更改」点开的和频道菜单里「通知」那一层是同一份。
+const notifyActions = computed<MenuAction[]>(() =>
+  notifyChoices(props.level, props.mutedUntil, (level, until) => emit('notify', level, until)).map(menuActionOf)
+)
 
 const general = computed(() => props.topic.kind === 'root')
 const archived = computed(() => props.topic.status === 'archived')
@@ -111,7 +135,7 @@ const canMakePublic = computed(
   <AdaptiveDialog v-model="open" size="md" :title="topic.title" :title-icon="channelGlyph(topic)">
     <div role="tablist" class="details__tabs">
       <button
-        v-for="name in ['about', 'settings'] as Tab[]"
+        v-for="name in TABS"
         :key="name"
         type="button"
         role="tab"
@@ -182,34 +206,53 @@ const canMakePublic = computed(
           <span>{{ managerName }}</span>
         </div>
       </div>
-      <!-- 成员：点开的是页头那串头像点开的同一份名单。换管理者、加人、移人都还在那份
-           名单里，「关于」这一页不再另造一套（清单第 5 条）。 -->
-      <div class="details__row">
-        <div class="details__what">
-          <span class="details__label">{{ t('work.channelDetails.members') }}</span>
-        </div>
-        <BaseButton kind="secondary" size="sm" @click="emit('open-members')">{{
-          t('work.channelDetails.membersOpen')
-        }}</BaseButton>
-      </div>
       <div class="details__row">
         <div class="details__what">
           <span class="details__label">{{ t('work.channelDetails.created') }}</span>
           <span>{{ relTime(topic.created_at) }}</span>
         </div>
       </div>
+      <div v-if="shortId" class="details__row">
+        <div class="details__what">
+          <span class="details__label">{{ t('work.channelDetails.number') }}</span>
+          <span class="details__mono" :title="topic.id">#{{ shortId }}</span>
+        </div>
+        <BaseButton kind="ghost" size="sm" @click="emit('copy-link')">{{ t('work.room.menu.copyLink') }}</BaseButton>
+      </div>
+      <div class="details__row">
+        <div class="details__what">
+          <span class="details__label">{{ t('work.room.menu.usage') }}</span>
+          <TopicUsageSummary :loading="usageLoading" :topic-usage="topicUsage" :project-usage="projectUsage" />
+        </div>
+      </div>
+    </div>
+
+    <div v-else-if="tab === 'members'" role="tabpanel">
+      <TopicRoster
+        :topic-id="topic.id"
+        :project-id="topic.project_id"
+        :project-members="projectMembers"
+        :me="me"
+        :can-manage="canManage"
+        :can-invite="canInvite"
+        :joined="topic.joined === true"
+        :general="general"
+      />
     </div>
 
     <div v-else class="details__box" role="tabpanel">
       <div v-if="topic.joined && !archived" class="details__row">
         <div class="details__what">
           <span class="details__label">{{ t('work.channel.notify.title') }}</span>
+          <span class="t-meta c-muted" data-testid="details-notify-level">{{
+            notifyLevelName(level, mutedUntil)
+          }}</span>
         </div>
-        <ChannelNotifyMenu
-          :level="level"
-          :muted-until="mutedUntil"
-          @set="(lv: TopicNotifyLevel, until: string | null) => emit('notify', lv, until)"
-        />
+        <AdaptiveMenu :actions="notifyActions" :title="t('work.channel.notify.title')">
+          <template #activator="{ props: menuProps }">
+            <BaseButton v-bind="menuProps" kind="secondary" size="sm">{{ t('work.channelDetails.change') }}</BaseButton>
+          </template>
+        </AdaptiveMenu>
       </div>
       <div v-if="canManage && !archived" class="details__row details__row--top">
         <div class="details__what">
@@ -250,6 +293,12 @@ const canMakePublic = computed(
           @update:model-value="emit('speakers', speakers, Boolean($event))"
         />
       </div>
+      <div class="details__row">
+        <div class="details__what">
+          <span class="details__label">{{ t('work.channelDetails.environment') }}</span>
+          <TopicDefaultEnvironment :topic-id="topic.id" />
+        </div>
+      </div>
       <div v-if="canMakePrivate || canMakePublic" class="details__row">
         <div class="details__what">
           <span class="details__label">{{
@@ -281,20 +330,20 @@ const canMakePublic = computed(
           t('work.projectSettings.channels.archive')
         }}</BaseButton>
       </div>
-      <!-- 删除排在最后，和 ⋯ 菜单里同一个次序：不可撤销的那一件不该挤在随手点的中间。
-           「综合」是项目本身，删不得，也就不画这一行。 -->
+      <div v-if="topic.joined && !general" class="details__row">
+        <div class="details__what">
+          <span class="details__label">{{ t('work.channel.leave') }}</span>
+        </div>
+        <BaseButton kind="danger" size="sm" @click="emit('leave')">{{ t('work.channel.leave') }}</BaseButton>
+      </div>
+      <!-- Delete comes last: the one thing that cannot be undone does not sit among the everyday ones.
+           The general channel is the project itself and cannot be deleted. -->
       <div v-if="canManage && !general" class="details__row">
         <div class="details__what">
           <span class="details__label">{{ t('work.room.menu.delete') }}</span>
           <span class="t-meta c-muted">{{ t('work.channel.delete.body') }}</span>
         </div>
         <BaseButton kind="danger" size="sm" @click="emit('delete')">{{ t('work.room.menu.delete') }}</BaseButton>
-      </div>
-      <div v-if="topic.joined && !general" class="details__row">
-        <div class="details__what">
-          <span class="details__label">{{ t('work.channel.leave') }}</span>
-        </div>
-        <BaseButton kind="danger" size="sm" @click="emit('leave')">{{ t('work.channel.leave') }}</BaseButton>
       </div>
     </div>
 
@@ -372,6 +421,10 @@ const canMakePublic = computed(
 .details__label {
   font-weight: 600;
   color: var(--ink);
+}
+.details__mono {
+  font-family: var(--font-mono);
+  font-size: 13px;
 }
 .details__row--top {
   align-items: flex-start;

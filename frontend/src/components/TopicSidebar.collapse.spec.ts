@@ -145,7 +145,8 @@ beforeAll(() => {
 describe('左侧话题列表：房间下面那些活的折叠', () => {
   beforeEach(() => localStorage.clear())
 
-  it.each([true, false])('频道菜单不因 can_manage=%s 恢复归档入口', async (allowed) => {
+  // 归档、删除在频道详情的「设置」里：侧栏右键列的那一份里没有，管不管这个频道都一样。
+  it.each([true, false])('频道菜单不因 can_manage=%s 多出归档', async (allowed) => {
     const active = { ...topic('managed', 'root'), can_manage: allowed, joined: true }
     const { container, baseElement } = mount({ topics: [topic('root', null, 'root'), active] })
     await fireEvent.click(rowFor(container, 'managed').querySelector('[title="更多操作"]') as HTMLElement)
@@ -154,8 +155,11 @@ describe('左侧话题列表：房间下面那些活的折叠', () => {
         item.textContent?.trim()
       )
       expect(actions).toEqual([
+        expect.stringContaining(t('work.channel.notify.title')),
+        t('work.room.menu.copyLink'),
         t('work.room.menu.newTask'),
         t('work.room.menu.allTasks'),
+        t('work.channelDetails.title'),
         t('work.room.menu.rename'),
         t('work.channel.leave'),
       ])

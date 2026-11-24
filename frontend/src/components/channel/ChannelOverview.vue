@@ -51,6 +51,8 @@ const props = defineProps<{
   files?: ConversationFile[]
   /** 这个频道的例行事务：名字和什么时候跑。 */
   routines?: { id: string; title: string; when: string }[]
+  /** 能不能在这个频道里新建任务（没归档）：未结束的任务那一段带一颗「+」。 */
+  canCreateTask?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -67,6 +69,7 @@ const emit = defineEmits<{
   (e: 'open-file', row: ConversationFile): void
   (e: 'open-routine', routineId: string): void
   (e: 'new-routine'): void
+  (e: 'new-task'): void
   /** 「全部 N 项」：打开那一块的列表。 */
   (e: 'show', key: 'threads' | 'files' | 'routines'): void
 }>()
@@ -337,7 +340,20 @@ async function save() {
     />
 
     <section v-if="running.length || !waitingOnMe.length" class="co-section" data-testid="channel-running">
-      <h3 class="co-title">{{ t('work.channel.overview.running', { count: lively.length }) }}</h3>
+      <div class="co-head">
+        <h3 class="co-title">{{ t('work.channel.overview.running', { count: lively.length }) }}</h3>
+        <BaseButton
+          v-if="canCreateTask"
+          kind="ghost"
+          size="sm"
+          icon="mdi-plus"
+          class="co-add"
+          :title="t('work.room.menu.newTask')"
+          :aria-label="t('work.room.menu.newTask')"
+          data-testid="channel-new-task"
+          @click="emit('new-task')"
+        />
+      </div>
       <p v-if="!running.length" class="t-meta c-faint">{{ t('work.channel.overview.noRunning') }}</p>
       <button
         v-for="task in lively"

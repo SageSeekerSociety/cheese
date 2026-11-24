@@ -67,6 +67,10 @@ vi.mock('@/api', async (importOriginal) => ({
   getTopicEnvironment: vi.fn(() => new Promise(() => {})),
   // 名册打开时读一份项目，看我能不能加人：这几条测试不看它。
   getProject: vi.fn(() => new Promise(() => {})),
+  // 频道详情打开时读的用量和项目角色：这几条测试不看它。
+  getTopicUsage: vi.fn(() => new Promise(() => {})),
+  getProjectUsage: vi.fn(() => new Promise(() => {})),
+  listProjectRoles: vi.fn(() => new Promise(() => {})),
   // 页面取一份采纳卡（对话栏那一条和「改动」页顶部共用）：这里没有卡。
   getAcceptCards: vi.fn(async () => ({ data: [], has_more: false })),
   // 频道概览里的任务：这里没有。
@@ -146,6 +150,8 @@ function setup() {
     openProject: vi.fn(),
     refreshTopics: vi.fn(),
     refreshUnread: vi.fn(),
+    levelOf: () => 'mentions',
+    mutedUntil: () => null,
   })
   pendingB.members = deferred()
   pendingB.proposals = deferred()
@@ -205,7 +211,7 @@ describe('switching topics', () => {
     const { router, view } = setup()
     await router.push('/projects/p1/topics/topic-a')
 
-    // Topic A is fully on screen, with its roster menu open.
+    // Topic A is fully on screen, with its roster open (the faces open the channel details on its members page).
     await waitFor(() => expect(view.baseElement.textContent).toContain('Topic A proposal'))
     await fireEvent.click(view.baseElement.querySelector('.members-mini')!)
     await waitFor(() => expect(view.baseElement.textContent).toContain('Old Roster Person'))

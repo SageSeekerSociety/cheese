@@ -32,6 +32,7 @@ import { useTopicPanelState } from './topicView/panel'
 import { useReviewChat } from './topicView/reviewChat'
 import { useSkillProposals } from './useSkillProposals'
 
+import { newTask } from '@/commands/topicActions'
 import HandInDialog from '@/components/accept/HandInDialog.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import ChannelOverview from '@/components/channel/ChannelOverview.vue'
@@ -1102,6 +1103,7 @@ void openPlace()
                   :can-create-thread="canOpenThread"
                   :files="roomFiles.rows.value"
                   :routines="channelOverview.routines.value"
+                  :can-create-task="selectedTopic.status !== 'archived'"
                   @unpin="channelOverview.unpin"
                   @edit-overview="
                     (id: string) => panelRef?.openDocument?.({ id, title: t('work.channel.overview.project') })
@@ -1116,6 +1118,7 @@ void openPlace()
                   @open-file="openOverviewFile"
                   @open-routine="openRoutine"
                   @new-routine="panelRef?.newRoutine?.()"
+                  @new-task="newTask(selectedTopic, router)"
                   @show="showList"
                 />
               </template>
