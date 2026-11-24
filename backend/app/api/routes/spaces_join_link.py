@@ -4,7 +4,9 @@ Two doors, the same shape a team's link has (``routes/teams.py``):
 
 * ``/spaces/{spaceId}/join-link`` and ``/spaces/{spaceId}/join-requests`` are
   the owner's and admins' side: read the link, reset it, switch approval on or
-  off, and answer the requests waiting while approval is on.
+  off, and answer the requests waiting while approval is on. A platform admin
+  holds the link too, through oversight alone: they hand a space its way in
+  when its people ask (a team's link stays its own people's, ``routes/teams.py``).
 * ``/space-invites/{token}`` is the holder's side: read which space the link
   names and where the reader stands, then join it (or ask to). It sits outside
   ``/spaces/{spaceId}`` because the holder is not yet anyone the space shows
@@ -103,12 +105,7 @@ def _join_link_payload(space: _LinkedSpace) -> dict:
 async def get_space_join_link(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     service: SpaceService = Depends(get_space_service),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    db=Depends(get_db),
 ) -> dict:
-    await SPACE.refuse_way_in(
-        db, space_id, auth_user.user_id, SpacePermission.manage_members
-    )
     return _join_link_payload(await service.join_link(space_id=space_id))
 
 
@@ -122,12 +119,7 @@ async def update_space_join_link(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     payload: JoinLinkSettings,
     service: SpaceService = Depends(get_space_service),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    db=Depends(get_db),
 ) -> dict:
-    await SPACE.refuse_way_in(
-        db, space_id, auth_user.user_id, SpacePermission.manage_members
-    )
     space = await service.join_link(space_id=space_id, approval=payload.approval)
     return _join_link_payload(space)
 
@@ -141,12 +133,7 @@ async def update_space_join_link(
 async def reset_space_join_link(
     space_id: Annotated[int, Path(ge=1, alias="spaceId")],
     service: SpaceService = Depends(get_space_service),
-    auth_user: AuthUserInfo = Depends(require_auth_user),
-    db=Depends(get_db),
 ) -> dict:
-    await SPACE.refuse_way_in(
-        db, space_id, auth_user.user_id, SpacePermission.manage_members
-    )
     return _join_link_payload(await service.join_link(space_id=space_id, reset=True))
 
 
@@ -281,6 +268,21 @@ async def join_space_by_join_link(
     auth_user: AuthUserInfo = Depends(require_auth_user),
     db=Depends(get_db),
 ) -> dict:
+    # A platform admin holds the link to pass it on. With approval off,
+    # opening it seats them at once — through oversight, which never seats the
+    # overseer. With approval on they only ask, and the owner or an admin
+    # answers (never they themselves, ``approve_space_join_request``).
+    linked = await service.space_for_join_token(token)
+    # Someone already in (or already asking) is only told where they stand.
+    standing = await service.join_status(space_id=linked.id, user_id=auth_user.user_id)
+    if not linked.join_approval and standing == "none":
+        await SPACE.refuse_own_seat(
+            db,
+            linked.id,
+            auth_user.user_id,
+            SpacePermission.manage_members,
+            seats=auth_user.user_id,
+        )
     space, join_status = await service.join_by_link(
         token=token, user_id=auth_user.user_id
     )

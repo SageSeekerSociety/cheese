@@ -8,6 +8,7 @@ from app.auth.core import AuthUserInfo
 from app.core.errors import (
     NotFoundError,
 )
+from app.core.policy import oversees
 from app.db.session import get_db
 from app.domain.materials.services import MaterialService
 from app.domain.space.analytics_service import SpaceAnalyticsService
@@ -47,6 +48,9 @@ async def require_reviewed_space(
         f"/spaces/{space_id}"
     ):
         if await SpaceReviewService(db).is_owner(space_id, user.user_id):
+            return
+        # A platform admin reads it too, to be sent on to reviewing it.
+        if await oversees(db, user.user_id):
             return
     raise NotFoundError("Space not found")
 

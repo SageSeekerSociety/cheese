@@ -45,6 +45,7 @@ vi.mock('vue-i18n', async () => {
 
 import Members from './Members.vue'
 
+import { ApiError } from '@/api/http'
 import DialogContainer from '@/components/common/DialogContainer.vue'
 import { setLocale } from '@/i18n'
 import { dialogs } from '@/plugins/dialog'
@@ -365,6 +366,20 @@ describe('空间成员页', () => {
     await waitFor(() => expect(document.body.textContent).toContain('秦老师'))
     // 昵称和账号是同一串：副行只写一次，不写成「(qinmo) · qinmo」。
     expect(document.body.textContent).not.toContain('(qinmo) · qinmo')
+  })
+
+  it('加入链接被拒时照服务端说的原因写，不写笼统的「操作失败」', async () => {
+    getJoinLink.mockRejectedValueOnce(new ApiError(404, '找不到这个空间（HTTP 404）'))
+    await mount(OWNER.id)
+    await waitFor(() => expect(document.body.textContent).toContain('找不到这个空间（HTTP 404）'))
+    expect(document.body.textContent).not.toContain('spaces.members.joinLink.failed')
+  })
+
+  it('加入链接因网络或服务端出错失败时，写笼统的那一句', async () => {
+    getJoinLink.mockRejectedValueOnce(new ApiError(502, 'HTTP 502 for /join-link'))
+    await mount(OWNER.id)
+    await waitFor(() => expect(document.body.textContent).toContain('spaces.members.joinLink.failed'))
+    expect(document.body.textContent).not.toContain('HTTP 502')
   })
 
   it('读失败时成员那一块换成原因和一条重试，不再假装只有管理员', async () => {

@@ -109,6 +109,7 @@ async function mount(userId: number, extra: Record<string, unknown> = {}, child:
     routes: [
       { path: '/spaces/:spaceId', component: Detail, children: [{ path: '', component: child }] },
       { path: '/space-applications/:spaceId', name: 'HomeSpaceApplication', component: Blank },
+      { path: '/admin/spaces', name: 'AdminSpaces', component: Blank },
     ],
   })
   await router.push(`/spaces/${SPACE_ID}`)
@@ -167,6 +168,20 @@ describe('所有者打开一块还没过审的空间', () => {
     expect(listCategories).not.toHaveBeenCalled()
     expect(taskList).not.toHaveBeenCalled()
     expect(toastError).not.toHaveBeenCalled()
+  })
+
+  it('平台管理员（不在名单里）打开一块待审的空间：换到「空间申请」去审它', async () => {
+    setLocale('zh-CN')
+    const OVERSEER_ID = 77
+    const { view, router } = await mount(
+      OVERSEER_ID,
+      { reviewStatus: 'PENDING', viewerPermissions: ['view', 'edit_settings', 'manage_members'] },
+      Page
+    )
+
+    await waitFor(() => expect(router.currentRoute.value.name).toBe('AdminSpaces'))
+    expect(view.queryByText('题目列表')).toBeNull()
+    expect(listCategories).not.toHaveBeenCalled()
   })
 
   it('过审了：照常挂页面、读分类', async () => {
