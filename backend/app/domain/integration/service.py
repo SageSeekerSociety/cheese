@@ -152,6 +152,19 @@ async def feishu_settings_for(
     return feishu_settings(row, app, user_only=not personal)
 
 
+def feishu_connection_view(row: Integration | None) -> dict | None:
+    """A person's own connection through one team's app, as far as the team's
+    page and the connections overview need it: which row, and whether they have
+    authorized it. ``None``: not connected."""
+    if row is None:
+        return None
+    return {
+        "id": str(row.id),
+        "status": row.status,
+        "user_authorized": bool(unseal(row).get("refresh_token")),
+    }
+
+
 def team_app_view(row: TeamFeishuApp | None) -> dict:
     """A team's Feishu app as its settings page sees it. Never the secret."""
     return {
@@ -204,10 +217,21 @@ class TeamFeishuAppService:
             await self._session.delete(row)
             await self._session.flush()
 
+    async def connection_for(self, user_id: int, team_id: int) -> Integration | None:
+        """The person's own connection through this team's app, if they made one."""
+        return await self._session.scalar(
+            select(Integration).where(
+                Integration.owner_user_id == user_id,
+                Integration.provider == "feishu",
+                Integration.config["team_id"].as_integer() == team_id,
+            )
+        )
+
     async def choices_for(self, user_id: int) -> list[dict]:
         """Every team the person is on, their personal team first, each with its
-        app if it has one and whether this person may set it — what 「连接飞书」
-        offers, and where to go when nothing is set yet."""
+        app if it has one, whether this person may set it, and their own
+        connection through it — the overview on 「我的连接」, each team linking
+        to its own 「飞书应用」 section, where connecting happens."""
         teams = team_service(self._session)
         personal = await teams.ensure_personal_team(user_id)
         mine = list(await teams.get_teams_of_user(user_id))
@@ -238,6 +262,9 @@ class TeamFeishuAppService:
                     "app": {"app_id": app.app_id, "domain": app.domain}
                     if app
                     else None,
+                    "connection": feishu_connection_view(
+                        await self.connection_for(user_id, team.id)
+                    ),
                 }
             )
         return out

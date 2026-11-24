@@ -21,7 +21,7 @@ import {
   sendMailDraft,
   updateIntegration,
 } from '../api'
-import { claimFeishuHandoff, connectFeishu, feishuAuthorizeUrl, feishuChoices } from '../api/feishu'
+import { claimFeishuHandoff, feishuAuthorizeUrl, feishuChoices } from '../api/feishu'
 
 import MyConnectionsViewView from './MyConnectionsViewView.vue'
 
@@ -37,8 +37,8 @@ const router = useRouter()
 const integrations = ref<Integration[]>([])
 const drafts = ref<MailDraft[]>([])
 const projects = ref<Project[]>([])
-/** 本人所在的团队和它们设的飞书应用（「连接飞书」那张选单）。读不到就是空的：选单说
- *  还没有可用的应用。 */
+/** 本人所在的团队、它们设的飞书应用和本人通过它连没连（「连接飞书」那一格，每个团队指到
+ *  它自己的「飞书应用」那一栏，连接在那里做）。读不到就是空的。 */
 const feishuTeams = ref<FeishuTeamChoice[]>([])
 const loading = ref(false)
 const error = ref('')
@@ -122,21 +122,6 @@ async function authorize(row: Integration) {
   if (out) goAuthorize(out.url)
 }
 
-/**
- * 「连接飞书」：两跳一步。
- *
- * 先要自己那一行（`POST /me/integrations/feishu`，记的是选了哪个团队的应用），再拿它的授权
- * 地址跳去飞书 —— 回调要靠行 id 找回它是谁（见 `feishu_callback` 的 `state`），所以顺序不能
- * 反过来。授权是本人自己的飞书账号。
- */
-async function connectFeishuAccount(teamId: number) {
-  const row = await act(`feishu:${teamId}`, () => connectFeishu(teamId))
-  if (!row) return
-  if (integrations.value.some((x) => x.id === row.id)) replace(row)
-  else integrations.value = [...integrations.value, row]
-  await authorize(row)
-}
-
 async function remove(row: Integration) {
   const out = await act(`${row.id}:delete`, () => deleteIntegration(row.id))
   if (out) integrations.value = integrations.value.filter((x) => x.id !== row.id)
@@ -209,7 +194,6 @@ onMounted(async () => {
     @refresh="load"
     @discard="discard"
     @send="send"
-    @connect-feishu="connectFeishuAccount"
     @set-grants="setGrants"
     @recheck="recheck"
     @authorize="authorize"

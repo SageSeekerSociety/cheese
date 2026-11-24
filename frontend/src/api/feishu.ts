@@ -13,6 +13,13 @@ import { request } from '../api'
 
 /* ---- 成员侧 ---- */
 
+/** 本人通过某个团队的应用连的飞书：哪一行，授权完了没有。 */
+export interface FeishuConnection {
+  id: string
+  status: 'ok' | 'auth_failed' | 'unreachable' | 'error'
+  user_authorized: boolean
+}
+
 /** 本人所在的一个团队，和它设的飞书应用（没设是 `null`）。 */
 export interface FeishuTeamChoice {
   team_id: number
@@ -23,6 +30,8 @@ export interface FeishuTeamChoice {
   /** 本人能不能去设这个团队的应用：个人团队的主人，或团队管理员。 */
   can_manage: boolean
   app: { app_id: string; domain: string } | null
+  /** 本人通过这个团队的应用连的飞书；没连是 `null`。 */
+  connection: FeishuConnection | null
 }
 
 export interface FeishuChoices {
@@ -31,13 +40,13 @@ export interface FeishuChoices {
   redirect_uri: string
 }
 
-/** 「连接飞书」能用哪些应用。 */
+/** 「我的连接」里飞书那一格：本人所在的每个团队、它的应用和本人连没连，各指到团队的「飞书应用」。 */
 export function feishuChoices(): Promise<FeishuChoices> {
   return request<FeishuChoices>('/me/integrations/feishu')
 }
 
 /**
- * 「连接飞书」选好一个团队的应用之后的第一步：先有自己那一行，再跳去飞书授权页。同一个团队
+ * 团队「飞书应用」那一栏里「连接我的飞书账号」的第一步：先有自己那一行，再跳去飞书授权页。同一个团队
  * 再选一次返回同一行，所以「连接过一半又回来了」不会攒出第二行。
  */
 export function connectFeishu(teamId: number): Promise<Integration> {
@@ -65,7 +74,7 @@ export function claimFeishuHandoff(
   })
 }
 
-/* ---- 团队设置（`/teams/{id}/feishu-app`），能改团队设置的人用 ---- */
+/* ---- 团队设置（`/teams/{id}/feishu-app`）：成员都读得到，能改团队设置的人能写 ---- */
 
 export interface TeamFeishuApp {
   configured: boolean
@@ -75,6 +84,10 @@ export interface TeamFeishuApp {
   updated_at: string | null
   /** 要填进应用「重定向 URL」的授权回调地址。 */
   redirect_uri: string
+  /** 读的人能不能设（只有读的时候给）。 */
+  can_manage?: boolean
+  /** 读的人自己通过这个应用连的飞书（只有读的时候给）。 */
+  connection?: FeishuConnection | null
 }
 
 export function getTeamFeishuApp(teamId: number): Promise<TeamFeishuApp> {

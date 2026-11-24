@@ -34,6 +34,7 @@
   "lede": "Connect your own mailbox or Feishu and choose which projects' AI teammates may use it. They read mail, write drafts and edit Feishu docs as you; mail is sent only after you confirm it",
   "loadFailed": "Couldn't load connections",
   "mail": "Mail",
+  "feishu": "Feishu",
   "none": "None",
   "notes": " ({list})",
   "pendingEmpty": "No mail waiting to send",

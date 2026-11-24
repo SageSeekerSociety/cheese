@@ -2,16 +2,13 @@
   "member": {
     "connect": "连接飞书",
     "notConnected": "还没连接飞书",
-    "pick": {
-      "title": "连接飞书",
-      "lede": "选一个团队的飞书应用，用你自己的飞书账号授权。",
+    "teams": {
+      "lede": "飞书应用设在团队上，连接在各团队的「飞书应用」里做，用的是你自己的飞书账号。",
+      "none": "你所在的团队都还没设置飞书应用。公司的团队由管理员设公司的企业自建应用；自己用就在个人设置里设在个人团队上。",
       "personal": "个人",
-      "use": "用这个连接",
-      "none": "你所在的团队都还没设置飞书应用。",
-      "noneHint": "飞书应用设在团队上：公司的团队设公司的企业自建应用；自己用就设在个人团队上。",
-      "setUpPersonal": "在个人设置里设置",
-      "setUpTeam": "去「{team}」的设置",
-      "unset": "还没设置"
+      "unset": "还没设置飞书应用",
+      "open": "打开",
+      "setUp": "去设置"
     }
   },
   "team": {
@@ -19,9 +16,7 @@
     "lede": "团队成员连接飞书时用的企业自建应用。每个人仍然用自己的飞书账号授权。",
     "ledePersonal": "你自己连接飞书时用的企业自建应用：建在你公司的飞书里，用你自己的飞书账号授权。",
     "appTitle": "应用",
-    "configured": "已设置 · {appId} · {domain}",
     "notConfigured": "还没设置",
-    "adminOnly": "只有团队管理员能设置飞书应用。",
     "feishu": "飞书",
     "domain": "版本",
     "appId": "App ID",
@@ -45,6 +40,22 @@
     "redirectLabel": "重定向 URL",
     "copy": "复制",
     "copied": "已复制",
-    "reason": "用于在 Cheese（okcheese.com）上以使用者本人的身份搜索和读写他自己的飞书文档。只申请用户身份权限，授权由使用者本人发起。"
+    "reason": "用于在 Cheese（okcheese.com）上以使用者本人的身份搜索和读写他自己的飞书文档。只申请用户身份权限，授权由使用者本人发起。",
+    "uses": "这个团队用的飞书应用：{appId}（{domain}）",
+    "usesPersonal": "你用的飞书应用：{appId}（{domain}）",
+    "adminSets": "团队管理员在这里设置之后，你就能连接自己的飞书账号。",
+    "mineTitle": "我的飞书账号",
+    "mine": {
+      "none": "还没连接",
+      "pending": "还没授权完",
+      "lapsed": "授权已失效，请重新连接",
+      "connected": "已连接"
+    },
+    "connect": "连接我的飞书账号",
+    "reconnect": "重新连接",
+    "disconnect": "断开",
+    "disconnectTitle": "断开你的飞书账号？",
+    "disconnectBody": "AI 队友不能再用你的飞书账号读写文档。之后可以在这里重新连接。",
+    "connectFailed": "连接飞书失败"
   }
 }

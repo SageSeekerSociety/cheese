@@ -2,16 +2,13 @@
   "member": {
     "connect": "Connect Feishu",
     "notConnected": "Not connected to Feishu yet",
-    "pick": {
-      "title": "Connect Feishu",
-      "lede": "Pick a team's Feishu app and authorize with your own Feishu account.",
+    "teams": {
+      "lede": "A Feishu app is set on a team. You connect in each team's Feishu app section, with your own Feishu account.",
+      "none": "None of your teams has a Feishu app yet. A company's team admin sets the company's custom app; on your own, set one on your personal team in personal settings.",
       "personal": "Personal",
-      "use": "Connect with this",
-      "none": "None of your teams has a Feishu app set up yet.",
-      "noneHint": "A Feishu app is set on a team: a company's team sets its company's custom app; on your own, set one on your personal team.",
-      "setUpPersonal": "Set one up in personal settings",
-      "setUpTeam": "Go to {team}'s settings",
-      "unset": "Not set up"
+      "unset": "No Feishu app set up",
+      "open": "Open",
+      "setUp": "Set up"
     }
   },
   "team": {
@@ -19,9 +16,7 @@
     "lede": "The custom app the team's members connect Feishu with. Each person still authorizes with their own Feishu account.",
     "ledePersonal": "The custom app you connect Feishu with: built in your company's Feishu, authorized with your own Feishu account.",
     "appTitle": "App",
-    "configured": "Set up · {appId} · {domain}",
     "notConfigured": "Not set up",
-    "adminOnly": "Only a team admin can set the Feishu app.",
     "feishu": "Feishu",
     "domain": "Domain",
     "appId": "App ID",
@@ -45,6 +40,22 @@
     "redirectLabel": "Redirect URL",
     "copy": "Copy",
     "copied": "Copied",
-    "reason": "To search, read and edit a person's own Feishu documents as themselves on Cheese (okcheese.com). Only user-identity permissions are requested, and each person starts their own authorization."
+    "reason": "To search, read and edit a person's own Feishu documents as themselves on Cheese (okcheese.com). Only user-identity permissions are requested, and each person starts their own authorization.",
+    "uses": "This team's Feishu app: {appId} ({domain})",
+    "usesPersonal": "Your Feishu app: {appId} ({domain})",
+    "adminSets": "Once a team admin sets it here, you can connect your own Feishu account.",
+    "mineTitle": "My Feishu account",
+    "mine": {
+      "none": "Not connected",
+      "pending": "Authorization not finished",
+      "lapsed": "Authorization expired. Connect again",
+      "connected": "Connected"
+    },
+    "connect": "Connect my Feishu account",
+    "reconnect": "Connect again",
+    "disconnect": "Disconnect",
+    "disconnectTitle": "Disconnect your Feishu account?",
+    "disconnectBody": "AI teammates can no longer read or write documents with your Feishu account. You can connect again here later.",
+    "connectFailed": "Could not connect Feishu"
   }
 }

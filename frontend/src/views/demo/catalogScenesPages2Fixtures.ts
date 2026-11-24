@@ -67,9 +67,9 @@ export const INTEGRATIONS: Integration[] = [
   }),
 ]
 
-/** 「连接飞书」那张选单：个人团队还没设应用（本人能设），一个团队设了。 */
+/** 「连接飞书」那一格：个人团队还没设应用（本人能设），一个团队设了、本人已连接。 */
 export const FEISHU_TEAMS: FeishuTeamChoice[] = [
-  { team_id: 11, team_name: '个人', team_handle: '', personal: true, can_manage: true, app: null },
+  { team_id: 11, team_name: '个人', team_handle: '', personal: true, can_manage: true, app: null, connection: null },
   {
     team_id: 12,
     team_name: '课程小队',
@@ -77,6 +77,7 @@ export const FEISHU_TEAMS: FeishuTeamChoice[] = [
     personal: false,
     can_manage: false,
     app: { app_id: 'cli_a1b2c3d4e5', domain: 'feishu' },
+    connection: { id: 'i-feishu-1', status: 'ok', user_authorized: true },
   },
 ]
 

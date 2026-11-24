@@ -630,15 +630,59 @@ def test_only_who_may_change_team_settings_sets_its_feishu_app(client, feishu_st
 
     refused = client.put(f"/teams/{tid}/feishu-app", json=APP, headers=member)
     assert refused.status_code == 403, refused.text
-    assert client.get(f"/teams/{tid}/feishu-app", headers=member).status_code == 403
     assert client.delete(f"/teams/{tid}/feishu-app", headers=member).status_code == 403
 
     saved = _set_app(client, admin, tid)
     assert saved["configured"] is True and saved["app_id"] == "cli_own"
-    # The member sees the app to connect with, and that they cannot change it.
+    # The member reads which app the team uses, and that they cannot change it.
+    read = client.get(f"/teams/{tid}/feishu-app", headers=member)
+    assert read.status_code == 200, read.text
+    assert read.json()["data"]["app_id"] == "cli_own"
+    assert read.json()["data"]["can_manage"] is False
+    assert APP_SECRET not in read.text
+    assert (
+        client.get(f"/teams/{tid}/feishu-app", headers=admin).json()["data"][
+            "can_manage"
+        ]
+        is True
+    )
     (team,) = [t for t in _choices(client, member) if t["team_id"] == tid]
     assert team["app"] == {"app_id": "cli_own", "domain": "feishu"}
     assert team["can_manage"] is False
+    # Someone not on the team reads nothing of it.
+    outsider = {"Authorization": f"Bearer {seed_user(client, 'fs_outsider')}"}
+    assert client.get(f"/teams/{tid}/feishu-app", headers=outsider).status_code in (
+        403,
+        404,
+    )
+
+
+def test_a_member_connects_from_the_team_section(client, feishu_stub):
+    """连接在团队的「飞书应用」那一栏里做：成员读到自己还没连，连上、授权之后再读，
+    那一栏和「我的连接」的总览都说已连接；断开之后又是没连。"""
+    person, _project, _room = _setup(client)
+    tid = _team(client, owner="fs_lead6", members=(OWNER,))
+    lead = {"Authorization": f"Bearer {seed_user(client, 'fs_lead6')}"}
+    _set_app(client, lead, tid)
+
+    def mine():
+        return client.get(f"/teams/{tid}/feishu-app", headers=person).json()["data"]
+
+    assert mine()["connection"] is None
+    row = _connect_feishu(client, person, tid)
+    assert mine()["connection"] == {
+        "id": row["id"],
+        "status": "ok",
+        "user_authorized": False,
+    }
+    _authorize(client, person, row["id"])
+    assert mine()["connection"]["user_authorized"] is True
+    (team,) = [t for t in _choices(client, person) if t["team_id"] == tid]
+    assert team["connection"]["user_authorized"] is True
+
+    gone = client.delete(f"/me/integrations/{row['id']}", headers=person)
+    assert gone.status_code == 200, gone.text
+    assert mine()["connection"] is None
 
 
 def test_the_app_secret_never_comes_back(client, feishu_stub):

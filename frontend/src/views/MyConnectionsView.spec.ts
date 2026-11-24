@@ -1,13 +1,9 @@
 /**
- * 「我的连接」上的飞书那一半：一颗「连接飞书」，打开一张选单 —— 本人所在团队设的飞书应用，
- * 选一个就跳去飞书授权；一个都没设时，指到能设的地方。
+ * 「我的连接」上的飞书那一半：一格「连接飞书」，列出本人所在的团队（个人团队在前），各说
+ * 团队的应用和本人连没连，并指到那个团队的「飞书应用」—— 连接在那里做。
  *
- * 这一份钉住几件事，每一件都是「坏了也不会有人立刻发现」的那种：
- *
- * 1. **选一个团队的应用真的把人送到飞书**：先建自己那一行（`POST /me/integrations/feishu`，
- *    带团队 id），再拿那一行的授权地址跳过去。
- * 2. **一个都没设时不是一张空白**：说清楚，并指到个人设置里个人团队的那一栏。
- * 3. **已经连上的飞书那一行有自己的「授权个人账号」**：没授权完或过期了从那里再走一次。
+ * 钉住：列表的顺序、状态和去处；一个都没设时说清楚并指到个人设置；读不到也不掀掉整页；
+ * 已经连上的飞书那一行留着自己的「授权个人账号」。
  */
 import type { Component } from 'vue'
 
@@ -15,14 +11,13 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, fireEvent, render, screen } from '@testing-library/vue'
+import { cleanup, render, screen } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listMyIntegrations = vi.fn()
 const listMyMailDrafts = vi.fn()
 const listProjects = vi.fn()
 const feishuChoices = vi.fn()
-const connectFeishu = vi.fn()
 const feishuAuthorizeUrl = vi.fn()
 const claimFeishuHandoff = vi.fn()
 
@@ -37,7 +32,6 @@ vi.mock('../api', async () => ({
 vi.mock('../api/feishu', async () => ({
   ...(await vi.importActual<typeof import('../api/feishu')>('../api/feishu')),
   feishuChoices: () => feishuChoices(),
-  connectFeishu: (teamId: unknown) => connectFeishu(teamId),
   feishuAuthorizeUrl: (id: string) => feishuAuthorizeUrl(id),
   claimFeishuHandoff: (integration: string, handoff: string) => claimFeishuHandoff(integration, handoff),
 }))
@@ -76,7 +70,15 @@ const FEISHU_ROW = {
   last_checked_at: null,
   user_authorized: false,
 }
-const PERSONAL = { team_id: 11, team_name: '个人', team_handle: '', personal: true, can_manage: true, app: null }
+const PERSONAL = {
+  team_id: 11,
+  team_name: '个人',
+  team_handle: '',
+  personal: true,
+  can_manage: true,
+  app: null,
+  connection: null,
+}
 const TEAM = {
   team_id: 12,
   team_name: '课程小队',
@@ -84,6 +86,7 @@ const TEAM = {
   personal: false,
   can_manage: false,
   app: { app_id: 'cli_team', domain: 'feishu' },
+  connection: null,
 }
 
 async function mount(url = '/') {
@@ -128,7 +131,6 @@ beforeEach(() => {
   listMyMailDrafts.mockReset().mockResolvedValue({ data: [] })
   listProjects.mockReset().mockResolvedValue({ data: [] })
   feishuChoices.mockReset().mockResolvedValue({ teams: [PERSONAL, TEAM], redirect_uri: 'r' })
-  connectFeishu.mockReset()
   feishuAuthorizeUrl.mockReset()
   sonner.success.mockReset()
   sonner.error.mockReset()
@@ -136,29 +138,30 @@ beforeEach(() => {
 
 afterEach(cleanup)
 
-describe('「连接飞书」', () => {
-  it('列出团队设的应用，选一个：先建自己那一行，再去飞书的授权页', async () => {
-    connectFeishu.mockResolvedValue(FEISHU_ROW)
-    feishuAuthorizeUrl.mockResolvedValue({ url: 'https://open.feishu.cn/authorize?team=1', redirect_uri: 'r' })
+describe('「连接飞书」那一格', () => {
+  it('列出本人所在的团队，个人团队在前，各说应用和本人连没连，并指到那个团队的「飞书应用」', async () => {
+    feishuChoices.mockResolvedValue({
+      teams: [PERSONAL, { ...TEAM, connection: { id: 'feishu-own', status: 'ok', user_authorized: true } }],
+      redirect_uri: 'r',
+    })
     await mount()
 
-    await fireEvent.click(await screen.findByRole('button', { name: '连接飞书' }))
-    expect(await screen.findByText('cli_team · feishu')).toBeTruthy()
-    await fireEvent.click(screen.getByRole('button', { name: '用这个连接' }))
-
-    await vi.waitFor(() => expect(navigatedTo).toBe('https://open.feishu.cn/authorize?team=1'))
-    expect(connectFeishu).toHaveBeenCalledWith(12)
-    expect(feishuAuthorizeUrl).toHaveBeenCalledWith('feishu-own')
+    const rows = await screen.findAllByText(/^(个人|课程小队)$/)
+    expect(rows.map((r) => r.textContent?.trim())).toEqual(['个人', '课程小队'])
+    expect(screen.getByText('cli_team · 已连接')).toBeTruthy()
+    expect(screen.getByText('还没设置飞书应用')).toBeTruthy()
+    // 连接在团队那一栏里做：这里只有去那里的链接，没有一张选单。
+    expect((screen.getByText('打开') as HTMLAnchorElement).getAttribute('href')).toBe('/teams/course-team/feishu')
+    expect((screen.getByText('去设置') as HTMLAnchorElement).getAttribute('href')).toBe('/settings/feishu')
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('一个都没设时说清楚，并指到个人设置里去设', async () => {
+  it('一个都没设时说清楚，个人那一行指到个人设置', async () => {
     feishuChoices.mockResolvedValue({ teams: [PERSONAL], redirect_uri: 'r' })
     await mount()
 
-    await fireEvent.click(await screen.findByRole('button', { name: '连接飞书' }))
-    expect(await screen.findByText('你所在的团队都还没设置飞书应用。')).toBeTruthy()
-    expect(await screen.findByText('在个人设置里设置')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: '用这个连接' })).toBeNull()
+    expect(((await screen.findByText('去设置')) as HTMLAnchorElement).getAttribute('href')).toBe('/settings/feishu')
+    expect(screen.getByText(/你所在的团队都还没设置飞书应用/)).toBeTruthy()
   })
 
   it('问不到团队的应用也不把整页连接一起掀掉', async () => {
@@ -167,19 +170,6 @@ describe('「连接飞书」', () => {
     await mount()
 
     expect(await screen.findByText('还没连接飞书')).toBeTruthy()
-  })
-
-  it('问不到回调地址时表单上说出来，并能再问一次', async () => {
-    feishuSetup.mockRejectedValueOnce(new Error('网络断了'))
-    await mount()
-
-    await fireEvent.click(await screen.findByRole('button', { name: '连接飞书' }))
-    expect(await screen.findByText('没能取到重定向 URL（网络断了）')).toBeTruthy()
-    expect(screen.queryByDisplayValue(REDIRECT)).toBeNull()
-
-    await fireEvent.click(screen.getByRole('button', { name: '重试' }))
-    expect(await screen.findByDisplayValue(REDIRECT)).toBeTruthy()
-    expect(screen.queryByText('没能取到重定向 URL（网络断了）')).toBeNull()
   })
 })
 
@@ -190,18 +180,6 @@ describe('已经有的连接', () => {
 
     expect(await screen.findByText('还没连接飞书')).toBeTruthy()
     expect(screen.getAllByText('授权个人账号（用于搜索）')).toHaveLength(1)
-  })
-
-  it('两家公司的飞书应用各成一行，列表和删除确认都说得出是哪一个', async () => {
-    const other = { ...FEISHU_ROW, id: 'feishu-other', label: 'Lark', config: { app_id: 'cli_other', domain: 'lark' } }
-    listMyIntegrations.mockResolvedValue({ data: [FEISHU_ROW, other] })
-    await mount()
-
-    expect(await screen.findByText('飞书 · cli_own')).toBeTruthy()
-    expect(screen.getByText('Lark · cli_other')).toBeTruthy()
-
-    await fireEvent.click(screen.getAllByRole('button', { name: '删除' })[1]!)
-    expect(await screen.findByText('删除「Lark · cli_other」')).toBeTruthy()
   })
 })
 

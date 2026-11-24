@@ -40,8 +40,6 @@ const emit = defineEmits<{
   refresh: []
   discard: [draft: MailDraft]
   send: [draft: MailDraft]
-  /** 用这个团队的飞书应用连接：页面建好那一行就跳去飞书授权。 */
-  'connect-feishu': [teamId: number]
   'set-grants': [row: Integration, grants: string[]]
   recheck: [row: Integration]
   authorize: [row: Integration]
@@ -155,12 +153,19 @@ function applyPreset(title: string) {
   })
 }
 
-const picking = ref(false)
-const feishuApps = computed(() => props.feishuTeams.filter((team) => team.app))
-const feishuSetUp = computed(() => props.feishuTeams.filter((team) => !team.app && team.can_manage))
-const teamLabel = (team: FeishuTeamChoice) => (team.personal ? t('integrations.member.pick.personal') : team.team_name)
+const anyApp = computed(() => props.feishuTeams.some((team) => team.app))
+const teamLabel = (team: FeishuTeamChoice) => (team.personal ? t('integrations.member.teams.personal') : team.team_name)
+/** 这个团队的「飞书应用」那一栏：个人团队的在个人设置里。连接就在那里做。 */
 const settingsOf = (team: FeishuTeamChoice) =>
   team.personal ? { name: 'UserSettingsFeishu' } : { name: 'TeamsDetailFeishu', params: { handle: team.team_handle } }
+/** 本人在这个团队的应用上连到哪一步。 */
+function mineOf(team: FeishuTeamChoice): string {
+  if (!team.app) return t('integrations.member.teams.unset')
+  const c = team.connection
+  if (!c) return t('integrations.team.mine.none')
+  if (c.status === 'auth_failed') return t('integrations.team.mine.lapsed')
+  return c.user_authorized ? t('integrations.team.mine.connected') : t('integrations.team.mine.pending')
+}
 
 /** 表单上只填地址，账号名跟着它走（填了账号名的老表单才会不一样）；`preset` 是这一页
  *  自己的东西，服务端不认识它。拼好之后连结果一起交给页面，请求在那一半。 */
@@ -252,9 +257,6 @@ function save() {
           <BaseButton kind="secondary" size="sm" prepend-icon="mdi-email-plus-outline" @click="adding = true">
             {{ t('account.connections.addMail') }}
           </BaseButton>
-          <BaseButton kind="secondary" size="sm" prepend-icon="mdi-link-variant-plus" @click="picking = true">
-            {{ t('integrations.member.connect') }}
-          </BaseButton>
         </div>
       </div>
       <BaseEmptyState
@@ -314,6 +316,33 @@ function save() {
       </div>
     </section>
 
+    <!-- Connect Feishu: every team this person is on, personal first, with its app and
+         their own connection through it; connecting happens in that team's Feishu
+         section, which each row links to. -->
+    <section class="settings-card" :aria-label="t('integrations.member.connect')" data-feishu-teams>
+      <div class="settings-card__title">{{ t('integrations.member.connect') }}</div>
+      <p class="settings-card__desc">
+        {{ anyApp ? t('integrations.member.teams.lede') : t('integrations.member.teams.none') }}
+      </p>
+      <div v-for="team in feishuTeams" :key="team.team_id" class="conn-team" :data-team="team.team_id">
+        <div class="conn-team__id">
+          <div class="conn-row__name">{{ teamLabel(team) }}</div>
+          <div class="conn-row__sub">
+            {{ team.app ? `${team.app.app_id} · ${mineOf(team)}` : mineOf(team) }}
+          </div>
+        </div>
+        <NavLink :to="settingsOf(team)" class="conn-team__link">
+          {{
+            team.app
+              ? t('integrations.member.teams.open')
+              : team.can_manage
+                ? t('integrations.member.teams.setUp')
+                : t('integrations.member.teams.open')
+          }}
+        </NavLink>
+      </div>
+    </section>
+
     <ConfirmDialog
       :model-value="!!confirming"
       :title="t('account.connections.sendTitle', { subject: confirming?.subject ?? '' })"
@@ -343,52 +372,6 @@ function save() {
     >
       {{ t('account.connections.removeBody') }}
     </ConfirmDialog>
-
-    <!-- Connect Feishu: the Feishu apps of the teams this person is on; picking one
-         goes to Feishu's authorization page. With none set yet, where to set one. -->
-    <AdaptiveDialog
-      :model-value="picking"
-      :title="t('integrations.member.pick.title')"
-      :max-width="560"
-      @update:model-value="picking = false"
-    >
-      <template v-if="picking">
-        <template v-if="feishuApps.length">
-          <p class="t-body mb-3">{{ t('integrations.member.pick.lede') }}</p>
-          <div v-for="team in feishuApps" :key="team.team_id" class="conn-pick" :data-team="team.team_id">
-            <div class="conn-pick__id">
-              <div class="conn-row__name">{{ teamLabel(team) }}</div>
-              <div class="conn-row__sub">{{ team.app?.app_id }} · {{ team.app?.domain }}</div>
-            </div>
-            <BaseButton
-              kind="primary"
-              size="sm"
-              :loading="busy === `feishu:${team.team_id}`"
-              @click="emit('connect-feishu', team.team_id)"
-            >
-              {{ t('integrations.member.pick.use') }}
-            </BaseButton>
-          </div>
-        </template>
-        <template v-else>
-          <p class="t-body mb-1">{{ t('integrations.member.pick.none') }}</p>
-          <p class="t-body c-muted mb-3">{{ t('integrations.member.pick.noneHint') }}</p>
-        </template>
-        <div v-for="team in feishuSetUp" :key="team.team_id" class="conn-pick" :data-setup="team.team_id">
-          <div class="conn-pick__id">
-            <div class="conn-row__name">{{ teamLabel(team) }}</div>
-            <div class="conn-row__sub">{{ t('integrations.member.pick.unset') }}</div>
-          </div>
-          <NavLink :to="settingsOf(team)" class="conn-pick__link">
-            {{
-              team.personal
-                ? t('integrations.member.pick.setUpPersonal')
-                : t('integrations.member.pick.setUpTeam', { team: team.team_name })
-            }}
-          </NavLink>
-        </div>
-      </template>
-    </AdaptiveDialog>
 
     <!-- 一张长表单：桌面上是对话框，手机上是整页（保存在页头右边，不会被键盘盖住）。 -->
     <AdaptiveDialog
@@ -581,20 +564,20 @@ function save() {
   justify-content: flex-end;
 }
 
-.conn-pick {
+.conn-team {
   display: flex;
   gap: 12px;
   align-items: center;
-  padding: 10px 0;
+  padding: 12px 24px;
   border-top: 1px solid var(--line);
 }
 
-.conn-pick__id {
+.conn-team__id {
   flex: 1;
   min-width: 0;
 }
 
-.conn-pick__link {
+.conn-team__link {
   color: var(--accent-ink);
   font-size: 13px;
   white-space: nowrap;
@@ -611,6 +594,10 @@ function save() {
 @media (max-width: 767.98px) {
   .conn-row {
     padding: 12px 16px 14px;
+  }
+
+  .conn-team {
+    padding: 12px 16px;
   }
 
   /* The add buttons take a line of their own under the title, starting where it
