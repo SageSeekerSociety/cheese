@@ -4,6 +4,9 @@
     :model-value="verifyInfoDialogOpen"
     :title="startsDirectly ? t('tasks.verifyDialog.titleStart') : t('tasks.verifyDialog.titleApply')"
     :primary-label="startsDirectly ? t('tasks.verifyDialog.confirmStart') : t('tasks.verifyDialog.confirmApply')"
+    :primary-loading="joinBusy"
+    :primary-disabled="joinBusy"
+    :close-disabled="joinBusy"
     persistent
     @update:model-value="handleCloseVerify"
     @primary="submitVerifyForm"
@@ -157,6 +160,7 @@
          pack, the composed guidance (and which layer it came from), and the
          materials that will be carried. This is the page to see before deciding. -->
     <TaskInheritance :inheritance="inheritance" :loading="inheritanceLoading" />
+    <p v-if="joinError" role="alert" class="t-body c-danger join-error">{{ joinError }}</p>
   </AdaptiveDialog>
 
   <!-- Starting an approved application: this makes the project, so the mentors are asked here. -->
@@ -164,12 +168,16 @@
     :model-value="startDialogOpen"
     :title="t('tasks.verifyDialog.titleStart')"
     :primary-label="t('tasks.verifyDialog.confirmStart')"
+    :primary-loading="joinBusy"
+    :primary-disabled="joinBusy"
+    :close-disabled="joinBusy"
     @update:model-value="startDialogOpen = $event"
     @primary="confirmStart"
   >
     <p class="text-body-1 mb-4">{{ t('tasks.verifyDialog.startIntro') }}</p>
     <TaskMentorNotice v-if="taskData?.mentors?.length" :names="mentorNames" class="mb-4" />
     <TaskInheritance :inheritance="inheritance" :loading="inheritanceLoading" />
+    <p v-if="joinError" role="alert" class="t-body c-danger join-error">{{ joinError }}</p>
   </AdaptiveDialog>
 
   <!-- 隐私声明对话框 -->
@@ -303,6 +311,9 @@ const teamSelectionDialogOpen = ref(false)
 const leaveTeamDialogOpen = ref(false)
 const privacyAgreed = ref(false)
 const fromSubmit = ref(false)
+/** 领取、申请、开始做的请求在路上；没成时的原因。成了由发请求的一方关框（`useTaskParticipation`）。 */
+const joinBusy = ref(false)
+const joinError = ref('')
 
 // 组件引用
 const verifyInfoFormRef = ref<InstanceType<typeof VerifyInfoFormComponent> | null>(null)
@@ -311,10 +322,17 @@ const verifyInfoFormRef = ref<InstanceType<typeof VerifyInfoFormComponent> | nul
 onMounted(() => {
   events.on('verify-dialog-open', (value) => {
     verifyInfoDialogOpen.value = value
+    if (value) joinError.value = ''
   })
 
   events.on('start-dialog-open', (value) => {
     startDialogOpen.value = value
+    if (value) joinError.value = ''
+  })
+
+  events.on('join-state', ({ busy, error }) => {
+    joinBusy.value = busy
+    joinError.value = error
   })
 
   events.on('privacy-dialog-open', (value) => {
@@ -373,15 +391,15 @@ const submitVerifyForm = async () => {
   }
 }
 
-// 处理表单提交
+// 处理表单提交：框等请求回来，成了由那一边关，没成留着、写上原因。
 const handleSubmitVerify = (data: any) => {
+  if (joinBusy.value) return
   events.emit('submit-verify', data)
-  verifyInfoDialogOpen.value = false
 }
 
-// 开始做：确认框里列出了导师，按下「开始做」就是同意他们加入项目。
+// 开始做：确认框里列出了导师，按下「开始做」就是同意他们加入项目。框同样等请求回来。
 const confirmStart = () => {
-  startDialogOpen.value = false
+  if (joinBusy.value) return
   events.emit('start-confirmed', undefined)
 }
 
@@ -473,5 +491,9 @@ const directShowPrivacy = () => {
 
 .cursor-pointer {
   cursor: pointer;
+}
+
+.join-error {
+  margin: 12px 0 0;
 }
 </style>

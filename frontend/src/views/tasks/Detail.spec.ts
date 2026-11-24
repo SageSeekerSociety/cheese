@@ -241,6 +241,20 @@ describe('题目详情', () => {
     expect(joined).toHaveBeenCalled()
   })
 
+  it('领取的请求还在路上：领取按钮点不动，免得再领一次', async () => {
+    AccountService.user = { id: 5, username: 'stu' } as never
+    let answer: (v: unknown) => void = () => {}
+    join.mockImplementation(() => new Promise((resolve) => (answer = resolve)))
+    const { container } = await mount({ startMode: 'APPLY' })
+
+    useEvents().emit('submit-verify', { phone: '13800000000' })
+    await waitFor(() => expect(join).toHaveBeenCalled())
+    expect(claimButton(container)?.disabled).toBe(true)
+
+    answer({ participant: { id: 11 }, project: null })
+    await waitFor(() => expect(claimButton(container)?.disabled).toBe(false))
+  })
+
   it.each([
     ['题目还在审', { approved: 'NONE' }, {}],
     ['题目被驳回', { approved: 'DISAPPROVED' }, {}],
