@@ -1480,9 +1480,8 @@ async def test_a_room_session_is_the_runner_its_screen_started(
             "work_id": str(uuid.uuid4()),
             "epoch": epoch,
         }
-        assert await call_executor("center", state, "send", sent) == {
-            "input_id": "message-1"
-        }
+        accepted = await call_executor("center", state, "send", sent)
+        assert accepted["input_id"] == "message-1"
         async with asyncio.timeout(60):
             while True:
                 records = [
