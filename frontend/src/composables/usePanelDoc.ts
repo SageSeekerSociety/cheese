@@ -110,9 +110,19 @@ export function usePanelDoc(props: PanelDocProps, mentionPool?: () => MentionMem
       !collab.outdated.value &&
       !collab.deleted.value
   )
-  // 当场要说的失败（复制代码失败这一类），和文档打不开的原因，说同一个地方。
+  // 当场要说的失败（复制代码失败这一类）。
   const localError = ref<string | null>(null)
-  const errorMsg = computed(() => localError.value ?? resolveError.value ?? collab.error.value)
+  const errorMsg = computed(() => localError.value)
+  // 文档根本没打开（是哪一份没问到，或者凭证没拿到）：正文那块地方说打不开、给重试，
+  // 不画一个会「连上后同步」的编辑器——没打开的文档什么也同步不了。
+  const openError = computed(() => resolveError.value ?? collab.error.value)
+  function retryOpen() {
+    const topicId = props.topic?.id ?? null
+    if (resolveError.value !== null && topicId) {
+      resolveError.value = null
+      void resolveDocument(topicId, props.taskId ?? null)
+    } else collab.reopen()
+  }
 
   // 修改建议的理由：建议本身在协同文档里，理由只在存回的那一份旁边（id → 理由）。文档
   // 里有建议时才去读（画的那一半说一声），之后每次存回跟着重读。
@@ -411,6 +421,8 @@ export function usePanelDoc(props: PanelDocProps, mentionPool?: () => MentionMem
     editable,
     loading,
     errorMsg,
+    openError,
+    retryOpen,
     // 这份文档
     documentId,
     /** 我 @ 了打不开这份文档的人：要不要加进频道。 */

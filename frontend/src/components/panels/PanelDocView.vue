@@ -49,6 +49,7 @@ import DocSurface from './doc/DocSurface.vue'
 import DocTopBar from './doc/DocTopBar.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
+import BaseLoadError from '@/components/base/BaseLoadError.vue'
 import MentionOutsidePrompt from '@/components/chat/MentionOutsidePrompt.vue'
 import DocAuthors from '@/components/library/DocAuthors.vue'
 import { t } from '@/i18n'
@@ -113,6 +114,8 @@ const props = withDefaults(
     /** 同一篇文档打开着的其他人。 */
     peers: DocPeer[]
     errorMsg: string | null
+    /** 文档没能打开的原因；打开了是 null。正文那块地方说打不开，给重试。 */
+    openError?: string | null
     // ---- 评论区 ----
     commentAuthor?: string
     threadState: DocThreadState
@@ -186,6 +189,7 @@ const props = withDefaults(
     barTo: undefined,
     flow: false,
     outdated: false,
+    openError: null,
     commentAuthor: '',
     sendComment: undefined,
     refreshThreads: undefined,
@@ -221,6 +225,8 @@ const emit = defineEmits<{
   share: []
   'mention-outside-add': []
   'mention-outside-dismiss': []
+  /** 文档没能打开，再试一次。 */
+  'retry-open': []
 }>()
 
 // 顶栏画到页面上的那个位置（`barTo`）。这个位置在页面自己那一行里，要等页面挂进文档
@@ -541,6 +547,10 @@ defineExpose({
         <div class="t-body mb-3">{{ t('work.room.doc.outdated') }}</div>
         <BaseButton kind="secondary" size="sm" @click="reload">{{ t('work.room.doc.reload') }}</BaseButton>
       </div>
+    </div>
+
+    <div v-else-if="openError != null" class="flex-grow-1 d-flex align-center justify-center pa-4">
+      <BaseLoadError :title="t('work.room.doc.openFailed')" :error="openError" @retry="emit('retry-open')" />
     </div>
 
     <template v-else>

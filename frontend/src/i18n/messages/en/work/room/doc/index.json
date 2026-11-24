@@ -46,6 +46,7 @@
   "loading": "Loading…",
   "noEditAccess": "You cannot edit this document",
   "offlineSync": "Offline. Your changes will sync when the connection is back",
+  "openFailed": "Could not open this document",
   "options": "Document options",
   "outdated": "This page has been updated. Refresh to keep editing",
   "outline": "Outline",

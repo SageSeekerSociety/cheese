@@ -61,7 +61,11 @@ export interface DocSession {
   user: { name: string; color: string; avatar: string }
 }
 
-export type DocConnection = 'connecting' | 'connected' | 'offline'
+/** `offline` is a connection that dropped or could not be made: what is typed meanwhile
+ *  stays in the local document and merges in once it is back. `unopened` is a document
+ *  that never opened — its ticket did not come — so there is nothing to type into and
+ *  nothing that will sync; `reopen` asks again. */
+export type DocConnection = 'connecting' | 'connected' | 'offline' | 'unopened'
 
 function connectToService(ticket: () => Promise<DocTicket>, first: DocTicket) {
   const doc = new Y.Doc()
@@ -156,6 +160,8 @@ export function useDocCollab(document: () => string | null, source?: DocLiveSour
   const mentionedOutside = shallowRef<MentionedOutside | null>(null)
   let close: (() => void) | null = null
   let generation = 0
+  /** The id being opened, for `reopen`. */
+  let current: string | null = null
 
   function teardown() {
     close?.()
@@ -168,6 +174,7 @@ export function useDocCollab(document: () => string | null, source?: DocLiveSour
 
   async function open(id: string) {
     const mine = ++generation
+    current = id
     teardown()
     error.value = null
     outdated.value = false
@@ -178,7 +185,7 @@ export function useDocCollab(document: () => string | null, source?: DocLiveSour
     } catch (cause) {
       if (mine === generation) {
         error.value = cause instanceof Error ? cause.message : String(cause)
-        connection.value = 'offline'
+        connection.value = 'unopened'
       }
       return
     }
@@ -265,6 +272,7 @@ export function useDocCollab(document: () => string | null, source?: DocLiveSour
       if (id) void open(id)
       else {
         generation++
+        current = null
         teardown()
       }
     },
@@ -276,7 +284,13 @@ export function useDocCollab(document: () => string | null, source?: DocLiveSour
     teardown()
   })
 
+  /** The document never opened (`unopened`): ask for its ticket again. */
+  function reopen() {
+    if (current) void open(current)
+  }
+
   return {
+    reopen,
     session,
     connection,
     synced,
