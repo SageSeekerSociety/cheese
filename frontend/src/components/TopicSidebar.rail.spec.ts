@@ -399,8 +399,11 @@ describe('C5 行操作', () => {
         n.textContent?.trim()
       )
       expect(items).toEqual([
+        expect.stringContaining(t('work.channel.notify.title')),
+        t('work.room.menu.copyLink'),
         t('work.room.menu.newTask'),
         t('work.room.menu.allTasks'),
+        t('work.channelDetails.title'),
         t('work.room.menu.rename'),
         t('work.channel.leave'),
       ])
@@ -410,7 +413,7 @@ describe('C5 行操作', () => {
   })
 
   // 综合不能改名或退出，不为凑够四项而扩大权限。
-  it('综合那一行也有 ⋯，只保留它有权使用的新建任务和全部任务', async () => {
+  it('综合那一行也有 ⋯：前两组和频道详情，没有改名和退出', async () => {
     const { container } = mount()
     const row = container.querySelector('[data-row-actions="root"]') as HTMLElement
     if (!row) throw new Error('没有找到「综合」那一行')
@@ -421,7 +424,13 @@ describe('C5 行操作', () => {
       const items = Array.from(document.querySelectorAll('.v-overlay .v-list-item-title')).map((n) =>
         n.textContent?.trim()
       )
-      expect(items).toEqual([t('work.room.menu.newTask'), t('work.room.menu.allTasks')])
+      expect(items).toEqual([
+        expect.stringContaining(t('work.channel.notify.title')),
+        t('work.room.menu.copyLink'),
+        t('work.room.menu.newTask'),
+        t('work.room.menu.allTasks'),
+        t('work.channelDetails.title'),
+      ])
     })
   })
 
@@ -495,7 +504,7 @@ describe('C6 等你的那一盏黄灯', () => {
     const mine = rowOf(container, 'mine').querySelector('.row-light--yellow')
     expect(mine).not.toBeNull()
     // 悬停和读屏都靠它：这一盏说的是「有事等你」，不是看板那一列的名字
-    expect(mine?.getAttribute('title')).toBe('有事等你')
+    expect(mine?.getAttribute('title')).toBe('有事项待你处理')
     expect(rowOf(container, 'theirs').querySelector('.row-light')).toBeNull()
     expect(rowOf(container, 'busy').querySelector('.row-light')).toBeNull()
   })
@@ -504,7 +513,7 @@ describe('C6 等你的那一盏黄灯', () => {
     const { container } = mount({ topics: rooms() })
     const row = rowOf(container, 'answered').querySelector('.row-light--yellow')
     expect(row).not.toBeNull()
-    expect(row?.getAttribute('title')).toBe('有事等你')
+    expect(row?.getAttribute('title')).toBe('有事项待你处理')
   })
 
   it('看板状态不再以任何记号出现在标题里', () => {
@@ -652,8 +661,11 @@ describe('整页形态', () => {
         item.textContent?.trim()
       )
       expect(items).toEqual([
+        expect.stringContaining(t('work.channel.notify.title')),
+        t('work.room.menu.copyLink'),
         t('work.room.menu.newTask'),
         t('work.room.menu.allTasks'),
+        t('work.channelDetails.title'),
         t('work.room.menu.rename'),
         t('work.channel.leave'),
       ])

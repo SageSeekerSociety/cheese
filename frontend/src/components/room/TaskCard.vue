@@ -10,6 +10,7 @@ import { computed } from 'vue'
 import { relTime } from '../../lib/relTime'
 
 import UserAvatar from '@/components/common/UserAvatar.vue'
+import TaskStateFacts from '@/components/task/TaskStateFacts.vue'
 import TaskStateMark from '@/components/task/TaskStateMark.vue'
 import { t } from '@/i18n'
 
@@ -32,9 +33,9 @@ const emit = defineEmits<{ (e: 'open', taskId: string): void }>()
 // 第二行：状态有话要说（在做什么、在等什么、卡在哪、待谁审阅）就写那一句，每一种排法
 // 都写；没有时，单独成块的卡写这件任务里最后说的一句。支线顶上那一行两样都不写，它们
 // 在下面的支线那几行里。
+const facts = computed(() => (props.head ? [] : props.task.state.parts))
 const second = computed(() => {
-  if (props.head) return ''
-  if (props.task.state.line) return props.task.state.line
+  if (props.head || facts.value.length) return ''
   return !props.inList || props.lone ? props.task.latest ?? '' : ''
 })
 </script>
@@ -71,7 +72,8 @@ const second = computed(() => {
       />
       <span v-if="!head" class="task-card__at t-meta">{{ relTime(task.at) }}</span>
     </span>
-    <span v-if="second" class="task-card__latest" data-testid="task-card-latest">{{ second }}</span>
+    <TaskStateFacts v-if="facts.length" class="task-card__latest" data-testid="task-card-latest" :parts="facts" />
+    <span v-else-if="second" class="task-card__latest" data-testid="task-card-latest">{{ second }}</span>
   </button>
 </template>
 

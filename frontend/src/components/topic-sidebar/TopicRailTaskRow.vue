@@ -24,6 +24,7 @@ import TopicRailLight from './TopicRailLight.vue'
 
 import { menuActionOf } from '@/commands'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
+import TaskStateFacts from '@/components/task/TaskStateFacts.vue'
 import TaskStateMark from '@/components/task/TaskStateMark.vue'
 import { t } from '@/i18n'
 import { taskTitle } from '@/lib/topicState'
@@ -186,7 +187,12 @@ function onMenuToggle(open: boolean) {
           :data-user-content="task.title_source === 'placeholder' ? undefined : ''"
           >{{ taskTitle(task) }}</span
         >
-        <span v-if="state?.line" class="rail-task__line" data-testid="rail-task-line">{{ state.line }}</span>
+        <TaskStateFacts
+          v-if="state?.parts.length"
+          class="rail-task__line"
+          data-testid="rail-task-line"
+          :parts="state.parts"
+        />
       </span>
       <TopicRailLight v-if="light" :light="light" />
     </button>

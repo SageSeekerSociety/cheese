@@ -16,6 +16,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChannelOverviewPins from '@/components/channel/ChannelOverviewPins.vue'
 import MarkdownView from '@/components/common/MarkdownView.vue'
+import TaskStateFacts from '@/components/task/TaskStateFacts.vue'
 import TaskStateMark from '@/components/task/TaskStateMark.vue'
 import { t } from '@/i18n'
 import { replyBlock, replySnippet, threadHeading } from '@/lib/blockDisplay'
@@ -51,6 +52,8 @@ const props = defineProps<{
   files?: ConversationFile[]
   /** 这个频道的例行事务：名字和什么时候跑。 */
   routines?: { id: string; title: string; when: string }[]
+  /** 能不能在这个频道里新建任务（没归档）：未结束的任务那一段带一颗「+」。 */
+  canCreateTask?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -67,6 +70,7 @@ const emit = defineEmits<{
   (e: 'open-file', row: ConversationFile): void
   (e: 'open-routine', routineId: string): void
   (e: 'new-routine'): void
+  (e: 'new-task'): void
   /** 「全部 N 项」：打开那一块的列表。 */
   (e: 'show', key: 'threads' | 'files' | 'routines'): void
 }>()
@@ -151,12 +155,9 @@ function add(key: 'threads' | 'files' | 'routines') {
 }
 /** 一件进行中的任务那一行只有一行：最后说的一句和谁负责在悬停里。 */
 function taskHint(task: RoomTask): string {
-  const owner = t('work.channel.overview.owner', {
-    name: nameOf(task.owner_handle ?? ''),
-    when: relTime(movedAt(task)),
-  })
+  const owner = t('work.channel.overview.owner', { name: nameOf(task.owner_handle ?? '') })
   const second = secondOf(task)
-  return [taskTitle(task), second, owner].filter(Boolean).join('\n')
+  return [taskTitle(task), second, owner, relTime(movedAt(task))].filter(Boolean).join('\n')
 }
 
 // 状态那一格和频道里的卡是同一个记号（`lib/taskState.ts`）；它下面那一行有话要说时写它，
@@ -164,6 +165,11 @@ function taskHint(task: RoomTask): string {
 function stateOf(task: RoomTask): TaskState {
   const agentName = (task.agent_handle && props.memberNames[task.agent_handle]) || props.agentName
   return taskState(task, { viewer: ME, nameOf, agentName })
+}
+/** 「待你处理」那一段里的一件：这一段的标题已经说了待谁处理，下面不再说一遍。 */
+function waitingFacts(task: RoomTask): string[] {
+  const state = stateOf(task)
+  return state.parts.filter((part) => part !== state.waits)
 }
 function secondOf(task: RoomTask): string | null {
   return stateOf(task).line || latest(task)
@@ -253,7 +259,12 @@ async function save() {
           <span class="co-task__title t-body">{{ taskTitle(task) }}</span>
           <TaskStateMark class="co-task__state t-meta" :state="stateOf(task)" :emphasis="true" />
         </span>
-        <span v-if="stateOf(task).line" class="co-task__latest t-meta">{{ stateOf(task).line }}</span>
+        <TaskStateFacts
+          v-if="waitingFacts(task).length"
+          class="co-task__facts t-meta"
+          :parts="waitingFacts(task)"
+          wrap
+        />
       </button>
     </section>
     <section v-if="general" class="co-section co-section--overview" data-testid="project-overview">
@@ -337,7 +348,20 @@ async function save() {
     />
 
     <section v-if="running.length || !waitingOnMe.length" class="co-section" data-testid="channel-running">
-      <h3 class="co-title">{{ t('work.channel.overview.running', { count: lively.length }) }}</h3>
+      <div class="co-head">
+        <h3 class="co-title">{{ t('work.channel.overview.running', { count: lively.length }) }}</h3>
+        <BaseButton
+          v-if="canCreateTask"
+          kind="ghost"
+          size="sm"
+          icon="mdi-plus"
+          class="co-add"
+          :title="t('work.room.menu.newTask')"
+          :aria-label="t('work.room.menu.newTask')"
+          data-testid="channel-new-task"
+          @click="emit('new-task')"
+        />
+      </div>
       <p v-if="!running.length" class="t-meta c-faint">{{ t('work.channel.overview.noRunning') }}</p>
       <button
         v-for="task in lively"
@@ -675,6 +699,9 @@ async function save() {
   -webkit-line-clamp: 2;
   line-clamp: 2;
   -webkit-box-orient: vertical;
+  color: var(--text);
+}
+.co-task__facts {
   color: var(--text);
 }
 .co-done {

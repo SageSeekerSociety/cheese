@@ -8,7 +8,14 @@ import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
 import { fireEvent, render, screen, within } from '@testing-library/vue'
-import { beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+
+// The settings page also shows the channel's default environment; this test is about who can post.
+vi.mock('@/api', async (original) => ({
+  ...(await original<object>()),
+  getTopicEnvironment: vi.fn(() => new Promise(() => {})),
+  listTopicMembers: vi.fn(() => new Promise(() => {})),
+}))
 
 import ChannelDetailsDialog from './ChannelDetailsDialog.vue'
 
@@ -69,6 +76,13 @@ function mount(extra: Record<string, unknown> = {}) {
       level: 'mentions',
       mutedUntil: null,
       roles: ROLES,
+      shortId: 't1',
+      usageLoading: false,
+      topicUsage: null,
+      projectUsage: null,
+      projectMembers: [],
+      me: 'me',
+      canInvite: false,
     },
     global: { plugins: [vuetify, i18n] },
   })
@@ -98,7 +112,8 @@ describe('频道详情：谁能发言', () => {
   it('勾掉最后一个角色不交出去', async () => {
     const { emitted } = mount({ speaker_roles: ['member'] })
     const dialog = await settingsTab()
-    await fireEvent.click(within(dialog).getByText('成员'))
+    // 「成员」也是详情的一页：点的是角色那一枚。
+    await fireEvent.click(within(dialog).getAllByText('成员').at(-1)!)
     expect(emitted('speakers')).toBeUndefined()
     await fireEvent.click(within(dialog).getByText('内测用户'))
     expect(emitted('speakers')).toEqual([[['member', 'r-tester'], true]])

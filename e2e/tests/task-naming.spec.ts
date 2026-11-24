@@ -52,12 +52,14 @@ test.describe('Task naming', () => {
     await say(page, '整理这周三份会议纪要');
     await expect(activeTitle(page)).toHaveText(/^E2E /, { timeout: 20_000 });
 
-    await page.getByTestId('task-more').click();
-    await page.getByTestId('task-rename').click();
+    // Renaming is in the task info, which the owner's face in the header opens.
+    await page.getByTestId('task-details').click();
+    await page.getByTestId('task-info-rename').click();
     const name = page.getByRole('textbox', { name: '任务名称' });
     await name.fill('会议纪要周报');
     await name.press('Enter');
     await expect(activeTitle(page)).toHaveText('会议纪要周报');
+    await page.keyboard.press('Escape');
 
     // More said after the rename: what would bring a platform-named task up
     // for another look.

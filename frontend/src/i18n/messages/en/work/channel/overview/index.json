@@ -11,7 +11,7 @@
   "noDescription": "No description",
   "noProject": "No project goals yet. Write down what this project is to achieve, by when, and what it leaves out for now.",
   "noRunning": "No open tasks",
-  "owner": "{name} owns it · {when}",
+  "owner": "{name} owns it",
   "project": "Project goals",
   "projectNote": "{name} reads this in every conversation",
   "quietRunning": "Nothing moved in the last 7 days; {count} in all tasks",

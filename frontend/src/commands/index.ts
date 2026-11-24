@@ -29,6 +29,18 @@ interface CommandBase {
   shortcut?: string
   /** 退出、删除这类：菜单里那一行用 --danger-ink。 */
   danger?: boolean
+  /** 这一条开一组新的：菜单里它前面画一条分隔线。 */
+  divider?: boolean
+  /** 行尾写着的此刻的值（「通知」后面的档位）。 */
+  value?: string
+  /** 名字下面一行小字：这一项是什么意思。 */
+  hint?: string
+  /** 几项里选一项的那种：给了就画选没选中，选中的那一项打勾。 */
+  checked?: boolean
+  /** 分隔线下面那一组的小标题（「静音一段时间」）。和 divider 一起给。 */
+  section?: string
+  /** 这一项点开是下一层：桌面是旁边弹出的子菜单，手机面板和命令面板里换成这一层。 */
+  children?: Command[]
   disabled?: boolean
   loading?: boolean
   /** 做这件事就是去一个地方。和 run 可以同时给，先跑 run。 */
@@ -62,12 +74,18 @@ export type HeaderCommand = Extract<Command, { header: HeaderPlacement }>
 export type MenuCommand = Command & { icon: string }
 
 /** 一条命令在菜单（AdaptiveMenu / MobileActionSheet）里的那一行。 */
-export function menuActionOf(command: MenuCommand): MenuAction {
+export function menuActionOf(command: Command): MenuAction {
   return {
     key: command.id,
     label: command.title,
     icon: command.icon,
     danger: command.danger,
+    divider: command.divider,
+    value: command.value,
+    hint: command.hint,
+    checked: command.checked,
+    section: command.section,
+    children: command.children?.map(menuActionOf),
     loading: command.loading,
     disabled: command.disabled,
     to: command.to,

@@ -1,6 +1,6 @@
 {
   "askAlreadyAnswered": "这道题已经有人回答过了",
-  "askNothingPending": "这道题上没有等你确认的回复",
+  "askNothingPending": "这道题没有待你确认的回复",
   "askAlreadyClosed": "这道题已经收起了，不再等人回答",
   "askAlreadySkipped": "你已经跳过了这道题",
   "askAnswerNotInGroup": "这些题不属于同一组：{ids}",
@@ -21,7 +21,7 @@
   "askOptionsTwoToThree": "每题需要 2-3 个对象选项",
   "askQuestionObject": "每题必须是对象",
   "askQuestionsCount": "questions 必须含 1-{limit} 题",
-  "askSkipNotYours": "这道题不在等你回答，你不能跳过它",
+  "askSkipNotYours": "这道题不是向你提的，不能跳过",
   "optionsDistinct": "选项不能重复",
   "chatRepliesShort": "每个快捷回答不能为空，不超过 {limit} 个字符",
   "quoteNeedsMessage": "引用要配上你自己写的话",

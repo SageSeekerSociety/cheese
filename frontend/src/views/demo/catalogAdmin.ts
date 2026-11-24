@@ -131,19 +131,19 @@ export const ADMIN_ENTRIES: CatalogEntry[] = [
       {
         name: '三条',
         note: 'tone 只有 warn / danger 用状态色，其余走中性阶；第二行没有去向，是静态的。',
-        props: { title: '等你处理', empty: '今天没有卡住的事', rows: ACTION_ROWS, moreTo: ADMIN_QUEUE },
+        props: { title: '待你处理', empty: '今天没有卡住的事', rows: ACTION_ROWS, moreTo: ADMIN_QUEUE },
         expect: '合并 #2100（前端边界闸）',
       },
       {
         name: '空屏',
         note: '空态是一句邀请（「今天没有卡住的事」），不是一句道歉。',
-        props: { title: '等你处理', empty: '今天没有卡住的事', rows: [] },
+        props: { title: '待你处理', empty: '今天没有卡住的事', rows: [] },
         expect: '今天没有卡住的事',
       },
       {
         name: '首次加载',
         note: '骨架行。',
-        props: { title: '等你处理', empty: '今天没有卡住的事', rows: [], loading: true },
+        props: { title: '待你处理', empty: '今天没有卡住的事', rows: [], loading: true },
         needs: ['vuetify', 'i18n'],
       },
     ],

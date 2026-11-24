@@ -243,7 +243,7 @@ describe('频道主线上的任务卡', () => {
     await flush()
 
     expect(status(container, 'sub-1').dataset.kind).toBe('review')
-    expect(card(container, 'sub-1').textContent).toContain('等linxiao')
+    expect(card(container, 'sub-1').textContent).toContain('待 linxiao 处理')
   })
 
   it('频道里没有任务时，时间线一如既往', async () => {

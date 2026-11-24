@@ -1,14 +1,11 @@
 {
   "allTasks": "All tasks",
-  "archive": "Archive",
   "copyLink": "Copy link",
   "delete": "Delete channel",
-  "files": "Files",
   "markAllRead": "Mark all as read",
   "markAllReadFailed": "Couldn't mark everything as read",
   "markRead": "Mark as read",
   "more": "More",
-  "mute": "Mute",
   "newTask": "New task",
   "newTaskFailed": "Couldn’t create the task. Try again later",
   "noUsage": "No data",
@@ -18,9 +15,6 @@
   "thisTopic": "This channel",
   "topicName": "Channel name",
   "unarchive": "Unarchive",
-  "unmute": "Unmute",
   "usage": "Usage",
-  "usageLine": "{turns} runs · {tokens} tokens · {cost}",
-  "usageSplit": "Input {input} · Output {output}",
   "wholeProject": "Whole project"
 }

@@ -4,8 +4,11 @@ import type { ContentKind } from './projectSearch'
 import { contentSource, searchRoomTitle } from './projectSearch'
 
 import { copyLink, linkOf } from '@/commands/copy'
-import { t } from '@/i18n'
+import { taskActions } from '@/commands/taskActions'
+import { mayIn } from '@/lib/projectPermissions'
 import { taskTitle } from '@/lib/topicState'
+import { myHandle } from '@/me'
+import { useWorkspaceStore } from '@/stores/workspace'
 
 export const tasks: ContentKind = {
   id: 'tasks',
@@ -23,14 +26,24 @@ export const tasks: ContentKind = {
         subtitle: searchRoomTitle(hit),
         icon: 'mdi-checkbox-marked-circle-outline',
         to,
-        actions: () => [
-          {
-            id: 'task.copyLink',
-            title: t('work.room.menu.copyLink'),
-            icon: 'mdi-link-variant',
-            run: () => void copyLink(linkOf(router, to)),
-          },
-        ],
+        // 和侧栏任务行、任务页是同一份（`commands/taskActions.ts`）。搜索结果不带负责人和
+        // 协作者，认不出我参不参加，所以这里只有人人能做的那几件；改名、关闭在任务页的
+        // 「操作」里。
+        actions: () => {
+          const store = useWorkspaceStore()
+          return taskActions(
+            { ...hit, project_id: projectId },
+            { rename: () => {}, close: () => {}, reopen: () => void store.reopenTask(hit.id) },
+            {
+              me: myHandle(),
+              worksTasks: mayIn(
+                store.projects.find((project) => project.id === projectId),
+                'tasks'
+              ),
+              copyLink: () => void copyLink(linkOf(router, to)),
+            }
+          )
+        },
       }
     }),
 }

@@ -179,6 +179,8 @@ export const useWorkspaceStore = defineStore('cxWorkspace', () => {
     markDmRead: actions.markDmRead,
     renameTopic: actions.renameTopic,
     renameTask: actions.renameTask,
+    closeTask: actions.closeTask,
+    reopenTask: actions.reopenTask,
     archive: actions.archive,
     unarchive: actions.unarchive,
     removeChannel: actions.removeChannel,

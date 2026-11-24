@@ -1,4 +1,4 @@
-// 侧栏的精简菜单只限制入口，不给频道扩大原有权限；回调仍对准被操作的频道。
+// 侧栏右键列的是频道那一整份（和命令面板、手机顶栏的 ⋯ 同一份），权限照旧；回调对准被操作的频道。
 import type { Topic } from '@/cx_types'
 
 import { defineComponent, h } from 'vue'
@@ -13,7 +13,9 @@ vi.mock('@/lib/routePrefetch', () => ({ prefetchOnHover: vi.fn(), cancelPrefetch
 
 import { useTopicRailRoutes } from './useTopicRailRoutes'
 
-import { topicActions } from '@/commands/topicActions'
+import { channelDetailsRequest } from '@/commands/channelDetails'
+import { queryClient } from '@/query/client'
+import { keys } from '@/query/keys'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 function channel(over: Partial<Topic> = {}): Topic {
@@ -46,17 +48,18 @@ function mount() {
   })
   const rename = vi.fn()
   const renameTask = vi.fn()
+  const closeTask = vi.fn()
   let routes!: ReturnType<typeof useTopicRailRoutes>
   render(
     defineComponent({
       setup() {
-        routes = useTopicRailRoutes(() => 'project-a', { rename, renameTask })
+        routes = useTopicRailRoutes(() => 'project-a', { rename, renameTask, closeTask })
         return () => h('div')
       },
     }),
     { global: { plugins: [pinia, router] } }
   )
-  return { routes, rename, renameTask, router, store: useWorkspaceStore() }
+  return { routes, rename, renameTask, closeTask, router, store: useWorkspaceStore() }
 }
 
 beforeEach(() => {
@@ -64,41 +67,102 @@ beforeEach(() => {
   api.createRoomTask.mockResolvedValue({ id: 'new-task' })
 })
 
-describe('侧栏频道菜单的四种入口和原有权限', () => {
-  it.each([true, false])('已加入的活动频道只保留四项，can_manage=%s 也不出现静音或归档', (canManage) => {
-    const { routes } = mount()
-    const ids = routes.actionsFor(channel({ can_manage: canManage })).map((action) => action.id)
-    expect(ids).toEqual(['topic.newTask', 'topic.allTasks', 'topic.rename', 'topic.leave'])
-  })
+const ids = (actions: { id: string }[]) => actions.map((action) => action.id)
 
-  it('未加入的活动频道用加入替代退出，不额外禁止原本允许的改名', () => {
+describe('侧栏右键：频道那一整份', () => {
+  it.each([true, false])('已加入的活动频道：已读通知链接、任务、频道本身、退出，can_manage=%s 一样', (canManage) => {
     const { routes } = mount()
-    expect(routes.actionsFor(channel({ joined: false })).map((action) => action.id)).toEqual([
+    expect(ids(routes.actionsFor(channel({ can_manage: canManage })))).toEqual([
+      'topic.notify',
+      'topic.copyLink',
       'topic.newTask',
       'topic.allTasks',
+      'topic.details',
+      'topic.rename',
+      'topic.leave',
+    ])
+  })
+
+  it('每组之间一条分隔线', () => {
+    const { routes } = mount()
+    const apart = routes
+      .actionsFor(channel())
+      .filter((action) => action.divider)
+      .map((action) => action.id)
+    expect(apart).toEqual(['topic.newTask', 'topic.details', 'topic.leave'])
+  })
+
+  it('未加入的频道没有通知，用加入替代退出', () => {
+    const { routes } = mount()
+    expect(ids(routes.actionsFor(channel({ joined: false })))).toEqual([
+      'topic.copyLink',
+      'topic.newTask',
+      'topic.allTasks',
+      'topic.details',
       'topic.rename',
       'topic.join',
     ])
   })
 
-  it.each([true, false])('综合不为凑够四项增加改名、退出或加入，joined=%s', (joined) => {
+  it.each([true, false])('综合只有前两组和频道详情，joined=%s', (joined) => {
     const { routes } = mount()
-    expect(routes.actionsFor(channel({ kind: 'root', joined, can_manage: true })).map((action) => action.id)).toEqual([
+    const expected = [
+      ...(joined ? ['topic.notify'] : []),
+      'topic.copyLink',
       'topic.newTask',
       'topic.allTasks',
+      'topic.details',
+    ]
+    expect(ids(routes.actionsFor(channel({ kind: 'root', joined, can_manage: true })))).toEqual(expected)
+  })
+
+  it.each([true, false])('已归档频道：复制链接、全部任务、详情，还在里面的能退出，can_manage=%s', (canManage) => {
+    const { routes } = mount()
+    expect(ids(routes.actionsFor(channel({ status: 'archived', joined: false, can_manage: canManage })))).toEqual([
+      'topic.copyLink',
+      'topic.allTasks',
+      'topic.details',
+    ])
+    expect(ids(routes.actionsFor(channel({ status: 'archived', joined: true, can_manage: canManage })))).toEqual([
+      'topic.copyLink',
+      'topic.allTasks',
+      'topic.details',
+      'topic.leave',
     ])
   })
 
-  it.each([true, false])('已归档频道不增加新建任务、改名或加入权限，can_manage=%s', (canManage) => {
+  it('归档、取消归档、删除不在这一份里，在频道详情的「设置」里', () => {
     const { routes } = mount()
-    expect(
-      routes
-        .actionsFor(channel({ status: 'archived', joined: false, can_manage: canManage }))
-        .map((action) => action.id)
-    ).toEqual(['topic.allTasks'])
-    expect(
-      routes.actionsFor(channel({ status: 'archived', joined: true, can_manage: canManage })).map((action) => action.id)
-    ).toEqual(['topic.allTasks', 'topic.leave'])
+    for (const over of [{ can_manage: true }, { can_manage: true, status: 'archived' as const }]) {
+      const listed = ids(routes.actionsFor(channel(over)))
+      expect(listed).not.toContain('topic.archive')
+      expect(listed).not.toContain('topic.unarchive')
+      expect(listed).not.toContain('topic.delete')
+    }
+  })
+
+  it('「通知」点开是三档和静音多久，此刻那一档打勾，选了就改这个频道', () => {
+    const { routes, store } = mount()
+    const setNotifyLevel = vi.spyOn(store, 'setNotifyLevel').mockResolvedValue()
+    const notify = routes.actionsFor(channel()).find((action) => action.id === 'topic.notify')!
+    const levels = notify.children!.slice(0, 3)
+    expect(levels.map((level) => level.checked)).toEqual([false, true, false])
+    levels[0].run!()
+    expect(setNotifyLevel).toHaveBeenCalledExactlyOnceWith('channel-a', 'all', null)
+  })
+
+  it('「频道详情」先去那个频道，由它的页头打开', async () => {
+    const { routes, router } = mount()
+    await router.addRoute({
+      path: '/projects/:projectId/topics/:topicId',
+      name: 'workspace-topic',
+      component: { render: () => null },
+    })
+    routes.actionsFor(channel()).find((action) => action.id === 'topic.details')!.run!()
+    await waitFor(() =>
+      expect(router.currentRoute.value.params).toEqual({ projectId: 'project-a', topicId: 'channel-a' })
+    )
+    expect(channelDetailsRequest.value).toEqual({ topicId: 'channel-a', tab: 'about' })
   })
 
   it('改名回调收到被操作的频道，而不是当前页面的频道', () => {
@@ -142,15 +206,30 @@ describe('侧栏频道菜单的四种入口和原有权限', () => {
       })
     })
   })
+})
 
-  it('侧栏精简不删除共享菜单入口，不改变其他入口的管理权限', () => {
-    const { router } = mount()
-    const unmanaged = topicActions(channel(), router, { rename: vi.fn() }).map((action) => action.id)
-    expect(unmanaged).toContain('topic.copyLink')
-    expect(unmanaged).toContain('topic.mute')
-    expect(unmanaged).toContain('topic.files')
-    expect(unmanaged).not.toContain('topic.archive')
-    const managed = topicActions(channel({ can_manage: true }), router, { rename: vi.fn() }).map((action) => action.id)
-    expect(managed).toContain('topic.archive')
+describe('侧栏右键：任务那一份', () => {
+  const task = (over: Record<string, unknown> = {}) => ({
+    id: 'task-1',
+    project_id: 'project-a',
+    room_id: 'channel-a',
+    status: 'open',
+    owner_handle: 'someone-else',
+    ...over,
+  })
+
+  it('不参加这件任务的人只有复制链接', () => {
+    const { routes } = mount()
+    expect(ids(routes.taskActionsFor(task()))).toEqual(['task.copyLink'])
+  })
+
+  it('关了的任务，项目里角色能新建任务和审阅的人能重新打开', () => {
+    const { routes, store } = mount()
+    queryClient.setQueryData(keys.projects(), [{ id: 'project-a', name: 'A', my_permissions: ['tasks'] }])
+    const reopen = vi.spyOn(store, 'reopenTask').mockResolvedValue(true)
+    const actions = routes.taskActionsFor(task({ status: 'closed' }))
+    expect(ids(actions)).toEqual(['task.copyLink', 'task.reopen'])
+    actions[1].run!()
+    expect(reopen).toHaveBeenCalledExactlyOnceWith('task-1')
   })
 })

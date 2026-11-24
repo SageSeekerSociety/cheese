@@ -247,7 +247,7 @@ async def agent_inbox(body: InboxIn, resolver: ActorResolverDep, db: DbSession) 
             and i.project_id == str(wanted)
         ]
     if not items:
-        return ok({"text": "现在没有等你处理的事。", "subject": INBOX})
+        return ok({"text": "现在没有待你处理的事项。", "subject": INBOX})
     names = _Names(db)
     lines = []
     for item in items[:INBOX_LIMIT]:
@@ -260,7 +260,7 @@ async def agent_inbox(body: InboxIn, resolver: ActorResolverDep, db: DbSession) 
         else:
             lines.append(_teaching_line(item, me.timezone))
     more = len(items) - INBOX_LIMIT
-    head = f"等你处理的事，共 {len(items)} 件，最近的在前："
+    head = f"待你处理的事项，共 {len(items)} 件，最近的在前："
     tail = (
         f"\n还有 {more} 件更早的没列出；按项目筛（project）可以看到它们。"
         if more > 0

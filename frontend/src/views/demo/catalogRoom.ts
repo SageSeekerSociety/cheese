@@ -241,7 +241,7 @@ const TASK_ENTRIES: CatalogEntry[] = [
     id: 'task-header',
     title: 'TaskHeader',
     about:
-      '任务页的页头：「# 频道 / 任务名」和此刻的状态，右边是负责人、协作者和「开始」；点开任务信息能看到每条会话的环境。',
+      '任务页的页头：「# 频道 / 任务名」、此刻的状态和负责人的头像；点任务名或头像打开任务信息，在等谁、原话、每条会话的环境都在里面。',
     file: 'src/components/task/TaskHeader.vue',
     component: TaskHeader,
     needs: UI_T,
@@ -254,7 +254,7 @@ const TASK_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '队友说在做',
-        note: '没有卡的时候，队友自己报的「在做」照写，后面跟它的原话。',
+        note: '没有卡的时候，队友自己报的「在做」照写；它的原话在任务信息的「状态」里（手机顶栏写在第二行）。',
         props: {
           ...TASK_HEADER_PROPS,
           task: {
@@ -266,11 +266,11 @@ const TASK_ENTRIES: CatalogEntry[] = [
             progress_set_at: '2026-10-05T00:00:00Z',
           },
         },
-        expectSelector: '[data-testid="task-progress-note"]',
+        expectSelector: '[data-testid="task-phrase"]',
       },
       {
         name: '队友说在等结果',
-        note: '会话停着时，状态是 AI 队友自己报的，后面跟着它的原话；悬停看是谁、什么时候报的。它的会话又跑起来、而它在这一次里没报过，就显示在做。',
+        note: '会话停着时，状态是 AI 队友自己报的，它的原话在任务信息里；悬停看是谁、什么时候报的。它的会话又跑起来、而它在这一次里没报过，就显示在做。',
         props: {
           ...TASK_HEADER_PROPS,
           task: {
@@ -282,11 +282,11 @@ const TASK_ENTRIES: CatalogEntry[] = [
             progress_set_at: '2026-10-05T00:00:00Z',
           },
         },
-        expectSelector: '[data-testid="task-progress-note"]',
+        expectSelector: '[data-testid="task-phrase"]',
       },
       {
         name: '队友说卡住了',
-        note: '「卡住了，等人帮忙」落在待处理，进负责人的待办；后面跟它说卡在哪。',
+        note: '「卡住了，等人帮忙」落在待处理，进负责人的待办；它说卡在哪写在任务信息里。',
         props: {
           ...TASK_HEADER_PROPS,
           task: {
@@ -298,11 +298,11 @@ const TASK_ENTRIES: CatalogEntry[] = [
             progress_set_at: '2026-10-05T00:00:00Z',
           },
         },
-        expectSelector: '[data-testid="task-progress-note"]',
+        expectSelector: '[data-testid="task-phrase"]',
       },
       {
         name: '递了卡，等人审阅',
-        note: '卡说在哪一步；队友递卡前报的状态和原话作废，页头不再写。对审阅人本人，下面那一行是「等你」。',
+        note: '卡说在哪一步；队友递卡前报的状态和原话作废，不再写。对审阅人本人，任务信息里在等谁那一格是「等你」。',
         props: {
           ...TASK_HEADER_PROPS,
           task: {
@@ -315,12 +315,12 @@ const TASK_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '递了卡，平台在跑检查',
-        note: '卡还在检查这一步：下一步在平台手上，没人被点到。',
+        note: '卡还在检查这一步：下一步在平台手上，没人被点到。页头只写状态，「检查运行中」在任务信息的「状态」里。',
         props: {
           ...TASK_HEADER_PROPS,
           task: { ...TASK_HEADER_PROPS.task, presentation: { column: 'delivering', phrase: 'gate_running' } },
         },
-        expect: '检查运行中',
+        expect: '待审阅',
       },
       {
         name: '卡被退回，回到进行中',

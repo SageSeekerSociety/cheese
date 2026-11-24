@@ -479,7 +479,7 @@ async def run_now(session: AsyncSession, routine: AssistantRoutine) -> bool:
             user_id=routine.user_id,
             routine_id=routine.id,
             occurrence=f"fill:{routine.id}:{routine.updated_at.isoformat()}",
-            detail="这条例行事务有几项空着，等你补上：" + "、".join(missing(routine)),
+            detail="这条例行事务有几项未填，待你补充：" + "、".join(missing(routine)),
         )
     return await _run(
         session,
@@ -785,7 +785,7 @@ async def _fill(session: AsyncSession, now: datetime) -> int:
             user_id=routine.user_id,
             routine_id=routine.id,
             occurrence=f"fill:{routine.id}:{routine.updated_at.isoformat()}",
-            detail="这条例行事务有几项空着，等你补上：" + "、".join(missing(routine)),
+            detail="这条例行事务有几项未填，待你补充：" + "、".join(missing(routine)),
         ):
             fired += 1
     return fired

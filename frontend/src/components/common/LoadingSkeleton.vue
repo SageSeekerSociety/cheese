@@ -26,7 +26,7 @@ withDefaults(
      * 画哪一种行。每一种都指名道姓地对应界面里的一样东西：
      * - `list`   侧栏导航行（`TopicSidebar` 的 `.topic-row`，36px 一行）
      * - `chat`   聊天消息行（`RoomMessage` 的 `.im-row`，28px 头像 + 名字 + 一两行正文，全部靠左）
-     * - `roster` 名册行（`TopicMembers` 的 `.roster__item`，26px 头像 + 两行字 + 小标）
+     * - `roster` 名册行（`TopicRoster` 的 `.roster__item`，26px 头像 + 两行字 + 小标）
      * - `entry`  支线进度（`TaskProgress`：一条分组小标 + 若干 55px 的 `.task-row`）
      * - `site`   现场的一页（`PanelSite`：一轮一组的组头 + 用时条 + 几种记录行）
      * - `siteRaw` 现场的原始记录页（同上，每条记录多一行类型 / 来源 / 时刻）
@@ -344,7 +344,7 @@ function siteGroups(count: number): string[][] {
   flex: none;
 }
 /* 头像、状态点的尺寸和形状照抄真东西：ChatPanel 的 .im-avatar 是 28px 的圆（人），
-   TopicMembers 的 .roster__avatar 是 26px 的圆，看板的 .board-dot 是 10px 的圆。
+   TopicRoster 的 .roster__avatar 是 26px 的圆，看板的 .board-dot 是 10px 的圆。
    对不上的话内容到达那一刻整行会挪一下，而骨架存在的意义正是不让它挪。 */
 .skel__bone--avatar {
   width: 28px;
@@ -391,7 +391,7 @@ function siteGroups(count: number): string[][] {
   flex: 1 1 auto;
   min-width: 0;
 }
-/* TopicMembers 的 .roster__item：padding 6px 14px、gap 9px；外面那层 ul 是 4px 0。 */
+/* TopicRoster 的 .roster__item：padding 6px 14px、gap 9px；外面那层 ul 是 4px 0。 */
 .skel__roster {
   display: flex;
   align-items: center;

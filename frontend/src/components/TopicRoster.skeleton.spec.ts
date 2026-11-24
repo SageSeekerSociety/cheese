@@ -7,7 +7,7 @@ import type { Component } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render, waitFor } from '@testing-library/vue'
+import { render, waitFor } from '@testing-library/vue'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listTopicMembers = vi.fn()
@@ -22,11 +22,11 @@ vi.mock('../api', async () => {
   }
 })
 
-import TopicMembers from './TopicMembers.vue'
+import TopicRoster from './TopicRoster.vue'
 
 import { setLocale } from '@/i18n'
 
-const Roster = TopicMembers as unknown as Component
+const Roster = TopicRoster as unknown as Component
 
 function pending<T>() {
   let resolve!: (v: T) => void
@@ -80,8 +80,6 @@ async function openRoster() {
     props: { topicId: 't1', projectMembers: [], me: 'alice' },
     global: { plugins: [createVuetify({ components, directives })] },
   })
-  await settle()
-  await fireEvent.click(document.querySelector('.members-mini')!)
   await settle()
 }
 

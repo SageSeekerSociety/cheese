@@ -48,7 +48,9 @@ vi.mock('../api', async () => {
 import { listTopicMembers } from '../api'
 import { setLocale } from '../i18n'
 
+import TopicDefaultEnvironment from './TopicDefaultEnvironment.vue'
 import TopicMembers from './TopicMembers.vue'
+import TopicRoster from './TopicRoster.vue'
 
 import { queryClient } from '@/query/client'
 import { keys } from '@/query/keys'
@@ -65,7 +67,7 @@ const PROJECT_MEMBERS = [
   { user_handle: 'cheese-a3', source: 'agent' as const, name: '退休', agent: true, active: false },
 ]
 
-const Roster = TopicMembers as unknown as Component
+const Roster = TopicRoster as unknown as Component
 
 // Vuetify 的浮层要这几样浏览器 API（happy-dom 没有）。
 beforeAll(() => {
@@ -108,13 +110,12 @@ const settle = async () => {
   for (let i = 0; i < 8; i += 1) await new Promise((r) => setTimeout(r, 0))
 }
 
+// 名册是频道详情「成员」那一页：页面一打开它就在。
 async function openRoster(extra: Record<string, unknown> = {}) {
   const utils = render(Roster, {
     props: { topicId: 't1', projectId: 'p1', projectMembers: PROJECT_MEMBERS, me: 'alice', canManage: true, ...extra },
     global: { plugins: [createVuetify({ components, directives })] },
   })
-  await settle()
-  await fireEvent.click(document.querySelector('.members-mini')!)
   await settle()
   return utils
 }
@@ -243,32 +244,23 @@ describe('成员名册', () => {
   })
 })
 
-// 频道详情的「设置」里那一行「成员」开的就是这一份，不在别处再造一张一样的名单。
-it('外面叫它开，开的就是这一份名单', async () => {
-  render(Roster, {
-    props: {
-      topicId: 't1',
-      projectId: 'p1',
-      projectMembers: PROJECT_MEMBERS,
-      me: 'alice',
-      canManage: true,
-      open: true,
-    },
-    global: { plugins: [createVuetify({ components, directives })] },
-  })
-  await settle()
-  expect(document.querySelector('.roster')).not.toBeNull()
-})
-
 it('按钮上是一份名册：人数含 AI 队友，头像堆里没有单挂的那一颗', async () => {
   // 名册列表本来就是全量渲染的；这颗按钮曾经只数人、再把 AI 队友作为一张单独的
   // 头像挂在旁边，读起来像「几个人，另外还有个它」。头像堆后面不再另写一个总数：
   // 三张脸加「+1」已经说了是四位。
-  await openRoster()
+  const onOpen = vi.fn()
+  render(TopicMembers as unknown as Component, {
+    props: { topicId: 't1', onOpen },
+    global: { plugins: [createVuetify({ components, directives })] },
+  })
+  await settle()
   expect(document.querySelectorAll('.members-mini__face:not(.members-mini__face--more)')).toHaveLength(3)
   expect(document.querySelector('.members-mini__face--more')!.textContent).toBe('+1')
   expect(document.querySelector('.members-mini__face--agent')).toBeNull()
   expect(document.querySelector('.members-mini')!.getAttribute('title')).toContain('4 位')
+  // 点它打开的是频道详情的「成员」那一页（由页头接）。
+  await fireEvent.click(document.querySelector('.members-mini')!)
+  expect(onOpen).toHaveBeenCalledOnce()
 })
 
 function faceOf(handle: string): HTMLElement {
@@ -381,9 +373,14 @@ describe('名册上每条会话的执行环境', () => {
     expect(agentRow().querySelector('[data-testid^="session-env-"]')).toBeNull()
   })
 
+  // 新会话默认用的环境在频道详情的「设置」里。
   it('「新会话默认」那一行改的是默认，不搬任何一条会话', async () => {
     machines.get.mockResolvedValue(roomEnvironments({ sessions: [session('s-a', 'cheese-t1')] }))
-    await openRoster()
+    render(TopicDefaultEnvironment as unknown as Component, {
+      props: { topicId: 't1' },
+      global: { plugins: [createVuetify({ components, directives })] },
+    })
+    await settle()
     const row = document.querySelector('[data-testid="future-machine"]')!
     expect(row.textContent).toContain('新 AI 队友默认：沙箱 · 标准')
     expect(row.textContent).toContain('项目默认')
@@ -422,7 +419,7 @@ it('加一位进来，名册当场多他一行，不用重开房间', async () =
   await fireEvent.click(dave)
   await settle()
   const add = Array.from(document.querySelectorAll('.roster__add button')).find(
-    (b) => b.textContent?.trim() === '加入'
+    (b) => b.textContent?.trim() === '添加'
   ) as HTMLElement
   await fireEvent.click(add)
 
@@ -504,8 +501,8 @@ describe('名册一打开先有内容', () => {
     }
   })
 
-  // 频道详情的「设置」里那一份一挂上就是开着的：没有「变成开」的那一下，补行也得跑。
-  it('一挂上就开着的名单，剩下的行照样补上', async () => {
+  // 名单一挂上就在屏幕上：没有「变成开」的那一下，补行也得跑。
+  it('一挂上的名单，剩下的行照样补上', async () => {
     server.rows = manyMembers(30)
     render(Roster, {
       props: {
@@ -514,7 +511,6 @@ describe('名册一打开先有内容', () => {
         projectMembers: PROJECT_MEMBERS,
         me: 'alice',
         canManage: true,
-        open: true,
       },
       global: { plugins: [createVuetify({ components, directives })] },
     })

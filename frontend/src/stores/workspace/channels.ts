@@ -18,7 +18,7 @@ import {
   unarchiveTopic,
   upgradeBlock,
 } from '@/api'
-import { renameTask as renameTaskApi } from '@/api/tasks'
+import { closeTask as closeTaskApi, renameTask as renameTaskApi, reopenTask as reopenTaskApi } from '@/api/tasks'
 import { setChannelMembersOnly, setChannelSpeakers } from '@/api/topicMembers'
 import { t } from '@/i18n'
 import { patchQuery } from '@/query/client'
@@ -352,6 +352,32 @@ export function useChannelActions(deps: ChannelDeps) {
     }
   }
 
+  /** 关闭一件任务（侧栏右键、命令面板）：写回那件任务的缓存，侧栏的清单重取。成了返回 true。 */
+  async function closeTask(taskId: string, conclusion: string): Promise<boolean> {
+    try {
+      const closed = await closeTaskApi(taskId, conclusion.trim() || undefined)
+      await patchQuery<RoomTask>(keys.roomTask(taskId), (held) => ({ ...held, ...closed }))
+      void refreshTopics()
+      return true
+    } catch (e) {
+      reportError(e, t('work.task.actionFailed'))
+      return false
+    }
+  }
+
+  /** 重新打开一件关了的任务（侧栏右键、命令面板）。 */
+  async function reopenTask(taskId: string): Promise<boolean> {
+    try {
+      const opened = await reopenTaskApi(taskId)
+      await patchQuery<RoomTask>(keys.roomTask(taskId), (held) => ({ ...held, ...opened }))
+      void refreshTopics()
+      return true
+    } catch (e) {
+      reportError(e, t('work.task.actionFailed'))
+      return false
+    }
+  }
+
   /** 转为任务：主线上一条消息的支线原地转成任务，或支线里的一条回复另开一件。返回那件任务；
    *  侧栏的清单在后面重取，打开那件任务不等它。 */
   async function upgradeMessage(messageId: string): Promise<RoomTask | null> {
@@ -376,6 +402,8 @@ export function useChannelActions(deps: ChannelDeps) {
     markDmRead,
     renameTopic,
     renameTask,
+    closeTask,
+    reopenTask,
     archive,
     unarchive,
     removeChannel,

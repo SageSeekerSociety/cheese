@@ -9,9 +9,10 @@
 // toolbar's buttons). Both numbers are gone: the roster is a normal flex child
 // of this row now, so there is nothing left to align it against.
 //
-// 资源 lands here too. It used to be the fifth drawer, re-fetching every 20
-// seconds for as long as it was open; usage numbers do not move that fast, and
-// nobody watches them. Now they load once, when the popover is opened.
+// 频道本身能做的事只有一份（commands/topicActions.ts）：侧栏右键、命令面板列的就是它。
+// 桌面页头上不再放管频道的 ⋯ 和铃铛：点频道名、点那一串头像打开频道详情（关于 / 成员 /
+// 设置），静音时频道名旁边一个记号。手机上页头是顶栏，那一份清单留在顶栏的 ⋯ 里。
+import type { ChannelDetailsTab } from '@/commands/channelDetails'
 import type { MenuAction } from '@/components/common/menuAction'
 import type { TaskBlockButton } from '@/components/task/taskBlocks'
 import type { ProjectMemberRow, Topic } from '@/cx_types'
@@ -24,6 +25,9 @@ import { useNavigation } from '@/composables/useNavigation'
 import { useTopicUsage } from '@/composables/useTopicUsage'
 
 import { menuActionOf, useCommands } from '@/commands'
+import { channelDetailsRequest } from '@/commands/channelDetails'
+import { copyLink, linkOf } from '@/commands/copy'
+import { notifyLevelName } from '@/commands/notifyChoices'
 import { archiveTopic, topicActions } from '@/commands/topicActions'
 import BaseButton from '@/components/base/BaseButton.vue'
 import ChannelDetailsDialog from '@/components/channel/ChannelDetailsDialog.vue'
@@ -31,9 +35,7 @@ import DeleteChannelDialog from '@/components/channel/DeleteChannelDialog.vue'
 import AdaptiveDialog from '@/components/common/AdaptiveDialog.vue'
 import AdaptiveMenu from '@/components/common/AdaptiveMenu.vue'
 import PageSidebarToggle from '@/components/common/Navigation/PageSidebarToggle.vue'
-import ChannelNotifyMenu from '@/components/room/ChannelNotifyMenu.vue'
 import TopicMembers from '@/components/TopicMembers.vue'
-import TopicUsageSummary from '@/components/TopicUsageSummary.vue'
 import { t } from '@/i18n'
 import { routeIds } from '@/lib/addresses'
 import { mayIn, roleName } from '@/lib/projectPermissions'
@@ -54,7 +56,7 @@ const props = defineProps<{
    * 开没开着，和支线上有没读过的回复时的点。
    */
   blocks?: TaskBlockButton[]
-  /** 读者挪过这一页的摆法时给：⋯ 里多一项「恢复默认摆法」。 */
+  /** 读者挪过这一页的摆法时给：那一组的 ⋯ 里（手机上是顶栏的 ⋯ 里）多一项「恢复默认摆法」。 */
   resetLayout?: () => void
   /** 那几颗按钮开合的那几块的 id。 */
   panelControls?: string
@@ -81,11 +83,13 @@ const shortId = computed(() => topicShortId(props.topic.id))
 const title = computed(() => topicTitle(props.topic))
 // 「综合」是项目本身，不是一件事：没有编号，也没有「进行中」这类状态。
 const isWorkTopic = computed(() => props.topic.kind !== 'root')
-// 我对这个频道的通知档位（铃铛）。
 const store = useWorkspaceStore()
-// ---- 用量 popover (was the 资源 drawer) ----
-const menuOpen = ref(false)
-// 取数（取哪两份、什么时候算新鲜）在 `composables/useTopicUsage.ts` 那一层。
+// 静音时频道名旁边那个记号：不能点，悬停说的是此刻那一档。
+const muted = computed(() => props.topic.joined === true && store.levelOf(props.topic.id) === 'mute')
+const mutedLabel = computed(() => notifyLevelName('mute', store.mutedUntil(props.topic.id)))
+
+// 用量在频道详情的「关于」里：打开详情时取（取哪两份、什么时候算新鲜在
+// `composables/useTopicUsage.ts` 那一层）。
 const {
   loading: usageLoading,
   topic: topicUsage,
@@ -93,16 +97,8 @@ const {
   load: loadUsage,
 } = useTopicUsage({ topicId: () => props.topic.id, projectId: () => props.topic.project_id })
 
-watch(menuOpen, (open) => {
-  if (open) void loadUsage()
-})
-
-// ⋯ 里放的是侧栏那一行同一个频道操作菜单（commands/topicActions.ts）：两处各写一份
-// 就会各长各的。桌面和手机都是这一份，桌面是下拉菜单、手机是底部升起的面板
-// （AdaptiveMenu）——原先桌面上这颗 ⋯ 只开用量，改名、归档只有手机上找得到，等于
-// 桌面版够不着（清单第 1、3 条）。用量本来是这颗 ⋯ 的全部内容，现在它退成菜单顶上
-// 的一段（#desktopHeader / #header），照旧在指针移上来时先取。
 const nav = useNavigation()
+const menuOpen = ref(false)
 const renaming = ref(false)
 const draftTitle = ref('')
 
@@ -118,34 +114,58 @@ function saveRename() {
   if (next) emit('rename', next)
 }
 
-// 同一份话题操作：⋯ 面板里是一行一行的菜单，命令面板里是「操作」。
-// `topicActions` 要的是整台 router（复制链接靠它解析、新建任务/归档靠它跳），从
-// `nav.router` 上取；宿主没装路由时没有去处，这份菜单就空着——和别处「没有路由就
-// 少画一点」同一个道理。
+// 同一份频道操作：手机顶栏的 ⋯ 里是一行一行的菜单，命令面板里是「操作」。
+// `topicActions` 要的是整台 router（复制链接靠它解析、新建任务靠它跳），从 `nav.router`
+// 上取；宿主没装路由时没有去处，这份菜单就空着——和别处「没有路由就少画一点」同一个道理。
 function roomCommands() {
   if (!nav) return []
-  return topicActions(props.topic, nav.router, { rename: startRename, remove: () => (deleteOpen.value = true) })
+  return topicActions(props.topic, nav.router, { rename: startRename, details: () => openDetails('about') })
 }
-// 「恢复默认摆法」只在 ⋯ 里：命令面板里那一条是页面登记的（views/workspace/roomLayout.ts）。
-const roomActions = computed<MenuAction[]>(() =>
-  [
-    ...roomCommands(),
-    ...(props.resetLayout
-      ? [{ id: 'room.resetLayout', title: t('shell.layout.reset'), icon: 'mdi-restore', run: props.resetLayout }]
-      : []),
-  ].map(menuActionOf)
+// 「恢复默认摆法」：桌面上在那一组的 ⋯ 里，手机上跟在顶栏 ⋯ 的最后；命令面板里那一条是
+// 页面登记的（views/workspace/roomLayout.ts）。
+const resetCommand = computed<MenuAction | null>(() =>
+  props.resetLayout
+    ? menuActionOf({
+        id: 'room.resetLayout',
+        title: t('shell.layout.reset'),
+        icon: 'mdi-restore',
+        run: props.resetLayout,
+        divider: true,
+      })
+    : null
 )
+const roomActions = computed<MenuAction[]>(() => [
+  ...roomCommands().map(menuActionOf),
+  ...(resetCommand.value ? [resetCommand.value] : []),
+])
 
-// 频道详情：点页头的频道名打开。管理者是谁从页头名册那里来。
+// 频道详情：点页头的频道名、那一串头像、菜单里的「频道详情」打开。管理者是谁从那一串
+// 头像那里来（名册）。
 const detailsOpen = ref(false)
-// 成员名单开着没有。名单自己长在成员名册那一块上，详情只叫它开（清单第 5 条）。
-const membersOpen = ref(false)
+const detailsTab = ref<ChannelDetailsTab>('about')
+function openDetails(tab: ChannelDetailsTab) {
+  detailsTab.value = tab
+  detailsOpen.value = true
+}
+watch(detailsOpen, (open) => {
+  if (open) void loadUsage()
+})
+// 别处（侧栏右键、命令面板）要开这个频道的详情：先把人带到这里，再由这里打开。
+watch(
+  [channelDetailsRequest, () => props.topic.id],
+  ([request, id]) => {
+    if (!request || request.topicId !== id) return
+    channelDetailsRequest.value = null
+    openDetails(request.tab)
+  },
+  { immediate: true }
+)
 const managerName = ref<string | null>(null)
-// 我在这个项目里能做什么：详情或名单打开时才问，和工作区别处读同一份项目（`query/project`）。
+// 我在这个项目里能做什么：详情打开时才问，和工作区别处读同一份项目（`query/project`）。
 const projectRead = useQuery(
   computed(() => ({
     ...projectQuery(props.topic.project_id),
-    enabled: detailsOpen.value || membersOpen.value,
+    enabled: detailsOpen.value,
   })),
   queryClient
 )
@@ -170,14 +190,17 @@ function leaveFromDetails() {
   detailsOpen.value = false
   void store.setJoined(props.topic.id, false)
 }
-// 详情先关、名单再开：两张浮层叠在一起，关上面那张时下面那张会跟着晃一下。
-function openMembersFromDetails() {
-  detailsOpen.value = false
-  membersOpen.value = true
+function copyChannelLink() {
+  if (!nav) return
+  void copyLink(
+    linkOf(nav.router, {
+      name: 'workspace-topic',
+      params: { projectId: props.topic.project_id, topicId: props.topic.id },
+    })
+  )
 }
 
-// 删除频道（清单第 2 条）：⋯ 菜单和详情「设置」都开到这张确认框上，真正删的是
-// store（它删完把侧栏那一行去掉）。删成了就走——内容是刚被删掉的那个频道，留着
+// 删除频道：详情「设置」开到这张确认框上，真正删的是 store（它删完把侧栏那一行去掉）。删成了就走——内容是刚被删掉的那个频道，留着
 // 只会是一页空壳或者一个 404。
 const deleteOpen = ref(false)
 const deleting = ref(false)
@@ -209,7 +232,7 @@ useCommands(roomCommands)
         class="topic-header__title topic-header__title--button t-title"
         :title="title"
         :aria-label="t('work.channelDetails.open', { name: title })"
-        @click="detailsOpen = true"
+        @click="openDetails('about')"
       >
         <v-icon
           v-if="topic.members_only"
@@ -220,6 +243,15 @@ useCommands(roomCommands)
           :aria-label="t('work.channel.privateTip')"
         />{{ title }}
       </button>
+      <span
+        v-if="muted"
+        class="topic-header__muted"
+        role="img"
+        :title="mutedLabel"
+        :aria-label="mutedLabel"
+        data-testid="channel-muted"
+        ><v-icon size="16" icon="mdi-bell-off-outline"
+      /></span>
       <span v-if="mdAndUp && topic.description" class="topic-header__description" :title="topic.description">{{
         topic.description
       }}</span>
@@ -232,31 +264,27 @@ useCommands(roomCommands)
       </span>
     </div>
 
-    <!-- 群聊感 (fusion-design §3): the roster, as a normal child of this row.
-         芝士也在这份名册里（带 Agent 标），换 AI 队友就在它那一行上。 -->
-    <TopicMembers
-      v-model:open="membersOpen"
-      :topic-id="topic.id"
-      :can-manage="topic.can_manage === true"
-      :can-invite="bringsPeopleIn"
-      :joined="topic.joined === true"
-      :general="!isWorkTopic"
-      :project-id="topic.project_id"
-      :project-members="members"
-      :me="me"
-      @manager="managerName = $event"
-    />
+    <!-- The roster as a stack of faces; pressing it opens the details on the members page. -->
+    <TopicMembers :topic-id="topic.id" @open="openDetails('members')" @manager="managerName = $event" />
 
     <ChannelDetailsDialog
       v-if="detailsOpen"
       v-model="detailsOpen"
       :topic="topic"
+      :initial-tab="detailsTab"
       :can-manage="topic.can_manage === true"
       :manages-project="managesProject"
       :manager-name="managerName"
       :level="store.levelOf(topic.id)"
       :muted-until="store.mutedUntil(topic.id)"
       :roles="channelRoles"
+      :short-id="isWorkTopic ? shortId : null"
+      :usage-loading="usageLoading"
+      :topic-usage="topicUsage"
+      :project-usage="projectUsage"
+      :project-members="members"
+      :me="me"
+      :can-invite="bringsPeopleIn"
       @rename="(next) => emit('rename', next)"
       @describe="(text) => store.describe(topic.id, text)"
       @set-private="(membersOnly) => store.setMembersOnly(topic.id, membersOnly)"
@@ -264,22 +292,14 @@ useCommands(roomCommands)
       @unarchive="store.unarchive(topic.id)"
       @leave="leaveFromDetails"
       @delete="removeChannel"
-      @open-members="openMembersFromDetails"
+      @copy-link="copyChannelLink"
       @notify="(level, until) => store.setNotifyLevel(topic.id, level, until)"
       @speakers="(roles, open) => store.setSpeakers(topic.id, roles, open)"
     />
 
-    <ChannelNotifyMenu
-      v-if="topic.joined && topic.status !== 'archived'"
-      :level="store.levelOf(topic.id)"
-      :muted-until="store.mutedUntil(topic.id)"
-      @set="(level, until) => store.setNotifyLevel(topic.id, level, until)"
-    />
-
-    <!-- 这一行常驻的只有标题、状态、成员。其余的都是偶尔才用的，按「做一件事 /
-         看一个数」分成两段：专注模式、用量，编号垫在最底下。工作电脑在成员名册里。
-         连接状态不在这里：连着是常态不用说，断了页头上自己会写「未连接」。 -->
-    <AdaptiveMenu v-model="menuOpen" :actions="roomActions" :title="t('work.room.menu.more')">
+    <!-- Phones: the top bar has no room for anything else, so the channel's one list of actions
+         lives under this ⋯ (desktop reaches it by right-clicking the sidebar row or the palette). -->
+    <AdaptiveMenu v-if="!mdAndUp" v-model="menuOpen" :actions="roomActions" :title="title">
       <template #activator="{ props: menuProps }">
         <BaseButton
           v-bind="menuProps"
@@ -288,31 +308,6 @@ useCommands(roomCommands)
           class="tap-target"
           :title="t('work.room.menu.more')"
           :aria-label="t('work.room.menu.more')"
-          @mouseenter="loadUsage"
-          @focus="loadUsage"
-        />
-      </template>
-      <!-- 用量排在操作前面：它是这一段的口径，不是一件能做的事。桌面那颗 ⋯ 本来就
-           只开它，现在它退成菜单顶上的一段；手机上这一块从底部升起（设计系统 §10.4）。 -->
-      <template #desktopHeader>
-        <v-card min-width="300" class="room-menu">
-          <TopicUsageSummary
-            class="room-menu__usage"
-            :loading="usageLoading"
-            :topic-usage="topicUsage"
-            :project-usage="projectUsage"
-            :short-id="isWorkTopic ? shortId : null"
-            :topic-id="topic.id"
-          />
-        </v-card>
-      </template>
-      <template #header>
-        <TopicUsageSummary
-          :loading="usageLoading"
-          :topic-usage="topicUsage"
-          :project-usage="projectUsage"
-          :short-id="isWorkTopic ? shortId : null"
-          :topic-id="topic.id"
         />
       </template>
     </AdaptiveMenu>
@@ -345,7 +340,7 @@ useCommands(roomCommands)
         />
         <span v-if="block.dot" class="topic-header__thing-dot" aria-hidden="true" />
       </span>
-      <v-menu v-if="moreBlocks.length" location="bottom end">
+      <v-menu v-if="moreBlocks.length || resetCommand" location="bottom end">
         <template #activator="{ props: menuProps }">
           <BaseButton
             v-bind="menuProps"
@@ -371,6 +366,15 @@ useCommands(roomCommands)
             :data-panel-thing="block.key"
             @click="emit('toggle-block', block.key)"
           />
+          <template v-if="resetCommand">
+            <v-divider v-if="moreBlocks.length" class="my-1" />
+            <v-list-item
+              role="menuitem"
+              :title="resetCommand.label"
+              :prepend-icon="resetCommand.icon"
+              @click="resetCommand.onSelect?.()"
+            />
+          </template>
         </v-list>
       </v-menu>
     </div>
@@ -554,12 +558,10 @@ useCommands(roomCommands)
   background: var(--accent);
   border-radius: var(--radius-pill);
 }
-/* ⋯ 菜单。一行一件事，行高和别处的菜单一样（36px），分段靠一条 --line。 */
-.room-menu {
-  padding-block: 4px;
-}
-.room-menu__usage {
-  margin-top: 4px;
-  border-top: 1px solid var(--line);
+/* 静音的记号：不能点，和频道名挨着，比名字弱一档。 */
+.topic-header__muted {
+  display: inline-flex;
+  flex: none;
+  color: var(--muted);
 }
 </style>

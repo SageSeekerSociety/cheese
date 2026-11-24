@@ -213,16 +213,16 @@
       "blockingRefile": "递卡受阻",
       "dwell": "递卡到决议",
       "live": "还在走",
-      "needsYou": "等你处理",
+      "needsYou": "待你处理",
       "stuck": "卡住了"
     },
     "needs": {
       "breakdown": "验收人 {r} · 报告人 {p} · 被点名 {a}",
-      "empty": "没有等你的事",
+      "empty": "暂无待你处理的事项",
       "note": "三个理由是一个封闭集合（验收人 / 报告人 / 被点名），不发明第四个。",
       "room": "房间",
       "task": "任务",
-      "title": "等你处理"
+      "title": "待你处理"
     },
     "station": {
       "archived": "归档",

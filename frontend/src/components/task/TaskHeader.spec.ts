@@ -1,4 +1,4 @@
-/** 任务页头：只有负责人能换做它的电脑、能换做它的队友；别人看得到它在哪台电脑上、交给了哪位队友。做这件事的人都能改名。 */
+/** 任务页头和任务信息：只有负责人能换做它的电脑、能换做它的队友；别人看得到它在哪台电脑上、交给了哪位队友。做这件事的人都能改名。 */
 import type { Component } from 'vue'
 import type { RoomTask, Topic } from '@/cx_types'
 import type { TopicEnvironment } from '@/types/compute'
@@ -7,7 +7,7 @@ import { nextTick } from 'vue'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { fireEvent, render, waitFor } from '@testing-library/vue'
+import { fireEvent, render, screen, waitFor } from '@testing-library/vue'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 let me = 'alice'
@@ -130,6 +130,24 @@ function stubViewport() {
   })
 }
 
+async function onPhone<T>(run: () => Promise<T>): Promise<T> {
+  const prevWidth = window.innerWidth
+  window.innerWidth = 390
+  window.dispatchEvent(new Event('resize'))
+  try {
+    return await run()
+  } finally {
+    window.innerWidth = prevWidth
+    window.dispatchEvent(new Event('resize'))
+  }
+}
+
+/** 任务信息「状态」那一行里的几格。 */
+async function stateFacts(container: Element): Promise<string[]> {
+  await openDetails(container)
+  return [...document.querySelectorAll('[data-testid="task-state-part"]')].map((el) => el.textContent ?? '')
+}
+
 async function openDetails(container: Element) {
   stubViewport()
   await fireEvent.click(container.querySelector('[data-testid="task-details"]')!)
@@ -167,42 +185,57 @@ describe('任务页头', () => {
 
   // 页头那一格和频道里的卡、全部任务、总览说同一件事：标签只说「待审阅」，后面那一行
   // 说在等谁——是看的人就说「等你」。
-  it('标签只说待审阅；等的是看的人，后面那一行说等你，等的是别人就写出是谁', () => {
+  // 桌面页头只摆状态那一格；在等谁、原话这些各自成一格，写在任务信息的「状态」里。
+  it('标签只说待审阅；等的是看的人，任务信息里写等你，等的是别人就写出是谁', async () => {
     me = 'alice'
     const mine = mount({ waiting_on: 'alice', needs_my_action: true })
     expect(mine.getByTestId('task-phrase').textContent).toBe('待审阅')
-    expect(mine.getByTestId('task-progress-note').textContent).toContain('等你')
+    expect(mine.queryByTestId('task-progress-note')).toBeNull()
+    expect(await stateFacts(mine.container)).toContain('待你处理')
     mine.unmount()
+    document.body.innerHTML = ''
 
     const theirs = mount({ owner_handle: 'bob', waiting_on: 'bob' })
     expect(theirs.getByTestId('task-phrase').textContent).toBe('待审阅')
-    expect(theirs.getByTestId('task-progress-note').textContent).toContain('等bob')
-    expect(theirs.getByTestId('task-progress-note').textContent).not.toContain('等你')
+    const facts = await stateFacts(theirs.container)
+    expect(facts).toContain('待 bob 处理')
+    expect(facts).not.toContain('待你处理')
   })
 
-  it('关注人不被页头写成实际答题人', () => {
+  it('关注人不被写成实际答题人', async () => {
     const view = mount({
       presentation: { column: 'needs_you', phrase: 'awaiting_answer' },
       waiting_on: 'bob',
       awaits_me: true,
       needs_my_action: false,
     })
-    expect(view.getByTestId('task-progress-note').textContent).not.toContain('等你')
-    expect(view.getByTestId('task-progress-note').textContent).toContain('等bob')
+    const facts = await stateFacts(view.container)
+    expect(facts).not.toContain('待你处理')
+    expect(facts).toContain('待 bob 处理')
   })
 
-  it('多人问题的实际被问者在页头看到等你', () => {
+  it('多人问题的实际被问者看到等你', async () => {
     const view = mount({
       presentation: { column: 'needs_you', phrase: 'awaiting_answer' },
       waiting_on: null,
       awaits_me: true,
       needs_my_action: true,
     })
-    expect(view.getByTestId('task-progress-note').textContent).toContain('等你')
+    expect(await stateFacts(view.container)).toContain('待你处理')
   })
 
-  // 队友报的那一句是看板这一格的出处：页头照说，会话走了也不改它，只在旁边说一声。
-  it('队友说在等结果：页头写进行中和它的原话，会话走了也照旧，旁边写已离开', () => {
+  it('待审阅的几样事各占一格，不连成一句', async () => {
+    const view = mount({
+      waiting_on: 'alice',
+      needs_my_action: true,
+      card: { id: 'c1', status: 'pending', version: 2, reviewer: 'alice' },
+    } as Partial<RoomTask>)
+    const facts = await stateFacts(view.container)
+    expect(facts).toEqual(['待你处理', '第 2 版'])
+  })
+
+  // 队友报的那一句是看板这一格的出处：照说，会话走了也不改它，只在旁边说一声。
+  it('队友说在等结果：页头写进行中，它的原话在任务信息里，会话走了也照旧，旁边写已离开', async () => {
     const said = {
       presentation: { column: 'building', phrase: 'waiting' },
       progress_state: 'waiting',
@@ -212,14 +245,15 @@ describe('任务页头', () => {
     } as Partial<RoomTask>
     const here = mount(said)
     expect(here.getByTestId('task-phrase').textContent).toBe('进行中')
-    expect(here.getByTestId('task-progress-note').textContent).toContain('等 CI 跑完')
+    expect(await stateFacts(here.container)).toContain('等 CI 跑完')
     expect(here.queryByTestId('task-agent-left')).toBeNull()
     here.unmount()
+    document.body.innerHTML = ''
 
     const gone = mount({ ...said, agent_left_at: '2026-10-05T01:00:00Z' })
     expect(gone.getByTestId('task-phrase').textContent).toBe('进行中')
-    expect(gone.getByTestId('task-progress-note').textContent).toContain('等 CI 跑完')
     expect(gone.getByTestId('task-agent-left').textContent).toContain('已离开')
+    expect(await stateFacts(gone.container)).toContain('等 CI 跑完')
   })
 
   // 名字跟的是报那句话的队友：任务中途换过人时，两处不是同一个，照任务当前的队友
@@ -368,10 +402,10 @@ describe('任务页头', () => {
     expect(setCollaborators).toHaveBeenCalledWith(['carol'])
   })
 
-  it('关了的任务，负责人能重新打开', async () => {
+  it('关了的任务，负责人能在任务信息里重新打开', async () => {
     stubViewport()
     const owner = mount({ status: 'closed' })
-    await fireEvent.click(owner.container.querySelector('[data-testid="task-more"]')!)
+    await fireEvent.click(owner.container.querySelector('[data-testid="task-details"]')!)
     await waitFor(() => expect(document.querySelector('[data-testid="task-reopen"]')).not.toBeNull())
     await fireEvent.click(document.querySelector('[data-testid="task-reopen"]')!)
     expect(owner.reopen).toHaveBeenCalledOnce()
@@ -381,40 +415,50 @@ describe('任务页头', () => {
     stubViewport()
     me = 'bob'
     const member = mount({ status: 'closed' })
-    await fireEvent.click(member.container.querySelector('[data-testid="task-more"]')!)
+    await fireEvent.click(member.container.querySelector('[data-testid="task-details"]')!)
     await waitFor(() => expect(document.querySelector('[data-testid="task-reopen"]')).not.toBeNull())
     await fireEvent.click(document.querySelector('[data-testid="task-reopen"]')!)
     expect(member.reopen).toHaveBeenCalledOnce()
   })
 
-  it('角色没有「新建任务和审阅」的人（导师）重新打开不了关了的任务', () => {
+  it('角色没有「新建任务和审阅」的人（导师）重新打开不了关了的任务', async () => {
     me = 'teacher'
     const { container } = mount({ status: 'closed' }, PEOPLE, AGENTS, false)
+    await openDetails(container)
+    expect(document.querySelector('[data-testid="task-reopen"]')).toBeNull()
+  })
+
+  it('桌面上页头没有管任务的 ⋯：那一份在侧栏右键和命令面板里', () => {
+    const { container } = mount({ contributor_handles: ['bob'] })
     expect(container.querySelector('[data-testid="task-more"]')).toBeNull()
   })
 
-  it('「⋯」打开的是一个菜单，每一项是菜单项', async () => {
-    const { container } = mount()
+  it('手机上顶栏的「⋯」是那一份：复制链接、重命名，然后关闭任务', async () => {
     stubViewport()
-    await fireEvent.click(container.querySelector('[data-testid="task-more"]')!)
-    const menu = await waitFor(() => {
-      const el = document.querySelector('[role="menu"]')
-      expect(el).not.toBeNull()
-      return el!
+    await onPhone(async () => {
+      const { container } = mount()
+      const more = await waitFor(() => {
+        const el = container.querySelector('[data-testid="task-more"]')
+        expect(el).not.toBeNull()
+        return el!
+      })
+      await fireEvent.click(more)
+      const items = await waitFor(() => {
+        const found = Array.from(document.querySelectorAll('[role="menuitem"]')).map((el) => el.textContent?.trim())
+        expect(found.length).toBeGreaterThan(0)
+        return found
+      })
+      expect(items).toEqual(['重命名', '关闭任务'])
     })
-    const items = Array.from(menu.querySelectorAll('[role="menuitem"]')).map((el) => el.textContent?.trim())
-    expect(items).toEqual(expect.arrayContaining(['重命名', '关闭任务']))
   })
 
-  it('协作者能改名、能关闭，不能转交', async () => {
+  it('协作者在任务信息里能改名、能关闭，不能转交', async () => {
     me = 'bob'
     const { container, rename } = mount({ contributor_handles: ['bob'] })
-    stubViewport()
-    await fireEvent.click(container.querySelector('[data-testid="task-more"]')!)
-    await waitFor(() => expect(document.querySelector('[data-testid="task-rename"]')).not.toBeNull())
-    expect(document.body.textContent).toContain('关闭任务')
-    expect(document.body.textContent).not.toContain('转交')
-    await fireEvent.click(document.querySelector('[data-testid="task-rename"]')!)
+    await openDetails(container)
+    expect(document.querySelector('[data-testid="task-close"]')).not.toBeNull()
+    expect(document.querySelector('[data-testid="task-hand-over"]')).toBeNull()
+    await fireEvent.click(screen.getByRole('button', { name: '编辑' }))
     const input = await waitFor(() => {
       const el = document.querySelector<HTMLInputElement>('input[aria-label="任务名称"]')
       expect(el).not.toBeNull()
@@ -443,11 +487,20 @@ describe('任务页头', () => {
     expect(owner.querySelector('.user-avatar-char')?.textContent?.trim()).toBe('B')
   })
 
-  it('协作者的头像各按自己挑过的画', async () => {
-    const { container } = mount({ owner_handle: 'bob', contributor_handles: ['carol'] }, PICKED)
-    await nextTick()
-    const helper = container.querySelector('.task-header__helper')!
-    expect(helper.querySelector('img')?.getAttribute('src')).toContain('/avatars/9')
+  it('手机顶栏里协作者的头像各按自己挑过的画', async () => {
+    await onPhone(async () => {
+      const { container } = mount({ owner_handle: 'bob', contributor_handles: ['carol'] }, PICKED)
+      await nextTick()
+      const helper = container.querySelector('.task-header__helper')!
+      expect(helper.querySelector('img')?.getAttribute('src')).toContain('/avatars/9')
+    })
+  })
+
+  it('负责人能在任务信息里转交', async () => {
+    const { container } = mount()
+    await openDetails(container)
+    await fireEvent.click(document.querySelector('[data-testid="task-hand-over"]')!)
+    await waitFor(() => expect(document.body.textContent).toContain('转交给谁？'))
   })
 
   it('手机顶栏里状态区保留完整进度说明与「已离开」，状态文字更新时横向滚动回到开头', async () => {
@@ -551,18 +604,18 @@ describe('任务页头', () => {
     expect(emitted('toggle-part')).toEqual([['terminal'], ['conversation']])
   })
 
-  it('编辑器里页头只留任务名和状态：在等谁、有未提交的修改、负责人收在任务名旁边那一颗里', async () => {
-    const { getByRole, queryByText, rerender } = mount({
+  it('编辑器里页头只留任务名和状态：有未提交的修改、负责人收在任务名旁边那一颗里', async () => {
+    const { getByRole, queryByRole, queryByText, rerender } = mount({
       presentation: { column: 'needs_you', phrase: 'awaiting_review' },
       card: { id: 'c1', status: 'pending', version: 1, reviewer: 'alice' },
     } as Partial<RoomTask>)
     await rerender({ form: 'chat', unhanded: true })
     expect(queryByText('有未提交的修改')).not.toBeNull()
-    expect(queryByText('alice 负责')).not.toBeNull()
+    expect(getByRole('button', { name: 'alice 负责' })).not.toBeNull()
 
     await rerender({ form: 'editor', unhanded: true, editorParts: { left: true, terminal: true, conversation: true } })
     expect(queryByText('有未提交的修改')).toBeNull()
-    expect(queryByText('alice 负责')).toBeNull()
+    expect(queryByRole('button', { name: 'alice 负责' })).toBeNull()
     await fireEvent.click(getByRole('button', { name: '任务信息' }))
     await waitFor(() => expect(queryByText('有未提交的修改')).not.toBeNull())
     expect(queryByText('负责人')).not.toBeNull()

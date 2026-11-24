@@ -1,12 +1,21 @@
 {
   "archive": "归档频道",
   "archiveHint": "归档后不能发送消息，历史消息仍可查看和搜索。有未结束的任务时不能归档",
+  "change": "更改",
   "created": "创建时间",
-  "members": "成员",
-  "membersOpen": "查看成员",
+  "environment": "环境",
+  "number": "编号",
   "open": "「{name}」的详情",
   "speakers": "谁能发言",
   "speakersEveryone": "所有人",
   "speakersSome": "指定角色",
-  "threadsOpen": "允许所有人在讨论串里回复"
+  "threadsOpen": "允许所有人在讨论串里回复",
+  "title": "频道详情",
+  "usage": {
+    "turns": "运行次数",
+    "tokens": "token",
+    "input": "输入",
+    "output": "输出",
+    "cost": "费用"
+  }
 }

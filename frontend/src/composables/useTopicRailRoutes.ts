@@ -1,5 +1,5 @@
 // 项目侧栏那一半「路由」：我在哪、点一下去哪儿、指针停住先预热什么，以及话题行尾
-// 那颗 ⋯ 里的几项（要一个真的 router 才算得出链接）。
+// 那一行右键的几项（要一个真的 router 才算得出链接）。
 //
 // 这一层存在的理由只有一个：`src/components/**` 不许 import vue-router
 //（.claude/rules/architecture.md）。侧栏仍然要路由，所以它绕这一道取——画的那几个
@@ -14,17 +14,21 @@ import type { Topic } from '../cx_types'
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { taskRowActions } from '../commands/taskActions'
+import { taskActions } from '../commands/taskActions'
 import { copyTaskLink } from '../commands/taskLink'
 import { topicActions } from '../commands/topicActions'
+import { mayIn } from '../lib/projectPermissions'
 import { cancelPrefetch, prefetchOnHover } from '../lib/routePrefetch'
 import { myHandle } from '../me'
+import { useWorkspaceStore } from '../stores/workspace'
 
 export interface TopicRailRouteHandlers {
   /** 行菜单里的「重命名」：侧栏里是就地改，改怎么做由调用方决定。 */
   rename: (topic: Topic) => void
   /** 任务行菜单里的「重命名」：同上，只是那一条属于一件任务。 */
   renameTask: (task: TaskActionTask) => void
+  /** 任务行菜单里的「关闭任务」：先要一句结论，那张确认框由侧栏出。 */
+  closeTask: (task: TaskActionTask) => void
 }
 
 /**
@@ -34,6 +38,7 @@ export interface TopicRailRouteHandlers {
 export function useTopicRailRoutes(projectId: () => string | null, on: TopicRailRouteHandlers) {
   const router = useRouter()
   const route = useRoute()
+  const store = useWorkspaceStore()
 
   /** 当前页的名字（不是字符串就给 null）——置顶行和项目菜单凭它画选中态。 */
   const routeName = computed<string | null>(() => (typeof route.name === 'string' ? route.name : null))
@@ -60,25 +65,37 @@ export function useTopicRailRoutes(projectId: () => string | null, on: TopicRail
     router.push({ name: 'workspace-project', params: { projectId: id } })
   }
 
-  /** 侧栏里给一条话题做得了的事（悬停的 ⋯、长按的面板都问它）。 */
+  /** 侧栏里给一个频道做得了的事（右键、长按的面板都问它）：和命令面板、手机顶栏的 ⋯
+   *  是同一份（`commands/topicActions.ts`）。 */
   function actionsFor(topic: Topic): MenuCommand[] {
-    // 只收窄侧栏入口；顶栏和命令面板仍保留各自的完整操作。
-    // 先由共享动作算权限，未加入的频道用「加入」替代「退出」。
-    const order = ['topic.newTask', 'topic.allTasks', 'topic.rename', 'topic.leave', 'topic.join']
     return topicActions(topic, router, { rename: () => on.rename(topic) })
-      .filter((action) => order.includes(action.id))
-      .sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id))
   }
 
-  /** 侧栏里给一件任务做得了的事：和任务页右上角同一份清单，只留扫列表时敢点的
-   *  「重命名」「复制链接」（见 `commands/taskActions.ts`）。 */
+  /** 侧栏里给一件任务做得了的事：和任务页那一份是同一份（`commands/taskActions.ts`）。 */
   function taskActionsFor(task: TaskActionTask): MenuCommand[] {
-    return taskRowActions(
+    const id = projectId()
+    return taskActions(
       task,
-      { rename: () => on.renameTask(task) },
-      { me: myHandle(), copyLink: () => copyTaskLink(router, task) }
+      {
+        rename: () => on.renameTask(task),
+        close: () => on.closeTask(task),
+        reopen: () => void store.reopenTask(task.id),
+      },
+      {
+        me: myHandle(),
+        worksTasks: mayIn(
+          store.projects.find((project) => project.id === id),
+          'tasks'
+        ),
+        copyLink: () => copyTaskLink(router, task),
+      }
     )
   }
 
-  return { routeName, openPage, prefetchPage, openProject, cancelPrefetch, actionsFor, taskActionsFor }
+  /** 关掉一件任务：侧栏那张确认框点了「关闭任务」之后。 */
+  function closeTask(task: TaskActionTask, conclusion: string): Promise<boolean> {
+    return store.closeTask(task.id, conclusion)
+  }
+
+  return { routeName, openPage, prefetchPage, openProject, cancelPrefetch, actionsFor, taskActionsFor, closeTask }
 }

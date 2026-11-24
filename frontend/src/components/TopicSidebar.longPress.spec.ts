@@ -149,7 +149,7 @@ afterEach(() => {
 })
 
 describe('手机话题列表：长按一行', () => {
-  it('长按升起这一行的四项操作，重命名提交的是这一行', async () => {
+  it('长按升起这一行的操作，重命名提交的是这一行', async () => {
     const { container, baseElement, onSelectTopic, onRenameTopic } = mount()
     await Promise.resolve()
     vi.useFakeTimers()
@@ -167,8 +167,11 @@ describe('手机话题列表：长按一行', () => {
     expect(onSelectTopic).not.toHaveBeenCalled()
 
     expect(sheetItems(baseElement).map((item) => item.textContent?.trim())).toEqual([
+      expect.stringContaining(t('work.channel.notify.title')),
+      t('work.room.menu.copyLink'),
       t('work.room.menu.newTask'),
       t('work.room.menu.allTasks'),
+      t('work.channelDetails.title'),
       t('work.room.menu.rename'),
       t('work.channel.leave'),
     ])
@@ -205,8 +208,11 @@ describe('手机话题列表：长按一行', () => {
     await fireEvent.click(more)
     await waitFor(() => {
       expect(sheetItems(baseElement).map((item) => item.textContent?.trim())).toEqual([
+        expect.stringContaining(t('work.channel.notify.title')),
+        t('work.room.menu.copyLink'),
         t('work.room.menu.newTask'),
         t('work.room.menu.allTasks'),
+        t('work.channelDetails.title'),
         t('work.room.menu.rename'),
         t('work.channel.leave'),
       ])

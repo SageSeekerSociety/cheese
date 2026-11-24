@@ -1,7 +1,7 @@
 {
   "inbox": {
-    "waiting": "等你处理",
-    "waitingEmpty": "暂无等你处理的事项",
+    "waiting": "待你处理",
+    "waitingEmpty": "暂无待你处理的事项",
     "loadFailed": "无法读取待处理事项",
     "feed": "动态",
     "reason": {

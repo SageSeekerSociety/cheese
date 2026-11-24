@@ -11,12 +11,17 @@
 // 档；减弱动效时直接出现。底部让出 safe-area-inset-bottom。
 //
 // 要「桌面是菜单、手机是面板」的，用 AdaptiveMenu，别在页面里自己分两支。
+//
+// 一项带 children 的是下一层：点它不关面板，面板换成那一层，顶上一颗返回回到上一层。
+// 面板很窄，旁边弹不出子菜单，所以就地换。
 import type { MenuAction } from './menuAction'
 
 import { computed, ref } from 'vue'
 
 import { useFocusReturn } from '@/composables/useFocusReturn'
 import { useNavigation } from '@/composables/useNavigation'
+
+import { t } from '@/i18n'
 
 const open = defineModel<boolean>({ default: false })
 
@@ -38,8 +43,16 @@ defineSlots<{
 
 const nav = useNavigation()
 
+/** 点开的那一层；null 是最上面那一层。 */
+const level = ref<MenuAction | null>(null)
+const shownActions = computed(() => level.value?.children ?? props.actions)
+
 function choose(action: MenuAction) {
   if (action.disabled || action.loading) return
+  if (action.children) {
+    level.value = action
+    return
+  }
   open.value = false
   emit('select', action)
   action.onSelect?.()
@@ -101,6 +114,7 @@ function onTouchEnd(e: TouchEvent) {
 function reset() {
   offset.value = 0
   settling.value = false
+  level.value = null
 }
 
 const panelStyle = computed(() => (offset.value ? { transform: `translateY(${offset.value}px)` } : undefined))
@@ -128,22 +142,31 @@ useFocusReturn(open)
       @touchcancel="onTouchEnd"
     >
       <div class="action-sheet__handle" aria-hidden="true" />
-      <div v-if="$slots.header || props.title" class="action-sheet__header">
+      <div v-if="level" class="action-sheet__header action-sheet__header--level">
+        <button type="button" class="action-sheet__back" :aria-label="t('global.back')" @click="level = null">
+          <v-icon size="20" icon="mdi-chevron-left" />
+        </button>
+        <span class="t-meta">{{ level.label }}</span>
+      </div>
+      <div v-else-if="$slots.header || props.title" class="action-sheet__header">
         <slot name="header">
           <span class="t-meta">{{ props.title }}</span>
         </slot>
       </div>
-      <slot />
-      <ul v-if="props.actions.length" class="action-sheet__list" role="menu">
+      <slot v-if="!level" />
+      <ul v-if="shownActions.length" class="action-sheet__list" role="menu">
         <li
-          v-for="action in props.actions"
+          v-for="action in shownActions"
           :key="action.key"
           role="none"
           :class="{ 'action-sheet__row--apart': action.divider }"
         >
+          <div v-if="action.section" class="action-sheet__section t-meta">{{ action.section }}</div>
           <button
             type="button"
-            role="menuitem"
+            :role="action.checked === undefined ? 'menuitem' : 'menuitemradio'"
+            :aria-checked="action.checked === undefined ? undefined : action.checked ? 'true' : 'false'"
+            :aria-haspopup="action.children ? 'menu' : undefined"
             class="action-sheet__item"
             :class="{ 'action-sheet__item--danger': action.danger }"
             :disabled="action.disabled || action.loading"
@@ -151,8 +174,16 @@ useFocusReturn(open)
             @click="choose(action)"
           >
             <v-progress-circular v-if="action.loading" indeterminate size="18" width="2" />
+            <v-icon v-else-if="action.checked !== undefined" size="20" aria-hidden="true">{{
+              action.checked ? 'mdi-check' : ''
+            }}</v-icon>
             <v-icon v-else size="20" aria-hidden="true">{{ action.icon }}</v-icon>
-            <span class="action-sheet__label">{{ action.label }}</span>
+            <span class="action-sheet__label">
+              <span class="action-sheet__name">{{ action.label }}</span>
+              <span v-if="action.hint" class="action-sheet__hint">{{ action.hint }}</span>
+            </span>
+            <span v-if="action.value" class="action-sheet__value">{{ action.value }}</span>
+            <v-icon v-if="action.children" size="18" class="action-sheet__chevron" icon="mdi-chevron-right" />
             <span v-if="action.badge" class="action-sheet__badge">{{ action.badge }}</span>
           </button>
         </li>
@@ -237,11 +268,59 @@ useFocusReturn(open)
   color: var(--danger-ink);
 }
 .action-sheet__label {
+  display: flex;
   flex: 1 1 auto;
+  flex-direction: column;
   min-width: 0;
+}
+.action-sheet__name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 名字下面那一行小字（通知档位的说明）：可以折行，比名字弱一档。 */
+.action-sheet__hint {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: var(--lh-13);
+}
+.action-sheet__item:has(.action-sheet__hint) {
+  padding-block: 8px;
+}
+.action-sheet__value {
+  flex: none;
+  max-width: 45%;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.action-sheet__chevron {
+  flex: none;
+}
+/* 一组的小标题（「静音一段时间」）。 */
+.action-sheet__section {
+  padding: 8px 20px 4px;
+  color: var(--muted);
+}
+.action-sheet__header--level {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-inline-start: 8px;
+}
+.action-sheet__back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  color: var(--muted);
+  cursor: pointer;
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-md);
 }
 /* 未读数：裸的琥珀数字，和侧栏行尾那一个同一种画法。 */
 .action-sheet__badge {

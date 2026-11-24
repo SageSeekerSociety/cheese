@@ -107,7 +107,7 @@ describe('统计页 · 交付管线那一屏', () => {
   it('五张 KPI 是存量的那五个数，四站导轨与三列各自到位', async () => {
     const { container } = await openTab('交付')
 
-    expect(kpiLabels(container)).toEqual(['还在走', '卡住了', '递卡到决议', '等你处理', '递卡受阻'])
+    expect(kpiLabels(container)).toEqual(['还在走', '卡住了', '递卡到决议', '待你处理', '递卡受阻'])
     // 5 / 2 / p50 四小时 / 4+3+1 / 5 —— 全部来自 fixtures 里的存量。
     expect(kpiValues(container)).toEqual(['5', '2', '4 小时', '8', '5'])
 

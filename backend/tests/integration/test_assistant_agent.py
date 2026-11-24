@@ -138,7 +138,7 @@ def test_the_inbox_says_when_nothing_waits(client):
         "/assistant/agent/inbox", json={}, headers=_as(_personal(client, "dora"))
     )
     assert r.status_code == 200, r.text
-    assert r.json()["data"]["text"] == "现在没有等你处理的事。"
+    assert r.json()["data"]["text"] == "现在没有待你处理的事项。"
 
 
 def test_a_search_finds_across_the_persons_projects_with_refs(client):

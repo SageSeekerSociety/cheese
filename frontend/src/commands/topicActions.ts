@@ -1,14 +1,20 @@
-// 对一个话题能做什么。话题列表那一行的 ⋯、手机上长按一行升起的面板、房间顶栏的
-// ⋯、命令面板里按 Tab 列出来的，问的是同一个问题，答案只在这里写一次：给话题加一件
-// 能做的事，这几处同时有。
+// 对一个频道能做什么。侧栏那一行的右键（和手机上长按升起的面板）、命令面板里按 Tab
+// 列出来的、手机频道页顶栏的 ⋯，列的是同一份，答案只在这里写一次：给频道加一件能做
+// 的事，这几处同时有。
 //
-// 重命名的做法各处不一样——侧栏里是就地改，房间里另起一页，命令面板里是在输入框里
-// 改——所以由调用的地方传进来。复制链接、标为已读、静音、归档在哪都一样，写在这里。
+// 分四组，组间一条分隔线：先是只关我自己的（标为已读、通知、复制链接），再是任务，再是
+// 频道本身（详情、重命名），最后是进出。归档、取消归档、删除不在这里，在频道详情的
+// 「设置」里。
+//
+// 重命名的做法各处不一样——侧栏里是就地改，页头另起一张对话框，命令面板里是在输入框里
+// 改——所以由调用的地方传进来。频道详情也一样：页头上就地打开，别处先去那个频道。
 import type { Router } from 'vue-router'
 import type { Topic } from '@/cx_types'
 import type { MenuCommand } from '.'
 
+import { requestChannelDetails } from './channelDetails'
 import { copyLink, linkOf } from './copy'
+import { notifyChoices, notifyLevelName } from './notifyChoices'
 
 import { createRoomTask } from '@/api/tasks'
 import { t } from '@/i18n'
@@ -18,54 +24,65 @@ import { useWorkspaceStore } from '@/stores/workspace'
 
 export interface TopicActionHandlers {
   rename: () => void
-  /** 「删除频道」（清单第 2 条）。没人接这一条就不画它——删除要走二次确认，而那张
-   *  确认框由调用的地方出。 */
-  remove?: () => void
+  /** 打开频道详情。不给就先去这个频道，由它的页头打开。 */
+  details?: () => void
+}
+
+/** 把几组连成一份：每组第一项前面画分隔线（第一组除外），空的组不留线。 */
+function grouped(groups: MenuCommand[][]): MenuCommand[] {
+  const out: MenuCommand[] = []
+  for (const group of groups) {
+    if (!group.length) continue
+    out.push(...group.map((command, i) => (i === 0 && out.length ? { ...command, divider: true } : command)))
+  }
+  return out
 }
 
 export function topicActions(topic: Topic, router: Router, on: TopicActionHandlers): MenuCommand[] {
   const store = useWorkspaceStore()
-  const actions: MenuCommand[] = [
-    {
-      id: 'topic.copyLink',
-      title: t('work.room.menu.copyLink'),
-      icon: 'mdi-link-variant',
-      run: () =>
-        void copyLink(
-          linkOf(router, { name: 'workspace-topic', params: { projectId: topic.project_id, topicId: topic.id } })
-        ),
-    },
-  ]
+  const archived = topic.status === 'archived'
+  const general = topic.kind === 'root'
+  const here = { name: 'workspace-topic', params: { projectId: topic.project_id, topicId: topic.id } }
+
+  const mine: MenuCommand[] = []
   if (store.unreadMap[topic.id])
-    actions.push({
+    mine.push({
       id: 'topic.markRead',
       title: t('work.room.menu.markRead'),
       icon: 'mdi-check-all',
       run: () => store.markRead(topic.id),
     })
-  // 静音：只有直接 @我才计数和通知，直到我取消。要静音一段时间、或者要所有新消息，
-  // 在频道顶栏的铃铛里选。
-  if (topic.joined) {
-    const muted = store.isMuted(topic.id)
-    actions.push({
-      id: muted ? 'topic.unmute' : 'topic.mute',
-      title: muted ? t('work.room.menu.unmute') : t('work.room.menu.mute'),
-      icon: muted ? 'mdi-bell-outline' : 'mdi-bell-off-outline',
-      run: () => void store.setNotifyLevel(topic.id, muted ? 'mentions' : 'mute'),
+  // 通知：只有频道里的人有档位可选，归档了不再有新消息。
+  if (topic.joined && !archived) {
+    const level = store.levelOf(topic.id)
+    const until = store.mutedUntil(topic.id)
+    mine.push({
+      id: 'topic.notify',
+      title: t('work.channel.notify.title'),
+      icon: level === 'mute' ? 'mdi-bell-off-outline' : 'mdi-bell-outline',
+      value: notifyLevelName(level, until),
+      children: notifyChoices(level, until, (next, at) => void store.setNotifyLevel(topic.id, next, at)),
     })
   }
-  // 没归档的房间（包括综合）都能新建任务。
-  if (topic.status !== 'archived') {
-    actions.push({
+  mine.push({
+    id: 'topic.copyLink',
+    title: t('work.room.menu.copyLink'),
+    icon: 'mdi-link-variant',
+    run: () => void copyLink(linkOf(router, here)),
+  })
+
+  const tasks: MenuCommand[] = []
+  // 没归档的频道（包括综合）都能新建任务。
+  if (!archived)
+    tasks.push({
       id: 'topic.newTask',
       title: t('work.room.menu.newTask'),
       icon: 'mdi-checkbox-marked-circle-plus-outline',
       run: () => void newTask(topic, router),
     })
-  }
   // 全部任务：这个频道的任务一整页，进行中的、已结束的都在，按谁的筛。侧栏频道下面只
-  // 挂几条，展开也只到进行中的，要看全部从这里走。
-  actions.push({
+  // 挂几条，要看全部从这里走。
+  tasks.push({
     id: 'topic.allTasks',
     title: t('work.room.menu.allTasks'),
     icon: 'mdi-format-list-checks',
@@ -76,73 +93,44 @@ export function topicActions(topic: Topic, router: Router, on: TopicActionHandle
         query: { channel: topic.id },
       }),
   })
-  // 文件：这个频道里的文件都在右侧面板的「文件」那一格——发进来的附件、芝士交付的和
-  // 写的、定时任务交回的。看是随时能看的，归档了也在，所以不问状态。
-  actions.push({
-    id: 'topic.files',
-    title: t('work.room.menu.files'),
-    icon: 'mdi-folder-outline',
-    run: () =>
-      void router.push({
-        name: 'workspace-topic',
-        params: { projectId: topic.project_id, topicId: topic.id },
-        query: { tab: 'files' },
-      }),
-  })
-  // 「综合」是项目本身：人人都在，退不出去，也不能改名、归档。
-  if (topic.kind === 'root') return actions
-  if (topic.joined)
-    actions.push({
+
+  const itself: MenuCommand[] = [
+    {
+      id: 'topic.details',
+      title: t('work.channelDetails.title'),
+      icon: 'mdi-information-outline',
+      run:
+        on.details ??
+        (() => {
+          requestChannelDetails(topic.id)
+          void router.push(here)
+        }),
+    },
+  ]
+  // 改名：项目里谁都能改。频道叫什么是用它的这些人一起定的事，不是创建者一个人的；
+  // 后端那一侧同样只认「你能进这个频道」（`topics_title.py`）。「综合」是项目本身，
+  // 不改名；归档了的也不再改。
+  if (!general && !archived)
+    itself.push({ id: 'topic.rename', title: t('work.room.menu.rename'), icon: 'mdi-pencil-outline', run: on.rename })
+
+  // 「综合」是项目本身：人人都在，退不出去。
+  const membership: MenuCommand[] = []
+  if (!general && topic.joined)
+    membership.push({
       id: 'topic.leave',
       title: t('work.channel.leave'),
       icon: 'mdi-logout-variant',
       run: () => void store.setJoined(topic.id, false),
     })
-  else if (topic.status !== 'archived')
-    actions.push({
+  else if (!general && !archived)
+    membership.push({
       id: 'topic.join',
       title: t('work.channel.join'),
       icon: 'mdi-login-variant',
       run: () => void store.setJoined(topic.id, true),
     })
-  // 删除排在最后：它不可撤销，不该挨着上面随手点的那几件。已归档的也能删——归档只是
-  // 不上不下地搁着，删除才是让它真的走。
-  const remove: MenuCommand[] = on.remove
-    ? [
-        {
-          id: 'topic.delete',
-          title: t('work.room.menu.delete'),
-          icon: 'mdi-trash-can-outline',
-          danger: true,
-          run: on.remove,
-        },
-      ]
-    : []
-  if (topic.status === 'archived') {
-    // 已归档的不再改名，只剩「取消归档」和「删除」——两件都归管这个频道的人。
-    if (!topic.can_manage) return actions
-    actions.push({
-      id: 'topic.unarchive',
-      title: t('work.room.menu.unarchive'),
-      icon: 'mdi-archive-arrow-up-outline',
-      run: () => void store.unarchive(topic.id),
-    })
-    return [...actions, ...remove]
-  }
-  // 改名：项目里谁都能改。频道叫什么是用它的这些人一起定的事，不是创建者一个人的；
-  // 后端那一侧同样只认「你能进这个频道」（`topics_title.py`）。
-  actions.push({ id: 'topic.rename', title: t('work.room.menu.rename'), icon: 'mdi-pencil-outline', run: on.rename })
-  // 归档、取消归档只给管这个频道的人：创建者和项目管理员。有进行中的任务时不归档。
-  if (!topic.can_manage) return actions
-  if ((topic.my_tasks?.open ?? 0) === 0) {
-    actions.push({
-      id: 'topic.archive',
-      title: t('work.room.menu.archive'),
-      icon: 'mdi-archive-arrow-down-outline',
-      run: () => void archiveTopic(topic, router),
-    })
-  }
-  return [...actions, ...remove]
+
+  return grouped([mine, tasks, itself, membership])
 }
 
 /** 新建任务：建的人就是负责人，建好就去任务页，在那里和 AI 队友说清楚要做什么。 */

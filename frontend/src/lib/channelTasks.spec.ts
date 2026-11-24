@@ -42,7 +42,7 @@ describe('任务卡', () => {
     )
     expect(line.mine).toBe(false)
     expect(line.state.line).toContain('林晓')
-    expect(line.state.line).not.toContain('等你')
+    expect(line.state.line).not.toContain('待你处理')
   })
 
   it('多人候答时，当前被问者仍有行动强调', () => {
@@ -58,14 +58,14 @@ describe('任务卡', () => {
       '芝士'
     )
     expect(line.mine).toBe(true)
-    expect(line.state.line).toContain('等你')
+    expect(line.state.line).toContain('待你处理')
   })
 
   it('等的是看的人自己，就对他说；别人看到的是在等谁', () => {
     const mine = taskLine(task({ needs_my_action: true }), 'linxiao', nameOf, '芝士')
     const theirs = taskLine(task({ needs_my_action: false }), 'chenmo', nameOf, '芝士')
     expect(mine.mine).toBe(true)
-    expect(mine.state.line).toContain('等你')
+    expect(mine.state.line).toContain('待你处理')
     expect(mine.state.line).not.toContain('林晓')
     expect(theirs.mine).toBe(false)
     expect(theirs.state.line).toContain('林晓')
@@ -156,7 +156,7 @@ describe('等人审阅的交付', () => {
   it('采纳交给卡上的每一位审阅人，标签只写在等谁', () => {
     const line = taskLine(task({ card: pending, branch_name: 'task/t1' }), 'chenmo', nameOf, '芝士')
     expect(line.delivery).toEqual({ reviewers: ['linxiao', 'chenmo'], code: true, preview: false })
-    expect(line.state.waits).toBe('等林晓')
+    expect(line.state.waits).toBe('待 林晓 处理')
   })
 
   it('队友在任务里摆出过一份东西，这一版才有预览可看', () => {

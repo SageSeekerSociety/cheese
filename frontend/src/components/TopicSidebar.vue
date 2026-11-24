@@ -7,6 +7,7 @@
 // `composables/useTopicRailRoutes.ts`（我在哪、点一下去哪儿、行的 ⋯ 里有哪几项）——
 // 分这两半是为了让组件不认识 `vue-router`（.claude/rules/architecture.md），也让
 // 折叠记不记得住、红灯会不会自己亮这些事能离开「画」单独测。
+import type { TaskActionTask } from '@/commands/taskActions'
 import type { Project, Topic } from '../cx_types'
 import type { RowLight } from '../lib/roomLight'
 import type { TopicUnread } from '../types/channels'
@@ -48,6 +49,7 @@ import TransferProjectDialog from './TransferProjectDialog.vue'
 import { menuActionOf } from '@/commands'
 import { openPalette } from '@/commands/palette/state'
 import BaseLoadError from '@/components/base/BaseLoadError.vue'
+import CloseTaskDialog from '@/components/task/CloseTaskDialog.vue'
 import { t } from '@/i18n'
 
 const props = defineProps<{
@@ -227,11 +229,32 @@ function tasksLight(channelId: string): RowLight | null {
 // 一行在改，而草稿放在这一层的话，改两行时上一次的草稿会漏到下一行。
 const renamingTopicId = ref<string | null>(null)
 
-const { routeName, openPage, prefetchPage, cancelPrefetch, openProject, actionsFor, taskActionsFor } =
+const { routeName, openPage, prefetchPage, cancelPrefetch, openProject, actionsFor, taskActionsFor, closeTask } =
   useTopicRailRoutes(() => props.selectedProjectId, {
     rename: (topic) => (renamingTopicId.value = topic.id),
     renameTask: (task) => startTaskRename(task),
+    closeTask: (task) => (closingTask.value = task),
   })
+
+// 任务行右键里的「关闭任务」：先在这张确认框里留一句结论，关成了再收起。
+const closingTask = ref<TaskActionTask | null>(null)
+const closeOpen = computed({
+  get: () => closingTask.value !== null,
+  set: (open: boolean) => {
+    if (!open) closingTask.value = null
+  },
+})
+const closingBusy = ref(false)
+async function confirmCloseTask(conclusion: string) {
+  const task = closingTask.value
+  if (!task) return
+  closingBusy.value = true
+  try {
+    if (await closeTask(task, conclusion)) closingTask.value = null
+  } finally {
+    closingBusy.value = false
+  }
+}
 
 // 项目级页面：项目名下那一行是总览和资料库，其余几页（全部任务、项目文档、项目设置、
 // 转让或退出）都在点项目名弹出的菜单里。它们和这个侧栏里的其他一切一样，只换内容区。
@@ -575,6 +598,8 @@ function keepFor(section: { rows: { topic: Topic }[] }): readonly number[] | und
         :actions="rowSheetActions"
         :title="rowSheetTask ? taskTitle(rowSheetTask) : rowSheetTopic ? topicTitle(rowSheetTopic) : undefined"
       />
+
+      <CloseTaskDialog v-model="closeOpen" :loading="closingBusy" @confirm="confirmCloseTask" />
 
       <!-- 中段：这个侧栏里唯一会滚的东西 -->
       <div ref="railScroll" class="rail-scroll flex-grow-1 overflow-y-auto">

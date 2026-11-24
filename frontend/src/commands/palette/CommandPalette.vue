@@ -11,7 +11,8 @@
 //
 // 回车做一条结果最直接的那件事（打开、执行、定位消息）。Tab 列出对它还能做的事
 // （复制链接、重命名……），手机上没有 Tab，长按一行升起同一份清单。
-import type { MenuCommand } from '@/commands'
+import type { Command, MenuCommand } from '@/commands'
+import type { MenuAction } from '@/components/common/menuAction'
 import type { ResultRow } from './results'
 
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -178,8 +179,17 @@ function choose(item: ResultRow, newTab = false) {
   if (item.to) void router.push(item.to)
 }
 
-async function runAction(action: MenuCommand) {
+async function runAction(action: Command) {
   const row = acting.value?.row
+  // 带下一层的（「通知」）：清单换成那一层，面板和这一条都留着。
+  if (action.children && row) {
+    acting.value = {
+      row,
+      actions: action.children.map((child) => ({ ...child, icon: child.icon ?? (child.checked ? 'mdi-check' : '') })),
+    }
+    actSelected.value = 0
+    return
+  }
   acting.value = null
   // 进到一个项目里搜：面板留着，换个范围接着打字。
   if (action.id === 'palette.scope' && row?.scope) {
@@ -202,15 +212,19 @@ async function runAction(action: MenuCommand) {
   if (action.to) void router.push(action.to)
 }
 
-// 长按（`PaletteResults` 认出来的）升起的那一份，和桌面上的清单是同一批事。
+// 长按（`PaletteResults` 认出来的）升起的那一份，和桌面上的清单是同一批事。下一层
+// （「通知」）由面板自己就地换，那一层里选中的同样走 runAction。
+function sheetActionOf(action: Command): MenuAction {
+  return {
+    ...menuActionOf(action),
+    children: action.children?.map(sheetActionOf),
+    onSelect: action.children ? undefined : () => void runAction(action),
+  }
+}
 watch(sheetOpen, (open) => {
   if (!open && !paletteAsk.value) acting.value = null
 })
-const sheetActions = computed(() =>
-  sheetOpen.value && acting.value
-    ? acting.value.actions.map((action) => ({ ...menuActionOf(action), onSelect: () => void runAction(action) }))
-    : []
-)
+const sheetActions = computed(() => (sheetOpen.value && acting.value ? acting.value.actions.map(sheetActionOf) : []))
 
 // ---- 在面板里问一句 --------------------------------------------------------
 

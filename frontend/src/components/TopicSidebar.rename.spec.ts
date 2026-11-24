@@ -219,7 +219,7 @@ describe('就地改名', () => {
   })
 
   // 频道叫什么名字是这个频道自己的事：不是管理者照样能改。
-  // 归档入口从侧栏移走，不因管理者身份加回来。
+  // 归档、删除在频道详情的「设置」里，侧栏不列，管理者也一样。
   it('不是管理者也能改名', async () => {
     const { container, baseElement, onRenameTopic } = mount({ can_manage: false })
     const { input } = await startRenameOn(container, baseElement, 'a')
@@ -233,15 +233,18 @@ describe('就地改名', () => {
     const { container, baseElement } = mount({ can_manage: false })
     const labels = await menuOn(container, baseElement, 'a')
     expect(labels).toContain(t('work.room.menu.rename'))
-    expect(labels).not.toContain(t('work.room.menu.archive'))
+    expect(labels).not.toContain(t('work.projectSettings.channels.archive'))
   })
 
-  it('管理者：侧栏仍只保留四项，不恢复归档入口', async () => {
+  it('管理者：侧栏列的是频道那一整份，归档、删除不在里面', async () => {
     const { container, baseElement } = mount()
     const labels = await menuOn(container, baseElement, 'a')
     expect(labels).toEqual([
+      expect.stringContaining(t('work.channel.notify.title')),
+      t('work.room.menu.copyLink'),
       t('work.room.menu.newTask'),
       t('work.room.menu.allTasks'),
+      t('work.channelDetails.title'),
       t('work.room.menu.rename'),
       t('work.channel.leave'),
     ])

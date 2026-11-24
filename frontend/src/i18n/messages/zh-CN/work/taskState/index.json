@@ -19,25 +19,25 @@
   "submitted": "{time}提交",
   "version": "第 {n} 版",
   "waitedFor": "已等 {time}",
-  "waitsOn": "等{name}",
-  "waitsOnYou": "等你",
+  "waitsOn": "待 {name} 处理",
+  "waitsOnYou": "待你处理",
   "workedFor": "已做 {time}",
-  "blockedRun": "看红的那次 CI",
+  "blockedRun": "查看未通过的 CI",
   "detail": {
-    "staleTitle": "在跑，但进度很久没变",
+    "staleTitle": "运行中，进度长时间未更新",
     "offlineTitle": "可能已断线",
-    "sessionLive": "会话：连着，此刻在跑",
-    "sessionIdle": "会话：本轮已结束，等后台任务",
-    "sessionGone": "会话：已离开，没有回来",
+    "sessionLive": "会话已连接，运行中",
+    "sessionIdle": "这次运行已结束，等待后台任务",
+    "sessionGone": "会话已断开",
     "updated": "最近更新：{time}前",
-    "staleHint": "可以点进去看现场，或在对话里问它一句",
-    "offlineHint": "它重新连上后会自动接着做"
+    "staleHint": "可查看现场，或在对话里询问",
+    "offlineHint": "重新连接后自动继续"
   },
   "neglect": {
-    "title": "搁置，将自动关闭",
-    "quiet": "已经 {time}没人理会",
-    "waiting": "在等人处理，已经 {time}没人动",
+    "title": "已搁置，将自动关闭",
+    "quiet": "已 {time}无人处理",
+    "waiting": "待处理，已 {time}无人操作",
     "closeIn": "{days} 天后自动关闭",
-    "hint": "在任务里说一句话就会重新计时；关闭后可以重开，PR 不会被关"
+    "hint": "在任务里发消息后重新计时。关闭后可重新打开，PR 保持打开"
   }
 }

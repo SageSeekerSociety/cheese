@@ -1,6 +1,6 @@
 <script setup lang="ts">
-// 话题 ⋯ 里的用量：本话题、全项目各一行（次数 · token · 费用），编号垫在最底下。
-// 桌面上它在 ⋯ 弹出的小卡片里，手机上在底部面板里——同一块内容，两种摆法。
+// 频道详情「关于」里的用量：本频道、全项目各一行，运行次数、token、输入、输出、费用各占
+// 一格。费用说不准（订阅、没有价目）时的那句说明在费用那一格的悬停里。
 import type { UsageStats } from '@/cx_types'
 
 import { t } from '@/i18n'
@@ -10,85 +10,83 @@ defineProps<{
   loading: boolean
   topicUsage: UsageStats | null
   projectUsage: UsageStats | null
-  /** 话题的短编号；项目本体没有。 */
-  shortId?: string | null
-  /** 完整 id，悬停时看。 */
-  topicId?: string
 }>()
 
-// 一行一个范围：次数 · token · 费用。输入 / 输出的拆分和费用的说明放在 title 里，
-// 原来那十个大格子里有八个在一个新话题上都是 0。
-function usageLine(u: UsageStats): string {
-  return t('work.room.menu.usageLine', { turns: fmtNum(u.turns), tokens: fmtNum(u.total_tokens), cost: costLabel(u) })
-}
-function usageTitle(u: UsageStats): string {
-  const split = t('work.room.menu.usageSplit', { input: fmtNum(u.input_tokens), output: fmtNum(u.output_tokens) })
-  const note = costNote(u)
-  return note ? `${split}\n${note}` : split
-}
+const COLUMNS = ['turns', 'tokens', 'input', 'output', 'cost'] as const
 </script>
 
 <template>
-  <div class="usage-summary">
-    <div class="usage-summary__usage">
-      <div class="usage-summary__label">{{ t('work.room.menu.usage') }}</div>
-      <!-- 两行一直都在，数没到时是一条同样位置的占位条：卡片一弹出就是最终的尺寸，
-           不先转一圈再撑开。手里有旧数就先显示旧数，重取不打断它。 -->
-      <div
+  <table class="usage-table" data-testid="channel-usage">
+    <thead>
+      <tr>
+        <td />
+        <th v-for="column in COLUMNS" :key="column" scope="col">{{ t(`work.channelDetails.usage.${column}`) }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      <!-- Both rows are always there; until the numbers arrive each holds a placeholder bar of the
+           same height, so the table opens at its final size. -->
+      <tr
         v-for="row in [
-          { label: t('work.room.menu.thisTopic'), u: topicUsage },
-          { label: t('work.room.menu.wholeProject'), u: projectUsage },
+          { key: 'topic', label: t('work.room.menu.thisTopic'), u: topicUsage },
+          { key: 'project', label: t('work.room.menu.wholeProject'), u: projectUsage },
         ]"
-        :key="row.label"
-        class="usage-row"
-        :title="row.u ? usageTitle(row.u) : undefined"
+        :key="row.key"
       >
-        <span>{{ row.label }}</span>
-        <span v-if="row.u" class="usage-row__value">{{ usageLine(row.u) }}</span>
-        <span v-else-if="loading" class="usage-row__placeholder" aria-hidden="true" />
-        <span v-else class="usage-row__value">{{ t('work.room.menu.noUsage') }}</span>
-      </div>
-    </div>
-    <div v-if="shortId" class="usage-summary__foot t-meta" :title="topicId">#{{ shortId }}</div>
-  </div>
+        <th scope="row">{{ row.label }}</th>
+        <template v-if="row.u">
+          <td>{{ fmtNum(row.u.turns) }}</td>
+          <td>{{ fmtNum(row.u.total_tokens) }}</td>
+          <td>{{ fmtNum(row.u.input_tokens) }}</td>
+          <td>{{ fmtNum(row.u.output_tokens) }}</td>
+          <td :title="costNote(row.u) || undefined">{{ costLabel(row.u) }}</td>
+        </template>
+        <td v-else-if="loading" :colspan="COLUMNS.length">
+          <span class="usage-table__placeholder" aria-hidden="true" />
+        </td>
+        <td v-else :colspan="COLUMNS.length" class="usage-table__none">{{ t('work.room.menu.noUsage') }}</td>
+      </tr>
+    </tbody>
+  </table>
 </template>
 
 <style scoped>
-.usage-summary__usage {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px 16px;
+.usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  line-height: var(--lh-13);
 }
-.usage-summary__label {
+.usage-table th,
+.usage-table td {
+  padding: 2px 0 2px 12px;
+  text-align: end;
+  white-space: nowrap;
+}
+.usage-table thead th {
   color: var(--muted);
-  font-size: 13px;
-  line-height: var(--lh-13);
+  font-weight: 400;
 }
-.usage-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
+.usage-table tbody th {
+  padding-inline-start: 0;
   color: var(--text);
-  font-size: 13px;
-  line-height: var(--lh-13);
+  font-weight: 400;
+  text-align: start;
 }
-.usage-row__value {
+.usage-table tbody td {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
-/* 和一行数字差不多宽、同一行高里居中：数到了换上去，这一行不跳。 */
-.usage-row__placeholder {
-  align-self: center;
+.usage-table__none {
+  text-align: start;
+}
+/* Same line box as a row of numbers: when they arrive the row does not jump. */
+.usage-table__placeholder {
+  display: inline-block;
   width: 12em;
   height: 10px;
+  vertical-align: middle;
   border-radius: var(--radius-sm);
   background: var(--fill-2);
-}
-.usage-summary__foot {
-  padding: 8px 16px 4px;
-  border-top: 1px solid var(--line);
-  color: var(--faint);
 }
 </style>
