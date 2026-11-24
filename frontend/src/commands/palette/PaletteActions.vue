@@ -40,6 +40,8 @@ const emit = defineEmits<{
     >
       <v-icon :icon="action.icon" size="16" class="palette__icon" />
       <span class="palette__title">{{ action.title }}</span>
+      <span v-if="action.value" class="palette__value">{{ action.value }}</span>
+      <v-icon v-if="action.children" icon="mdi-chevron-right" size="16" class="palette__icon" />
     </div>
   </div>
 </template>
@@ -82,11 +84,22 @@ const emit = defineEmits<{
 .palette__action--danger {
   color: var(--danger-ink);
 }
+.palette__value {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .palette__icon {
   flex: none;
   color: var(--muted);
 }
 .palette__title {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

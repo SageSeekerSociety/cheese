@@ -12,6 +12,8 @@ import { useRowMenu } from '@/composables/useRowMenu'
 
 import AdaptiveMenu from './AdaptiveMenu.vue'
 
+import { t } from '@/i18n'
+
 beforeAll(() => {
   if (!('ResizeObserver' in globalThis)) {
     ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
@@ -124,5 +126,49 @@ describe('AdaptiveMenu', () => {
 
     await fireEvent.contextMenu(screen.getByText('第二处'), { clientX: 40, clientY: 120 })
     await waitFor(() => expect(showing()).toEqual(['第二处的操作']))
+  })
+
+  it('桌面上：带下一层的那一项在旁边弹出子菜单，选中的那一项执行', async () => {
+    const all = vi.fn()
+    mount(1280, [
+      {
+        key: 'notify',
+        label: '通知',
+        icon: 'mdi-bell-outline',
+        value: '静音',
+        children: [
+          { key: 'all', label: '所有新消息', checked: false, onSelect: all },
+          { key: 'mute', label: '静音', checked: true, onSelect: vi.fn() },
+        ],
+      },
+    ])
+    await fireEvent.click(screen.getByText('更多'))
+    await fireEvent.click(await screen.findByRole('menuitem', { name: /通知/ }))
+    const mute = await screen.findByRole('menuitemradio', { name: '静音' })
+    expect(mute.getAttribute('aria-checked')).toBe('true')
+    await fireEvent.click(screen.getByRole('menuitemradio', { name: '所有新消息' }))
+    expect(all).toHaveBeenCalledTimes(1)
+  })
+
+  it('手机上：带下一层的那一项点了换成那一层，返回回到上一层', async () => {
+    const all = vi.fn()
+    mount(390, [
+      { key: 'copy', label: '复制链接', icon: 'mdi-link', onSelect: vi.fn() },
+      {
+        key: 'notify',
+        label: '通知',
+        icon: 'mdi-bell-outline',
+        children: [{ key: 'all', label: '所有新消息', checked: false, onSelect: all }],
+      },
+    ])
+    await fireEvent.click(screen.getByText('更多'))
+    await fireEvent.click(await screen.findByRole('menuitem', { name: /通知/ }))
+    expect(await screen.findByRole('menuitemradio', { name: '所有新消息' })).toBeTruthy()
+    expect(screen.queryByRole('menuitem', { name: '复制链接' })).toBeNull()
+    await fireEvent.click(screen.getByRole('button', { name: t('global.back') }))
+    expect(await screen.findByRole('menuitem', { name: '复制链接' })).toBeTruthy()
+    await fireEvent.click(await screen.findByRole('menuitem', { name: /通知/ }))
+    await fireEvent.click(await screen.findByRole('menuitemradio', { name: '所有新消息' }))
+    expect(all).toHaveBeenCalledTimes(1)
   })
 })
