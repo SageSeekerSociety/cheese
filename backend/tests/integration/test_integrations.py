@@ -338,6 +338,8 @@ class FeishuStub:
         self.bearers: list[str] = []
         #: The (app_id, app_secret) each tenant-token call carried.
         self.app_credentials: list[tuple[str, str]] = []
+        #: App Secrets Feishu refuses a tenant token for, as it does a wrong one.
+        self.bad_secrets: set[str] = set()
         #: What the person agreed to on the authorization page, by the code it
         #: sent them back with: Feishu issues a refresh token only when that
         #: included ``offline_access``.
@@ -388,6 +390,10 @@ class FeishuStub:
         if path.endswith("/tenant_access_token/internal"):
             body = json.loads(request.content)
             self.app_credentials.append((body["app_id"], body["app_secret"]))
+            if body["app_secret"] in self.bad_secrets:
+                return httpx.Response(
+                    400, json={"code": 10014, "msg": "app secret invalid"}
+                )
             return httpx.Response(
                 200, json={"code": 0, "tenant_access_token": "t", "expire": 7200}
             )
@@ -545,10 +551,10 @@ def _shared_app_connection(client, person, project, *, admin=ADMIN, monkeypatch=
 def _seed_own_app_connection(
     client, handle, grants, *, app_id="cli_own", app_secret="own-secret", token=None
 ):
-    """一条自带凭据的连接，就是「每个人自己建应用」那个年代留在库里的行。
+    """一条自带凭据的连接，直接落库，可以带一份已经拿到的用户 token。
 
-    它是**数据**，不是某个接口还能建出来的东西：新流程下没人再写这样的行，而库里
-    已有的照旧要能用。所以这里直接落库，不经过任何路由。
+    成员在页面上填自己公司的应用、经路由建出这一行的那条路，由
+    `test_a_member_connects_with_their_own_companys_app` 测；这里要的只是这一行本身。
     """
 
     async def _seed() -> str:
@@ -662,6 +668,70 @@ def test_authorizing_before_an_administrator_configures_says_so(client, feishu_s
     r = client.post("/me/integrations/feishu", headers=person)
     assert r.status_code == 422, r.text
     assert "管理员还没配置飞书应用" in r.text
+    assert client.get("/me/integrations", headers=person).json()["data"]["data"] == []
+
+
+def test_a_member_connects_with_their_own_companys_app(client, feishu_stub):
+    """平台的应用只在它自己那家企业的飞书里能用。另一家公司的成员填自己公司的
+    企业自建应用：授权、换 token、续期都用那套凭据，平台没配应用也照样连得上，
+    Secret 不会回到页面上。"""
+    person, project, room = _setup(client)
+    assert (
+        client.get("/me/integrations/feishu", headers=person).json()["data"][
+            "configured"
+        ]
+        is False
+    )
+    assert (
+        client.get("/me/integrations/feishu", headers=person)
+        .json()["data"]["redirect_uri"]
+        .endswith("/api/integrations/feishu/callback")
+    )
+    own = {"app_id": "cli_other", "app_secret": "other-secret", "domain": "lark"}
+
+    r = client.post("/me/integrations/feishu", json=own, headers=person)
+    assert r.status_code == 200, r.text
+    row = r.json()["data"]
+    assert row["shared_app"] is False
+    assert "other-secret" not in r.text
+    assert feishu_stub.app_credentials[-1] == ("cli_other", "other-secret")
+
+    url = _authorize(client, person, row["id"])
+    assert "cli_other" in url and "open.larksuite.com" in url
+    assert feishu_stub.tokens[-1]["client_id"] == "cli_other"
+    assert feishu_stub.tokens[-1]["client_secret"] == "other-secret"
+
+    client.patch(
+        f"/me/integrations/{row['id']}", json={"grants": [project]}, headers=person
+    )
+    _expire_user_token(client, row["id"])
+    read = client.get(f"/integrations/{row['id']}/feishu/docs/doc-ok?topic={room}")
+    assert read.status_code == 200, read.text
+    assert feishu_stub.tokens[-1]["grant_type"] == "refresh_token"
+    assert feishu_stub.tokens[-1]["client_id"] == "cli_other"
+    assert feishu_stub.tokens[-1]["client_secret"] == "other-secret"
+
+    # Entering the same app again (say, after a mistyped secret) is the same
+    # connection, not a second one.
+    again = client.post("/me/integrations/feishu", json=own, headers=person)
+    assert again.status_code == 200, again.text
+    assert again.json()["data"]["id"] == row["id"]
+    listed = client.get("/me/integrations", headers=person).json()["data"]["data"]
+    assert [x["id"] for x in listed] == [row["id"]]
+    assert "other-secret" not in str(listed)
+
+
+def test_a_wrong_own_app_secret_is_said_before_authorizing(client, feishu_stub):
+    person, _project, _room = _setup(client)
+    feishu_stub.bad_secrets.add("typo")
+
+    r = client.post(
+        "/me/integrations/feishu",
+        json={"app_id": "cli_other", "app_secret": "typo"},
+        headers=person,
+    )
+    assert r.status_code >= 400, r.text
+    assert "10014" in r.text
     assert client.get("/me/integrations", headers=person).json()["data"]["data"] == []
 
 
@@ -884,7 +954,7 @@ def test_checking_a_lapsed_authorization_says_it_lapsed(
 def test_a_connection_with_its_own_app_credentials_still_works(
     client, feishu_stub, monkeypatch
 ):
-    """没有平台应用，老式连接照样读、写、搜 —— 它自带的那套凭据说了算。"""
+    """没有平台应用，自带凭据的连接照样读、写、搜 —— 它自带的那套凭据说了算。"""
     monkeypatch.setattr(settings, "platform_admin_handles", [ADMIN])
     person, project, room = _setup(client)
     assert (

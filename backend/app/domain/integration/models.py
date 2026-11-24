@@ -75,12 +75,13 @@ class MailDraft(UuidPk, Timestamps, Base):
 class FeishuApp(Timestamps, Base):
     """The Feishu app the platform administrator configures once for everybody.
 
-    Members used to create a custom app each and paste its App ID and Secret into
-    «我的连接». Now one app belongs to the platform: an administrator fills it in
-    on the admin page, a member clicks once to authorize, and the member's own
-    row (``Integration``) keeps only that person's ``user_access_token`` and
-    ``refresh_token``. Which app credentials a call uses is read from here at
-    the moment of the call, so rotating the secret reaches every connection.
+    An administrator fills it in on the admin page, a member clicks once to
+    authorize, and the member's own row (``Integration``) keeps only that
+    person's ``user_access_token`` and ``refresh_token``. Which app credentials a
+    call uses is read from here at the moment of the call, so rotating the secret
+    reaches every connection under it. A custom app serves only its own Feishu
+    tenant, so a member whose Feishu is another company's brings that company's
+    app instead, kept on their own row.
 
     ``app_id`` is not a secret; ``app_secret`` is sealed exactly like a
     connection's secret (``Purpose.INTEGRATION_SECRET``, bound to this row).

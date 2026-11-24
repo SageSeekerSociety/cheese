@@ -47,7 +47,7 @@ API 分成两半，`backend/app/api/routes/integrations.py` 开头就写明：`/
 
 芝士起草时，房间会收到一条事件块和一条给主人的通知（`EVENT_MAIL_DRAFTED`，标题「邮件草稿待你确认：…」），草稿状态走 `drafted → sent | failed | discarded`。
 
-## 飞书：应用是平台的，授权是个人的 {#feishu}
+## 飞书：应用是平台的或成员公司的，授权是个人的 {#feishu}
 
 `backend/app/domain/integration/feishu.py` 支持两种身份：
 
@@ -56,13 +56,15 @@ API 分成两半，`backend/app/api/routes/integrations.py` 开头就写明：`/
 | 应用 | `app_id` + `app_secret` → tenant token | 分享给这个应用的那些文档 |
 | 用户授权 | OAuth 拿到的 `user_access_token` + `refresh_token` | 这个人看得见的；**搜索 API 只在这条路上有答案** |
 
-授权页地址带着 `scope`（`feishu.USER_SCOPES`）。少了 `offline_access`，飞书就不发 `refresh_token`，授权两小时后作废；反过来，代码里请求了应用后台没开通的权限，授权页对所有人报 20027。所以这张清单和下面让管理员开的那几项要一一对应，改一处就改另一处。
+授权页地址带着 `scope`（`feishu.USER_SCOPES`）。少了 `offline_access`，飞书就不发 `refresh_token`，授权两小时后作废；反过来，代码里请求了应用后台没开通的权限，授权页对所有人报 20027。所以这张清单、下面让管理员开的那几项、和「我的连接」上自己公司应用那张表单里的批量导入 JSON（`MyConnectionsViewView.vue` 的 `FEISHU_SCOPES_IMPORT`）要一一对应，改一处就改另一处。
 
-**应用是组织的，一个人建一次。** 成员以前各自去飞书建一个企业自建应用、把 App ID / Secret 填进「我的连接」——每个人做的是同一件事。现在它落在 `FeishuApp`（`feishu_apps` 表，固定一行）：平台管理员在飞书建好自建应用，在「权限管理」里开通 `feishu.USER_SCOPES` 列的那几个用户身份权限（`offline_access`、`search:docs:read`、`docx:document`），在「安全设置」里打开「刷新 user_access_token」，把回调地址填成 `{frontend_url}/api/integrations/feishu/callback`、发布并通过审核，然后在后台的「飞书应用」那一页（`PUT /admin/integrations/feishu`，门是 `PlatformAdminDep`）把凭据填一次。Secret 只写不回显，空着提交表示不改已经存下的那一个。
+**平台的应用由管理员建一次。** 它落在 `FeishuApp`（`feishu_apps` 表，固定一行）：平台管理员在飞书建好自建应用，在「权限管理」里开通 `feishu.USER_SCOPES` 列的那几个用户身份权限（`offline_access`、`search:docs:read`、`docx:document`），在「安全设置」里打开「刷新 user_access_token」，把回调地址填成 `{frontend_url}/api/integrations/feishu/callback`、发布并通过审核，然后在后台的「飞书应用」那一页（`PUT /admin/integrations/feishu`，门是 `PlatformAdminDep`）把凭据填一次。Secret 只写不回显，空着提交表示不改已经存下的那一个。
 
-成员那边只有一颗「连接飞书」：`POST /me/integrations/feishu` 先落一行（不带任何凭据 —— 应用是管理员的，个人出的是自己的账号），`GET /me/integrations/{id}/feishu/authorize` 拿授权地址跳过去，回调把 `user_access_token` / `refresh_token` 写进**这一行**。平台没配应用时按钮是灰的，提示「管理员还没配置飞书应用」；没配就发起授权会得到同一句话的 422。
+成员点「连接飞书」：`POST /me/integrations/feishu` 先落一行（不带正文 —— 应用是管理员的，个人出的是自己的账号），`GET /me/integrations/{id}/feishu/authorize` 拿授权地址跳过去，回调把 `user_access_token` / `refresh_token` 写进**这一行**。
 
-**自带凭据的老连接照旧能用。** `feishu_settings` 的次序是：这一行自己的 `app_id` 在先，平台应用在后，都没有才报错 —— 所以库里那些每个人自己建的连接不用迁移就还在跑，只是页面不再引导建新的那种。`public(row)` 用 `shared_app` 说出这一行走的是哪一条。
+**飞书属于别的公司的成员带自己公司的应用。** 企业自建应用只在它自己那家企业的飞书里能用，平台的应用连不了别家公司的账号。所以「我的连接」上还有一张表单：成员在自己公司的飞书里建企业自建应用（表单上给出重定向 URL、批量导入权限的 JSON 和一段申请理由，都能一键复制），把 App ID / Secret / 版本填进来，`POST /me/integrations/feishu` 带着这三项落一行：凭据存在这一行上（`config.app_id`、`config.domain`，Secret 封在 `secret` 里、从不回显），落库前先拿它换一次 tenant token，Secret 不对当场报错；同一个 App ID 再提交一次是改那一行，不是再建一行。平台没配应用时「连接飞书」直接打开这张表单。`GET /me/integrations/feishu` 也回 `redirect_uri`，表单上那个地址就是它。
+
+`feishu_settings` 的次序是：这一行自己的 `app_id` 在先，平台应用在后，都没有才报错 —— 授权、换 token、续期都用这一行该用的那套凭据。`public(row)` 用 `shared_app` 说出这一行走的是哪一条。
 
 错误码按「调用方还能做什么」分类：`AUTH_CODES` / `FORBIDDEN_CODES` / `NOT_FOUND_CODES` → `IntegrationError` 的 kind；刷新令牌被拒（无效、过期、撤销、已用过）都算 `auth_failed`。
 

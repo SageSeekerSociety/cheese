@@ -6,6 +6,7 @@
 
 <script setup lang="ts">
 import type { Integration, MailDraft } from '../api'
+import type { FeishuOwnApp } from '../api/feishu'
 import type { Project } from '../cx_types'
 
 import { computed, reactive, ref } from 'vue'
@@ -13,6 +14,7 @@ import { computed, reactive, ref } from 'vue'
 import ConfirmDialog from '../components/base/ConfirmDialog.vue'
 import AdaptiveDialog from '../components/common/AdaptiveDialog.vue'
 
+import { copyText } from '@/commands/copy'
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
@@ -30,17 +32,20 @@ const props = defineProps<{
   error: string
   /** 正在飞的那个动作（`<id>:<动作>`），用来只把点过的那颗按钮画成在转。 */
   busy: string
-  /** 平台管理员没配飞书应用：按钮灰着，底下写明为什么。 */
+  /** 平台管理员没配飞书应用：「连接飞书」直接打开自己公司应用那张表单，底下写明为什么。 */
   feishuMissing: boolean
-  /** 还在问「配没配」：按钮先灰着，不然没配的时候它会先亮一下再变灰。 */
+  /** 还在问「配没配」：按钮先灰着，不然还不知道按下去该走哪条路。 */
   feishuAsking: boolean
+  /** 授权回调地址，自己公司的应用要把它填进「重定向 URL」；`''` 表示没问到。 */
+  feishuRedirectUri: string
 }>()
 
 const emit = defineEmits<{
   refresh: []
   discard: [draft: MailDraft]
   send: [draft: MailDraft]
-  'connect-feishu': []
+  /** `null` 走平台的应用；带了就是成员自己公司的应用，`done` 带回成没成、以及没成时那句话。 */
+  'connect-feishu': [ownApp: FeishuOwnApp | null, done?: (ok: boolean, message?: string) => void]
   'set-grants': [row: Integration, grants: string[]]
   recheck: [row: Integration]
   authorize: [row: Integration]
@@ -124,9 +129,10 @@ function confirmRemove() {
 }
 
 // ── 接入 ───────────────────────────────────────────────────────────────────
-// 只剩邮箱这一张表单。飞书不再有「填 App ID / Secret」这一种接入方式 —— 它是成员点
-// 一下「连接飞书」、跳到飞书授权页那一步（页面里的 `connectFeishuAccount`），凭据在
-// 管理员那边。表单自己那份草稿住在这一半：每一个字段都是这个文件里的一个元素。
+// 两张表单：邮箱，和飞书「用自己公司的应用」。平台配了飞书应用时「连接飞书」是一下就
+// 跳到飞书授权页（页面里的 `connectFeishuAccount`），凭据在管理员那边；但企业自建应用
+// 只在它那家企业的飞书里能用，飞书属于别的公司的成员、或平台没配应用时，就填自己公司
+// 的应用。表单自己那份草稿住在这一半：每一个字段都是这个文件里的一个元素。
 const adding = ref(false)
 const saving = ref(false)
 const formError = ref('')
@@ -151,6 +157,41 @@ function applyPreset(title: string) {
     smtp_host: preset.smtp,
     smtp_port: preset.smtpPort,
     security: preset.security,
+  })
+}
+
+/** 粘进飞书开发者后台「权限管理 → 批量导入/导出权限」的那份 JSON：只要用户身份权限，
+ *  和后端 `feishu.USER_SCOPES` 一一对应，改一处就改另一处。 */
+const FEISHU_SCOPES_IMPORT = JSON.stringify(
+  { scopes: { tenant: [], user: ['offline_access', 'search:docs:read', 'docx:document'] } },
+  null,
+  2
+)
+const ownApp = ref(false)
+const ownAppSaving = ref(false)
+const ownAppError = ref('')
+const ownAppForm = reactive({ domain: 'feishu', app_id: '', app_secret: '' })
+const consoleUrl = computed(() =>
+  ownAppForm.domain === 'lark' ? 'https://open.larksuite.com/app' : 'https://open.feishu.cn/app'
+)
+
+/** 平台没配应用时，「连接飞书」只剩自己公司应用这一条路。 */
+function connectFeishu() {
+  if (props.feishuMissing) ownApp.value = true
+  else emit('connect-feishu', null)
+}
+
+function saveOwnApp() {
+  if (ownAppSaving.value) return
+  ownAppSaving.value = true
+  ownAppError.value = ''
+  emit('connect-feishu', { ...ownAppForm }, (ok: boolean, message?: string) => {
+    ownAppSaving.value = false
+    if (ok) {
+      ownApp.value = false
+      return
+    }
+    ownAppError.value = message ?? ''
   })
 }
 
@@ -248,11 +289,14 @@ function save() {
             kind="secondary"
             size="sm"
             prepend-icon="mdi-link-variant-plus"
-            :disabled="feishuMissing || feishuAsking"
-            :loading="busy === 'feishu:connect'"
-            @click="emit('connect-feishu')"
+            :disabled="feishuAsking"
+            :loading="busy === 'feishu:connect' && !ownApp"
+            @click="connectFeishu"
           >
             {{ t('integrations.member.connect') }}
+          </BaseButton>
+          <BaseButton v-if="!feishuMissing && !feishuAsking" kind="ghost" size="sm" @click="ownApp = true">
+            {{ t('integrations.member.ownApp.open') }}
           </BaseButton>
         </div>
       </div>
@@ -346,8 +390,86 @@ function save() {
       {{ t('account.connections.removeBody') }}
     </ConfirmDialog>
 
-    <!-- 一张长表单：桌面上是对话框，手机上是整页（保存在页头右边，不会被键盘盖住）。
-         只剩邮箱 —— 飞书那一栏不是一张表单，是上面那颗「连接飞书」。 -->
+    <!-- 飞书「用自己公司的应用」：先照着几步在自己公司的飞书里建好应用，再填凭据。
+         保存时服务端拿它换一次应用令牌，成了就直接跳去飞书授权页。 -->
+    <AdaptiveDialog
+      :model-value="ownApp"
+      :title="t('integrations.member.ownApp.title')"
+      :primary-label="t('integrations.member.ownApp.submit')"
+      :primary-loading="ownAppSaving"
+      :max-width="560"
+      @update:model-value="ownApp = false"
+      @primary="saveOwnApp"
+    >
+      <template v-if="ownApp">
+        <p class="t-body">{{ t('integrations.member.ownApp.why') }}</p>
+        <ol class="conn-steps t-body">
+          <li>{{ t('integrations.member.ownApp.step1', { console: consoleUrl }) }}</li>
+          <li>
+            {{ t('integrations.member.ownApp.step2') }}
+            <div v-if="feishuRedirectUri" class="conn-copy">
+              <pre class="conn-code">{{ feishuRedirectUri }}</pre>
+              <BaseButton
+                kind="ghost"
+                size="sm"
+                icon="mdi-content-copy"
+                :aria-label="t('integrations.member.ownApp.copyRedirect')"
+                :title="t('integrations.member.ownApp.copyRedirect')"
+                @click="copyText(feishuRedirectUri, t('integrations.member.ownApp.copied'))"
+              />
+            </div>
+          </li>
+          <li>
+            {{ t('integrations.member.ownApp.step3') }}
+            <div class="conn-copy">
+              <pre class="conn-code">{{ FEISHU_SCOPES_IMPORT }}</pre>
+              <BaseButton
+                kind="ghost"
+                size="sm"
+                icon="mdi-content-copy"
+                :aria-label="t('integrations.member.ownApp.copyScopes')"
+                :title="t('integrations.member.ownApp.copyScopes')"
+                @click="copyText(FEISHU_SCOPES_IMPORT, t('integrations.member.ownApp.copied'))"
+              />
+            </div>
+          </li>
+          <li>
+            {{ t('integrations.member.ownApp.step4') }}
+            <div class="conn-copy">
+              <pre class="conn-code">{{ t('integrations.member.ownApp.reason') }}</pre>
+              <BaseButton
+                kind="ghost"
+                size="sm"
+                icon="mdi-content-copy"
+                :aria-label="t('integrations.member.ownApp.copyReason')"
+                :title="t('integrations.member.ownApp.copyReason')"
+                @click="copyText(t('integrations.member.ownApp.reason'), t('integrations.member.ownApp.copied'))"
+              />
+            </div>
+          </li>
+          <li>{{ t('integrations.member.ownApp.step5') }}</li>
+        </ol>
+        <v-select
+          v-model="ownAppForm.domain"
+          autocomplete="off"
+          :items="[
+            { title: t('integrations.member.ownApp.feishu'), value: 'feishu' },
+            { title: 'Lark', value: 'lark' },
+          ]"
+          :label="t('integrations.admin.domain')"
+        />
+        <v-text-field v-model="ownAppForm.app_id" autocomplete="off" :label="t('integrations.admin.appId')" />
+        <v-text-field
+          v-model="ownAppForm.app_secret"
+          autocomplete="new-password"
+          type="password"
+          :label="t('integrations.admin.appSecret')"
+        />
+        <p v-if="ownAppError" role="alert" class="t-body c-danger mt-2">{{ ownAppError }}</p>
+      </template>
+    </AdaptiveDialog>
+
+    <!-- 一张长表单：桌面上是对话框，手机上是整页（保存在页头右边，不会被键盘盖住）。 -->
     <AdaptiveDialog
       :model-value="adding"
       :title="t('account.connections.addMail')"
@@ -536,6 +658,35 @@ function save() {
   flex-wrap: wrap;
   gap: 4px;
   justify-content: flex-end;
+}
+
+.conn-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 8px 0 16px;
+  padding-left: 20px;
+  color: var(--text);
+}
+
+.conn-copy {
+  display: flex;
+  gap: 4px;
+  align-items: flex-start;
+  margin-top: 4px;
+}
+
+.conn-code {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .conn-form-row {

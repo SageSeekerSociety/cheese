@@ -4,8 +4,10 @@
 // 只能变短；而飞书这一条线本来就有边界 —— 成员侧走 `/me/integrations/feishu`，管理端走
 // `/admin/integrations/feishu`，两边共用同一份应用凭据 —— 所以拆在这里是一个有理由的整体。
 //
-// 凭据是组织一份、账号是个人一份：应用由管理员在「飞书应用」那页填一次，成员点一下
-// 「连接飞书」出自己的授权。所以这里的 secret 只写不回显，`connectFeishu` 也不带正文。
+// 凭据通常是组织一份、账号是个人一份：应用由管理员在「飞书应用」那页填一次，成员点一下
+// 「连接飞书」出自己的授权。企业自建应用只在它自己那家企业的飞书里能用，所以飞书属于
+// 别的公司的成员带自己公司的应用来（`connectFeishu` 带上 App ID / Secret）。secret
+// 一律只写不回显。
 import type { Integration } from '../api'
 
 import { request } from '../api'
@@ -21,20 +23,33 @@ export interface FeishuAvailability {
   configured: boolean
   app_id: string
   domain: string
+  /** 授权回调地址。成员用自己公司的应用时，要把它填进那个应用的「重定向 URL」。 */
+  redirect_uri: string
 }
 
 export function feishuAvailability(): Promise<FeishuAvailability> {
   return request<FeishuAvailability>('/me/integrations/feishu')
 }
 
+/** 成员自己公司的企业自建应用。`domain` 是 `feishu`（飞书）或 `lark`。 */
+export interface FeishuOwnApp {
+  app_id: string
+  app_secret: string
+  domain: string
+}
+
 /**
  * 「连接飞书」按下的第一步：先有自己那一行，再跳去飞书授权页。
  *
- * 不带任何正文 —— 应用凭据是平台管理员的，成员这边只出自己的账号。已有的那一行会被
- * 原样返回（这个动作是幂等的），所以「连接过一半又回来了」不会攒出第二行。
+ * 不带 `ownApp` 走平台管理员配的应用，成员这边只出自己的账号；带了就用成员自己公司的
+ * 应用，服务端先拿它换一次应用令牌，Secret 填错当场就说。两条路都幂等：已有的那一行
+ * （同一个平台应用、或同一个 App ID）原样返回，所以「连接过一半又回来了」不会攒出第二行。
  */
-export function connectFeishu(): Promise<Integration> {
-  return request<Integration>('/me/integrations/feishu', { method: 'POST' })
+export function connectFeishu(ownApp?: FeishuOwnApp): Promise<Integration> {
+  return request<Integration>('/me/integrations/feishu', {
+    method: 'POST',
+    ...(ownApp ? { body: JSON.stringify(ownApp) } : {}),
+  })
 }
 
 /** 某一行的授权地址。回调要靠行 id 认出是谁授权的，所以这一定是已经存在的那一行。 */

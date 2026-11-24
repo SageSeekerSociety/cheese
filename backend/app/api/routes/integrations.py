@@ -226,7 +226,8 @@ async def connect_mail(body: MailIn, db: DbSession, resolver: ActorResolverDep) 
 
 @router.get("/me/integrations/feishu")
 async def feishu_availability(db: DbSession, resolver: ActorResolverDep) -> dict:
-    """平台配过飞书应用没有 —— 「连接飞书」那颗按钮亮不亮就是这个问题的答案。
+    """平台配过飞书应用没有，以及授权回调地址 —— 没配、或者成员的飞书属于别的公司时，
+    成员用自己公司的应用连接，要把这个地址填进那个应用的「重定向 URL」。
 
     平台应用只有一个，读它不需要是谁的连接；但这是成员自己的页面，所以还是要本人。
     """
@@ -237,23 +238,45 @@ async def feishu_availability(db: DbSession, resolver: ActorResolverDep) -> dict
             "configured": app is not None,
             "app_id": app.app_id if app else "",
             "domain": app.domain if app else "",
+            "redirect_uri": _redirect_uri(),
         }
     )
 
 
+class FeishuOwnAppIn(BaseModel):
+    """成员自己公司的企业自建应用。平台的应用只在它自己那家企业的飞书里能用。"""
+
+    app_id: str = Field(min_length=1, max_length=64)
+    app_secret: str = Field(min_length=1, max_length=256)
+    domain: str = "feishu"
+
+
 @router.post("/me/integrations/feishu", dependencies=[ROUTE_DECIDES])
-async def connect_feishu(db: DbSession, resolver: ActorResolverDep) -> dict:
+async def connect_feishu(
+    db: DbSession, resolver: ActorResolverDep, body: FeishuOwnAppIn | None = None
+) -> dict:
     """「连接飞书」按下的第一步：先有自己那一行，再跳去飞书授权页。
 
     行在这里就落库，因为回调用 `state` 里的 id 找到它、把 token 写进去（见
-    `feishu_callback`）。应用凭据是平台的，这一行不带；授予哪些项目之后在这个连接
-    那一行上勾选。
+    `feishu_callback`）。不带正文走平台的应用，这一行不带凭据；带了 App ID / Secret
+    就是成员自己公司的应用，凭据存在这一行上，授权和续期都用它。授予哪些项目之后在
+    这个连接那一行上勾选。
     """
     actor = await _person(resolver)
     assert actor.user_id is not None
-    row = await _service(db).connect_under_platform_app(
-        owner_user_id=actor.user_id, owner_handle=actor.handle
-    )
+    service = _service(db)
+    if body is None:
+        row = await service.connect_under_platform_app(
+            owner_user_id=actor.user_id, owner_handle=actor.handle
+        )
+    else:
+        row = await service.connect_under_own_app(
+            owner_user_id=actor.user_id,
+            owner_handle=actor.handle,
+            app_id=body.app_id.strip(),
+            app_secret=body.app_secret.strip(),
+            domain=body.domain,
+        )
     await db.commit()
     return ok(public(row))
 

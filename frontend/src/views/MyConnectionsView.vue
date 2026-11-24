@@ -5,7 +5,7 @@
 // 画的那一半在 `MyConnectionsViewView.vue`：这里只留下请求、地址和 toast，画面只收
 // props、只 emit。邮箱表单的那份草稿跟着画面走 —— 每个字段都是那边的元素。
 import type { Integration, MailDraft } from '../api'
-import type { FeishuAvailability } from '../api/feishu'
+import type { FeishuAvailability, FeishuOwnApp } from '../api/feishu'
 import type { Project } from '../cx_types'
 
 import { computed, onMounted, ref } from 'vue'
@@ -37,15 +37,15 @@ const router = useRouter()
 const integrations = ref<Integration[]>([])
 const drafts = ref<MailDraft[]>([])
 const projects = ref<Project[]>([])
-/** 平台管理员配过飞书应用没有。没配时「连接飞书」是灰的 —— 点了必然失败，画成能点
- *  只会把人送到一句报错上。 */
-const feishu = ref<FeishuAvailability>({ configured: false, app_id: '', domain: '' })
-/** 上面那个问题问到答案没有。读不到时按钮不画灰 —— 没读到不等于没配，而「管理员还没
+/** 平台管理员配过飞书应用没有。没配时「连接飞书」改走成员自己公司的应用那张表单 ——
+ *  去平台应用那条路必然失败，只会把人送到一句报错上。 */
+const feishu = ref<FeishuAvailability>({ configured: false, app_id: '', domain: '', redirect_uri: '' })
+/** 上面那个问题问到答案没有。读不到时照旧走平台应用 —— 没读到不等于没配，而「管理员还没
  *  配置飞书应用」是一句会被当真的话：宁可让人按下去，由服务端回那句实话。 */
 const feishuKnown = ref(false)
-/** 还在问：按钮先灰着，不然没配的时候它会先亮一下再变灰。 */
+/** 还在问：按钮先灰着，不然还不知道按下去该走哪条路。 */
 const feishuAsking = ref(true)
-/** 确定没配：按钮灰着，底下写明为什么。 */
+/** 确定没配：按钮打开自己公司应用那张表单，底下写明为什么。 */
 const feishuMissing = computed(() => feishuKnown.value && !feishu.value.configured)
 const loading = ref(false)
 const error = ref('')
@@ -140,15 +140,30 @@ async function authorize(row: Integration) {
  * 「连接飞书」：两跳一步。
  *
  * 先要自己那一行（`POST /me/integrations/feishu`），再拿它的授权地址跳去飞书 —— 回调
- * 要靠行 id 找回它是谁（见 `feishu_callback` 的 `state`），所以顺序不能反过来。这一行
- * 此刻没有任何凭据：应用是平台管理员的，成员出的是自己的账号。
+ * 要靠行 id 找回它是谁（见 `feishu_callback` 的 `state`），所以顺序不能反过来。不带
+ * `ownApp` 时这一行没有任何凭据：应用是平台管理员的，成员出的是自己的账号；带了就是成员
+ * 自己公司的应用，那张表单的结果用 `done` 带回去（没成时把服务端那句话留在表单底下）。
  */
-async function connectFeishuAccount() {
-  const row = await act('feishu:connect', () => connectFeishu())
+async function connectFeishuAccount(ownApp: FeishuOwnApp | null, done?: (ok: boolean, message?: string) => void) {
+  let row: Integration | undefined
+  if (done) {
+    busy.value = 'feishu:connect'
+    try {
+      row = await connectFeishu(ownApp ?? undefined)
+      done(true)
+    } catch (e) {
+      done(false, e instanceof Error ? e.message : t('account.connections.connectFailed'))
+    } finally {
+      busy.value = ''
+    }
+  } else {
+    row = await act('feishu:connect', () => connectFeishu())
+  }
   if (!row) return
-  if (integrations.value.some((x) => x.id === row.id)) replace(row)
-  else integrations.value = [...integrations.value, row]
-  await authorize(row)
+  const got = row
+  if (integrations.value.some((x) => x.id === got.id)) replace(got)
+  else integrations.value = [...integrations.value, got]
+  await authorize(got)
 }
 
 async function remove(row: Integration) {
@@ -221,6 +236,7 @@ onMounted(async () => {
     :busy="busy"
     :feishu-missing="feishuMissing"
     :feishu-asking="feishuAsking"
+    :feishu-redirect-uri="feishu.redirect_uri"
     @refresh="load"
     @discard="discard"
     @send="send"

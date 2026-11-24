@@ -1,11 +1,28 @@
 {
   "member": {
     "connect": "Connect Feishu",
-    "notConfigured": "An administrator has not configured the Feishu app",
-    "notConnected": "Not connected to Feishu yet"
+    "notConfigured": "An administrator has not configured the platform's Feishu app. You can connect with your own company's Feishu app",
+    "notConnected": "Not connected to Feishu yet",
+    "ownApp": {
+      "open": "Use my company's Feishu app",
+      "title": "Connect with your company's Feishu app",
+      "why": "A custom app only connects Feishu accounts in its own organization. If your Feishu belongs to another company, create an app in your company's Feishu first, then enter its credentials here.",
+      "step1": "On the Feishu developer console ({console}), create a custom app.",
+      "step2": "Under Security Settings, add this redirect URL and turn on refreshing user_access_token:",
+      "step3": "Under Permissions, choose batch import/export and paste this configuration, then apply for it:",
+      "step4": "Under Version Management & Release, create and publish a version. Set availability to just yourself, which makes approval much easier. You can give this reason, then wait for your company's Feishu admin to approve:",
+      "step5": "Enter the App ID and App Secret from Credentials & Basic Info below.",
+      "feishu": "Feishu",
+      "submit": "Save and authorize in Feishu",
+      "reason": "To search, read and edit my own Feishu documents as myself on Cheese (okcheese.com). Only user-identity permissions are requested, the authorization is started by me, and the app is available to me alone.",
+      "copyRedirect": "Copy redirect URL",
+      "copyScopes": "Copy permission configuration",
+      "copyReason": "Copy reason",
+      "copied": "Copied"
+    }
   },
   "admin": {
-    "sub": "Members no longer build a Feishu app of their own. Fill this in once and each member connects with one click in My connections.",
+    "sub": "Fill this in once and members in this app's organization connect with one click in My connections; members whose Feishu belongs to another company connect with their own company's app.",
     "appId": "App ID",
     "appSecret": "App Secret",
     "domain": "Domain",

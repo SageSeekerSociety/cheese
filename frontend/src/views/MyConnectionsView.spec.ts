@@ -1,13 +1,14 @@
 /**
- * 「我的连接」上的飞书那一半：平台应用配好之后，成员这边是一颗按钮，不是一张表单。
+ * 「我的连接」上的飞书那一半：平台应用配好之后，成员这边是一颗按钮；飞书属于别的公司、
+ * 或平台没配应用时，是一张填自己公司应用凭据的表单。
  *
- * 这一份钉住三件事，每一件都是「坏了也不会有人立刻发现」的那种：
+ * 这一份钉住几件事，每一件都是「坏了也不会有人立刻发现」的那种：
  *
- * 1. **平台没配应用时按钮是灰的**，而且点了什么也不会发生。按钮画亮、只在按下时报错，
- *    也「能用」—— 代价是每个人都要自己撞一次那句错，而这句话本来可以提前说。
- * 2. **点一下真的把人送到飞书**：先建自己那一行（`POST /me/integrations/feishu`，不带
- *    任何正文 —— 应用凭据是平台管理员的），再拿那一行的授权地址跳过去。少了前一步，
- *    回调没法知道是谁授权的；少了后一步，就永远停在原地。
+ * 1. **平台没配应用时按钮不是死的**：它说明原因，并打开自己公司应用那张表单，填完照样
+ *    把人送到飞书。按钮画灰，就是让飞书属于别的公司的成员永远连不上。
+ * 2. **点一下真的把人送到飞书**：先建自己那一行（`POST /me/integrations/feishu`，平台
+ *    应用那条路不带凭据，自己公司应用那条路带上 App ID / Secret），再拿那一行的授权地址
+ *    跳过去。少了前一步，回调没法知道是谁授权的；少了后一步，就永远停在原地。
  * 3. **请求还在飞的时候按钮是忙的**（`aria-busy`）：那一次跳转有两跳，中间那一拍里
  *    按钮看起来和没按过一样。
  *
@@ -42,7 +43,7 @@ vi.mock('../api', async () => ({
 vi.mock('../api/feishu', async () => ({
   ...(await vi.importActual<typeof import('../api/feishu')>('../api/feishu')),
   feishuAvailability: () => feishuAvailability(),
-  connectFeishu: () => connectFeishu(),
+  connectFeishu: (ownApp?: unknown) => connectFeishu(ownApp),
   feishuAuthorizeUrl: (id: string) => feishuAuthorizeUrl(id),
   claimFeishuHandoff: (integration: string, handoff: string) => claimFeishuHandoff(integration, handoff),
 }))
@@ -100,7 +101,16 @@ async function mount(url = '/') {
   return render(MyConnectionsView as unknown as Component, {
     global: {
       plugins: [createVuetify({ components, directives }), router],
-      stubs: ['router-link'],
+      stubs: {
+        'router-link': true,
+        // 对话框原地摊开：测试环境里浮层挂不上，开着的时候里面的东西照常画。
+        AdaptiveDialog: {
+          props: ['modelValue', 'title', 'primaryLabel'],
+          emits: ['primary'],
+          template:
+            '<div v-if="modelValue"><h2>{{ title }}</h2><slot /><button @click="$emit(\'primary\')">{{ primaryLabel }}</button></div>',
+        },
+      },
     },
   })
 }
@@ -128,12 +138,50 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('「连接飞书」这颗按钮', () => {
-  it('平台没配应用时是灰的，并说出原因', async () => {
-    feishuAvailability.mockResolvedValue({ configured: false, app_id: '', domain: '' })
+  it('平台没配应用时说出原因，并改用自己公司的应用把人送到飞书', async () => {
+    feishuAvailability.mockResolvedValue({
+      configured: false,
+      app_id: '',
+      domain: '',
+      redirect_uri: 'https://okcheese.com/api/integrations/feishu/callback',
+    })
+    connectFeishu.mockResolvedValue(OWN_APP_ROW)
+    feishuAuthorizeUrl.mockResolvedValue({ url: 'https://open.feishu.cn/authorize?own=1', redirect_uri: 'r' })
     await mount()
 
-    await screen.findByText('管理员还没配置飞书应用')
-    expect(connectButton().disabled).toBe(true)
+    await screen.findByText('管理员还没配置平台的飞书应用，可以用你公司自己的飞书应用连接')
+    await fireEvent.click(await readyConnectButton())
+    // 要填进自己那个应用的回调地址就写在表单上。
+    expect(await screen.findByText('https://okcheese.com/api/integrations/feishu/callback')).toBeTruthy()
+    await fireEvent.update(screen.getByLabelText('App ID'), 'cli_other')
+    await fireEvent.update(screen.getByLabelText('App Secret'), 'other-secret')
+    await fireEvent.click(screen.getByRole('button', { name: '保存并去飞书授权' }))
+
+    await vi.waitFor(() => expect(navigatedTo).toBe('https://open.feishu.cn/authorize?own=1'))
+    expect(connectFeishu).toHaveBeenCalledWith({ domain: 'feishu', app_id: 'cli_other', app_secret: 'other-secret' })
+    expect(feishuAuthorizeUrl).toHaveBeenCalledWith('feishu-own')
+  })
+
+  it('自己公司的应用凭据不对时，服务端那句话留在表单上，不跳走', async () => {
+    feishuAvailability.mockResolvedValue({ configured: false, app_id: '', domain: '', redirect_uri: '' })
+    connectFeishu.mockRejectedValue(new Error('以应用身份取令牌：飞书返回 10014 app secret invalid'))
+    await mount()
+
+    await fireEvent.click(await readyConnectButton())
+    await fireEvent.update(await screen.findByLabelText('App ID'), 'cli_other')
+    await fireEvent.update(screen.getByLabelText('App Secret'), 'typo')
+    await fireEvent.click(screen.getByRole('button', { name: '保存并去飞书授权' }))
+
+    expect(await screen.findByText('以应用身份取令牌：飞书返回 10014 app secret invalid')).toBeTruthy()
+    expect(navigatedTo).toBe('')
+    expect(feishuAuthorizeUrl).not.toHaveBeenCalled()
+  })
+
+  it('平台配了应用，飞书属于别的公司的成员也有自己公司应用那条路', async () => {
+    await mount()
+    await readyConnectButton()
+    await fireEvent.click(screen.getByRole('button', { name: '用自己公司的飞书应用' }))
+    expect(await screen.findByLabelText('App Secret')).toBeTruthy()
   })
 
   it('还没问到「配没配」时先灰着：没配的时候不会先亮一下', async () => {

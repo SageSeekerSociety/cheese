@@ -1,7 +1,7 @@
 """后台的「飞书应用」设置页：管理员填一次 App ID / Secret / 域名。
 
-成员不再各建一个企业自建应用（`domain/integration/models.py` 的 `FeishuApp` 讲了
-为什么），于是平台上只有这一处能写这套凭据，也只有这一处该读它。门是后台共用的
+和这个应用同一家企业的成员都走它（飞书属于别的公司的成员带自己公司的应用，见
+`domain/integration/models.py` 的 `FeishuApp`），平台应用的凭据只有这一处能写。门是后台共用的
 `PlatformAdminDep` —— 进来先问「是不是平台管理员」，这里不自己判，理由和
 `admin_deps.py` 头上那段一样：判据写两份就会漂开。
 

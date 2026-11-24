@@ -5,10 +5,12 @@ AI teammates may use it, and sends a drafted mail. A teammate in a granted
 project may search, read, fetch attachments, write drafts, and read and write
 Feishu documents — always as the owner's account, never as the platform's.
 
-The Feishu app those documents are reached through is the platform's, configured
-once by a platform administrator (``FeishuApp``, ``/admin/integrations/feishu``).
-A connection that carries its own ``app_id`` and ``app_secret`` — made back when
-every member created their own app — keeps using those.
+The Feishu app those documents are reached through is either the platform's,
+configured once by a platform administrator (``FeishuApp``,
+``/admin/integrations/feishu``), or the member's own: a self-built app lives in
+one Feishu tenant, so a member whose Feishu belongs to another company connects
+with an app built in that company, its ``app_id`` and ``app_secret`` kept on the
+connection itself.
 """
 
 from __future__ import annotations
@@ -155,11 +157,11 @@ def feishu_settings(row: Integration, app: FeishuApp | None = None) -> FeishuSet
     """Which app credentials this connection is used with.
 
     A connection carrying its own ``app_id`` (and the sealed ``app_secret`` next
-    to it) is used with those — it was made when every member created an app, and
-    nothing about it is migrated. Every other connection goes through the app the
-    platform administrator configured, read here at the moment of the call so a
-    rotated secret reaches it; with none configured there is nothing to call with
-    and the person is told whose job that is.
+    to it) is used with those — its owner's Feishu is a tenant the platform's app
+    does not reach (``connect_under_own_app``). Every other connection goes
+    through the app the platform administrator configured, read here at the
+    moment of the call so a rotated secret reaches it; with none configured there
+    is nothing to call with and the person is told whose job that is.
     """
     secret = unseal(row)
     own_app_id = row.config.get("app_id")
@@ -190,8 +192,8 @@ async def feishu_settings_for(
 ) -> FeishuSettings:
     """``feishu_settings`` with the platform app read from the database.
 
-    The read is skipped for a connection that carries its own credentials: those
-    deployments have no platform app at all.
+    The read is skipped for a connection that carries its own credentials: the
+    platform's app plays no part in it.
     """
     app = (
         None if row.config.get("app_id") else await FeishuAppService(session).current()
@@ -540,6 +542,41 @@ class IntegrationService:
         self._session.add(row)
         await self._session.flush()
         return row
+
+    async def connect_under_own_app(
+        self,
+        *,
+        owner_user_id: int,
+        owner_handle: str,
+        app_id: str,
+        app_secret: str,
+        domain: str,
+    ) -> Integration:
+        """The member's own row under a self-built app of their own company.
+
+        The platform's app is a self-built app too, usable only inside its own
+        Feishu tenant; a member whose Feishu belongs to another company builds
+        one there and brings its credentials. They are proved here (a tenant
+        token is asked for) so a wrong App Secret is said now, not after the
+        authorization page. The same App ID entered again updates that row
+        rather than adding a second one.
+        """
+        if domain not in ("feishu", "lark"):
+            raise ValidationError(say("feishuDomainInvalid"))
+        for row in await self.owned(owner_user_id):
+            if row.provider == "feishu" and row.config.get("app_id") == app_id:
+                return await self.update(
+                    row, config={"domain": domain}, secret={"app_secret": app_secret}
+                )
+        return await self.connect(
+            owner_user_id=owner_user_id,
+            owner_handle=owner_handle,
+            provider="feishu",
+            label="飞书" if domain == "feishu" else "Lark",
+            config={"app_id": app_id, "domain": domain, "folders": []},
+            secret={"app_secret": app_secret},
+            grants=[],
+        )
 
     async def update(
         self, row: Integration, *, grants=None, config=None, secret=None, label=None
