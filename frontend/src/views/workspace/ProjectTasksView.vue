@@ -52,6 +52,8 @@ const props = defineProps<{
   /** 正在读下一页、或下一页读失败了。 */
   closedLoading: boolean
   closedFailed: boolean
+  /** 新建的任务还在路上：「新建任务」转圈、点不动。 */
+  creating?: boolean
 }>()
 
 const status = defineModel<'all' | 'open' | 'closed'>('status', { default: 'open' })
@@ -181,7 +183,9 @@ function stateOf(task: RoomTask): TaskState {
 <template>
   <AppPage :title="t('work.sidebar.allTasks')" width="wide">
     <template #controls>
-      <BaseButton kind="primary" size="sm" @click="emit('new-task')">{{ t('work.room.menu.newTask') }}</BaseButton>
+      <BaseButton kind="primary" size="sm" :loading="creating" :disabled="creating" @click="emit('new-task')">{{
+        t('work.room.menu.newTask')
+      }}</BaseButton>
     </template>
 
     <div class="tasks__filters">

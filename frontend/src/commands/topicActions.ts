@@ -12,6 +12,8 @@ import type { Router } from 'vue-router'
 import type { Topic } from '@/cx_types'
 import type { MenuCommand } from '.'
 
+import { reactive } from 'vue'
+
 import { requestChannelDetails } from './channelDetails'
 import { copyLink, linkOf } from './copy'
 import { notifyChoices, notifyLevelName } from './notifyChoices'
@@ -133,17 +135,30 @@ export function topicActions(topic: Topic, router: Router, on: TopicActionHandle
   return grouped([mine, tasks, itself, membership])
 }
 
+/** 正在新建任务的频道。一个频道同一时刻只建一件：连点「新建任务」（或从几处入口各点一
+ *  下）不会建出好几件空任务。建好、进了任务页才放开。 */
+const creatingIn = reactive(new Set<string>())
+
+/** 这个频道里的新建任务还在路上：入口的按钮转圈、点不动。 */
+export function creatingTaskIn(topicId: string | null | undefined): boolean {
+  return !!topicId && creatingIn.has(topicId)
+}
+
 /** 新建任务：建的人就是负责人，建好就去任务页，在那里和 AI 队友说清楚要做什么。 */
 export async function newTask(topic: Topic, router: Router): Promise<void> {
+  if (creatingIn.has(topic.id)) return
+  creatingIn.add(topic.id)
   const store = useWorkspaceStore()
   try {
     const task = await createRoomTask(topic.id)
-    void router.push({
+    await router.push({
       name: 'workspace-task',
       params: { projectId: topic.project_id, topicId: topic.id, taskId: task.id },
     })
   } catch (e) {
     store.reportError(e, t('work.room.menu.newTaskFailed'))
+  } finally {
+    creatingIn.delete(topic.id)
   }
 }
 
