@@ -666,6 +666,9 @@ export const VIEW_ASSISTANT_ENTRIES: CatalogEntry[] = [
       saving: false,
       saved: false,
       error: '',
+      // 预览站没有服务器：存一律当作成了。
+      saveRoutine: async () => '',
+      memoryEdit: async () => '',
     },
     states: [
       {

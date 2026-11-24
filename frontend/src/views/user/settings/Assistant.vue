@@ -31,6 +31,7 @@ import {
   setAssistantRoutine,
   updateAssistantRoutine,
 } from '@/api'
+import { axiosErrorMessage } from '@/api/axiosHttp'
 import { t } from '@/i18n'
 import { openAgentConversation } from '@/stores/agent'
 
@@ -118,6 +119,20 @@ async function remembered(call: () => Promise<AssistantMemory>) {
   })
 }
 
+/** 改一条记忆：回来的那句是失败原因，空串是成功；改的那一格据此收起或留着。 */
+async function editMemory(name: string, description: string, text: string): Promise<string> {
+  let said = ''
+  await run(async () => {
+    try {
+      memory.value = await saveAssistantMemoryItem(name, description, text)
+    } catch (e) {
+      said = axiosErrorMessage(e, t('account.assistant.saveFailed'))
+      throw e
+    }
+  })
+  return said
+}
+
 async function routine(id: string, action: 'pause' | 'resume' | 'delete' | 'run-now') {
   await run(async () => {
     const now = await setAssistantRoutine(id, action)
@@ -134,7 +149,7 @@ async function saveRoutine(id: string | null, body: AssistantRoutineForm): Promi
       const now = id ? await updateAssistantRoutine(id, body) : await createAssistantRoutine(body)
       routines.value = now.routines
     } catch (e) {
-      said = e instanceof Error ? e.message : String(e)
+      said = axiosErrorMessage(e, t('account.assistant.saveFailed'))
       throw e
     }
   })
@@ -153,14 +168,14 @@ async function saveRoutine(id: string | null, body: AssistantRoutineForm): Promi
     :saving="saving"
     :saved="saved"
     :error="error"
+    :save-routine="saveRoutine"
+    :memory-edit="editMemory"
     @retry="load"
     @toggle="toggle"
     @add-item="addItem"
     @remove-item="removeItem"
     @routine="routine"
-    @save-routine="saveRoutine"
     @memory-enabled="(on: boolean) => remembered(() => setAssistantMemoryEnabled(on))"
-    @memory-edit="(name: string, d: string, text: string) => remembered(() => saveAssistantMemoryItem(name, d, text))"
     @memory-delete="(name: string) => remembered(() => deleteAssistantMemoryItem(name))"
     @memory-clear="remembered(clearAssistantMemory)"
     @open-conversation="openAgentConversation"

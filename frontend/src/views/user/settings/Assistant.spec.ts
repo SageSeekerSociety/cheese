@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import Assistant from './Assistant.vue'
 
+import { ApiError } from '@/api/http'
 import i18n, { setLocale } from '@/i18n'
 
 const {
@@ -19,6 +20,7 @@ const {
   memoryMock,
   editMemoryMock,
   deleteMemoryMock,
+  createRoutineMock,
 } = vi.hoisted(() => ({
   rulesMock: vi.fn(),
   saveMock: vi.fn(),
@@ -28,6 +30,7 @@ const {
   memoryMock: vi.fn(),
   editMemoryMock: vi.fn(),
   deleteMemoryMock: vi.fn(),
+  createRoutineMock: vi.fn(),
 }))
 
 vi.mock('@/api', () => ({
@@ -36,6 +39,8 @@ vi.mock('@/api', () => ({
   getAssistantActivity: activityMock,
   getAssistantRoutines: routinesMock,
   setAssistantRoutine: setRoutineMock,
+  createAssistantRoutine: createRoutineMock,
+  updateAssistantRoutine: vi.fn(),
   getAssistantMemory: memoryMock,
   saveAssistantMemoryItem: editMemoryMock,
   deleteAssistantMemoryItem: deleteMemoryMock,
@@ -197,6 +202,51 @@ describe('芝士 settings', () => {
     await fireEvent.click(removeMemory)
     await waitFor(() => expect(view.getByText('暂无记忆')).toBeTruthy())
     expect(deleteMemoryMock).toHaveBeenCalledWith('formal-to-teachers')
+  })
+
+  it('a memory edit the server refuses stays open with the edited text and says why', async () => {
+    editMemoryMock.mockRejectedValue(new ApiError(409, '这条记忆已被删除'))
+    const view = mount()
+    await waitFor(() => expect(view.getByText('给老师写东西用书面语')).toBeTruthy())
+
+    await fireEvent.click(view.getByRole('button', { name: '编辑' }))
+    await fireEvent.update(view.getByRole('textbox', { name: '描述' }), '给老师写东西要正式')
+    await fireEvent.submit(view.getByRole('textbox', { name: '描述' }).closest('form') as HTMLFormElement)
+
+    await waitFor(() =>
+      expect(
+        view
+          .getAllByRole('alert')
+          .map((a) => a.textContent)
+          .join()
+      ).toContain('这条记忆已被删除')
+    )
+    expect((view.getByRole('textbox', { name: '描述' }) as HTMLInputElement).value).toBe('给老师写东西要正式')
+  })
+
+  it('a routine the server refuses keeps the form and what was typed, and says why', async () => {
+    createRoutineMock.mockRejectedValue(new ApiError(409, '例行事务已达上限'))
+    const view = mount()
+    const create = await waitFor(() =>
+      view.getByRole('button', { name: i18n.global.t('account.assistant.routines.actionNew') })
+    )
+
+    await fireEvent.click(create)
+    const goal = view.container.querySelector('.ast__form textarea') as HTMLTextAreaElement
+    await fireEvent.update(goal, '每周一提醒我交周报')
+    await fireEvent.submit(goal.closest('form') as HTMLFormElement)
+
+    await waitFor(() =>
+      expect(
+        view
+          .getAllByRole('alert')
+          .map((a) => a.textContent)
+          .join()
+      ).toContain('例行事务已达上限')
+    )
+    expect((view.container.querySelector('.ast__form textarea') as HTMLTextAreaElement | null)?.value).toBe(
+      '每周一提醒我交周报'
+    )
   })
 
   it('a one-off waits with a way to call it off, and once it has run it leaves the list', async () => {
