@@ -233,14 +233,6 @@ export default [
         component: () => import('@/views/admin/AdminMembersPage.vue'),
         meta: { titleKey: 'navigation.admin.members', isFullPage: true },
       },
-      {
-        // 平台上唯一一处飞书应用凭据：管理员填一次，成员在「我的连接」里点一下就连上。
-        // 它是**平台级**的设置（不属于任何一个项目），和上面几块一样是后台的一格。
-        path: 'integrations',
-        name: 'AdminIntegrations',
-        component: () => import('@/views/admin/AdminIntegrationsPage.vue'),
-        meta: { titleKey: 'navigation.admin.integrations', isFullPage: true },
-      },
     ],
   },
 ] as RouteRecordRaw[]

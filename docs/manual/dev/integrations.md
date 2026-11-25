@@ -6,7 +6,7 @@ covers:
   - backend/app/domain/integration/
   - backend/app/domain/webhook/
   - backend/app/api/routes/integrations.py
-  - backend/app/api/routes/admin_integrations.py
+  - backend/app/api/routes/team_feishu_app.py
   - backend/app/api/routes/webhooks.py
   - backend/app/core/webhook_auth.py
 ---
@@ -26,7 +26,7 @@ covers:
 | `owner_user_id` / `owner_handle` | 钥匙的主人。**只有他**能建、改、授权、发送 |
 | `provider` | `mail` 或 `feishu` |
 | `label` | 主人眼里它叫什么（地址，或飞书应用名） |
-| `config` | **非密**设置：IMAP/SMTP 主机端口用户名；**自带应用时**还有 `app_id`、`domain`、`folders`（走平台应用的行没有这几个，见[飞书](#feishu)） |
+| `config` | **非密**设置：IMAP/SMTP 主机端口用户名；飞书是 `app_id`、`domain`、`folders`（见[飞书](#feishu)） |
 | `secret` | 密封后的密码 / 自带应用的 `app_secret`，加用户令牌 |
 | `grants` | **哪些项目**的芝士可以用它（项目 id 列表） |
 | `status` / `last_error` / `last_checked_at` | `ok` / `auth_failed` / `unreachable` / `error` |
@@ -47,7 +47,7 @@ API 分成两半，`backend/app/api/routes/integrations.py` 开头就写明：`/
 
 芝士起草时，房间会收到一条事件块和一条给主人的通知（`EVENT_MAIL_DRAFTED`，标题「邮件草稿待你确认：…」），草稿状态走 `drafted → sent | failed | discarded`。
 
-## 飞书：应用是平台的，授权是个人的 {#feishu}
+## 飞书：应用设在团队上，授权是个人的 {#feishu}
 
 `backend/app/domain/integration/feishu.py` 支持两种身份：
 
@@ -56,21 +56,27 @@ API 分成两半，`backend/app/api/routes/integrations.py` 开头就写明：`/
 | 应用 | `app_id` + `app_secret` → tenant token | 分享给这个应用的那些文档 |
 | 用户授权 | OAuth 拿到的 `user_access_token` + `refresh_token` | 这个人看得见的；**搜索 API 只在这条路上有答案** |
 
-授权页地址带着 `scope`（`feishu.USER_SCOPES`）。少了 `offline_access`，飞书就不发 `refresh_token`，授权两小时后作废；反过来，代码里请求了应用后台没开通的权限，授权页对所有人报 20027。所以这张清单和下面让管理员开的那几项要一一对应，改一处就改另一处。
+授权页地址带着 `scope`（`feishu.USER_SCOPES`）。少了 `offline_access`，飞书就不发 `refresh_token`，授权两小时后作废；反过来，代码里请求了应用后台没开通的权限，授权页对所有人报 20027。所以这张清单和团队设置「飞书应用」里的批量导入 JSON（`views/teams/detail/FeishuView.vue` 的 `FEISHU_SCOPES_IMPORT`）要一一对应，改一处就改另一处。
 
-**应用是组织的，一个人建一次。** 成员以前各自去飞书建一个企业自建应用、把 App ID / Secret 填进「我的连接」——每个人做的是同一件事。现在它落在 `FeishuApp`（`feishu_apps` 表，固定一行）：平台管理员在飞书建好自建应用，在「权限管理」里开通 `feishu.USER_SCOPES` 列的那几个用户身份权限（`offline_access`、`search:docs:read`、`docx:document`），在「安全设置」里打开「刷新 user_access_token」，把回调地址填成 `{frontend_url}/api/integrations/feishu/callback`、发布并通过审核，然后在后台的「飞书应用」那一页（`PUT /admin/integrations/feishu`，门是 `PlatformAdminDep`）把凭据填一次。Secret 只写不回显，空着提交表示不改已经存下的那一个。
+**应用设在团队上。** 企业自建应用只在它自己那家企业的飞书里能用，所以平台不持有飞书应用，应用由团队持有：`TeamFeishuApp`（`team_feishu_apps` 表，主键就是 `team_id`，一个团队至多一个），公司的团队设公司的应用，一个人自己用就设在他的个人团队上（`TeamService.ensure_personal_team`，和个人的设备、模型同一个团队）。团队设置里「飞书应用」那一栏（`GET/PUT/DELETE /teams/{teamId}/feishu-app`，门是 `Can(TeamPermission.edit_settings)`：团队管理员，个人团队是它的主人；个人团队的那一栏挂在个人设置里）填版本（飞书 / Lark）、App ID、App Secret；下面写着在飞书里建应用的几步：在开放平台创建企业自建应用；在「安全设置」里添加重定向 URL（`redirect_uri`，即 `{frontend_url}/api/integrations/feishu/callback`）并打开「刷新 user_access_token」；在「权限管理 → 批量导入/导出权限」里粘贴权限配置；创建版本、填申请理由（个人团队提示可用范围只选自己），等公司的飞书管理员审核。重定向 URL、权限配置、申请理由都能一键复制。保存前先拿这套凭据换一次 tenant token，Secret 不对当场报错、什么也不存；Secret 封在这一行上（绑在团队上）、从不回显，空着保存表示不改。
 
-成员那边只有一颗「连接飞书」：`POST /me/integrations/feishu` 先落一行（不带任何凭据 —— 应用是管理员的，个人出的是自己的账号），`GET /me/integrations/{id}/feishu/authorize` 拿授权地址跳过去，回调把 `user_access_token` / `refresh_token` 写进**这一行**。平台没配应用时按钮是灰的，提示「管理员还没配置飞书应用」；没配就发起授权会得到同一句话的 422。
+连接在团队的「飞书应用」那一栏里做。团队里每个成员都读得到这一栏（`GET /teams/{teamId}/feishu-app`，门是 `view_members`）：团队用的是哪个应用（不含 Secret）、本人能不能设（`can_manage`）、本人通过它的连接（`connection`：行 id、状态、授权完没有）。成员点「连接我的飞书账号」，`POST /me/integrations/feishu`（`{team_id}`，只认本人所在、且设了应用的团队）落一行：这一行只记 `config.team_id`（外加下面说的 `app_id` 记号），不复制应用的任何凭据；同一个团队再连一次是同一行。随后 `GET /me/integrations/{id}/feishu/authorize` 拿授权地址跳过去，用的是本人自己的飞书账号，回调把 `user_access_token` / `refresh_token` 写进**这一行**；「重新连接」对已有的那一行再走一次授权，「断开」删掉这一行。「我的连接」是总览：`GET /me/integrations/feishu` 回本人所在每个团队（个人团队在前）、它的应用和本人的连接，每个团队指到它的「飞书应用」那一栏；一个都没设时，指到个人设置里个人团队的那一栏。
 
-**自带凭据的老连接照旧能用。** `feishu_settings` 的次序是：这一行自己的 `app_id` 在先，平台应用在后，都没有才报错 —— 所以库里那些每个人自己建的连接不用迁移就还在跑，只是页面不再引导建新的那种。`public(row)` 用 `shared_app` 说出这一行走的是哪一条。
+`feishu_settings_for(session, row)` 每次调用时从团队读应用：换了 Secret，所有连接下一次调用就用新的。成员的令牌只在发它的那个 App ID 下用：令牌和它的发放者（`config.authorized_app_id`）记在一起，团队现在的 App ID 和它对不上、或者根本没记，这些令牌一概不用，也不拿应用自己的身份顶替（`FeishuSettings.user_only`），调用报 `auth_failed`，授权地址照常给，重新授权就回来。团队换 App ID 或删掉应用时，保存那一下把成员连接的令牌清掉、`authorized_app_id` 记成 `None`、标成要重新授权：授权过一次的团队连接在主人重新授权之前什么也不读，个人团队也一样——不拿应用自己的身份顶替（从没授权过的个人团队连接照旧可以用应用的身份读）。领取授权时（`_claim_feishu`）先看团队的应用是不是正被保存：被保存的那一下拿着它，就回 `busy`、不花掉领取号，页面把领取号放回地址栏，刷新就能再领。然后不持任何锁去飞书换授权码（从这里起领取号已经花掉），换完才对团队的应用加共享锁；团队的应用还是换码时那一个——App ID 和封好的 Secret 密文都没变（换码用的凭据和这份密文出自同一次读取，`FeishuSettings.app_sealed`），删掉再用同一个 App ID 建一次也算变了，因为重建会重新密封——才存下令牌，否则什么也不存（`app_changed`）。令牌在这一行的行锁下并进它**当时**的密封 Secret（较早的连接自己的 App Secret 也在里面，期间改过就留着改过的），用 `UPDATE … RETURNING` 写，写完不再重读这一行：期间被断开就回 `deleted`，提交之后被断开也不会报错。换码之后等不到锁、或者写这一行时等不到行锁，回 `authorize_again`：领取号已经没了，页面不放回去、只说请重新连接。两处等锁都在保存点里、最多等 `TEAM_APP_LOCK_WAIT`，等不到不会让事务中止，拿到之后把请求原来的等锁时间放回去（`_within_wait`）。写的时候只写令牌、`authorized_app_id` 和状态，不写回换码前读到的整份 `config`，主人期间改的目录留着。保存应用先拿新凭据向飞书换一次 tenant token、这期间不持有任何锁，只在写的那一下锁住团队那一行。团队删了应用，或者主人已不在这个团队，连接报 `auth_failed`、说清楚到哪里重新连接。共享团队的应用对成员只走本人授权，不借应用自己的身份，所以只持有一个连接、没授权的人读不到分享给团队应用的文档；个人团队的应用是本人自己的，照旧可以用。团队的应用只有团队里的人读写得到：没有席位、只凭平台管理员身份管着这个团队的人也不行。两次保存同时到：各自先验证、再锁住那一行写（第一次配置先 `ON CONFLICT DO NOTHING` 预留）；空着 Secret 的那一次不写 Secret，所以不会把期间换上的新 Secret 盖回去；期间另一次保存把 App ID 换成了别的，空着 Secret 的这一次就没有为这个 App ID 验证过的 Secret，报 `feishuTeamAppSavedMeanwhile`、什么也不写。成员算不算「授权完」（`user_authorized`）按调用实际会用的那份令牌算：有刷新令牌，而且团队连接上它是在团队现在的 App ID 下发的（`member_authorized`）。一个人在一个团队上只有一个连接（`uq_integrations_owner_feishu_team`），两次连接同时插入时后到的拿先建的那一行。
 
-错误码按「调用方还能做什么」分类：`AUTH_CODES` / `FORBIDDEN_CODES` / `NOT_FOUND_CODES` → `IntegrationError` 的 kind；刷新令牌被拒（无效、过期、撤销、已用过）都算 `auth_failed`。
+新建的团队连接 `config` 是 `{"team_id", "app_id": "team-app:<team_id>", "folders"}`：`app_id` 是一个没有哪个飞书应用会用的记号，团队应用之前的版本（回退镜像时还在跑的那一版）把 `config` 里没有 `app_id` 的行当成平台应用的连接、拿平台应用的身份去调；有了这个记号，它拿一个飞书不认的 App ID 去调、被拒，也不会把这一行当成自己能复用的那一行。从较早的连接（自带应用的、平台应用时代的）走团队重新连接时，新的那一行不借给任何项目：主人自己勾选；较早的那一行还列着它借给了哪些项目，页面提示新连接不沿用、要重新勾选。
+
+**较早的连接原样读。** 团队应用的四个迁移（都不碰已有的行；旧的 API 允许同一个人、同一个 App ID 连好几次，这些行原样留着，没有按 App ID 建唯一索引）（`4288e24987e2` 建表、`6bfa39e854c4` 加外键 `NOT VALID`、`8a9d4083c7c7` 验证外键（先用 `with_lock_retries` 拿下两张表）、`499940a660b1` 用 `CONCURRENTLY` 建 `uq_integrations_owner_feishu_team`）一行已有的连接都不改；建表用 `IF NOT EXISTS`、加外键先按名字和所在的表查有没有，中途断掉可以重跑。显式地把库降级到它们之前会删掉 `team_feishu_apps`，各团队设好的应用一并没了；只回退镜像不降级数据库则不受影响。自带 `app_id` / `app_secret` 的连接照旧用它自己那套凭据（续期也是），页面提示主人用团队的飞书应用重新连接；平台应用时代建的、`config` 为空的连接显示需要重新连接（不算正常），页面上不给它「授权个人账号」的按钮（没有应用可授权），只指到团队的飞书应用；`feishu_settings_for` 对它抛 `credentials_invalid`，续期跳过它。`feishu_apps` 表这一版不再读写、仍留在库里，按两次发布的规矩由下一个 PR 删。
+
+**一次调用写回的东西只落在它用的那份凭据上。** 刷新令牌一刷新就在自己的短事务里存下（见下面），请求的事务从不持有没存下的令牌。长调用中途令牌到期时，客户端不自己刷新，而是走同一个上锁、存下的续期（`FeishuClient` 的 `renew`，即 `_renew_locked`）：别的请求等锁、拿到已存下的新令牌，期间主人重新授权了就接着用新的授权；如果新的授权是在另一个应用下给的（App ID、域名或 App Secret 变了），这次调用停下、回 503 让人再试一次，不把那个应用的令牌和这个客户端的应用拼在一起。调用失败时只写「只有主人能修」的失败（授权失效、应用凭据不对），由 `IntegrationService._write_back` 写，而且是条件写：只在这一行的 `secret` 还是这次调用用的那一份（续期返回的、令牌从它解出来的那份密文；密封每次都换密文，正好当版本号用）时才写；期间主人重新授权了，这一笔就什么也不写。它先结束请求的事务、在同一个连接上单独提交。续期刷新成功时把状态改回「正常」：之前记在旧凭据上的失败不再成立。续期刷新被拒时，只有确实是主人的授权出了问题才记成失效：团队应用的 Secret 在这期间换过（刷新带的是旧的），或者应用自己的凭据就被拒（`_owners_to_mend` 拿同一份凭据换一次 tenant token），都不算主人的失败。改目录（`PATCH` 带 `folders`）在写这一行之前先检查：先换应用的 tenant token、再刷新本人的令牌，飞书这时不可用就停在前一步。转给人、写进地址栏和记录的飞书原话里，这次调用带的每一样凭据都换成 `***`，不论长短：App Secret、tenant token、本人的令牌、OAuth 授权码、刷新令牌；授权页拒绝后跳回来的 `error` 里回显的授权码和 `state` 也一样。
+
+错误码按「调用方还能做什么」分类：`AUTH_CODES` / `FORBIDDEN_CODES` / `NOT_FOUND_CODES` → `IntegrationError` 的 kind；刷新令牌被拒（无效、过期、撤销、已用过）都算 `auth_failed`；换 tenant token 时只有飞书自己的凭据错误码（`CREDENTIAL_CODES`：10003、10014、10015）是 `credentials_invalid`、回 422。只有飞书自己的信封（带整数 `code` 的 JSON 对象）才算飞书在说话：没有信封的回答（空的、网关的 HTML 页、JSON 数组、没有 `code` 的对象）从不算成功，也从不算成「文档不存在」「授权失效」这类只有飞书能下的结论，只按 HTTP 状态判：限流（429、99991400）、超时（408）或出错（5xx）回 503 `busy`、可以重试；其余（比如网关的 404、401）是上游错误，回 502，每小时的续期把它留到下一轮。每小时的续期一行出了任何异常都记日志、接着处理别的行。
 
 **刷新令牌只能用一次，大约一周过期。** 由此有三条：
 
-- **刷新前锁住这一行**（`service._renewed`）。`user_access_token` 快到期时，先 `SELECT … FOR UPDATE` 重读这一行，确实还要刷才刷，刷完立刻写回。两个调用同时发现过期，后一个等锁、读到新令牌，不会拿已经用掉的那个再刷一次。
+- **刷新是一个单独的短事务**（`service._refreshed`）。`user_access_token` 离到期不到十分钟时，结束请求到这时为止只读过的事务，在**同一个连接**上开一个短事务：`SELECT … FOR UPDATE` 重读这一行，确实还要刷才刷，新令牌写下、提交，然后才发文档调用。锁只在刷新加提交那一下持有；不另要一个连接，并发的刷新不会各占一个连接再等第二个、把连接池耗光。两个调用同时发现过期，后一个等锁、读到已经提交的新令牌，不会拿已经用掉的那个再刷一次；前一个的文档调用随后失败也不影响。请求在这之前不能写过东西（不然会被这次提交带走）：会话里有没 flush 的改动、或者这个事务已经经 ORM flush 过改动，续期都直接拒绝（`_wrote`，只在最外层事务结束时清掉，中间释放或回滚一个保存点不算；经会话直接执行的 Core `UPDATE` 看不出来，目前没有调用方在续期前这样做），所以改目录先检查、后写。
 - **到期前续上**（`service.renew_feishu`，每小时一次）。刷新令牌离过期不到 `RENEW_BEFORE_S`（两天）就刷一次，过期时间（`refresh_token_expires_at`）跟令牌一起封在 `secret` 里。一周没人用的授权照样能用；飞书规定授权满一年必须重新授权，到那时刷新被拒，这一行标成 `auth_failed`。
-- **「重新检查」验的是本人授权**。有用户授权的行，检查时刷新一次：刷得动才算正常，刷不动就是 `auth_failed`，页面如实显示。只验应用凭据的话，个人授权早已失效，状态也还是「正常」。
+- **「重新检查」验的是本人授权**。有用户授权的行，检查时刷新一次：刷得动才算正常，刷不动就是 `auth_failed`，页面如实显示。只验应用凭据的话，个人授权早已失效，状态也还是「正常」。检查的结论只在它用的凭据都没变时才写下（`_settle`：这一行的 `secret` 是检查用的那一份，团队应用的 Secret 密文也是）：检查期间管理员换了 Secret、主人又重新授权了，旧凭据上的失败不会盖到新的授权上。
 
 刷不动时报「授权已失效，到「我的连接」里重新授权」。
 

@@ -353,7 +353,15 @@ async def validation_exception_handler(
     # exception object, which `JSONResponse` cannot serialize: the handler then
     # raised, and any body refused by a custom validator answered 500. Its
     # sentence is what the caller needs, so it goes out as text.
-    data = {"details": jsonable_encoder(exc.errors(), custom_encoder={Exception: str})}
+    # Each error's ``input`` is left out: it is what the caller sent (for a
+    # missing field, the whole body around it), so it would echo a password or
+    # an App Secret back into a response, the browser's tools and any log of
+    # it. Where the refusal is and why (``loc``, ``msg``, ``type``) is enough.
+    errors = [
+        {key: value for key, value in error.items() if key != "input"}
+        for error in exc.errors()
+    ]
+    data = {"details": jsonable_encoder(errors, custom_encoder={Exception: str})}
     body = BadRequestError(message, data=data).to_response_body()
     if "text/event-stream" in accept:
         return PlainTextResponse(

@@ -41,7 +41,6 @@ const ROUTES = {
   models: '#/admin/models',
   spaces: '#/admin/spaces',
   members: '#/admin/members',
-  integrations: '#/admin/integrations',
 }
 
 const browser = await chromium.launch({

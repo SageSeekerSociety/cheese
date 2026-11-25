@@ -1,18 +1,9 @@
 /**
- * 「我的连接」上的飞书那一半：平台应用配好之后，成员这边是一颗按钮，不是一张表单。
+ * 「我的连接」上的飞书那一半：一格「连接飞书」，列出本人所在的团队（个人团队在前），各说
+ * 团队的应用和本人连没连，并指到那个团队的「飞书应用」—— 连接在那里做。
  *
- * 这一份钉住三件事，每一件都是「坏了也不会有人立刻发现」的那种：
- *
- * 1. **平台没配应用时按钮是灰的**，而且点了什么也不会发生。按钮画亮、只在按下时报错，
- *    也「能用」—— 代价是每个人都要自己撞一次那句错，而这句话本来可以提前说。
- * 2. **点一下真的把人送到飞书**：先建自己那一行（`POST /me/integrations/feishu`，不带
- *    任何正文 —— 应用凭据是平台管理员的），再拿那一行的授权地址跳过去。少了前一步，
- *    回调没法知道是谁授权的；少了后一步，就永远停在原地。
- * 3. **请求还在飞的时候按钮是忙的**（`aria-busy`）：那一次跳转有两跳，中间那一拍里
- *    按钮看起来和没按过一样。
- *
- * 还有一条：**自带凭据的老连接照旧有它的「授权个人账号」按钮**，而走平台应用的那一行
- * 没有 —— 后者的连接方式就是上面那颗按钮（`shared_app` 说的就是这件事）。
+ * 钉住：列表的顺序、状态和去处；一个都没设时说清楚并指到个人设置；读不到也不掀掉整页；
+ * 已经连上的飞书那一行留着自己的「授权个人账号」。
  */
 import type { Component } from 'vue'
 
@@ -26,23 +17,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const listMyIntegrations = vi.fn()
 const listMyMailDrafts = vi.fn()
 const listProjects = vi.fn()
-const feishuAvailability = vi.fn()
-const connectFeishu = vi.fn()
+const feishuChoices = vi.fn()
 const feishuAuthorizeUrl = vi.fn()
 const claimFeishuHandoff = vi.fn()
+const deleteIntegration = vi.fn()
+const checkIntegration = vi.fn()
 
 vi.mock('../api', async () => ({
   ...(await vi.importActual<typeof import('../api')>('../api')),
   listMyIntegrations: () => listMyIntegrations(),
   listMyMailDrafts: () => listMyMailDrafts(),
   listProjects: () => listProjects(),
+  deleteIntegration: (id: string) => deleteIntegration(id),
+  checkIntegration: (id: string) => checkIntegration(id),
 }))
 
 // 飞书那几个函数住它们自己的模块（`../api/feishu`），所以按模块分别挡。
 vi.mock('../api/feishu', async () => ({
   ...(await vi.importActual<typeof import('../api/feishu')>('../api/feishu')),
-  feishuAvailability: () => feishuAvailability(),
-  connectFeishu: () => connectFeishu(),
+  feishuChoices: () => feishuChoices(),
   feishuAuthorizeUrl: (id: string) => feishuAuthorizeUrl(id),
   claimFeishuHandoff: (integration: string, handoff: string) => claimFeishuHandoff(integration, handoff),
 }))
@@ -69,47 +62,74 @@ function stubLocation() {
   navigatedTo = ''
 }
 
-const SHARED_ROW = {
-  id: 'feishu-shared',
+const FEISHU_ROW = {
+  id: 'feishu-own',
   provider: 'feishu',
   label: '飞书',
   owner_handle: 'user-1',
-  config: {},
+  config: { team_id: 12, folders: [] },
   grants: [],
   status: 'ok',
   last_error: '',
   last_checked_at: null,
   user_authorized: false,
-  shared_app: true,
 }
-const OWN_APP_ROW = {
-  ...SHARED_ROW,
-  id: 'feishu-own',
-  label: '飞书（自己建的）',
-  config: { app_id: 'cli_own' },
-  shared_app: false,
+const PERSONAL = {
+  team_id: 11,
+  team_name: '个人',
+  team_handle: '',
+  personal: true,
+  can_manage: true,
+  app: null,
+  connection: null,
 }
+const TEAM = {
+  team_id: 12,
+  team_name: '课程小队',
+  team_handle: 'course-team',
+  personal: false,
+  can_manage: false,
+  app: { app_id: 'cli_team', domain: 'feishu' },
+  connection: null,
+}
+
+/** 最近一次 mount 用的路由：看地址栏里还留着什么。 */
+let mounted: ReturnType<typeof createRouter> | undefined
 
 async function mount(url = '/') {
   const router = createRouter({
     history: createMemoryHistory(),
-    routes: [{ path: '/', component: { template: '<div />' } }],
+    routes: [
+      { path: '/', component: { template: '<div />' } },
+      // Where the empty state points to set a Feishu app up.
+      { path: '/settings/feishu', name: 'UserSettingsFeishu', component: { template: '<div />' } },
+      { path: '/teams/:handle/feishu', name: 'TeamsDetailFeishu', component: { template: '<div />' } },
+    ],
   })
   await router.push(url)
   await router.isReady()
+  mounted = router
   return render(MyConnectionsView as unknown as Component, {
     global: {
       plugins: [createVuetify({ components, directives }), router],
-      stubs: ['router-link'],
+      stubs: {
+        'router-link': true,
+        // 对话框原地摊开：测试环境里浮层挂不上，开着的时候里面的东西照常画。
+        AdaptiveDialog: {
+          props: ['modelValue', 'title', 'primaryLabel'],
+          emits: ['primary'],
+          template:
+            '<div v-if="modelValue"><h2>{{ title }}</h2><slot /><button @click="$emit(\'primary\')">{{ primaryLabel }}</button></div>',
+        },
+        ConfirmDialog: {
+          props: ['modelValue', 'title', 'confirmLabel'],
+          emits: ['confirm'],
+          template:
+            '<div v-if="modelValue" role="dialog"><h2>{{ title }}</h2><slot /><button @click="$emit(\'confirm\')">{{ confirmLabel }}</button></div>',
+        },
+      },
     },
   })
-}
-
-const connectButton = () => screen.getByRole('button', { name: '连接飞书' }) as HTMLButtonElement
-/** 问完「配没配」、按钮能按了的那一刻。 */
-async function readyConnectButton(): Promise<HTMLButtonElement> {
-  await vi.waitFor(() => expect(connectButton().disabled).toBe(false))
-  return connectButton()
 }
 
 beforeEach(() => {
@@ -118,85 +138,173 @@ beforeEach(() => {
   listMyIntegrations.mockReset().mockResolvedValue({ data: [] })
   listMyMailDrafts.mockReset().mockResolvedValue({ data: [] })
   listProjects.mockReset().mockResolvedValue({ data: [] })
-  feishuAvailability.mockReset().mockResolvedValue({ configured: true, app_id: 'cli_p', domain: 'feishu' })
-  connectFeishu.mockReset()
+  feishuChoices.mockReset().mockResolvedValue({ teams: [PERSONAL, TEAM], redirect_uri: 'r' })
   feishuAuthorizeUrl.mockReset()
+  deleteIntegration.mockReset()
+  checkIntegration.mockReset()
   sonner.success.mockReset()
   sonner.error.mockReset()
 })
 
 afterEach(cleanup)
 
-describe('「连接飞书」这颗按钮', () => {
-  it('平台没配应用时是灰的，并说出原因', async () => {
-    feishuAvailability.mockResolvedValue({ configured: false, app_id: '', domain: '' })
+describe('「连接飞书」那一格', () => {
+  it('列出本人所在的团队，个人团队在前，各说应用和本人连没连，并指到那个团队的「飞书应用」', async () => {
+    feishuChoices.mockResolvedValue({
+      teams: [PERSONAL, { ...TEAM, connection: { id: 'feishu-own', status: 'ok', user_authorized: true } }],
+      redirect_uri: 'r',
+    })
     await mount()
 
-    await screen.findByText('管理员还没配置飞书应用')
-    expect(connectButton().disabled).toBe(true)
+    const rows = await screen.findAllByText(/^(个人|课程小队)$/)
+    expect(rows.map((r) => r.textContent?.trim())).toEqual(['个人', '课程小队'])
+    expect(screen.getByText('cli_team · 已连接')).toBeTruthy()
+    expect(screen.getByText('还没设置飞书应用')).toBeTruthy()
+    // 连接在团队那一栏里做：这里只有去那里的链接，没有一张选单。
+    expect((screen.getByText('打开') as HTMLAnchorElement).getAttribute('href')).toBe('/teams/course-team/feishu')
+    expect((screen.getByText('去设置') as HTMLAnchorElement).getAttribute('href')).toBe('/settings/feishu')
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('还没问到「配没配」时先灰着：没配的时候不会先亮一下', async () => {
-    let answer!: (value: unknown) => void
-    feishuAvailability.mockReturnValue(new Promise((resolve) => (answer = resolve)))
+  it('一个都没设时说清楚，个人那一行指到个人设置', async () => {
+    feishuChoices.mockResolvedValue({ teams: [PERSONAL], redirect_uri: 'r' })
     await mount()
 
-    expect((await screen.findByRole('button', { name: '连接飞书' })).hasAttribute('disabled')).toBe(true)
-    answer({ configured: true, app_id: 'cli_p', domain: 'feishu' })
-    expect((await readyConnectButton()).disabled).toBe(false)
+    expect(((await screen.findByText('去设置')) as HTMLAnchorElement).getAttribute('href')).toBe('/settings/feishu')
+    expect(screen.getByText(/你所在的团队都还没设置飞书应用/)).toBeTruthy()
   })
 
-  it('加载连接列表时同步发起飞书可用性查询，不串行排在列表后面', async () => {
-    listMyIntegrations.mockReturnValue(new Promise(() => {}))
-    await mount()
-    expect(feishuAvailability).toHaveBeenCalledTimes(1)
-  })
-
-  it('问不到「配没配」时既不谎报没配，也不把整页连接一起掀掉', async () => {
-    // 「没读到」和「没配」是两件事。前者的正确画法是照旧让人按，由服务端回那句实话 ——
-    // 把没读到画成没配，是在替管理员说一句他可能没做过的事。
-    listMyIntegrations.mockResolvedValue({ data: [SHARED_ROW] })
-    feishuAvailability.mockRejectedValue(new Error('读不到'))
+  it('问不到团队的应用也不把整页连接一起掀掉', async () => {
+    listMyIntegrations.mockResolvedValue({ data: [FEISHU_ROW] })
+    feishuChoices.mockRejectedValue(new Error('读不到'))
     await mount()
 
     expect(await screen.findByText('还没连接飞书')).toBeTruthy()
-    expect(screen.queryByText('管理员还没配置飞书应用')).toBeNull()
-    expect(connectButton().disabled).toBe(false)
   })
+})
 
-  it('配好了就走两步：先有自己的那一行，再去飞书的授权页', async () => {
-    connectFeishu.mockResolvedValue(SHARED_ROW)
-    feishuAuthorizeUrl.mockResolvedValue({ url: 'https://open.feishu.cn/authorize?x=1', redirect_uri: 'r' })
+describe('「连接飞书」那一格跟着连接走', () => {
+  it('在这里删掉飞书连接，团队那一格不再说已连接', async () => {
+    const connected = { ...TEAM, connection: { id: 'feishu-own', status: 'ok', user_authorized: true } }
+    listMyIntegrations.mockResolvedValue({ data: [FEISHU_ROW] })
+    feishuChoices
+      .mockResolvedValueOnce({ teams: [PERSONAL, connected], redirect_uri: 'r' })
+      .mockResolvedValue({ teams: [PERSONAL, TEAM], redirect_uri: 'r' })
+    deleteIntegration.mockResolvedValue({ deleted: 'feishu-own' })
     await mount()
 
-    await fireEvent.click(await readyConnectButton())
-
-    await vi.waitFor(() => expect(navigatedTo).toBe('https://open.feishu.cn/authorize?x=1'))
-    expect(connectFeishu).toHaveBeenCalledTimes(1)
-    expect(feishuAuthorizeUrl).toHaveBeenCalledWith('feishu-shared')
+    expect(await screen.findByText('cli_team · 已连接')).toBeTruthy()
+    await fireEvent.click(screen.getByRole('button', { name: '删除' }))
+    await fireEvent.click(screen.getAllByRole('button', { name: '删除' }).at(-1)!)
+    expect(await screen.findByText('cli_team · 还没连接')).toBeTruthy()
+    expect(screen.queryByText('cli_team · 已连接')).toBeNull()
   })
 
-  it('两跳之间是忙的，不是又一颗看起来没按过的按钮', async () => {
-    let release!: (row: unknown) => void
-    connectFeishu.mockReturnValue(new Promise((resolve) => (release = resolve)))
-    feishuAuthorizeUrl.mockResolvedValue({ url: 'https://open.feishu.cn/authorize?x=1', redirect_uri: 'r' })
+  it('团队那一格读不到时说读不到，不说「没有团队设了应用」，并能再读', async () => {
+    feishuChoices
+      .mockRejectedValueOnce(new Error('网络断了'))
+      .mockResolvedValue({ teams: [PERSONAL, TEAM], redirect_uri: 'r' })
     await mount()
 
-    await fireEvent.click(await readyConnectButton())
-    await vi.waitFor(() => expect(connectButton().getAttribute('aria-busy')).toBe('true'))
-    expect(navigatedTo).toBe('')
+    expect(await screen.findByText(/网络断了/)).toBeTruthy()
+    expect(screen.queryByText(/你所在的团队都还没设置飞书应用/)).toBeNull()
+    await fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    expect(await screen.findByText('cli_team · 还没连接')).toBeTruthy()
+  })
 
-    release(SHARED_ROW)
-    await vi.waitFor(() => expect(navigatedTo).toBe('https://open.feishu.cn/authorize?x=1'))
+  it('较早的飞书连接提示用团队的飞书应用重新连接', async () => {
+    listMyIntegrations.mockResolvedValue({
+      data: [
+        {
+          ...FEISHU_ROW,
+          config: { app_id: 'cli_old', domain: 'feishu' },
+          user_authorized: true,
+          reconnect: 'team_app',
+        },
+      ],
+    })
+    await mount()
+    expect(await screen.findByText(/用团队的飞书应用重新连接/)).toBeTruthy()
+    // 新的连接不沿用旧的那一行借给的项目：这里说清楚，旧的那一行还列着它们。
+    expect(screen.getByText(/新的连接不沿用这一行勾选的项目/)).toBeTruthy()
+  })
+})
+
+describe('「连接飞书」那一格跟着检查走', () => {
+  it('测试连接查出授权失效，团队那一格也跟着说失效，不再说已连接', async () => {
+    const connected = { ...TEAM, connection: { id: 'feishu-own', status: 'ok', user_authorized: true } }
+    const lapsed = { ...TEAM, connection: { id: 'feishu-own', status: 'auth_failed', user_authorized: true } }
+    listMyIntegrations.mockResolvedValue({ data: [{ ...FEISHU_ROW, user_authorized: true }] })
+    feishuChoices
+      .mockResolvedValueOnce({ teams: [PERSONAL, connected], redirect_uri: 'r' })
+      .mockResolvedValue({ teams: [PERSONAL, lapsed], redirect_uri: 'r' })
+    checkIntegration.mockResolvedValue({ ...FEISHU_ROW, status: 'auth_failed', last_error: '授权已过期' })
+    await mount()
+
+    expect(await screen.findByText('cli_team · 已连接')).toBeTruthy()
+    await fireEvent.click(screen.getByRole('button', { name: '测试连接' }))
+    expect(await screen.findByText('cli_team · 授权已失效，请重新连接')).toBeTruthy()
+    expect(screen.queryByText('cli_team · 已连接')).toBeNull()
+  })
+})
+
+describe('平台应用那时候的旧连接', () => {
+  it('没有应用可授权：不给授权按钮，只说用团队的飞书应用重新连接', async () => {
+    listMyIntegrations.mockResolvedValue({
+      data: [
+        {
+          ...FEISHU_ROW,
+          config: {},
+          status: 'auth_failed',
+          last_error: '这个连接要改用团队的飞书应用',
+          reconnect: 'team_app',
+        },
+      ],
+    })
+    await mount()
+
+    expect(await screen.findByText(/用团队的飞书应用重新连接/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /授权个人账号/ })).toBeNull()
+  })
+
+  it('带着自己应用的旧连接还能在原地重新授权', async () => {
+    listMyIntegrations.mockResolvedValue({
+      data: [{ ...FEISHU_ROW, config: { app_id: 'cli_old' }, user_authorized: true, reconnect: 'team_app' }],
+    })
+    await mount()
+
+    expect(await screen.findByRole('button', { name: '重新授权个人账号' })).toBeTruthy()
+  })
+})
+
+describe('团队移除了飞书应用', () => {
+  it('那一行不给授权按钮，指到团队的「飞书应用」那一栏', async () => {
+    listMyIntegrations.mockResolvedValue({
+      data: [
+        {
+          ...FEISHU_ROW,
+          config: { team_id: 12, app_id: 'team-app:12', folders: [] },
+          status: 'auth_failed',
+          last_error: '',
+          user_authorized: false,
+        },
+      ],
+    })
+    feishuChoices.mockResolvedValue({ teams: [PERSONAL, { ...TEAM, app: null }], redirect_uri: 'r' })
+    await mount()
+
+    expect(await screen.findByText(/这个团队的飞书应用已经移除/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /授权个人账号/ })).toBeNull()
+    const links = screen.getAllByText('打开') as HTMLAnchorElement[]
+    expect(links.some((a) => a.getAttribute('href') === '/teams/course-team/feishu')).toBe(true)
   })
 })
 
 describe('已经有的连接', () => {
-  it('走平台应用的那一行只等授权，自带凭据的那一行留着它自己的授权按钮', async () => {
-    listMyIntegrations.mockResolvedValue({ data: [SHARED_ROW, OWN_APP_ROW] })
+  it('飞书那一行没授权完时说还没连上，并留着它自己的授权按钮', async () => {
+    listMyIntegrations.mockResolvedValue({ data: [FEISHU_ROW] })
     await mount()
 
-    // 走平台应用：连接的方式就是上面那颗按钮，所以这一行没有第二颗。
     expect(await screen.findByText('还没连接飞书')).toBeTruthy()
     expect(screen.getAllByText('授权个人账号（用于搜索）')).toHaveLength(1)
   })
@@ -211,12 +319,8 @@ describe('从飞书授权回来', () => {
 
   it('a refusal of ours arrives as its sentence key', async () => {
     setLocale('en')
-    await mount('/?feishu=feishuAppNotConfigured')
-    await vi.waitFor(() =>
-      expect(sonner.error).toHaveBeenCalledWith(
-        "An admin hasn't set up the Feishu app yet, so Feishu can't be connected for now"
-      )
-    )
+    await mount('/?feishu=feishuDomainInvalid')
+    await vi.waitFor(() => expect(sonner.error).toHaveBeenCalledWith('The domain must be feishu or lark'))
   })
 
   it('a code this build does not know says only that authorizing did not complete', async () => {
@@ -237,6 +341,20 @@ describe('从飞书授权回来', () => {
     await mount('/?feishu_integration=i1&feishu_handoff=h1')
     await vi.waitFor(() => expect(sonner.success).toHaveBeenCalledWith('飞书授权成功'))
     expect(claimFeishuHandoff).toHaveBeenCalledWith('i1', 'h1')
+  })
+
+  it('团队的应用正被保存、这次没领：说稍后刷新，领取号放回地址栏', async () => {
+    claimFeishuHandoff.mockResolvedValueOnce({ authorization: { feishu: 'busy' } })
+    await mount('/?feishu_integration=i1&feishu_handoff=h3')
+    await vi.waitFor(() => expect(sonner.error).toHaveBeenCalledWith(expect.stringMatching(/稍后刷新/)))
+    await vi.waitFor(() => expect(mounted!.currentRoute.value.query.feishu_handoff).toBe('h3'))
+  })
+
+  it('换过授权码之后没存下：说重新连接，领取号不放回去', async () => {
+    claimFeishuHandoff.mockResolvedValueOnce({ authorization: { feishu: 'authorize_again' } })
+    await mount('/?feishu_integration=i1&feishu_handoff=h4')
+    await vi.waitFor(() => expect(sonner.error).toHaveBeenCalledWith(expect.stringMatching(/请重新连接/)))
+    expect(mounted!.currentRoute.value.query.feishu_handoff).toBeUndefined()
   })
 
   it('领不到（别人的授权、过期了）就说链接无效，不当成功', async () => {

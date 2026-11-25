@@ -1,17 +1,19 @@
 """Feishu / Lark documents over the open platform API.
 
-Two ways in: the platform's own app (app_id + app_secret, held by the platform
-administrator, tenant token — sees the documents shared with the app), or the
+Two ways in, both through a team's self-built app: the app itself (app_id +
+app_secret, tenant token — sees the documents shared with the app), or the
 owner's user authorization (sees what the owner sees, and is the only way the
-search API answers). Every failure becomes ``IntegrationError`` with a kind:
-expired or missing authorization, no permission on that document, not found, or
-the service failing.
+search API answers). On a shared team only the second is used for a member.
+Every failure becomes ``IntegrationError`` with a kind: app credentials Feishu
+does not accept, expired or missing authorization, no permission on that
+document, not found, or the service failing.
 """
 
 from __future__ import annotations
 
 import re
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from urllib.parse import urlencode
 
@@ -39,7 +41,12 @@ AUTH_CODES = {
     20073,
 }
 FORBIDDEN_CODES = {99991672, 99991679, 1770032, 1770031, 91204, 131006, 1061004}
+#: Feishu turning a call away for now — its rate limit — rather than refusing it.
+BUSY_CODES = {99991400}
 NOT_FOUND_CODES = {1770002, 91402, 131005, 1061003}
+#: The tenant-token call refusing the app's own credentials: the App ID or App
+#: Secret is not one Feishu accepts. Only these are the person's to correct.
+CREDENTIAL_CODES = {10003, 10014, 10015}
 
 BLOCK_TEXT, BLOCK_H1, BLOCK_H2, BLOCK_H3, BLOCK_BULLET, BLOCK_ORDERED = (
     2,
@@ -61,8 +68,10 @@ BLOCK_KEY = {
 #: What the owner is asked to grant: keeping the authorization past the access
 #: token's two hours (``offline_access`` — without it Feishu issues no refresh
 #: token), searching their documents, and reading and writing them. The
-#: platform's app has to have each of these enabled in Feishu's developer
-#: console, or the authorization page refuses everyone (20027).
+#: team's app has to have each of these enabled in Feishu's developer console,
+#: or the authorization page refuses them (20027). The import JSON the team's
+#: Feishu settings offer (``views/teams/detail/FeishuView.vue``) lists the same
+#: three.
 USER_SCOPES = ("offline_access", "search:docs:read", "docx:document")
 
 
@@ -80,17 +89,73 @@ class FeishuSettings:
     refresh_token_expires_at: float | None = None
     #: Folders the app may list when there is no user authorization to search with.
     folders: list[str] = field(default_factory=list)
+    #: Never fall back to the app's own identity: a member of a shared team acts
+    #: only as themselves, not as the team's app.
+    user_only: bool = False
+    #: The team app's sealed secret these settings were read from (``None``
+    #: for a row carrying its own app): what tells, later, whether the app is
+    #: still the one they were made with — every save that sets a secret, and
+    #: every re-creation, seals it anew.
+    app_sealed: str | None = None
 
     @property
     def base(self) -> str:
         return DOMAINS.get(self.domain, DOMAINS["feishu"])
 
 
-def _raise(status: int, body: dict | None, action: str) -> None:
+def redact(text: str, secrets: tuple[str, ...]) -> str:
+    """``text`` with every one of ``secrets`` blanked out, whatever its length;
+    the longest first, so a secret that contains another is blanked whole."""
+    for secret in sorted({v for v in secrets if v}, key=len, reverse=True):
+        text = text.replace(secret, "***")
+    return text
+
+
+def _body(response: httpx.Response) -> dict | None:
+    """Feishu's answer when it is Feishu's envelope — a JSON object carrying an
+    integer ``code`` — else ``None``: an empty answer, a gateway's HTML page,
+    a JSON array or an object without a code is not Feishu speaking, and is
+    never taken as success."""
+    try:
+        body = response.json() if response.content else None
+    except ValueError:
+        return None
+    # ``type(...) is int``: JSON ``true`` is a Python bool, which ``isinstance``
+    # would take for the integer 1.
+    if not isinstance(body, dict) or type(body.get("code")) is not int:
+        return None
+    return body
+
+
+def _reply(status: int, body: dict | None, secrets: tuple[str, ...]) -> str:
+    """What Feishu answered, in its own words, with any credential this call
+    carried blanked out: its message is passed on to the person and the logs,
+    and an upstream that echoes the request must not hand the secret back."""
     code = (body or {}).get("code")
     msg = (body or {}).get("msg") or (body or {}).get("message") or ""
     reply = f"{code if code is not None else status} {msg}".strip()
+    return redact(reply, secrets)
+
+
+def _busy(status: int, body: dict | None) -> bool:
+    return (
+        status in (408, 429) or status >= 500 or (body or {}).get("code") in BUSY_CODES
+    )
+
+
+def _raise(
+    status: int, body: dict | None, action: str, secrets: tuple[str, ...] = ()
+) -> None:
+    code = (body or {}).get("code")
+    reply = _reply(status, body, secrets)
     detail = say("feishuReplied", action=action, reply=reply)
+    if _busy(status, body):
+        raise IntegrationError("busy", say("feishuBusyAfter", detail=detail), reply)
+    if body is None:
+        # Not Feishu's envelope (a gateway or proxy answered): by its status it
+        # is Feishu busy (above) or an upstream error — never a missing
+        # document or a lapsed authorization, which only Feishu can say.
+        raise IntegrationError("error", detail, reply)
     if status == 401 or code in AUTH_CODES:
         raise IntegrationError(
             "auth_failed", say("feishuAuthExpiredAfter", detail=detail), reply
@@ -114,10 +179,25 @@ class FeishuClient:
         settings: FeishuSettings,
         *,
         transport: httpx.AsyncBaseTransport | None = None,
+        renew: Callable[[FeishuSettings], Awaitable[None]] | None = None,
     ):
         self.settings = settings
         self._transport = transport
+        #: How a lapsing user token is renewed in the middle of a call: the
+        #: service's locked, stored renewal, which fills ``settings`` with what
+        #: it stored. Without it the client refreshes by itself.
+        self._renew = renew
         self._tenant: tuple[str, float] | None = None
+
+    @property
+    def _secrets(self) -> tuple[str, ...]:
+        """Every credential a call of this client may carry: the app's secret,
+        its tenant token, and the person's tokens."""
+        s = self.settings
+        tenant = self._tenant[0] if self._tenant else None
+        return tuple(
+            v for v in (s.app_secret, tenant, s.user_access_token, s.refresh_token) if v
+        )
 
     def _http(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(
@@ -127,7 +207,8 @@ class FeishuClient:
     async def _call(
         self, method: str, path: str, action: str, *, token: str | None = None, **kwargs
     ) -> dict:
-        headers = {"Authorization": f"Bearer {token or await self.token()}"}
+        bearer = token or await self.token()
+        headers = {"Authorization": f"Bearer {bearer}"}
         try:
             async with self._http() as http:
                 response = await http.request(method, path, headers=headers, **kwargs)
@@ -137,13 +218,11 @@ class FeishuClient:
                 say("feishuActionUnreachable", action=action, error=str(exc)),
                 str(exc),
             ) from exc
-        try:
-            body = response.json()
-        except ValueError:
-            body = None
-        if response.status_code >= 400 or (body or {}).get("code", 0) != 0:
-            _raise(response.status_code, body, action)
-        return (body or {}).get("data") or {}
+        body = _body(response)
+        if body is None or response.status_code >= 400 or body["code"] != 0:
+            _raise(response.status_code, body, action, (*self._secrets, bearer))
+        assert body is not None
+        return body.get("data") or {}
 
     async def tenant_token(self) -> str:
         if self._tenant and self._tenant[1] > time.time() + 60:
@@ -161,18 +240,44 @@ class FeishuClient:
             raise IntegrationError(
                 "unreachable", say("feishuUnreachable", error=str(exc))
             ) from exc
-        body = response.json() if response.content else {}
-        if response.status_code >= 400 or body.get("code", 0) != 0:
-            _raise(response.status_code, body, say("feishuActionTenantToken"))
+        body = _body(response) or {}
+        reply = _reply(response.status_code, body, self._secrets)
+        detail = say(
+            "feishuReplied", action=say("feishuActionTenantToken"), reply=reply
+        )
+        if body.get("code") in CREDENTIAL_CODES:
+            # Feishu saying the App ID or App Secret is not one it accepts.
+            raise IntegrationError(
+                "credentials_invalid",
+                say("feishuAppCredentialsRefused", detail=detail),
+                reply,
+            )
+        if (
+            response.status_code >= 400
+            or body.get("code", 0) != 0
+            or not body.get("tenant_access_token")
+        ):
+            # Anything else is Feishu busy or down, or an answer we cannot read
+            # — said as what it is, never as a wrong App Secret.
+            if _busy(response.status_code, body):
+                raise IntegrationError(
+                    "busy", say("feishuBusyAfter", detail=detail), reply
+                )
+            raise IntegrationError("error", detail, reply)
         token = body["tenant_access_token"]
         self._tenant = (token, time.time() + int(body.get("expire", 7200)))
         return token
 
     async def token(self) -> str:
         """The owner's own authorization when there is one, else the app's."""
+        if self.settings.user_only and not self.settings.user_access_token:
+            raise IntegrationError("auth_failed", say("feishuAuthExpired"))
         if self.settings.user_access_token:
             if (self.settings.user_token_expires_at or 0) <= time.time() + 60:
-                await self.refresh_user_token()
+                if self._renew is not None:
+                    await self._renew(self.settings)
+                else:
+                    await self.refresh_user_token()
             return self.settings.user_access_token or ""
         return await self.tenant_token()
 
@@ -204,13 +309,19 @@ class FeishuClient:
                 say("feishuActionUnreachable", action=action, error=str(exc)),
                 str(exc),
             ) from exc
-        body = response.json() if response.content else {}
+        body = _body(response)
         if (
-            response.status_code >= 400
-            or body.get("code", 0) != 0
+            body is None
+            or response.status_code >= 400
+            or body["code"] != 0
             or "access_token" not in body
         ):
-            _raise(response.status_code, body, action)
+            # The grant itself (the OAuth code, the refresh token) is a credential too.
+            carried = tuple(
+                str(grant[k]) for k in ("code", "refresh_token") if grant.get(k)
+            )
+            _raise(response.status_code, body, action, (*self._secrets, *carried))
+        assert body is not None
         self.settings.user_access_token = body["access_token"]
         self.settings.user_token_expires_at = time.time() + int(
             body.get("expires_in", 7200)

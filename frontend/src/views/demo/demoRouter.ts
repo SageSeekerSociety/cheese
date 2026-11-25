@@ -50,6 +50,7 @@ const catalogTargets = [
   { path: '/users/:handle', name: 'UserPage', component: blank },
   { path: '/users/settings/invites', name: 'UserSettingsInvites', component: blank },
   { path: '/users/settings/compute', name: 'UserSettingsCompute', component: blank },
+  { path: '/users/settings/feishu', name: 'UserSettingsFeishu', component: blank },
   { path: '/legal/terms', name: 'LegalTerms', component: blank },
   { path: '/legal/privacy', name: 'LegalPrivacy', component: blank },
   { path: '/feedback/:id', name: 'FeedbackDetail', component: blank },
@@ -72,6 +73,7 @@ const catalogTargets = [
   { path: '/teams/:handle/library/docs/:docId', name: 'TeamsDocument', component: blank },
   { path: '/teams/:handle/compute', name: 'TeamsDetailCompute', component: blank },
   { path: '/teams/:handle/models', name: 'TeamsDetailModels', component: blank },
+  { path: '/teams/:handle/feishu', name: 'TeamsDetailFeishu', component: blank },
   { path: '/teams/:handle/credits', name: 'TeamsDetailCredits', component: blank },
   { path: '/inbox', name: 'inbox', component: blank },
   // 首页那份目录里「市场」多出来的一行（`HomeNav.vue` 的 `:to="{ name: 'market' }"`）：

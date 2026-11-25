@@ -5,10 +5,12 @@ AI teammates may use it, and sends a drafted mail. A teammate in a granted
 project may search, read, fetch attachments, write drafts, and read and write
 Feishu documents — always as the owner's account, never as the platform's.
 
-The Feishu app those documents are reached through is the platform's, configured
-once by a platform administrator (``FeishuApp``, ``/admin/integrations/feishu``).
-A connection that carries its own ``app_id`` and ``app_secret`` — made back when
-every member created their own app — keeps using those.
+The Feishu app those documents are reached through belongs to a team
+(``TeamFeishuApp``): a self-built app lives in one Feishu tenant, so a company's
+team sets its company's app, and a person on their own sets one on their
+personal team. A member's connection names the team and keeps only their own
+tokens; the app's credentials are read from the team at every call. The
+platform holds no app of its own.
 """
 
 from __future__ import annotations
@@ -17,6 +19,7 @@ import asyncio
 import hashlib
 import ipaddress
 import json
+import logging
 import socket
 import time
 import uuid
@@ -25,8 +28,11 @@ from datetime import UTC, date, datetime
 from email.message import EmailMessage
 
 import httpx
-from sqlalchemy import inspect, select
+from sqlalchemy import event, select, text, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.crypto import Purpose, decrypt, encrypt
@@ -35,15 +41,13 @@ from app.core.sentences import say
 from app.domain.integration import mail
 from app.domain.integration.feishu import FeishuClient, FeishuSettings
 from app.domain.integration.mail import IntegrationError, MailSettings
-from app.domain.integration.models import (
-    FEISHU_APP_ROW_ID,
-    FeishuApp,
-    Integration,
-    MailDraft,
-)
+from app.domain.integration.models import Integration, MailDraft, TeamFeishuApp
 from app.domain.integration.ports import RoomFiles, TeammateNames
+from app.domain.team.services import team_service
 
 MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024
+
+logger = logging.getLogger(__name__)
 
 
 def _now() -> datetime:
@@ -62,82 +66,6 @@ def unseal(row: Integration) -> dict:
     )
 
 
-#: What the platform app's secret is sealed to. That row is a singleton with a
-#: fixed integer key, so binding to a name says what a ciphertext belongs to
-#: where "1" would only say it belongs to some row.
-FEISHU_APP_BINDING = "platform-feishu-app"
-
-
-def seal_app(row: FeishuApp, secret: dict) -> None:
-    row.secret = encrypt(
-        Purpose.INTEGRATION_SECRET, json.dumps(secret), bound_to=FEISHU_APP_BINDING
-    )
-
-
-def unseal_app(row: FeishuApp) -> dict:
-    if not row.secret:
-        return {}
-    return json.loads(
-        decrypt(Purpose.INTEGRATION_SECRET, row.secret, bound_to=FEISHU_APP_BINDING)
-    )
-
-
-def feishu_app_view(row: FeishuApp | None) -> dict:
-    """The platform app as the admin page sees it. Never carries the secret.
-
-    ``configured`` is the answer to the only question the page asks first, and
-    ``None`` — no administrator has saved one — is an answer, not an error.
-    """
-    if row is None:
-        return {
-            "configured": False,
-            "app_id": "",
-            "domain": "feishu",
-            "updated_by": "",
-            "updated_at": None,
-        }
-    return {
-        "configured": True,
-        "app_id": row.app_id,
-        "domain": row.domain,
-        "updated_by": row.updated_by,
-        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
-    }
-
-
-class FeishuAppService:
-    """The one Feishu app the platform holds: read by everybody, written by an
-    administrator. Nothing here is per person."""
-
-    def __init__(self, session: AsyncSession):
-        self._session = session
-
-    async def current(self) -> FeishuApp | None:
-        return await self._session.get(FeishuApp, FEISHU_APP_ROW_ID)
-
-    async def save(
-        self, *, app_id: str, app_secret: str, domain: str, by: str
-    ) -> FeishuApp:
-        """Save the password-style update: an empty ``app_secret`` keeps the one
-        already stored, so the page can be saved without retyping the secret it
-        never shows."""
-        if domain not in ("feishu", "lark"):
-            raise ValidationError(say("feishuDomainInvalid"))
-        row = await self.current()
-        if row is None:
-            row = FeishuApp(id=FEISHU_APP_ROW_ID, secret="")
-        if app_secret:
-            seal_app(row, {"app_secret": app_secret})
-        elif not row.secret:
-            raise ValidationError(say("feishuAppSecretRequired"))
-        row.app_id = app_id
-        row.domain = domain
-        row.updated_by = by
-        self._session.add(row)
-        await self._session.flush()
-        return row
-
-
 def mail_settings(row: Integration) -> MailSettings:
     config = row.config
     return MailSettings(
@@ -151,56 +79,379 @@ def mail_settings(row: Integration) -> MailSettings:
     )
 
 
-def feishu_settings(row: Integration, app: FeishuApp | None = None) -> FeishuSettings:
-    """Which app credentials this connection is used with.
+#: Failures only the connection's owner can mend — authorize again, or connect
+#: through an app Feishu accepts. The row is marked failed and waits for them.
+NEEDS_OWNER = frozenset({"auth_failed", "credentials_invalid"})
 
-    A connection carrying its own ``app_id`` (and the sealed ``app_secret`` next
-    to it) is used with those — it was made when every member created an app, and
-    nothing about it is migrated. Every other connection goes through the app the
-    platform administrator configured, read here at the moment of the call so a
-    rotated secret reaches it; with none configured there is nothing to call with
-    and the person is told whose job that is.
+
+def feishu_redirect_uri() -> str:
+    """Where Feishu sends a browser back after authorizing: the callback route.
+    A team's app lists it as its redirect URL."""
+    return f"{settings.frontend_url}/api/integrations/feishu/callback"
+
+
+def _team_app_binding(team_id: int) -> str:
+    return f"team-feishu-app:{team_id}"
+
+
+def seal_team_app(row: TeamFeishuApp, app_secret: str) -> None:
+    row.secret = encrypt(
+        Purpose.INTEGRATION_SECRET,
+        json.dumps({"app_secret": app_secret}),
+        bound_to=_team_app_binding(row.team_id),
+    )
+
+
+def team_app_secret(row: TeamFeishuApp) -> str:
+    return json.loads(
+        decrypt(
+            Purpose.INTEGRATION_SECRET,
+            row.secret,
+            bound_to=_team_app_binding(row.team_id),
+        )
+    ).get("app_secret", "")
+
+
+def feishu_settings(
+    row: Integration, app: TeamFeishuApp | None, *, user_only: bool = False
+) -> FeishuSettings:
+    """What this connection calls Feishu with: the team app's credentials (or,
+    on an older row that carries its own, those), and the owner's own tokens.
+
+    The owner's tokens were issued under one App ID (``authorized_app_id``, kept
+    with them). A team that has since switched to another app has nothing those
+    tokens can be used with: they are left out, never paired with the new app's
+    credentials, and the owner authorizes again under it.
     """
     secret = unseal(row)
-    own_app_id = row.config.get("app_id")
-    if own_app_id:
-        app_id = own_app_id
+    if app is not None:
+        app_id, app_secret, domain = app.app_id, team_app_secret(app), app.domain
+    else:
+        app_id = row.config["app_id"]
         app_secret = secret.get("app_secret") or ""
         domain = row.config.get("domain", "feishu")
-    elif app is not None:
-        app_id = app.app_id
-        app_secret = unseal_app(app).get("app_secret") or ""
-        domain = app.domain
+    issued_under = row.config.get("authorized_app_id")
+    # A team connection's tokens are used only under the App ID they were
+    # issued under, which is recorded with them; tokens with no record are not
+    # used at all. An older row carrying its own app has only ever had one.
+    if app is not None:
+        tokens = issued_under == app_id
     else:
-        raise ValidationError(say("feishuAppNotConfigured"))
+        tokens = issued_under is None or issued_under == app_id
+    # Tokens it may not use leave the row to its owner's own authorization:
+    # falling back to the app's identity would answer as someone else. So does
+    # a team connection that was authorized once (``authorized_app_id`` is on
+    # record — ``None`` after its team switched or removed its app): until its
+    # owner authorizes again it serves nothing, personal team included. A row
+    # never authorized reads with the app's identity, as it always has.
+    held = bool(secret.get("user_access_token") or secret.get("refresh_token"))
+    if app is not None and "authorized_app_id" in row.config:
+        held = True
     return FeishuSettings(
         app_id=app_id,
         app_secret=app_secret,
         domain=domain,
-        user_access_token=secret.get("user_access_token"),
-        user_token_expires_at=secret.get("user_token_expires_at"),
-        refresh_token=secret.get("refresh_token"),
-        refresh_token_expires_at=secret.get("refresh_token_expires_at"),
+        user_access_token=secret.get("user_access_token") if tokens else None,
+        user_token_expires_at=secret.get("user_token_expires_at") if tokens else None,
+        refresh_token=secret.get("refresh_token") if tokens else None,
+        refresh_token_expires_at=(
+            secret.get("refresh_token_expires_at") if tokens else None
+        ),
         folders=list(row.config.get("folders") or []),
+        user_only=user_only or (held and not tokens),
+        app_sealed=app.secret if app is not None else None,
     )
+
+
+def feishu_kind(row: Integration) -> str:
+    """Which shape a Feishu row has: ``team`` (through a team's app, what every
+    connection made now is), ``own_app`` (an older row carrying its own app
+    credentials — it keeps working, and its owner is asked to reconnect through
+    a team), or ``platform`` (made under the platform-wide app that no longer
+    exists — there is nothing to call with until its owner reconnects)."""
+    if row.config.get("team_id"):
+        return "team"
+    if row.config.get("app_id"):
+        return "own_app"
+    return "platform"
 
 
 async def feishu_settings_for(
     session: AsyncSession, row: Integration
 ) -> FeishuSettings:
-    """``feishu_settings`` with the platform app read from the database.
+    """``feishu_settings`` with the team's app read now, so a rotated secret
+    reaches every member at their next call.
 
-    The read is skipped for a connection that carries its own credentials: those
-    deployments have no platform app at all.
+    A connection whose team no longer has an app, or whose owner has left the
+    team, has nothing to call with: it is an authorization to give again, and
+    the owner is told so. On a shared team the app's own identity is never used
+    for a member — only their own authorization is — so nobody reads what is
+    shared with the team's app just by holding a connection; on their personal
+    team it is their own app. An older row is read as it was written.
     """
+    kind = feishu_kind(row)
+    if kind == "own_app":
+        return feishu_settings(row, None)
+    if kind == "platform":
+        raise IntegrationError("credentials_invalid", say("feishuNeedsTeamApp"))
+    team_id = int(row.config["team_id"])
+    teams = team_service(session)
+    team = await teams.get_team(team_id)
+    # Read afresh: a session that renewed (and so committed) earlier in the
+    # request must not keep using an app it read before a rotation.
     app = (
-        None if row.config.get("app_id") else await FeishuAppService(session).current()
+        await session.get(TeamFeishuApp, team_id, populate_existing=True)
+        if team is not None
+        else None
     )
-    return feishu_settings(row, app)
+    if team is None or app is None:
+        raise IntegrationError(
+            "auth_failed", say("feishuTeamAppRemoved", team=row.label)
+        )
+    if not await teams.is_team_member(team_id, row.owner_user_id):
+        raise IntegrationError("auth_failed", say("feishuTeamLeft", team=row.label))
+    # Tokens issued under another App ID are left out (``feishu_settings``):
+    # the call that needs them fails as an authorization to give again, and
+    # authorizing again — which needs only the app — always works.
+    return feishu_settings(
+        row, app, user_only=team.personal_owner_user_id != row.owner_user_id
+    )
+
+
+def member_authorized(row: Integration, app_id: str | None) -> bool:
+    """Whether the owner's own authorization is one a call would use: a
+    refresh token, and on a team connection one issued under the team's
+    current App ID (``app_id``; ``None``: the team has none)."""
+    if not unseal(row).get("refresh_token"):
+        return False
+    if feishu_kind(row) != "team":
+        return True
+    return app_id is not None and row.config.get("authorized_app_id") == app_id
+
+
+async def team_app_ids(session: AsyncSession, rows: list[Integration]) -> dict:
+    """The current App ID of each team these Feishu rows connect through."""
+    teams = {
+        int(r.config["team_id"])
+        for r in rows
+        if r.provider == "feishu" and r.config.get("team_id")
+    }
+    if not teams:
+        return {}
+    found = await session.execute(
+        select(TeamFeishuApp.team_id, TeamFeishuApp.app_id).where(
+            TeamFeishuApp.team_id.in_(teams)
+        )
+    )
+    return {team_id: app_id for team_id, app_id in found}
+
+
+def feishu_connection_view(row: Integration | None, app_id: str | None) -> dict | None:
+    """A person's own connection through one team's app (``app_id`` is its
+    current App ID), as far as the team's page and the connections overview
+    need it: which row, and whether they have authorized it. ``None``: not
+    connected."""
+    if row is None:
+        return None
+    return {
+        "id": str(row.id),
+        "status": row.status,
+        "user_authorized": member_authorized(row, app_id),
+    }
+
+
+def team_app_view(row: TeamFeishuApp | None) -> dict:
+    """A team's Feishu app as its settings page sees it. Never the secret."""
+    return {
+        "configured": row is not None,
+        "app_id": row.app_id if row else "",
+        "domain": row.domain if row else "feishu",
+        "updated_by": row.updated_by if row else "",
+        "updated_at": row.updated_at.isoformat() if row and row.updated_at else None,
+        "redirect_uri": feishu_redirect_uri(),
+    }
+
+
+class TeamFeishuAppService:
+    """A team's Feishu app: set, changed or removed by whoever may change the
+    team's settings (the route checks that), read by its members."""
+
+    def __init__(self, session: AsyncSession):
+        self._session = session
+
+    async def get(self, team_id: int) -> TeamFeishuApp | None:
+        return await self._session.get(TeamFeishuApp, team_id)
+
+    async def require_member(self, team_id: int, user_id: int) -> None:
+        """Only someone on the team reads or changes its Feishu app — a platform
+        admin overseeing the team without a seat in it included: the app is the
+        credential the team's members connect their own accounts through, not a
+        setting to manage from outside. A personal team's one member is its
+        owner. Anyone else is answered as if there were no such team."""
+        if not await team_service(self._session).is_team_member(team_id, user_id):
+            raise NotFoundError(say("teamNotFoundById", team_id=team_id))
+
+    async def save(
+        self, *, team_id: int, app_id: str, app_secret: str, domain: str, by: str
+    ) -> TeamFeishuApp:
+        """Save it after proving it: one tenant token is asked for with the
+        credentials, so a wrong App Secret is said here and nothing is kept. An
+        empty ``app_secret`` keeps the one already stored — the page never shows
+        it, so it cannot be retyped.
+
+        Two saves at once: each proves its credentials before taking the row's
+        lock, which it holds only for the write (reserved first with ``ON
+        CONFLICT DO NOTHING``, so a first save racing another meets it instead
+        of failing). A save that keeps the stored secret writes no secret, so it
+        never puts back an older one over a rotation that landed meanwhile.
+
+        Switching to another App ID leaves every member's authorization behind
+        (their tokens were issued under the old app): those connections are
+        cleared and marked to authorize again. Rotating the secret of the same
+        App ID leaves them as they are.
+        """
+        if domain not in ("feishu", "lark"):
+            raise ValidationError(say("feishuDomainInvalid"))
+        # Proved with Feishu first, holding no lock: the row is locked only for
+        # the write, so an authorization being finished under the team's app
+        # (which share-locks it across the code exchange) is never kept waiting
+        # on Feishu, nor is another save.
+        stored = await self._session.get(TeamFeishuApp, team_id)
+        proved = stored.secret if stored is not None else None
+        secret = app_secret or (team_app_secret(stored) if stored else "")
+        if not secret:
+            raise ValidationError(say("feishuAppSecretRequired"))
+        await FeishuClient(
+            FeishuSettings(app_id=app_id, app_secret=secret, domain=domain)
+        ).tenant_token()
+        now = _now()
+        await self._session.execute(
+            pg_insert(TeamFeishuApp)
+            .values(
+                team_id=team_id,
+                app_id=app_id,
+                domain=domain,
+                secret="",
+                updated_by=by,
+                created_at=now,
+                updated_at=now,
+            )
+            .on_conflict_do_nothing(index_elements=[TeamFeishuApp.team_id])
+        )
+        row = await self._session.scalar(
+            select(TeamFeishuApp)
+            .where(TeamFeishuApp.team_id == team_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        assert row is not None
+        reserved = row.secret == ""
+        if not app_secret and not reserved and row.secret != proved:
+            # Another save landed since the stored secret was read and proved.
+            # Under the same App ID that save proved its own secret, which is
+            # kept; under another one there is no secret proved for this App ID.
+            if row.app_id != app_id:
+                raise ValidationError(say("feishuTeamAppSavedMeanwhile"))
+        switched = not reserved and row.app_id != app_id
+        row.app_id, row.domain, row.updated_by, row.updated_at = (
+            app_id,
+            domain,
+            by,
+            now,
+        )
+        if app_secret or reserved:
+            seal_team_app(row, secret)
+        if switched:
+            await self._send_members_back(team_id, "feishuTeamAppChanged")
+        await self._session.flush()
+        return row
+
+    async def remove(self, team_id: int) -> None:
+        row = await self._session.scalar(
+            select(TeamFeishuApp)
+            .where(TeamFeishuApp.team_id == team_id)
+            .with_for_update()
+        )
+        if row is not None:
+            await self._session.delete(row)
+            await self._send_members_back(team_id, "feishuTeamAppRemoved")
+            await self._session.flush()
+
+    async def _send_members_back(self, team_id: int, key: str) -> None:
+        """Every member's connection through this team's app loses the tokens it
+        holds and is marked to authorize again, saying why."""
+        rows = await self._session.scalars(
+            select(Integration).where(
+                Integration.provider == "feishu",
+                Integration.config["team_id"].as_integer() == team_id,
+            )
+        )
+        for member in rows:
+            seal(member, {})
+            # Authorized once, under no App ID now: serves nothing until its
+            # owner authorizes again (``feishu_settings``).
+            member.config = {**member.config, "authorized_app_id": None}
+            member.status = "auth_failed"
+            member.last_error = str(say(key, team=member.label))
+
+    async def connection_for(self, user_id: int, team_id: int) -> Integration | None:
+        """The person's own connection through this team's app, if they made one."""
+        return await self._session.scalar(
+            select(Integration).where(
+                Integration.owner_user_id == user_id,
+                Integration.provider == "feishu",
+                Integration.config["team_id"].as_integer() == team_id,
+            )
+        )
+
+    async def choices_for(self, user_id: int) -> list[dict]:
+        """Every team the person is on, their personal team first, each with its
+        app if it has one, whether this person may set it, and their own
+        connection through it — the overview on 「我的连接」, each team linking
+        to its own 「飞书应用」 section, where connecting happens."""
+        teams = team_service(self._session)
+        personal = await teams.ensure_personal_team(user_id)
+        mine = list(await teams.get_teams_of_user(user_id))
+        if all(t.id != personal.id for t in mine):
+            mine.append(personal)
+        mine.sort(key=lambda t: (t.personal_owner_user_id != user_id, t.id))
+        apps = {
+            a.team_id: a
+            for a in (
+                await self._session.scalars(
+                    select(TeamFeishuApp).where(
+                        TeamFeishuApp.team_id.in_([t.id for t in mine])
+                    )
+                )
+            )
+        }
+        out = []
+        for team in mine:
+            app = apps.get(team.id)
+            out.append(
+                {
+                    "team_id": team.id,
+                    "team_name": team.name,
+                    "team_handle": team.handle or "",
+                    "personal": team.personal_owner_user_id == user_id,
+                    "can_manage": team.personal_owner_user_id == user_id
+                    or await teams.is_team_at_least_admin(team.id, user_id),
+                    "app": {"app_id": app.app_id, "domain": app.domain}
+                    if app
+                    else None,
+                    "connection": feishu_connection_view(
+                        await self.connection_for(user_id, team.id),
+                        app.app_id if app else None,
+                    ),
+                }
+            )
+        return out
 
 
 def keep_feishu_tokens(row: Integration, settings: FeishuSettings) -> None:
-    """A refreshed user token is written back, or the next call refreshes again."""
+    """A refreshed user token is written back, or the next call refreshes again.
+    The App ID it was issued under goes with it (``authorized_app_id``), so the
+    token is never later paired with another app's credentials."""
     secret = unseal(row)
     fresh = {
         **secret,
@@ -211,6 +462,9 @@ def keep_feishu_tokens(row: Integration, settings: FeishuSettings) -> None:
     }
     if fresh != secret:
         seal(row, fresh)
+    if settings.user_access_token and row.config.get("team_id"):
+        if row.config.get("authorized_app_id") != settings.app_id:
+            row.config = {**row.config, "authorized_app_id": settings.app_id}
 
 
 #: How long before the refresh token stops working an authorization is renewed.
@@ -222,7 +476,9 @@ def _access_lapses(settings: FeishuSettings) -> bool:
     """The user token will not last through a call."""
     return (
         bool(settings.user_access_token)
-        and (settings.user_token_expires_at or 0) <= time.time() + 60
+        # Ten minutes, well past the client's own one-minute margin: a call
+        # starts with a token that outlasts it and never refreshes midway.
+        and (settings.user_token_expires_at or 0) <= time.time() + 600
     )
 
 
@@ -235,37 +491,120 @@ def _refresh_lapses(settings: FeishuSettings) -> bool:
     return ends is None or ends <= time.time() + RENEW_BEFORE_S
 
 
-async def _renewed(
+_WROTE = "integration.wrote_in_transaction"
+
+
+@event.listens_for(Session, "after_flush")
+def _note_flushed_writes(session: Session, _context) -> None:
+    if session.new or session.dirty or session.deleted:
+        session.info[_WROTE] = True
+
+
+@event.listens_for(Session, "after_transaction_end")
+def _forget_flushed_writes(session: Session, transaction) -> None:
+    # Only when the outermost transaction ends: a savepoint released or rolled
+    # back inside it leaves what the transaction flushed before it in place.
+    if transaction.parent is None:
+        session.info.pop(_WROTE, None)
+
+
+def _wrote(session: AsyncSession) -> bool:
+    """Whether this transaction has flushed changes through the ORM."""
+    return bool(session.sync_session.info.get(_WROTE))
+
+
+async def _refreshed(
     session: AsyncSession,
     row: Integration,
     lapses: Callable[[FeishuSettings], bool],
-) -> FeishuSettings:
-    """The row's settings, its user token refreshed first when ``lapses`` says so.
+) -> tuple[FeishuSettings, str]:
+    """The row's settings, its user token refreshed first when ``lapses`` says
+    so, and the sealed secret those settings were read from — what a later
+    write about this call compares against.
 
-    A refresh token is good for one refresh: two calls refreshing with the same
-    one leave the second refused and the person told to authorize again. So the
-    row is locked and read again before refreshing, and the new tokens are
-    written back at once — a caller that waited on the lock finds them there and
-    does not refresh a second time.
+    A refresh token is good for one refresh, and the one spent is gone at
+    Feishu. So a refresh is a short transaction of its own: lock the row, read
+    it again, refresh only if it still lapses, write the new tokens and commit
+    — before any document call. Nobody ever holds tokens that are not in the
+    database, and a call that waited on the lock finds them there instead of
+    spending the old refresh token a second time. A refresh Feishu refuses for
+    good marks the row failed in the same transaction.
+
+    It runs on ``session``'s own connection: the transaction so far has only
+    read, so it ends first. Asking the pool for a second connection while
+    holding this one would leave concurrent callers each holding one and
+    waiting for another. So it must be called before anything is written
+    through ``session`` in this transaction: pending changes, and changes
+    already flushed through the ORM (``_wrote``), are refused rather than
+    committed along with the refresh. (A Core ``UPDATE`` run through the
+    session is not seen; no caller runs one before a refresh.)
     """
     settings = await feishu_settings_for(session, row)
     if not lapses(settings):
-        return settings
-    if inspect(row).persistent:
-        await session.refresh(row, with_for_update=True)
-        settings = await feishu_settings_for(session, row)
-        if not lapses(settings):
-            return settings
+        return settings, row.secret
+    return await _renew_locked(session, row, lapses)
+
+
+async def _renew_locked(
+    session: AsyncSession,
+    row: Integration,
+    lapses: Callable[[FeishuSettings], bool],
+) -> tuple[FeishuSettings, str]:
+    """The locked, stored renewal of ``_refreshed`` — also what a client asks
+    for when its token lapses in the middle of a long call."""
+    if session.new or session.dirty or session.deleted or _wrote(session):
+        # i18n-exempt: a programming error, never shown to a reader
+        raise RuntimeError("a Feishu refresh needs a session that has written nothing")
+    await session.commit()
+    # Waiting on another refresh of this row is a few seconds at most.
+    await session.execute(text("SET LOCAL lock_timeout = '25s'"))
+    locked = await session.get(
+        Integration, row.id, with_for_update=True, populate_existing=True
+    )
+    if locked is None:
+        raise NotFoundError(say("integrationNotFound"))
+    settings = await feishu_settings_for(session, locked)
+    if lapses(settings):
+        client = FeishuClient(settings)
+        try:
+            await client.refresh_user_token()
+        except IntegrationError as exc:
+            if exc.kind in NEEDS_OWNER and await _owners_to_mend(
+                session, locked, client
+            ):
+                locked.status = "auth_failed"
+                locked.last_error = str(exc.args[0])
+            await session.commit()
+            raise
+        keep_feishu_tokens(locked, settings)
+        # A refresh that went through is a working authorization: a failure
+        # recorded against the older credentials no longer holds.
+        locked.status, locked.last_error = "ok", ""
+    used = locked.secret
+    await session.commit()
+    return settings, used
+
+
+async def _owners_to_mend(
+    session: AsyncSession, row: Integration, client: FeishuClient
+) -> bool:
+    """Whether a refused refresh is the owner's authorization failing, to be
+    recorded on their connection — not the app's credentials: the team's app
+    secret rotated since it was read (the refresh went out with the old one),
+    or the app's own credentials refused outright."""
+    team_id = row.config.get("team_id")
+    if team_id:
+        current = await session.scalar(
+            select(TeamFeishuApp.secret).where(TeamFeishuApp.team_id == int(team_id))
+        )
+        if current != client.settings.app_sealed:
+            return False
     try:
-        await FeishuClient(settings).refresh_user_token()
+        await client.tenant_token()
     except IntegrationError as exc:
-        if exc.kind == "auth_failed":
-            row.status, row.last_error = "auth_failed", str(exc.args[0])
-            await session.flush()
-        raise
-    keep_feishu_tokens(row, settings)
-    await session.flush()
-    return settings
+        if exc.kind == "credentials_invalid":
+            return False
+    return True
 
 
 async def renew_feishu(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -282,27 +621,51 @@ async def renew_feishu(sessions: async_sessionmaker[AsyncSession]) -> None:
     for integration_id in ids:
         async with sessions() as session:
             row = await session.get(Integration, integration_id)
-            # One already failed waits for the person to authorize again.
-            if row is None or row.status == "auth_failed":
+            # One already failed waits for the person to authorize again; one
+            # made under the platform-wide app has nothing to renew with.
+            if (
+                row is None
+                or row.status == "auth_failed"
+                or feishu_kind(row) == "platform"
+            ):
                 continue
             try:
-                await _renewed(session, row, _refresh_lapses)
+                await _refreshed(session, row, _refresh_lapses)
             except IntegrationError as exc:
-                # A failed one is marked so (kept below); one Feishu did not
-                # answer for is tried again the next hour.
-                if exc.kind != "auth_failed":
+                # One Feishu did not answer for is tried again the next hour.
+                if exc.kind not in NEEDS_OWNER:
                     continue
-            except ValidationError:
-                # No platform app any more: there is nothing to refresh with.
+                # A failed one is marked so and kept; the scan goes on.
+                row.status, row.last_error = "auth_failed", str(exc.args[0])
+            except Exception:
+                # Whatever went wrong with this one row, the others are still
+                # due their renewal: it is tried again the next hour.
+                logger.exception("feishu renewal failed for %s", integration_id)
                 continue
             await session.commit()
 
 
-def public(row: Integration) -> dict:
+def public(row: Integration, app_ids: dict | None = None) -> dict:
+    """The page's view of a connection, never its secret. ``app_ids`` holds the
+    current App ID of the teams Feishu rows connect through (``team_app_ids``):
+    a team connection counts as authorized only with tokens issued under it."""
     config = {k: v for k, v in row.config.items()}
     authorized = False
+    status, last_error = row.status, row.last_error
+    reconnect = None
     if row.provider == "feishu":
-        authorized = bool(unseal(row).get("refresh_token"))
+        team_id = row.config.get("team_id")
+        authorized = member_authorized(
+            row, (app_ids or {}).get(int(team_id)) if team_id else None
+        )
+        kind = feishu_kind(row)
+        # An older row is asked to reconnect through a team's app: one carrying
+        # its own app keeps working meanwhile; one made under the platform-wide
+        # app has nothing to call with, so it does not read as working.
+        if kind != "team":
+            reconnect = "team_app"
+        if kind == "platform":
+            status, last_error = "auth_failed", str(say("feishuNeedsTeamApp"))
     return {
         "id": str(row.id),
         "provider": row.provider,
@@ -310,14 +673,15 @@ def public(row: Integration) -> dict:
         "owner_handle": row.owner_handle,
         "config": config,
         "grants": row.grants,
-        "status": row.status,
-        "last_error": row.last_error,
+        "status": status,
+        "last_error": last_error,
         "last_checked_at": row.last_checked_at.isoformat()
         if row.last_checked_at
         else None,
         "user_authorized": authorized,
-        #: Uses the platform's app rather than credentials of its own.
-        "shared_app": row.provider == "feishu" and not row.config.get("app_id"),
+        #: ``team_app``: an older Feishu row whose owner should connect again
+        #: through a team's app.
+        "reconnect": reconnect,
     }
 
 
@@ -410,6 +774,15 @@ def guard_mail_hosts(config: dict) -> None:
         refuse_internal_host(str(config.get(key) or ""), say("nounMailServer"))
 
 
+def _checked_status(exc: IntegrationError) -> str:
+    """The status a failed check leaves a connection in."""
+    return {
+        "auth_failed": "auth_failed",
+        "credentials_invalid": "auth_failed",
+        "unreachable": "unreachable",
+    }.get(exc.kind, "error")
+
+
 class IntegrationService:
     def __init__(
         self, session: AsyncSession, room_files: RoomFiles, teammates: TeammateNames
@@ -452,33 +825,81 @@ class IntegrationService:
         return row
 
     async def _check(self, row: Integration) -> None:
-        row.last_checked_at = _now()
+        """Prove the connection works as a call would make it. A Feishu row is
+        checked before anything is written to it in this request: proving the
+        owner's authorization refreshes it in a transaction of its own
+        (``_refreshed``), which takes this row's lock."""
         if row.provider == "mail":
             await asyncio.to_thread(guard_mail_hosts, row.config)
-        try:
-            if row.provider == "mail":
+            try:
                 await asyncio.to_thread(mail.check, mail_settings(row))
-            else:
-                settings = await feishu_settings_for(self._session, row)
-                # The owner's authorization is proved by refreshing it: a token
-                # still in its two hours says nothing of whether it will be
-                # renewed, and the refresh is what stops working when it lapses.
-                if settings.user_access_token or settings.refresh_token:
-                    settings = await _renewed(self._session, row, lambda _: True)
-                # Nothing to call with yet on the platform's app before the member
-                # has authorized: the credentials are the administrator's and the
-                # authorization-code exchange is what proves them.
-                if row.config.get("app_id") or settings.user_access_token:
-                    await FeishuClient(settings).tenant_token()
+            except IntegrationError as exc:
+                row.last_checked_at = _now()
+                row.status, row.last_error = _checked_status(exc), str(exc.args[0])
+                raise
+            row.last_checked_at = _now()
+            row.status, row.last_error = "ok", ""
+            return
+        # What this check proves is about the credentials it used — the
+        # owner's (the row's sealed secret) and the team app's — so its verdict
+        # is written only if both are still those: a check that started before
+        # the app's secret was rotated and the owner authorized again does not
+        # mark the new authorization failed.
+        used = row.secret
+        team_id = row.config.get("team_id")
+        app = await self._session.get(TeamFeishuApp, int(team_id)) if team_id else None
+        app_used = app.secret if app is not None else None
+        try:
+            settings = await feishu_settings_for(self._session, row)
+            # The app is proved first, so a check that fails on the app has
+            # spent nothing of the owner's.
+            await FeishuClient(settings).tenant_token()
+            # A connection that may act only as its owner and holds no token a
+            # call would use (never authorized on a shared team, tokens from
+            # another App ID, its team's app switched) serves nothing: an
+            # authorization to give, not a working one.
+            if settings.user_only and not (
+                settings.refresh_token or settings.user_access_token
+            ):
+                raise IntegrationError("auth_failed", say("feishuAuthExpired"))
+            # The owner's authorization is proved by refreshing it: a token
+            # still in its two hours says nothing of whether it will be
+            # renewed, and the refresh is what stops working when it lapses.
+            if settings.user_access_token or settings.refresh_token:
+                _settings, used = await _refreshed(self._session, row, lambda _: True)
         except IntegrationError as exc:
-            row.status = {
-                "auth_failed": "auth_failed",
-                "unreachable": "unreachable",
-            }.get(exc.kind, "error")
-            row.last_error = str(exc.args[0])
+            await self._settle(
+                row, used, app_used, _checked_status(exc), str(exc.args[0])
+            )
             raise
-        row.status = "ok"
-        row.last_error = ""
+        await self._settle(row, used, app_used, "ok", "")
+
+    async def _settle(
+        self,
+        row: Integration,
+        used: str,
+        app_used: str | None,
+        status: str,
+        last_error: str,
+    ) -> None:
+        """Write a check's verdict onto ``row`` only if its credentials are
+        still the ones the check used (see ``_check``)."""
+        still = Integration.secret == used
+        team_id = row.config.get("team_id")
+        if team_id:
+            still = still & (
+                select(TeamFeishuApp.secret)
+                .where(TeamFeishuApp.team_id == int(team_id))
+                .scalar_subquery()
+                .is_not_distinct_from(app_used)
+            )
+        await self._session.execute(
+            update(Integration)
+            .where(Integration.id == row.id, still)
+            .values(status=status, last_error=last_error, last_checked_at=_now())
+            .execution_options(synchronize_session=False)
+        )
+        await self._session.refresh(row)
 
     async def connect(
         self,
@@ -507,55 +928,84 @@ class IntegrationService:
         await self._session.flush()
         return row
 
-    async def connect_under_platform_app(
-        self, *, owner_user_id: int, owner_handle: str
+    async def connect_feishu(
+        self, *, owner_user_id: int, owner_handle: str, team_id: int
     ) -> Integration:
-        """The member's own row under the platform's app, before they authorize.
+        """The member's Feishu connection through a team's app, before they
+        authorize: the row the callback puts their tokens in.
 
-        The row carries no credentials of its own: it is where the callback puts
-        the ``user_access_token`` and ``refresh_token`` that make it usable.
-
-        Idempotent — the app is one and so is this person's account in it, so
-        clicking «连接飞书» twice returns the same row rather than a second one.
-        No call is made here: the app credentials belong to the administrator,
-        and the authorization-code exchange proves them a moment later.
+        Only a team they are on, and only one that has an app. The row names the
+        team and copies nothing of the app; picking the same team again returns
+        the same row. No call is made here: the app was proved when it was saved,
+        and the authorization-code exchange proves it again a moment later.
         """
-        app = await FeishuAppService(self._session).current()
-        if app is None:
-            raise ValidationError(say("feishuAppNotConfigured"))
-        for row in await self.owned(owner_user_id):
-            if row.provider == "feishu" and not row.config.get("app_id"):
-                return row
+        teams = team_service(self._session)
+        team = await teams.get_team(team_id)
+        if team is None or not await teams.is_team_member(team_id, owner_user_id):
+            raise NotFoundError(say("integrationNotFound"))
+        if await self._session.get(TeamFeishuApp, team_id) is None:
+            raise ValidationError(say("feishuTeamAppMissing", team=team.name))
+        existing = await TeamFeishuAppService(self._session).connection_for(
+            owner_user_id, team_id
+        )
+        if existing is not None:
+            return existing
+        # A new connection is lent to no project: its owner grants it, the
+        # older row they reconnect from still showing which projects it had.
         row = Integration(
             id=uuid.uuid4(),
             owner_user_id=owner_user_id,
             owner_handle=owner_handle,
             provider="feishu",
-            label="飞书" if app.domain == "feishu" else "Lark",
-            config={},
+            label=team.name,
+            # ``app_id`` is a marker no Feishu app has: the release before team
+            # apps reads a row without one as made under the platform-wide app
+            # and would call with that app's identity. With this it calls with
+            # an App ID Feishu refuses instead, and never reuses the row.
+            config={
+                "team_id": team_id,
+                "app_id": f"team-app:{team_id}",
+                "folders": [],
+            },
             grants=[],
             status="ok",
         )
         seal(row, {})
-        self._session.add(row)
-        await self._session.flush()
+        # Two connects at once meet at ``uq_integrations_owner_feishu_team``:
+        # the one that lost takes the row the other made.
+        try:
+            async with self._session.begin_nested():
+                self._session.add(row)
+                await self._session.flush()
+        except IntegrityError:
+            existing = await TeamFeishuAppService(self._session).connection_for(
+                owner_user_id, team_id
+            )
+            if existing is None:
+                raise
+            return existing
         return row
 
     async def update(
         self, row: Integration, *, grants=None, config=None, secret=None, label=None
     ):
+        recheck = bool(config or secret)
+        if recheck and row.provider == "feishu":
+            # Checked before anything is written to the row: proving the
+            # owner's authorization takes the row's lock in a transaction of
+            # its own, which would wait on this one's. Folders do not change
+            # what the check proves.
+            await self._check(row)
         if grants is not None:
             row.grants = [str(g) for g in grants]
         if label:
             row.label = label
-        recheck = False
         if config:
             row.config = {**row.config, **config}
-            recheck = True
         if secret:
             seal(row, {**unseal(row), **secret})
-            recheck = True
-        if recheck:
+        if recheck and row.provider != "feishu":
+            await self._session.flush()
             await self._check(row)
         await self._session.flush()
         return row
@@ -767,14 +1217,65 @@ class IntegrationService:
     async def feishu(self, row: Integration, action):
         if row.provider != "feishu":
             raise ValidationError(say("integrationNotFeishu"))
-        settings = await _renewed(self._session, row, _access_lapses)
-        client = FeishuClient(settings)
+        read = row.secret
+        try:
+            settings, used = await _refreshed(self._session, row, _access_lapses)
+        except IntegrationError as exc:
+            await self._write_back(row, read, exc=exc)
+            raise
+        # Refreshed (and stored) with minutes to spare. A long call whose
+        # token lapses midway renews through the same locked, stored renewal —
+        # never by the client alone — so there is nothing to write back after.
+        held = {"used": used}
+
+        async def renew_midway(current: FeishuSettings) -> None:
+            fresh, held["used"] = await _renew_locked(
+                self._session, row, _access_lapses
+            )
+            if not fresh.user_access_token:
+                raise IntegrationError("auth_failed", say("feishuAuthExpired"))
+            # Authorized again under another app (or the app's secret
+            # rotated) while this call ran: its tokens belong to that app, not
+            # to the one this client calls as. The call stops; tried again, it
+            # starts with the new app.
+            if (fresh.app_id, fresh.domain, fresh.app_secret) != (
+                current.app_id,
+                current.domain,
+                current.app_secret,
+            ):
+                raise IntegrationError("busy", say("feishuReauthorizedMidway"))
+            current.user_access_token = fresh.user_access_token
+            current.user_token_expires_at = fresh.user_token_expires_at
+            current.refresh_token = fresh.refresh_token
+            current.refresh_token_expires_at = fresh.refresh_token_expires_at
+
+        client = FeishuClient(settings, renew=renew_midway)
         try:
             return await action(client)
         except IntegrationError as exc:
-            if exc.kind == "auth_failed":
-                row.status, row.last_error = "auth_failed", str(exc.args[0])
+            await self._write_back(row, held["used"], exc=exc)
             raise
-        finally:
-            keep_feishu_tokens(row, settings)
-            await self._session.flush()
+
+    async def _write_back(
+        self, row: Integration, used: str, *, exc: IntegrationError
+    ) -> None:
+        """A failed call's request is rolled back; a failure only the owner
+        can mend is still recorded — and only onto the credentials the call
+        used (``used``, the sealed secret its tokens came from): a row
+        reauthorized or renewed meanwhile is left as it is. Written after
+        ending the request's transaction, on the same connection."""
+        if exc.kind not in NEEDS_OWNER:
+            return
+        row_id = row.id
+        await self._session.rollback()
+        await self._session.execute(
+            update(Integration)
+            .where(Integration.id == row_id, Integration.secret == used)
+            .values(
+                status="auth_failed",
+                last_error=str(exc.args[0]),
+                last_checked_at=_now(),
+            )
+            .execution_options(synchronize_session=False)
+        )
+        await self._session.commit()

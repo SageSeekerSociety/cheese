@@ -38,9 +38,6 @@
     "oneLevel": "One level at a time",
     "comment": "Post the comment"
   },
-  "integrations": {
-    "domainFeishu": "Feishu (feishu.cn)"
-  },
   "layout": {
     "brand": "Cheese · Admin",
     "sections": "Admin sections",

@@ -1,10 +1,9 @@
 /**
  * 预览站里「小队与后台那几屏拆出来的半张画面」：我的团队、发现小队、团队算力、小队详情、
- * 小队那一页的页头与建队弹窗、成员页与「团队地址与加入」那张卡、飞书应用、空间申请。
+ * 小队那一页的页头与建队弹窗、成员页与「团队地址与加入」那张卡、空间申请。
  *
  * 这几屏在应用里由各自的路由页取数（`Mine.vue`、`Explore.vue`、`detail/Compute.vue`、
- * `Detail.vue`、`Index.vue`、`detail/Members.vue`、`AdminIntegrationsPage.vue`、
- * `AdminSpacesPage.vue`），路由页碰接口层，预览站碰不得。好在它们都已经拆成「路由页 → 只
+ * `Detail.vue`、`Index.vue`、`detail/Members.vue`、`AdminSpacesPage.vue`），路由页碰接口层，预览站碰不得。好在它们都已经拆成「路由页 → 只
  * 吃 props 的画面」：这里展示的正是产品里真会走到的那几格 —— 数据到货 / 首次加载 / 读失败 /
  * 空 / 没权限 / 表单与驳回框。各屏公用的一份数据见 `catalogScenesMiscFixtures.ts`。
  *
@@ -18,8 +17,6 @@ import type { CatalogEntry, CatalogNeed } from './catalog'
 import {
   APPLICATIONS,
   DEVICES,
-  FEISHU_CONFIGURED,
-  FEISHU_UNCONFIGURED,
   FOUND_USER,
   MY_TEAMS,
   SEARCH_TEAMS,
@@ -30,7 +27,6 @@ import {
 } from './catalogScenesMiscFixtures'
 
 import { t } from '@/i18n'
-import AdminIntegrationsPageView from '@/views/admin/AdminIntegrationsPageView.vue'
 import AdminSpacesPageView from '@/views/admin/AdminSpacesPageView.vue'
 import ComputeView from '@/views/teams/detail/ComputeView.vue'
 import MembersView from '@/views/teams/detail/MembersView.vue'
@@ -365,69 +361,6 @@ export const SCENES_MISC_ENTRIES: CatalogEntry[] = [
           teamHandleError: '这个地址已被占用',
         },
         expect: '这个地址已被占用',
-      },
-    ],
-  },
-  {
-    id: 'admin-integrations-page-view',
-    title: 'AdminIntegrationsPageView',
-    get about() {
-      return t('catalog.adminIntegrationsPageView.about')
-    },
-    file: 'src/views/admin/AdminIntegrationsPageView.vue',
-    component: AdminIntegrationsPageView,
-    needs: UI_T_R,
-    args: FEISHU_CONFIGURED,
-    states: [
-      {
-        get name() {
-          return t('catalog.adminIntegrationsPageView.s1.name')
-        },
-        get note() {
-          return t('catalog.adminIntegrationsPageView.s1.note')
-        },
-        props: {},
-        expect: '已配置 · cli_platform · feishu',
-      },
-      {
-        get name() {
-          return t('catalog.adminIntegrationsPageView.s2.name')
-        },
-        get note() {
-          return t('catalog.adminIntegrationsPageView.s2.note')
-        },
-        props: { ...FEISHU_UNCONFIGURED },
-        expect: '还没配置',
-      },
-      {
-        get name() {
-          return t('catalog.adminIntegrationsPageView.s3.name')
-        },
-        get note() {
-          return t('catalog.adminIntegrationsPageView.s3.note')
-        },
-        props: { loadError: '飞书应用接口超时', showStatus: false },
-        expect: '飞书应用接口超时',
-      },
-      {
-        get name() {
-          return t('catalog.adminIntegrationsPageView.s4.name')
-        },
-        get note() {
-          return t('catalog.adminIntegrationsPageView.s4.note')
-        },
-        props: { appId: '', validationError: '先填 App ID' },
-        expect: '先填 App ID',
-      },
-      {
-        get name() {
-          return t('catalog.adminIntegrationsPageView.s5.name')
-        },
-        get note() {
-          return t('catalog.adminIntegrationsPageView.s5.note')
-        },
-        props: { saveError: 'App Secret 不能为空' },
-        expect: 'App Secret 不能为空',
       },
     ],
   },

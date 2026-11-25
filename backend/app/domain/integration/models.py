@@ -1,6 +1,8 @@
 """A person's own mailbox or Feishu account, lent to the AI teammates of the
-projects they name, the mail drafts those teammates write into it, and the one
-Feishu app the platform administrator configures for everybody.
+projects they name, the mail drafts those teammates write into it, and the
+Feishu app a team connects its members through (``TeamFeishuApp``). A Feishu
+connection names its team (``config.team_id``) and keeps only its owner's
+tokens.
 
 The secret is sealed at rest and bound to its row. Nothing is sent from a
 mailbox without its owner confirming the exact draft that was written.
@@ -9,21 +11,27 @@ mailbox without its owner confirming the exact draft that was written.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, String, Text, Uuid
+from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String, Text, Uuid, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
 from app.domain.common import Timestamps, UuidPk
 
-#: The platform's Feishu app is a singleton; its row id is the constant below, so
-#: "has an administrator configured it" is one ``get`` and a second row cannot
-#: appear by accident.
-FEISHU_APP_ROW_ID = 1
-
 
 class Integration(UuidPk, Timestamps, Base):
     __tablename__ = "integrations"
+    __table_args__ = (
+        # One connection per member per team app: connecting through the same
+        # team again is that connection (``IntegrationService.connect_feishu``).
+        Index(
+            "uq_integrations_owner_feishu_team",
+            "owner_user_id",
+            text("(config ->> 'team_id')"),
+            unique=True,
+            postgresql_where=text("provider = 'feishu' AND config ? 'team_id'"),
+        ),
+    )
 
     owner_user_id: Mapped[int] = mapped_column(BigInteger, index=True)
     owner_handle: Mapped[str] = mapped_column(String(64))
@@ -31,7 +39,9 @@ class Integration(UuidPk, Timestamps, Base):
     provider: Mapped[str] = mapped_column(String(16))
     #: What the owner sees it as: the address, or the Feishu app's name.
     label: Mapped[str] = mapped_column(String(200))
-    #: Non-secret settings (hosts, ports, username; app_id, domain, folder).
+    #: Non-secret settings (hosts, ports, username; for Feishu the team whose
+    #: app it uses, ``team_id``, and the App ID its tokens were issued under,
+    #: ``authorized_app_id``; older rows carry their own ``app_id`` / ``domain``).
     config: Mapped[dict] = mapped_column(JSONB, default=dict)
     #: {"password": …} / {"app_secret": …, "user_access_token": …, …}, sealed.
     secret: Mapped[str] = mapped_column(Text)
@@ -72,27 +82,33 @@ class MailDraft(UuidPk, Timestamps, Base):
     )
 
 
-class FeishuApp(Timestamps, Base):
-    """The Feishu app the platform administrator configures once for everybody.
+class TeamFeishuApp(Timestamps, Base):
+    """The Feishu app a team connects its members' Feishu accounts through.
 
-    Members used to create a custom app each and paste its App ID and Secret into
-    «我的连接». Now one app belongs to the platform: an administrator fills it in
-    on the admin page, a member clicks once to authorize, and the member's own
-    row (``Integration``) keeps only that person's ``user_access_token`` and
-    ``refresh_token``. Which app credentials a call uses is read from here at
-    the moment of the call, so rotating the secret reaches every connection.
+    A self-built Feishu app lives in one Feishu tenant, and a team is the unit
+    that has one: a company's team sets its company's app, and a person on their
+    own sets one on their personal team. A team holds at most one. Each member
+    still authorizes with their own Feishu account; their ``Integration`` row
+    names the team (``config.team_id``) and keeps only their own tokens, so a
+    rotated secret reaches every member at their next call.
 
-    ``app_id`` is not a secret; ``app_secret`` is sealed exactly like a
-    connection's secret (``Purpose.INTEGRATION_SECRET``, bound to this row).
+    ``app_id`` is not a secret; ``app_secret`` is sealed like a connection's
+    secret (``Purpose.INTEGRATION_SECRET``), bound to the team.
     """
 
-    __tablename__ = "feishu_apps"
+    __tablename__ = "team_feishu_apps"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    team_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey(
+            "team.id", ondelete="CASCADE", name="fk_team_feishu_apps_team_id_team"
+        ),
+        primary_key=True,
+    )
     app_id: Mapped[str] = mapped_column(String(64))
     #: feishu | lark
     domain: Mapped[str] = mapped_column(String(16), default="feishu")
     #: {"app_secret": …}, sealed.
     secret: Mapped[str] = mapped_column(Text)
-    #: The platform administrator who last saved it.
+    #: The handle of whoever last saved it.
     updated_by: Mapped[str] = mapped_column(String(64))

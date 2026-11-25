@@ -16,6 +16,7 @@ import {
   CONNECTION_PROJECTS,
   FEATURE,
   feedback,
+  FEISHU_TEAMS,
   INTEGRATIONS,
   MAIL_DRAFTS,
   PRIVATE_FEEDBACK,
@@ -28,6 +29,7 @@ import AdminFeaturePageView from '@/views/admin/AdminFeaturePageView.vue'
 import FeedbackDetailPageView from '@/views/feedback/FeedbackDetailPageView.vue'
 import MyConnectionsViewView from '@/views/MyConnectionsViewView.vue'
 import ProjectSkillsViewView from '@/views/ProjectSkillsViewView.vue'
+import FeishuView from '@/views/teams/detail/FeishuView.vue'
 
 /** 四件都要 Vuetify 的画法和一套语言包（页框、按钮、状态药丸、下拉、抽屉都在 Vuetify 上）。 */
 const UI_T: CatalogNeed[] = ['vuetify', 'i18n']
@@ -113,12 +115,12 @@ export const SCENES_PAGES2_ENTRIES: CatalogEntry[] = [
       loading: false,
       error: '',
       busy: '',
-      feishuMissing: false,
-      feishuAsking: false,
+      feishuTeams: FEISHU_TEAMS,
+      feishuError: '',
       refresh: noop,
+      'retry-feishu': noop,
       discard: noop,
       send: noop,
-      'connect-feishu': noop,
       'set-grants': noop,
       recheck: noop,
       authorize: noop,
@@ -140,15 +142,15 @@ export const SCENES_PAGES2_ENTRIES: CatalogEntry[] = [
       },
       {
         name: '连着两个账号，飞书那个还没授权',
-        note: '一条邮箱、一条走平台应用的飞书：飞书那条在授权回来之前什么也做不了，所以它那一行说的是「还没连接飞书」，而不是旁边那颗「正常」药丸的意思。',
+        note: '一条邮箱、一条用团队应用的飞书：飞书那条在个人授权回来之前搜不了，所以它那一行说的是「还没连接飞书」，而不是旁边那颗「正常」药丸的意思。',
         props: { integrations: INTEGRATIONS },
         expect: '还没连接飞书',
       },
       {
-        name: '平台没配飞书应用',
-        note: '管理员还没在这一部署里填飞书应用：「连接飞书」灰着，底下写明为什么 —— 灰按钮没有理由，人只会当成坏了。',
-        props: { integrations: [INTEGRATIONS[0]], feishuMissing: true },
-        expect: '管理员还没配置飞书应用',
+        name: '还没有团队设飞书应用',
+        note: '只有个人团队、它也还没设应用：「连接飞书」那一格说还没有可用的应用，个人那一行指到个人设置里去设。',
+        props: { feishuTeams: [FEISHU_TEAMS[0]] },
+        expect: '你所在的团队都还没设置飞书应用',
       },
       {
         name: '读失败',
@@ -161,6 +163,98 @@ export const SCENES_PAGES2_ENTRIES: CatalogEntry[] = [
         note: '还在路上：页头那颗刷新转着，两格先按空的样子摆着。',
         props: { loading: true },
         expectSelector: '.v-progress-circular',
+      },
+    ],
+  },
+  {
+    id: 'team-feishu-view',
+    title: 'FeishuView',
+    about:
+      '团队设置「飞书应用」那一栏的画面（个人设置里个人团队的那一栏也是它）：每个成员都看得到团队用的是哪个飞书应用，并在这里连接、重新连接、断开自己的飞书账号；能改团队设置的人另外填 App ID / Secret / 版本，下面是在飞书里建这个应用的几步，重定向 URL、权限配置、申请理由都能复制。取数、保存、连接、复制都在容器 `teams/detail/Feishu.vue` 里。',
+    file: 'src/views/teams/detail/FeishuView.vue',
+    component: FeishuView,
+    needs: UI_T,
+    args: {
+      personal: false,
+      app: {
+        configured: true,
+        app_id: 'cli_a1b2c3d4e5',
+        domain: 'feishu',
+        updated_by: 'course-lead',
+        updated_at: '2026-11-20T09:00:00Z',
+        redirect_uri: 'https://okcheese.com/api/integrations/feishu/callback',
+      },
+      loading: false,
+      loadError: '',
+      canManage: true,
+      connection: null,
+      connecting: false,
+      save: (_body: unknown, done: (ok: boolean, message?: string) => void) => done(true),
+      remove: noop,
+      copy: noop,
+      retry: noop,
+      connect: noop,
+      reconnect: noop,
+      disconnect: noop,
+    },
+    states: [
+      {
+        name: '管理员，自己还没连',
+        note: '团队设好了应用：上面写着用的是哪个应用，管理员看得到表单；「我的飞书账号」说还没连接，按钮是「连接我的飞书账号」。',
+        props: {},
+        expect: '这个团队用的飞书应用：cli_a1b2c3d4e5（feishu）',
+      },
+      {
+        name: '管理员，已连接',
+        note: '本人已经授权：写「已连接」，可以重新连接或断开。',
+        props: { connection: { id: 'i-1', status: 'ok', user_authorized: true } },
+        expect: '已连接',
+      },
+      {
+        name: '成员，已连接',
+        note: '不是管理员：看得到团队用的应用和自己的连接，没有表单和建应用的步骤。',
+        props: { canManage: false, connection: { id: 'i-1', status: 'ok', user_authorized: true } },
+        expect: '已连接',
+      },
+      {
+        name: '成员，还没连',
+        note: '不是管理员、自己还没连：看得到团队用的应用，按钮是「连接我的飞书账号」。',
+        props: { canManage: false },
+        expect: '还没连接',
+      },
+      {
+        name: '成员，团队还没设',
+        note: '团队还没设应用：写「还没设置」，并说管理员设好之后就能连接。',
+        props: {
+          canManage: false,
+          app: {
+            configured: false,
+            app_id: '',
+            domain: 'feishu',
+            updated_by: '',
+            updated_at: null,
+            redirect_uri: 'https://okcheese.com/api/integrations/feishu/callback',
+          },
+        },
+        expect: '团队管理员在这里设置之后，你就能连接自己的飞书账号。',
+      },
+      {
+        name: '个人团队',
+        note: '个人设置里的那一栏：说的是你用的飞书应用，第 4 步提示可用范围只选你自己。',
+        props: { personal: true },
+        expect: '你用的飞书应用：cli_a1b2c3d4e5（feishu）',
+      },
+      {
+        name: '授权已失效',
+        note: '本人的授权失效了：红字说请重新连接，按钮是「连接我的飞书账号」。',
+        props: { connection: { id: 'i-1', status: 'auth_failed', user_authorized: true } },
+        expect: '授权已失效，请重新连接',
+      },
+      {
+        name: '读失败',
+        note: '读不到时那句话挂在上面，带「重试」。',
+        props: { loadError: '飞书应用加载失败' },
+        expect: '飞书应用加载失败',
       },
     ],
   },

@@ -13,8 +13,8 @@ export interface Integration {
   last_error: string
   last_checked_at: string | null
   user_authorized: boolean
-  /** 用的是平台管理员配的那一个应用，而不是这条连接自己带的凭据。 */
-  shared_app: boolean
+  /** `team_app`：较早的飞书连接（自带应用，或平台应用时代建的），主人应该用团队的飞书应用重新连接。 */
+  reconnect?: 'team_app' | null
 }
 
 export interface MailDraft {

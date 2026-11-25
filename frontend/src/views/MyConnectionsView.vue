@@ -5,10 +5,10 @@
 // 画的那一半在 `MyConnectionsViewView.vue`：这里只留下请求、地址和 toast，画面只收
 // props、只 emit。邮箱表单的那份草稿跟着画面走 —— 每个字段都是那边的元素。
 import type { Integration, MailDraft } from '../api'
-import type { FeishuAvailability } from '../api/feishu'
+import type { FeishuTeamChoice } from '../api/feishu'
 import type { Project } from '../cx_types'
 
-import { computed, onMounted, ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import {
@@ -21,7 +21,7 @@ import {
   sendMailDraft,
   updateIntegration,
 } from '../api'
-import { claimFeishuHandoff, connectFeishu, feishuAuthorizeUrl, feishuAvailability } from '../api/feishu'
+import { claimFeishuHandoff, feishuAuthorizeUrl, feishuChoices } from '../api/feishu'
 
 import MyConnectionsViewView from './MyConnectionsViewView.vue'
 
@@ -37,16 +37,11 @@ const router = useRouter()
 const integrations = ref<Integration[]>([])
 const drafts = ref<MailDraft[]>([])
 const projects = ref<Project[]>([])
-/** 平台管理员配过飞书应用没有。没配时「连接飞书」是灰的 —— 点了必然失败，画成能点
- *  只会把人送到一句报错上。 */
-const feishu = ref<FeishuAvailability>({ configured: false, app_id: '', domain: '' })
-/** 上面那个问题问到答案没有。读不到时按钮不画灰 —— 没读到不等于没配，而「管理员还没
- *  配置飞书应用」是一句会被当真的话：宁可让人按下去，由服务端回那句实话。 */
-const feishuKnown = ref(false)
-/** 还在问：按钮先灰着，不然没配的时候它会先亮一下再变灰。 */
-const feishuAsking = ref(true)
-/** 确定没配：按钮灰着，底下写明为什么。 */
-const feishuMissing = computed(() => feishuKnown.value && !feishu.value.configured)
+/** 本人所在的团队、它们设的飞书应用和本人通过它连没连（「连接飞书」那一格，每个团队指到
+ *  它自己的「飞书应用」那一栏，连接在那里做）。读不到就是空的。 */
+const feishuTeams = ref<FeishuTeamChoice[]>([])
+/** 团队那一格没读到时那句原话：没读到不是「没有团队设了应用」，画面要说读失败。 */
+const feishuError = ref('')
 const loading = ref(false)
 const error = ref('')
 /** 从飞书授权回来时地址栏里的结果（`?feishu=`）：一个结果码，或者平台那句拒绝的
@@ -68,17 +63,17 @@ const FEISHU_OUTCOMES: Record<string, string> = {
   denied: 'denied',
   deleted: 'deleted',
   exchange_failed: 'failed',
+  busy: 'busy',
+  authorize_again: 'authorizeAgain',
+  app_changed: 'appChanged',
 }
 const busy = ref('')
 
 async function load() {
   loading.value = true
   error.value = ''
-  // 应用配没配与上面三项并行发起，但单独结算：问不到不该把整页的连接一起掀掉。
-  const feishuRead = feishuAvailability().then(
-    (got) => ({ ok: true as const, got }),
-    () => ({ ok: false as const })
-  )
+  // 飞书应用与下面三项并行发起，但单独结算：问不到不该把整页的连接一起掀掉。
+  const feishuRead = loadFeishuTeams()
   try {
     const [mine, waiting, projectList] = await Promise.all([
       listMyIntegrations(),
@@ -93,14 +88,16 @@ async function load() {
   } finally {
     loading.value = false
   }
-  const feishuRes = await feishuRead
-  if (feishuRes.ok) {
-    feishu.value = feishuRes.got
-    feishuKnown.value = true
-  } else {
-    feishuKnown.value = false
+  await feishuRead
+}
+
+async function loadFeishuTeams() {
+  try {
+    feishuTeams.value = (await feishuChoices()).teams
+    feishuError.value = ''
+  } catch (e) {
+    feishuError.value = e instanceof Error ? e.message : t('integrations.member.teams.loadFailed')
   }
-  feishuAsking.value = false
 }
 
 function replace(row: Integration) {
@@ -129,6 +126,8 @@ async function setGrants(row: Integration, grants: string[]) {
 async function recheck(row: Integration) {
   const out = await act(`${row.id}:check`, () => checkIntegration(row.id))
   if (out) replace(out)
+  // 团队那一格说的连接状态是同一行：重新检查出了问题，那里也不能还说正常。
+  if (row.provider === 'feishu') await loadFeishuTeams()
 }
 
 async function authorize(row: Integration) {
@@ -136,24 +135,12 @@ async function authorize(row: Integration) {
   if (out) goAuthorize(out.url)
 }
 
-/**
- * 「连接飞书」：两跳一步。
- *
- * 先要自己那一行（`POST /me/integrations/feishu`），再拿它的授权地址跳去飞书 —— 回调
- * 要靠行 id 找回它是谁（见 `feishu_callback` 的 `state`），所以顺序不能反过来。这一行
- * 此刻没有任何凭据：应用是平台管理员的，成员出的是自己的账号。
- */
-async function connectFeishuAccount() {
-  const row = await act('feishu:connect', () => connectFeishu())
-  if (!row) return
-  if (integrations.value.some((x) => x.id === row.id)) replace(row)
-  else integrations.value = [...integrations.value, row]
-  await authorize(row)
-}
-
 async function remove(row: Integration) {
   const out = await act(`${row.id}:delete`, () => deleteIntegration(row.id))
-  if (out) integrations.value = integrations.value.filter((x) => x.id !== row.id)
+  if (!out) return
+  integrations.value = integrations.value.filter((x) => x.id !== row.id)
+  // 删的是飞书连接时，团队那一格说的「已连接」也跟着变。
+  if (row.provider === 'feishu') await loadFeishuTeams()
 }
 
 async function send(draft: MailDraft) {
@@ -189,11 +176,16 @@ async function save(body: Record<string, unknown>, done: (ok: boolean, message?:
  *  去领，只有发起授权的人领得到 —— 别人点了同一条授权链接，令牌也进不了这一行。领到的
  *  就是这次授权的结果，和别的回执（`?feishu=`）一样说一次；地址栏里的领取号随即拿掉。 */
 async function landedFeishu(): Promise<Record<string, unknown>> {
-  const { feishu_handoff: handoff, feishu_integration: integration, ...rest } = route.query
-  if (typeof handoff !== 'string' || !handoff || typeof integration !== 'string') return route.query
+  const landed = { ...route.query }
+  const { feishu_handoff: handoff, feishu_integration: integration, ...rest } = landed
+  if (typeof handoff !== 'string' || !handoff || typeof integration !== 'string') return landed
   void router.replace({ query: rest, hash: route.hash })
   try {
-    return { ...rest, ...(await claimFeishuHandoff(integration, handoff)).authorization }
+    const outcome = (await claimFeishuHandoff(integration, handoff)).authorization
+    // 只有「这次没领」（busy）的领取号还在：放回地址栏，刷新一下就能再领。领过了、
+    // 授权码也换过了（authorize_again、app_changed）就只能重新连接，不放回去。
+    if (outcome.feishu === 'busy') void router.replace({ query: landed, hash: route.hash })
+    return { ...rest, ...outcome }
   } catch {
     return { ...rest, feishu: 'exchange_failed' }
   }
@@ -219,12 +211,12 @@ onMounted(async () => {
     :loading="loading"
     :error="error"
     :busy="busy"
-    :feishu-missing="feishuMissing"
-    :feishu-asking="feishuAsking"
+    :feishu-teams="feishuTeams"
+    :feishu-error="feishuError"
     @refresh="load"
+    @retry-feishu="loadFeishuTeams"
     @discard="discard"
     @send="send"
-    @connect-feishu="connectFeishuAccount"
     @set-grants="setGrants"
     @recheck="recheck"
     @authorize="authorize"

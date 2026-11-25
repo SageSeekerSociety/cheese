@@ -186,7 +186,6 @@ python3 .claude/scripts/scene-ratchet.py --list     # 每个场景的档和理�
 | `views/admin/AdminCreditsPage.vue` | 容器 | 画面在 `AdminCreditsPageView.vue`（A 级）；本页留着：经 `composables/useAdminCredits.ts` 取数 |
 | `views/admin/AdminFeaturePage.vue` | 容器 | 画面在 `AdminFeaturePageView.vue`（A 级）；本页留着：经 `views/admin/features/registry.ts` 取数 |
 | `views/admin/AdminFeatureStatsPage.vue` | D | 经 `views/admin/features/featureApi.ts` 取数；经 `views/admin/features/registry.ts` 取数；读路由；模板里画 `<RouterLink>` |
-| `views/admin/AdminIntegrationsPage.vue` | 容器 | 画面在 `AdminIntegrationsPageView.vue`（A 级）；本页留着：经 `api/feishu.ts` 取数 |
 | `views/admin/AdminLayout.vue` | D | 经 `composables/useAdminSections.ts` 取数；读路由；模板里画 `<RouterView>`；读 store（feedback） |
 | `views/admin/AdminMachinesPage.vue` | 容器 | 画面在 `AdminMachinesPageView.vue`（A 级）；本页留着：经 `views/admin/machinesApi.ts` 取数 |
 | `views/admin/AdminMembersPage.vue` | 容器 | 画面在 `AdminMembersPageView.vue`（A 级）；本页留着：直接取数（`api.ts`） |

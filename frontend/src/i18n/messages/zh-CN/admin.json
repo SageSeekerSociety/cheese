@@ -38,9 +38,6 @@
     "oneLevel": "一次退一层",
     "comment": "提交评论"
   },
-  "integrations": {
-    "domainFeishu": "飞书（feishu.cn）"
-  },
   "layout": {
     "brand": "芝士 · 管理",
     "sections": "管理后台分区",

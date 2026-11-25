@@ -28,6 +28,7 @@ export function settingsGroups(): SettingsGroup[] {
         item('UserSettingsConnections', t('account.settings.connections'), 'mdi-link-variant'),
         item('UserSettingsCompute', t('home.nav.teamCompute'), 'mdi-laptop'),
         item('UserSettingsModels', t('home.nav.teamModels'), 'mdi-creation-outline'),
+        item('UserSettingsFeishu', t('home.nav.teamFeishu'), 'mdi-link-variant'),
       ],
     },
     {

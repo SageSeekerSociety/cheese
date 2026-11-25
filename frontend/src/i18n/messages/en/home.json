@@ -83,6 +83,7 @@
     "teamLibrary": "Library",
     "teamSettings": "Settings",
     "teamModels": "Models",
+    "teamFeishu": "Feishu app",
     "spaceReview": {
       "PENDING": "In review",
       "REJECTED": "Rejected"

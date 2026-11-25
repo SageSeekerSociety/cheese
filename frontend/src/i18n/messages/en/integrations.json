@@ -1,23 +1,65 @@
 {
   "member": {
     "connect": "Connect Feishu",
-    "notConfigured": "An administrator has not configured the Feishu app",
-    "notConnected": "Not connected to Feishu yet"
+    "notConnected": "Not connected to Feishu yet",
+    "teams": {
+      "lede": "A Feishu app is set on a team. You connect in each team's Feishu app section, with your own Feishu account.",
+      "none": "None of your teams has a Feishu app yet. A company's team admin sets the company's custom app; on your own, set one on your personal team in personal settings.",
+      "personal": "Personal",
+      "unset": "No Feishu app set up",
+      "open": "Open",
+      "setUp": "Set up",
+      "loadFailed": "Could not load your teams' Feishu apps",
+      "retry": "Retry",
+      "reconnect": "Connect again with a team's Feishu app: open the team's Feishu app section under Connect Feishu below. The new connection does not take over the projects ticked on this one; tick them again on the new one once connected",
+      "appGone": "This team's Feishu app has been removed, so there is nothing to authorize here: see the team's Feishu app section"
+    }
   },
-  "admin": {
-    "sub": "Members no longer build a Feishu app of their own. Fill this in once and each member connects with one click in My connections.",
+  "team": {
+    "title": "Feishu app",
+    "lede": "The custom app the team's members connect Feishu with. Each person still authorizes with their own Feishu account.",
+    "ledePersonal": "The custom app you connect Feishu with: built in your company's Feishu, authorized with your own Feishu account.",
+    "appTitle": "App",
+    "notConfigured": "Not set up",
+    "feishu": "Feishu",
+    "domain": "Domain",
     "appId": "App ID",
     "appSecret": "App Secret",
-    "domain": "Domain",
     "secretHint": "Leave empty to keep the saved one",
     "save": "Save",
     "saved": "Saved",
     "saveFailed": "Could not save",
-    "loadFailed": "Lark integration failed to load",
+    "loadFailed": "The Feishu app failed to load",
     "retry": "Retry",
-    "configured": "Configured",
-    "notConfigured": "Not configured",
-    "updatedBy": "Last updated by {handle}",
-    "appIdRequired": "Enter the App ID first"
+    "remove": "Remove",
+    "removeTitle": "Remove the Feishu app?",
+    "removeBody": "Every Feishu connection made with this app stops working, and members have to connect again.",
+    "setupTitle": "Create the app in Feishu",
+    "step1": "On the Feishu developer console ({console}), create a custom app.",
+    "step2": "Under Security Settings, add this redirect URL and turn on refreshing user_access_token:",
+    "step3": "Under Permissions, choose batch import/export and paste this configuration, then apply for it:",
+    "step4": "Under Version Management & Release, create and publish a version, available to the team members who will use it. You can give this reason, then wait for your company's Feishu admin to approve:",
+    "step4Personal": "Under Version Management & Release, create and publish a version. Set availability to just yourself, which makes approval much easier. You can give this reason, then wait for your company's Feishu admin to approve:",
+    "step5": "Enter the App ID and App Secret from Credentials & Basic Info above, and save.",
+    "redirectLabel": "Redirect URL",
+    "copy": "Copy",
+    "copied": "Copied",
+    "reason": "To search, read and edit a person's own Feishu documents as themselves on Cheese (okcheese.com). Only user-identity permissions are requested, and each person starts their own authorization.",
+    "uses": "This team's Feishu app: {appId} ({domain})",
+    "usesPersonal": "Your Feishu app: {appId} ({domain})",
+    "adminSets": "Once a team admin sets it here, you can connect your own Feishu account.",
+    "mineTitle": "My Feishu account",
+    "mine": {
+      "none": "Not connected",
+      "pending": "Authorization not finished",
+      "lapsed": "Authorization expired. Connect again",
+      "connected": "Connected"
+    },
+    "connect": "Connect my Feishu account",
+    "reconnect": "Connect again",
+    "disconnect": "Disconnect",
+    "disconnectTitle": "Disconnect your Feishu account?",
+    "disconnectBody": "AI teammates can no longer read or write documents with your Feishu account. You can connect again here later.",
+    "connectFailed": "Could not connect Feishu"
   }
 }

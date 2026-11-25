@@ -198,31 +198,3 @@ export const APPLICATIONS: SpaceApplication[] = [
     reviewedAt: '2026-09-29T03:00:00Z',
   }),
 ]
-
-// ---- 飞书应用（AdminIntegrationsPageView）----------------------------------
-
-/** 已经配过一次：状态行说的是「已配置 · App ID · 版本」。 */
-export const FEISHU_CONFIGURED: Record<string, unknown> = {
-  loading: false,
-  loadError: null,
-  status: '已配置 · cli_platform · feishu',
-  showStatus: true,
-  configured: true,
-  updated: '最后由 andy 更新',
-  saving: false,
-  saved: false,
-  saveError: '',
-  validationError: '',
-  appId: 'cli_platform',
-  appSecret: '',
-  domain: 'feishu',
-}
-
-/** 还没配过：状态行说的是「还没配置」，两格空着等人填。 */
-export const FEISHU_UNCONFIGURED: Record<string, unknown> = {
-  ...FEISHU_CONFIGURED,
-  status: '还没配置',
-  configured: false,
-  updated: '',
-  appId: '',
-}

@@ -1,23 +1,65 @@
 {
   "member": {
     "connect": "连接飞书",
-    "notConfigured": "管理员还没配置飞书应用",
-    "notConnected": "还没连接飞书"
+    "notConnected": "还没连接飞书",
+    "teams": {
+      "lede": "飞书应用设在团队上，连接在各团队的「飞书应用」里做，用的是你自己的飞书账号。",
+      "none": "你所在的团队都还没设置飞书应用。公司的团队由管理员设公司的企业自建应用；自己用就在个人设置里设在个人团队上。",
+      "personal": "个人",
+      "unset": "还没设置飞书应用",
+      "open": "打开",
+      "setUp": "去设置",
+      "loadFailed": "没能读到你所在团队的飞书应用",
+      "retry": "重试",
+      "reconnect": "用团队的飞书应用重新连接：在下面「连接飞书」里打开团队的「飞书应用」。新的连接不沿用这一行勾选的项目，连上之后在新的那一行重新勾选",
+      "appGone": "这个团队的飞书应用已经移除，在这里授权不了：到团队的「飞书应用」那一栏看看"
+    }
   },
-  "admin": {
-    "sub": "成员不再各建一个飞书应用。这里填一次，成员在「我的连接」里点一下就接上了。",
+  "team": {
+    "title": "飞书应用",
+    "lede": "团队成员连接飞书时用的企业自建应用。每个人仍然用自己的飞书账号授权。",
+    "ledePersonal": "你自己连接飞书时用的企业自建应用：建在你公司的飞书里，用你自己的飞书账号授权。",
+    "appTitle": "应用",
+    "notConfigured": "还没设置",
+    "feishu": "飞书",
+    "domain": "版本",
     "appId": "App ID",
     "appSecret": "App Secret",
-    "domain": "版本",
     "secretHint": "留空表示不改已经存下的那一个",
     "save": "保存",
     "saved": "已保存",
     "saveFailed": "保存失败",
     "loadFailed": "飞书应用加载失败",
     "retry": "重试",
-    "configured": "已配置",
-    "notConfigured": "还没配置",
-    "updatedBy": "最后由 {handle} 更新",
-    "appIdRequired": "先填 App ID"
+    "remove": "移除",
+    "removeTitle": "移除飞书应用？",
+    "removeBody": "用这个应用连接的飞书都会失效，成员要重新连接。",
+    "setupTitle": "在飞书里建这个应用",
+    "step1": "在飞书开放平台（{console}）创建一个「企业自建应用」。",
+    "step2": "在「安全设置」里添加这个重定向 URL，并打开「刷新 user_access_token」：",
+    "step3": "在「权限管理」里点「批量导入/导出权限」，粘贴这段权限配置并申请开通：",
+    "step4": "在「版本管理与发布」里创建版本并发布，可用范围选团队里要用的人；申请理由可以这样写，然后等公司的飞书管理员审核通过：",
+    "step4Personal": "在「版本管理与发布」里创建版本并发布。可用范围只选你自己，审批会容易很多；申请理由可以这样写，然后等你公司的飞书管理员审核通过：",
+    "step5": "把「凭证与基础信息」里的 App ID 和 App Secret 填在上面，保存。",
+    "redirectLabel": "重定向 URL",
+    "copy": "复制",
+    "copied": "已复制",
+    "reason": "用于在 Cheese（okcheese.com）上以使用者本人的身份搜索和读写他自己的飞书文档。只申请用户身份权限，授权由使用者本人发起。",
+    "uses": "这个团队用的飞书应用：{appId}（{domain}）",
+    "usesPersonal": "你用的飞书应用：{appId}（{domain}）",
+    "adminSets": "团队管理员在这里设置之后，你就能连接自己的飞书账号。",
+    "mineTitle": "我的飞书账号",
+    "mine": {
+      "none": "还没连接",
+      "pending": "还没授权完",
+      "lapsed": "授权已失效，请重新连接",
+      "connected": "已连接"
+    },
+    "connect": "连接我的飞书账号",
+    "reconnect": "重新连接",
+    "disconnect": "断开",
+    "disconnectTitle": "断开你的飞书账号？",
+    "disconnectBody": "AI 队友不能再用你的飞书账号读写文档。之后可以在这里重新连接。",
+    "connectFailed": "连接飞书失败"
   }
 }

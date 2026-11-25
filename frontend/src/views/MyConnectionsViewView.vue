@@ -6,6 +6,7 @@
 
 <script setup lang="ts">
 import type { Integration, MailDraft } from '../api'
+import type { FeishuTeamChoice } from '../api/feishu'
 import type { Project } from '../cx_types'
 
 import { computed, reactive, ref } from 'vue'
@@ -15,6 +16,7 @@ import AdaptiveDialog from '../components/common/AdaptiveDialog.vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
 import BaseEmptyState from '@/components/base/BaseEmptyState.vue'
+import NavLink from '@/components/common/NavLink.vue'
 import UserRef from '@/components/common/UserRefLink.vue'
 import { t } from '@/i18n'
 
@@ -30,17 +32,18 @@ const props = defineProps<{
   error: string
   /** 正在飞的那个动作（`<id>:<动作>`），用来只把点过的那颗按钮画成在转。 */
   busy: string
-  /** 平台管理员没配飞书应用：按钮灰着，底下写明为什么。 */
-  feishuMissing: boolean
-  /** 还在问「配没配」：按钮先灰着，不然没配的时候它会先亮一下再变灰。 */
-  feishuAsking: boolean
+  /** 本人所在的团队和它们设的飞书应用，个人团队在前；没读到时是空的。 */
+  feishuTeams: FeishuTeamChoice[]
+  /** 团队那一格读失败时那句原话；`''` 表示没失败。 */
+  feishuError: string
 }>()
 
 const emit = defineEmits<{
   refresh: []
+  /** 再读一次团队那一格。 */
+  'retry-feishu': []
   discard: [draft: MailDraft]
   send: [draft: MailDraft]
-  'connect-feishu': []
   'set-grants': [row: Integration, grants: string[]]
   recheck: [row: Integration]
   authorize: [row: Integration]
@@ -124,9 +127,9 @@ function confirmRemove() {
 }
 
 // ── 接入 ───────────────────────────────────────────────────────────────────
-// 只剩邮箱这一张表单。飞书不再有「填 App ID / Secret」这一种接入方式 —— 它是成员点
-// 一下「连接飞书」、跳到飞书授权页那一步（页面里的 `connectFeishuAccount`），凭据在
-// 管理员那边。表单自己那份草稿住在这一半：每一个字段都是这个文件里的一个元素。
+// 邮箱是一张表单；「连接飞书」是一张选单：本人所在团队设的飞书应用，选一个就跳去飞书授权
+// （页面里的 `connectFeishuAccount`）。一个都没设时，指到能设的地方（个人设置里的个人团队，
+// 以及本人管着的团队的设置）。表单自己那份草稿住在这一半：每一个字段都是这个文件里的一个元素。
 const adding = ref(false)
 const saving = ref(false)
 const formError = ref('')
@@ -152,6 +155,32 @@ function applyPreset(title: string) {
     smtp_port: preset.smtpPort,
     security: preset.security,
   })
+}
+
+const anyApp = computed(() => props.feishuTeams.some((team) => team.app))
+const teamLabel = (team: FeishuTeamChoice) => (team.personal ? t('integrations.member.teams.personal') : team.team_name)
+/** 这个团队的「飞书应用」那一栏：个人团队的在个人设置里。连接就在那里做。 */
+const settingsOf = (team: FeishuTeamChoice) =>
+  team.personal ? { name: 'UserSettingsFeishu' } : { name: 'TeamsDetailFeishu', params: { handle: team.team_handle } }
+/** 团队连接属于哪个团队（列表里有的话）。 */
+const teamOf = (row: Integration) =>
+  row.config.team_id == null ? undefined : props.feishuTeams.find((team) => team.team_id === Number(row.config.team_id))
+/** 团队连接、而那个团队的飞书应用已经被移除：这里没有应用可授权，只能到团队那一栏去。 */
+const teamAppGone = (row: Integration) => {
+  const team = teamOf(row)
+  return !!team && !team.app
+}
+/** 这一行能不能在这里授权：平台应用那时候的旧连接（既不属于团队，也没带自己的应用），
+ *  和团队已经移除了飞书应用的团队连接，都没有应用可以授权，点了只会被拒。 */
+const canAuthorize = (row: Integration) =>
+  row.provider === 'feishu' && !(row.reconnect === 'team_app' && !row.config.app_id) && !teamAppGone(row)
+/** 本人在这个团队的应用上连到哪一步。 */
+function mineOf(team: FeishuTeamChoice): string {
+  if (!team.app) return t('integrations.member.teams.unset')
+  const c = team.connection
+  if (!c) return t('integrations.team.mine.none')
+  if (c.status === 'auth_failed') return t('integrations.team.mine.lapsed')
+  return c.user_authorized ? t('integrations.team.mine.connected') : t('integrations.team.mine.pending')
 }
 
 /** 表单上只填地址，账号名跟着它走（填了账号名的老表单才会不一样）；`preset` 是这一页
@@ -244,19 +273,8 @@ function save() {
           <BaseButton kind="secondary" size="sm" prepend-icon="mdi-email-plus-outline" @click="adding = true">
             {{ t('account.connections.addMail') }}
           </BaseButton>
-          <BaseButton
-            kind="secondary"
-            size="sm"
-            prepend-icon="mdi-link-variant-plus"
-            :disabled="feishuMissing || feishuAsking"
-            :loading="busy === 'feishu:connect'"
-            @click="emit('connect-feishu')"
-          >
-            {{ t('integrations.member.connect') }}
-          </BaseButton>
         </div>
       </div>
-      <p v-if="feishuMissing" class="settings-card__desc">{{ t('integrations.member.notConfigured') }}</p>
       <BaseEmptyState
         v-if="!integrations.length && !loading"
         size="inline"
@@ -271,10 +289,17 @@ function save() {
               {{ row.label }}
             </div>
             <div v-if="row.last_error" class="conn-row__sub c-danger">{{ row.last_error }}</div>
-            <!-- 平台应用那一行在授权回来之前什么也做不了（凭据是管理员的，账号是你的），
-                 所以这里说的是「连结上了没有」，不是「工作正常」—— 旁边那个状态在授权
-                 之前说的「正常」只到「这一行本身没问题」为止。 -->
-            <div v-else-if="row.shared_app && !row.user_authorized" class="conn-row__sub">
+            <!-- 飞书那一行在授权回来之前搜不了（搜索只认个人授权），所以这里说的是「连结上
+                 了没有」，不是「工作正常」—— 旁边那个状态在授权之前说的「正常」只到「应用
+                 凭据没问题」为止。 -->
+            <div v-if="row.reconnect === 'team_app'" class="conn-row__sub">
+              {{ t('integrations.member.teams.reconnect') }}
+            </div>
+            <div v-else-if="teamAppGone(row)" class="conn-row__sub">
+              {{ t('integrations.member.teams.appGone') }}
+              <NavLink :to="settingsOf(teamOf(row)!)">{{ t('integrations.member.teams.open') }}</NavLink>
+            </div>
+            <div v-else-if="!row.last_error && row.provider === 'feishu' && !row.user_authorized" class="conn-row__sub">
               {{ t('integrations.member.notConnected') }}
             </div>
           </div>
@@ -299,11 +324,10 @@ function save() {
           <BaseButton kind="ghost" size="sm" :loading="busy === `${row.id}:check`" @click="emit('recheck', row)">
             {{ t('account.connections.check') }}
           </BaseButton>
-          <!-- 自带凭据的老连接：授权个人账号是它在搜索上差的那一步，按钮留着是为了让
-               这些行照旧能用（`feishu_settings` 优先用它自己那套凭据）。走平台应用的那
-               些行没有这一颗 —— 它们连接的方式就是上面那颗「连接飞书」。 -->
+          <!-- 授权个人账号：连接时跳过一次飞书；没授权完、授权过期或想换账号时从这里再走一次。
+               平台应用那时候的旧连接没有应用可授权，只能从团队的飞书应用重新连接。 -->
           <BaseButton
-            v-if="row.provider === 'feishu' && !row.shared_app"
+            v-if="canAuthorize(row)"
             kind="ghost"
             size="sm"
             :loading="busy === `${row.id}:auth`"
@@ -313,6 +337,39 @@ function save() {
           </BaseButton>
           <BaseButton kind="ghost" size="sm" @click="removing = row">{{ t('account.connections.remove') }}</BaseButton>
         </div>
+      </div>
+    </section>
+
+    <!-- Connect Feishu: every team this person is on, personal first, with its app and
+         their own connection through it; connecting happens in that team's Feishu
+         section, which each row links to. -->
+    <section class="settings-card" :aria-label="t('integrations.member.connect')" data-feishu-teams>
+      <div class="settings-card__title">{{ t('integrations.member.connect') }}</div>
+      <p v-if="feishuError" role="alert" class="settings-card__desc c-danger">
+        {{ feishuError }}
+        <BaseButton kind="ghost" size="sm" @click="emit('retry-feishu')">{{
+          t('integrations.member.teams.retry')
+        }}</BaseButton>
+      </p>
+      <p v-else class="settings-card__desc">
+        {{ anyApp ? t('integrations.member.teams.lede') : t('integrations.member.teams.none') }}
+      </p>
+      <div v-for="team in feishuTeams" :key="team.team_id" class="conn-team" :data-team="team.team_id">
+        <div class="conn-team__id">
+          <div class="conn-row__name">{{ teamLabel(team) }}</div>
+          <div class="conn-row__sub">
+            {{ team.app ? `${team.app.app_id} · ${mineOf(team)}` : mineOf(team) }}
+          </div>
+        </div>
+        <NavLink :to="settingsOf(team)" class="conn-team__link">
+          {{
+            team.app
+              ? t('integrations.member.teams.open')
+              : team.can_manage
+                ? t('integrations.member.teams.setUp')
+                : t('integrations.member.teams.open')
+          }}
+        </NavLink>
       </div>
     </section>
 
@@ -346,8 +403,7 @@ function save() {
       {{ t('account.connections.removeBody') }}
     </ConfirmDialog>
 
-    <!-- 一张长表单：桌面上是对话框，手机上是整页（保存在页头右边，不会被键盘盖住）。
-         只剩邮箱 —— 飞书那一栏不是一张表单，是上面那颗「连接飞书」。 -->
+    <!-- 一张长表单：桌面上是对话框，手机上是整页（保存在页头右边，不会被键盘盖住）。 -->
     <AdaptiveDialog
       :model-value="adding"
       :title="t('account.connections.addMail')"
@@ -538,6 +594,25 @@ function save() {
   justify-content: flex-end;
 }
 
+.conn-team {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 24px;
+  border-top: 1px solid var(--line);
+}
+
+.conn-team__id {
+  flex: 1;
+  min-width: 0;
+}
+
+.conn-team__link {
+  color: var(--accent-ink);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
 .conn-form-row {
   display: grid;
   grid-template-columns: 1fr 120px;
@@ -549,6 +624,10 @@ function save() {
 @media (max-width: 767.98px) {
   .conn-row {
     padding: 12px 16px 14px;
+  }
+
+  .conn-team {
+    padding: 12px 16px;
   }
 
   /* The add buttons take a line of their own under the title, starting where it

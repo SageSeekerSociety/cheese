@@ -1,40 +1,59 @@
-// 飞书：平台管理员配过一次的那个应用，加上成员各自的授权。
+// 飞书：团队设的企业自建应用，加上成员各自的授权。
 //
 // 这一块从 `api.ts` 拆出来。那个文件已经在上限之上（`.claude/scripts/check-file-sizes.py`），
-// 只能变短；而飞书这一条线本来就有边界 —— 成员侧走 `/me/integrations/feishu`，管理端走
-// `/admin/integrations/feishu`，两边共用同一份应用凭据 —— 所以拆在这里是一个有理由的整体。
+// 只能变短；而飞书这一条线本来就有边界 —— 成员侧走 `/me/integrations/feishu`，团队设置走
+// `/teams/{id}/feishu-app`。
 //
-// 凭据是组织一份、账号是个人一份：应用由管理员在「飞书应用」那页填一次，成员点一下
-// 「连接飞书」出自己的授权。所以这里的 secret 只写不回显，`connectFeishu` 也不带正文。
+// 企业自建应用只在它自己那家企业的飞书里能用，所以应用设在团队上：公司的团队设公司的应用，
+// 一个人自己用就设在个人团队上。成员的连接只记是哪个团队的应用，授权是本人自己的飞书账号。
+// Secret 只写不回显。
 import type { Integration } from '../api'
 
 import { request } from '../api'
 
 /* ---- 成员侧 ---- */
 
-/**
- * 平台配过飞书应用没有 —— 「连接飞书」那颗按钮亮不亮就是这个问题的答案。
- *
- * 没有它的时候按钮是灰的，而灰的原因只有一个：管理员还没填那一次（`/admin/integrations/feishu`）。
- */
-export interface FeishuAvailability {
-  configured: boolean
-  app_id: string
-  domain: string
+/** 本人通过某个团队的应用连的飞书：哪一行，授权完了没有。 */
+export interface FeishuConnection {
+  id: string
+  status: 'ok' | 'auth_failed' | 'unreachable' | 'error'
+  user_authorized: boolean
 }
 
-export function feishuAvailability(): Promise<FeishuAvailability> {
-  return request<FeishuAvailability>('/me/integrations/feishu')
+/** 本人所在的一个团队，和它设的飞书应用（没设是 `null`）。 */
+export interface FeishuTeamChoice {
+  team_id: number
+  team_name: string
+  /** 共享团队的地址名；个人团队是空串（它的设置在个人设置里）。 */
+  team_handle: string
+  personal: boolean
+  /** 本人能不能去设这个团队的应用：个人团队的主人，或团队管理员。 */
+  can_manage: boolean
+  app: { app_id: string; domain: string } | null
+  /** 本人通过这个团队的应用连的飞书；没连是 `null`。 */
+  connection: FeishuConnection | null
+}
+
+export interface FeishuChoices {
+  /** 个人团队在前。 */
+  teams: FeishuTeamChoice[]
+  redirect_uri: string
+}
+
+/** 「我的连接」里飞书那一格：本人所在的每个团队、它的应用和本人连没连，各指到团队的「飞书应用」。 */
+export function feishuChoices(): Promise<FeishuChoices> {
+  return request<FeishuChoices>('/me/integrations/feishu')
 }
 
 /**
- * 「连接飞书」按下的第一步：先有自己那一行，再跳去飞书授权页。
- *
- * 不带任何正文 —— 应用凭据是平台管理员的，成员这边只出自己的账号。已有的那一行会被
- * 原样返回（这个动作是幂等的），所以「连接过一半又回来了」不会攒出第二行。
+ * 团队「飞书应用」那一栏里「连接我的飞书账号」的第一步：先有自己那一行，再跳去飞书授权页。同一个团队
+ * 再选一次返回同一行，所以「连接过一半又回来了」不会攒出第二行。
  */
-export function connectFeishu(): Promise<Integration> {
-  return request<Integration>('/me/integrations/feishu', { method: 'POST' })
+export function connectFeishu(teamId: number): Promise<Integration> {
+  return request<Integration>('/me/integrations/feishu', {
+    method: 'POST',
+    body: JSON.stringify({ team_id: teamId }),
+  })
 }
 
 /** 某一行的授权地址。回调要靠行 id 认出是谁授权的，所以这一定是已经存在的那一行。 */
@@ -44,8 +63,7 @@ export function feishuAuthorizeUrl(id: string): Promise<{ url: string; redirect_
 
 /** 从飞书回来时地址栏里的 `feishu_handoff`：回调没存任何东西，只把结果替发起人留着。
  *  登录着的这一页去领（改这一行连接：`feishu_handoff`），只有这行连接的主人领得到，领到
- *  才存。回的 `authorization` 是这一次授权的结果，和回调以前直接落在地址栏里的那几项一样
- *  （`feishu`，可能还有 `feishu_detail`）。 */
+ *  才存。回的 `authorization` 是这一次授权的结果（`feishu`，可能还有 `feishu_detail`）。 */
 export function claimFeishuHandoff(
   integrationId: string,
   handoff: string
@@ -56,34 +74,35 @@ export function claimFeishuHandoff(
   })
 }
 
-/* ---- 管理端（`/admin/integrations`）----
- *
- * 平台上**唯一**一处飞书应用凭据（`backend/app/api/routes/admin_integrations.py`）。
- * 成员不再各自去飞书建一个应用，所以这一页是管理员填一次、所有人共用的那一次。
- *
- * Secret 只写不回显：读回来的结构里根本没有它，所以 `save` 的空串表示「不改已经存下的
- * 那一个」，不是「清空」—— 改了域名或 App ID 不必先把它找回来。
- */
+/* ---- 团队设置（`/teams/{id}/feishu-app`）：成员都读得到，能改团队设置的人能写 ---- */
 
-export interface PlatformFeishuApp {
+export interface TeamFeishuApp {
   configured: boolean
   app_id: string
   domain: string
   updated_by: string
   updated_at: string | null
+  /** 要填进应用「重定向 URL」的授权回调地址。 */
+  redirect_uri: string
+  /** 读的人能不能设（只有读的时候给）。 */
+  can_manage?: boolean
+  /** 读的人自己通过这个应用连的飞书（只有读的时候给）。 */
+  connection?: FeishuConnection | null
 }
 
-export function getPlatformFeishuApp(): Promise<PlatformFeishuApp> {
-  return request<PlatformFeishuApp>('/admin/integrations/feishu')
+export function getTeamFeishuApp(teamId: number): Promise<TeamFeishuApp> {
+  return request<TeamFeishuApp>(`/teams/${teamId}/feishu-app`)
 }
 
-export function savePlatformFeishuApp(body: {
-  app_id: string
-  app_secret: string
-  domain: string
-}): Promise<PlatformFeishuApp> {
-  return request<PlatformFeishuApp>('/admin/integrations/feishu', {
-    method: 'PUT',
-    body: JSON.stringify(body),
-  })
+/** 保存前服务端先拿这套凭据换一次应用令牌，Secret 不对当场报错。`app_secret` 空着表示
+ *  不改已经存下的那一个。 */
+export function saveTeamFeishuApp(
+  teamId: number,
+  body: { app_id: string; app_secret: string; domain: string }
+): Promise<TeamFeishuApp> {
+  return request<TeamFeishuApp>(`/teams/${teamId}/feishu-app`, { method: 'PUT', body: JSON.stringify(body) })
+}
+
+export function removeTeamFeishuApp(teamId: number): Promise<TeamFeishuApp> {
+  return request<TeamFeishuApp>(`/teams/${teamId}/feishu-app`, { method: 'DELETE' })
 }

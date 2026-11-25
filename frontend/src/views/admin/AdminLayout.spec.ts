@@ -58,7 +58,6 @@ const SECTION_LABELS: Record<string, string> = {
   'navigation.admin.credits': '方案与额度',
   'navigation.admin.spaces': '空间申请',
   'navigation.admin.members': '成员',
-  'navigation.admin.integrations': '飞书应用',
   'admin.layout.checking': '正在确认权限…',
   'admin.layout.deniedTitle': '这一页是管理员后台',
 }

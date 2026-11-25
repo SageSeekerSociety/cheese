@@ -11,14 +11,16 @@
   "check": "测试连接",
   "connectFailed": "连接失败",
   "discard": "丢弃",
-  "feishu": "飞书",
   "feishuAuthorized": "飞书授权成功",
   "feishuOutcome": {
     "deleted": "连接已删除",
     "denied": "没有授权",
     "failed": "飞书授权没有完成",
     "invalidLink": "授权链接无效",
-    "withDetail": "{sentence}：{detail}"
+    "withDetail": "{sentence}：{detail}",
+    "busy": "团队的飞书应用正在被修改，这次授权还留着：稍后刷新这一页就会接着完成",
+    "appChanged": "授权期间团队换了飞书应用，这次授权没有保存，请重新连接",
+    "authorizeAgain": "团队的飞书应用刚被修改，这次授权没有保存，请重新连接"
   },
   "form": {
     "address": "邮箱地址",
@@ -35,6 +37,7 @@
   "lede": "接入自己的邮箱或飞书，并选择允许哪些项目的 AI 队友使用。AI 队友以你的账号读邮件、写草稿、读写飞书文档，邮件须经你确认后才会发出",
   "loadFailed": "加载连接失败",
   "mail": "邮箱",
+  "feishu": "飞书",
   "none": "无",
   "notes": "（{list}）",
   "pendingEmpty": "暂无待发送的邮件",
