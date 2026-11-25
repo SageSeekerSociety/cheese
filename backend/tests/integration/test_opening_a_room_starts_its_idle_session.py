@@ -7,6 +7,7 @@ once a minute at most, and only when the session host has room for it.
 """
 
 import asyncio
+import uuid
 from collections.abc import Callable
 from types import SimpleNamespace
 from typing import Any
@@ -29,7 +30,7 @@ from app.domain.agent_instance.models import AgentInstance
 from app.domain.skill_library import native_skill_doc
 from app.main import app
 from tests.integration import test_central_room_sessions as central_sessions
-from tests.integration.conftest import room_socket
+from tests.integration.conftest import open_task, room_socket
 from tests.integration.test_a_release_restarts_quiet_sessions import IDLE, ReleaseHub
 from tests.integration.test_central_room_sessions import sessions
 from tests.support.hang import HANG_S
@@ -225,3 +226,87 @@ async def test_a_session_started_ahead_of_a_turn_carries_the_teammates_skills(
     guide = native_skill_doc("wolfram")
     assert guide is not None
     assert guide[1] in client.portal.call(carried)
+
+
+@pytest.fixture
+def fresh_room(client, room, monkeypatch, tmp_path):
+    """A room nobody has written to: its teammate has no session yet."""
+    monkeypatch.setattr(settings, "agent_session_device_id", "center")
+    hub = IdleHub()
+    hub.ping = dict(IDLE)
+    service, claude = _backend(client, hub, tmp_path)
+    app.dependency_overrides[get_chat_service] = lambda: service
+    yield room, hub, service, claude
+    app.dependency_overrides.pop(get_chat_service, None)
+
+
+@pytest.mark.anyio
+async def test_typing_to_a_teammate_starts_its_first_session(client, fresh_room):
+    """The first message to a teammate used to wait for its session to start.
+    Typing a message that would go to it is the sign that one is coming."""
+    (_project, topic), hub, service, claude = fresh_room
+    seat = client.portal.call(service._turn_seat_handle, topic)
+
+    with room_socket(client, topic, "alice") as ws:
+        ws.send_json({"type": "typing", "topic": str(topic), "agent": seat})
+        client.portal.call(_until, lambda: claude.holds(topic, seat))
+    assert len(hub.opened) == 1
+
+
+@pytest.mark.anyio
+async def test_typing_to_nobody_starts_no_session(client, fresh_room):
+    """Opening a room, or typing to the people in it, starts no session the
+    room never had: most rooms that are opened are only read."""
+    (_project, topic), hub, _service, claude = fresh_room
+
+    with room_socket(client, topic, "alice") as ws:
+        ws.send_json({"type": "typing", "topic": str(topic)})
+        ws.send_json({"type": "ping", "topic": str(topic)})
+        while ws.receive_json()["type"] != "pong":
+            pass
+        client.portal.call(asyncio.sleep, 0.3)
+    assert hub.opened == []
+    assert not claude.holds(topic)
+
+
+@pytest.mark.anyio
+async def test_typing_in_a_task_starts_the_tasks_own_session(client, fresh_room):
+    """A task is a conversation of its own in its channel, with a session of
+    its own: typing in the task starts that one, not the channel's."""
+    (project, topic), hub, service, claude = fresh_room
+    task = uuid.UUID(open_task(client, str(topic), owner="alice")["id"])
+    seat = client.portal.call(service._turn_seat_handle, task)
+
+    with room_socket(client, task, "alice") as ws:
+        ws.send_json({"type": "typing", "topic": str(task), "agent": seat})
+        client.portal.call(_until, lambda: claude.holds(task, seat))
+    assert not claude.holds(topic, seat)
+
+
+@pytest.mark.anyio
+async def test_a_place_outside_the_watched_room_starts_nothing(client, fresh_room):
+    """The typing signal names where the draft is; only a conversation of the
+    room being watched is taken from it."""
+    (project, topic), hub, service, _claude = fresh_room
+    other = uuid.UUID(
+        client.post(
+            "/topics",
+            json={"project_id": str(project), "title": "Elsewhere"},
+            headers=central_sessions.session_auth_headers("alice"),
+        ).json()["data"]["id"]
+    )
+    seat = client.portal.call(service._turn_seat_handle, topic)
+    outcomes: list[str] = []
+    start = service.prewarm._start
+
+    async def recorded(*args):
+        outcomes.append(await start(*args))
+        return outcomes[-1]
+
+    service.prewarm._start = recorded
+    with room_socket(client, topic, "alice") as ws:
+        ws.send_json(
+            {"type": "typing", "topic": str(topic), "agent": seat, "place": str(other)}
+        )
+        client.portal.call(_until, lambda: bool(outcomes))
+    assert hub.opened == []

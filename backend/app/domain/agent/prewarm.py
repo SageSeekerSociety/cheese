@@ -13,6 +13,12 @@ A session whose runner let it go after sitting idle is started again the same
 way when somebody opens its room or starts typing there (`room_active`): a
 message is likely on its way, and the session can be up before it arrives.
 
+A seat that has no session yet — the first message to a teammate in a channel,
+a task, a 支线 or a private chat — is started when somebody is typing a message
+that would go to that teammate (`addressed`): the page says so with its typing
+signal, from the backend's own answer to who the draft is for. Opening the
+place is not enough for these: most places that are opened are only read.
+
 The start goes through the same `RoomSessions.ensure` a turn uses, from the
 same inputs (`TurnPreparation.launch_inputs`) and under the same seat lock, so a turn
 arriving meanwhile waits for it rather than racing it, and the session it
@@ -70,6 +76,7 @@ class SeatPrewarm:
         self._running: dict[tuple[uuid.UUID, str], asyncio.Task] = {}
         self._memory = HostMemory()
         self._room_seen: dict[uuid.UUID, float] = {}
+        self._addressed_seen: dict[tuple[uuid.UUID, str], float] = {}
         self._looking: set[asyncio.Task] = set()
 
     def room_active(self, topic_id: uuid.UUID) -> None:
@@ -98,6 +105,95 @@ class SeatPrewarm:
         live = runtime.live.get((topic_id, seat)) if runtime is not None else None
         if live is not None:
             self.nudge(live.session)
+
+    def addressed(
+        self, room_id: uuid.UUID, conversation_id: uuid.UUID, agent_handle: str
+    ) -> None:
+        """Somebody in this room is typing a message that would go to this
+        teammate in this conversation (the room itself, or a task or 支线 in
+        it): have its session up before the message is sent, at most once a
+        minute."""
+        now = time.monotonic()
+        key = (conversation_id, agent_handle)
+        if now - self._addressed_seen.get(key, float("-inf")) < ROOM_AGAIN_AFTER_S:
+            return
+        self._addressed_seen = {
+            seat: seen
+            for seat, seen in self._addressed_seen.items()
+            if now - seen < ROOM_AGAIN_AFTER_S
+        }
+        self._addressed_seen[key] = now
+        task = asyncio.create_task(
+            self._addressed(room_id, conversation_id, agent_handle)
+        )
+        self._looking.add(task)
+        task.add_done_callback(self._looking.discard)
+
+    async def _addressed(
+        self, room_id: uuid.UUID, conversation_id: uuid.UUID, agent_handle: str
+    ) -> None:
+        started = time.monotonic()
+        try:
+            outcome = await self._start(room_id, conversation_id, agent_handle)
+        except Exception:  # the turn starts it the usual way
+            logger.exception(
+                "session_prewarm_failed topic=%s seat=%s", conversation_id, agent_handle
+            )
+            return
+        logger.info(
+            "session_prewarm topic=%s seat=%s outcome=%s elapsed_ms=%.0f",
+            conversation_id,
+            agent_handle,
+            outcome,
+            (time.monotonic() - started) * 1000,
+        )
+
+    async def _start(
+        self, room_id: uuid.UUID, conversation_id: uuid.UUID, agent_handle: str
+    ) -> str:
+        """Start the session a message to this teammate here would start, when
+        the seat has none; what happened, for the log."""
+        chat = self._chat
+        read = chat.turn_preparation.launch_inputs
+        seen = await read(conversation_id, agent_handle)
+        if seen is None or seen.session.topic_id != room_id:
+            # Nowhere to run, a teammate that may not act here, or a
+            # conversation outside the room this was said in.
+            return "not_here"
+        seat = seen.session.agent_handle
+        if (holder := chat._compute.holder(conversation_id, seat)) is not None:
+            # It has a session: restarted only if its runner let it go.
+            if (held := holder.holding((conversation_id, seat))) is not None:
+                self.nudge(held)
+            return "held"
+        if not seen.runtime.starts_sessions():
+            return "not_owner"
+        async with (
+            self._slots,
+            seat_admission(chat.live.seat_lock_for(conversation_id, seat)),
+        ):
+            # Read again under the seat's lock: a turn that ran while this
+            # waited has started it, and moved what it would be started with.
+            if chat._compute.holder(conversation_id, seat) is not None:
+                return "held"
+            launch = await read(conversation_id, agent_handle)
+            if launch is None or launch.session != seen.session:
+                return "not_here"
+            if not await self._memory.has_room(room_id):
+                return "host_full"
+            await chat._compute.activate(launch.session, launch.runtime)
+            await launch.runtime.ensure(
+                launch.session,
+                system_prompt=launch.system_prompt,
+                resume_token=launch.resume_token,
+                retired_token=launch.retired_token,
+                model=launch.model,
+                env=launch.env,
+                acting=launch.acting,
+                needs_place=launch.needs_place,
+                keeps_nothing=launch.keeps_nothing,
+            )
+            return "started"
 
     def nudge(self, session: SessionRef) -> None:
         """Bring this seat's session up to date in the background, once."""
@@ -142,17 +238,23 @@ class SeatPrewarm:
     async def _prewarm(self, session: SessionRef) -> str:
         chat = self._chat
         topic_id, seat = session.topic_id, session.agent_handle
+        # A task's or a 支线's session is a conversation of its own in the room:
+        # its turns queue on it and are started with what it reads.
+        conversation_id = session.conversation_id
         runtime = chat._compute.seat_runtime(topic_id, seat)
         if runtime is None:
             return "not_held"
-        async with self._slots, seat_admission(chat.live.seat_lock_for(topic_id, seat)):
+        async with (
+            self._slots,
+            seat_admission(chat.live.seat_lock_for(conversation_id, seat)),
+        ):
             live = runtime.prewarm_due(session)
             if live is None:
                 return "not_due"
             if not await self._memory.has_room(topic_id):
                 return "host_full"
             launch = await chat.turn_preparation.launch_inputs(
-                topic_id, seat, acting=live.acting
+                conversation_id, seat, acting=live.acting
             )
             if launch is None or launch.runtime is not runtime:
                 # Archived, gone, or now on another harness: that move is the
@@ -167,5 +269,6 @@ class SeatPrewarm:
                 env=launch.env,
                 acting=live.acting,
                 needs_place=launch.needs_place,
+                keeps_nothing=launch.keeps_nothing,
             )
             return "deferred" if runtime.prewarm_due(session) else "current"

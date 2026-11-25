@@ -118,6 +118,10 @@ class Launch:
     model: str | None
     env: dict[str, str] | None
     needs_place: bool
+    #: The seat it acts under, and whether its work stays on the machine (a
+    #: 支线's): both part of what a turn starts it with.
+    acting: str
+    keeps_nothing: bool
 
 
 @dataclass(frozen=True, slots=True)

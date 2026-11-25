@@ -319,6 +319,7 @@ const {
   awaitingReply,
   agentFaces,
   activityLines,
+  noteAddressing,
   prShortId,
   prState,
   composerHint,
@@ -764,6 +765,7 @@ useComposerShortcut({
           :reply-to="replyTarget?.id ?? null"
           :place-state="placeState ?? null"
           @send="onComposerSend"
+          @addressing="noteAddressing"
           @clear-reply="clearReply"
           @clear-quote="clearDraftQuote"
           @files="(files) => void addFiles(files)"

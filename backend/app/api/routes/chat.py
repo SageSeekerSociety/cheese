@@ -257,6 +257,15 @@ async def rooms_live(
                 await broker.typing(topic, room.handle, active=typing)
                 if typing and room.room_id is not None:
                     chat_service.prewarm.room_active(room.room_id)
+                # The draft would go to this AI teammate, in this conversation
+                # of the room: the page's reading of `chat-addressing`.
+                agent = payload.get("agent")
+                if typing and room.within is not None and isinstance(agent, str):
+                    try:
+                        place = uuid.UUID(str(payload.get("place") or topic_id))
+                    except ValueError:
+                        continue
+                    chat_service.prewarm.addressed(room.within, place, agent)
                 continue
             # A message is POSTed to /topics/{id}/messages; this socket writes
             # nothing, so it says so rather than dropping the frame.
@@ -288,6 +297,8 @@ class _Room:
         self.handle: str | None = None
         #: The room to keep warm while it is watched; None for a task's channel.
         self.room_id: uuid.UUID | None = None
+        #: The room this subscription is in: itself, or its task's.
+        self.within: uuid.UUID | None = None
 
     async def watch(self, chat_service, broker, send, forget) -> None:
         """Feed this room to the connection until it is dropped or ends."""
@@ -393,6 +404,7 @@ class _Room:
                     return ("forbidden", exc.args[0]), [], card, None, None
             self.handle = actor.handle
             self.room_id = room_id if card is None else None
+            self.within = room_id
             # The turns still running here, as the database has them. The
             # broker's own list lives in this process only, and a deploy replaces
             # the process, so a turn started before it, or on the other

@@ -4,7 +4,10 @@ import type { MemberActivity } from '@/lib/memberActivity'
 
 // The client sends the liveness probe, `typing` (I am composing here; `active:
 // false` = stopped; who is the socket's credential) and `sync` — a message is a POST.
-export type WsClientMessage = { type: 'ping' } | { type: 'typing'; active?: boolean } | { type: 'sync' }
+export type WsClientMessage =
+  | { type: 'ping' }
+  | { type: 'typing'; active?: boolean; agent?: string; place?: string }
+  | { type: 'sync' }
 
 /** 后端还欠着的一次自动重试，`room_state` 帧里的那一项（turn_resume.waiting）。 */
 export interface ResumeWait {

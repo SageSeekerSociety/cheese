@@ -115,6 +115,8 @@ const emit = defineEmits<{
   (e: 'clear-reply'): void
   (e: 'clear-quote'): void
   (e: 'add-library-file', path: string): void
+  /** 这条草稿此刻会交给哪位 AI 队友、在哪段对话里（后端的回答）；谁也不交给时为空。 */
+  (e: 'addressing', to: { agent: string; place: string } | null): void
 }>()
 
 /** 正文。存在哪、谁清它、怎么跨刷新，全在房间那一层。 */
@@ -325,6 +327,11 @@ const { addressing, fresh: addressingFresh } = useAddressing({
   }),
   version: () => props.placeState ?? null,
 })
+watch(
+  () => [addressing.value?.agent?.handle ?? null, props.place ?? null] as const,
+  ([agent, place]) => emit('addressing', agent && place ? { agent, place } : null),
+  { immediate: true }
+)
 
 // 这条草稿现在交不交给队友。**读的是后端对这份草稿的回答**，不是一个单独存着的开关值，
 // 也不是浏览器照抄的一份规矩：@ 了它、回复它的消息、任务负责人在开着的任务里说话，

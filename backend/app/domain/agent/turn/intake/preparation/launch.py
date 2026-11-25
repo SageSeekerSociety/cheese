@@ -15,9 +15,10 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
+from app.core.errors import UnprocessableEntityError
 from app.domain.agent.carried_bodies import carried_bodies
 from app.domain.agent.harness import SessionRef
-from app.domain.agent.queries import _session_agent
+from app.domain.agent.queries import _acting_handle, _agent_at, _named_teammate
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.room.system_prompt import (
     session_env,
@@ -71,17 +72,23 @@ async def launch_inputs(
     topic_id: uuid.UUID,
     agent_handle: str,
     *,
-    acting: str,
+    acting: str | None = None,
 ) -> Launch | None:
     """What this seat's session would be started with if a turn started it
     now, read without opening one — no backlog claimed, no policy gate
-    passed, nothing written. None when the room has nowhere to run.
+    passed, nothing written. None when the conversation has nowhere to run,
+    or the teammate may not act in it.
+
+    ``topic_id`` is the conversation: a channel or private chat, or a task or
+    支线 in one, each of which has a session of its own. ``acting`` is the seat
+    a running session already acts under; unnamed, it is read as a turn reads
+    it (`_acting_handle`).
 
     Every input is the one `prepare` and `converse` hand
     `RoomSessions.send`, from the same helpers, so a session started from
     these is the one the next turn would compare equal and keep."""
     async with prep.sessions() as session:
-        place = await PlaceResolver(session).resolve(topic_id)
+        place = await PlaceResolver(session).conversation(topic_id)
         if place is None or place.room.status == TopicStatus.archived:
             return None
         topic = place.room
@@ -89,7 +96,16 @@ async def launch_inputs(
         if project is None:
             return None
         agents = AgentInstanceService(session)
-        agent = await _session_agent(agents, topic, project, agent_handle)
+        # The teammate the seat names, else the one that works here, as a
+        # turn resolves it (`assembly`).
+        agent = await _named_teammate(agents, project, agent_handle) or await _agent_at(
+            session, place
+        )
+        if acting is None:
+            try:
+                acting = await _acting_handle(session, topic.id, agent)
+            except UnprocessableEntityError:
+                return None
         needs_place = not _is_dm(topic)
         kind = session_kind(place, needs_place=needs_place)
         doc_text = await living_doc_text(session, place, needs_place=needs_place)
@@ -100,7 +116,7 @@ async def launch_inputs(
         if provider is None:
             return None
         continuation = await AgentSessionService(session).continuation(
-            place.room_id,
+            place.conversation_id,
             agent.handle,
             harness=harness,
             generation=PROFILES[kind].generation,
@@ -117,14 +133,21 @@ async def launch_inputs(
     model_kwargs, _route = await prep.model_options(
         project.id,
         provider,
-        topic_id,
+        place.room_id,
         agent=agent,
         acting_agent=acting,
+        task_id=place.task_id,
         default_effort=PROFILES[kind].effort,
     )
     model_kwargs["env"] = {**model_kwargs.get("env", {}), **session_env(kind)}
     return Launch(
-        session=SessionRef(project.id, topic_id, agent.handle, harness=harness),
+        session=SessionRef(
+            project.id,
+            place.room_id,
+            agent.handle,
+            harness=harness,
+            inner_id=place.inner_id,
+        ),
         runtime=provider,
         system_prompt=session_system_prompt(
             prep.base_prompt,
@@ -140,4 +163,6 @@ async def launch_inputs(
         model=model_kwargs.get("model"),
         env=model_kwargs.get("env"),
         needs_place=needs_place,
+        acting=acting,
+        keeps_nothing=not place.keeps_work,
     )
