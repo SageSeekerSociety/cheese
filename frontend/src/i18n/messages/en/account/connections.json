@@ -13,7 +13,6 @@
   "discard": "Discard",
   "feishuAuthorized": "Feishu authorized",
   "feishuOutcome": {
-    "appChanged": "The team switched its Feishu app during authorization, so this one was not kept. Connect again",
     "deleted": "The connection has been deleted",
     "denied": "Authorization was not granted",
     "failed": "Feishu authorization did not complete",

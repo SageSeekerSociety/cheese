@@ -11,7 +11,7 @@
       "setUp": "Set up",
       "loadFailed": "Could not load your teams' Feishu apps",
       "retry": "Retry",
-      "reconnect": "Connect again with a team's Feishu app: open the team's Feishu app section under Connect Feishu below"
+      "reconnect": "Connect again with a team's Feishu app: open the team's Feishu app section under Connect Feishu below. The new connection does not take over the projects ticked on this one; tick them again on the new one once connected"
     }
   },
   "team": {

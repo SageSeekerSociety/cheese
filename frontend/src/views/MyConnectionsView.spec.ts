@@ -221,6 +221,8 @@ describe('「连接飞书」那一格跟着连接走', () => {
     })
     await mount()
     expect(await screen.findByText(/用团队的飞书应用重新连接/)).toBeTruthy()
+    // 新的连接不沿用旧的那一行借给的项目：这里说清楚，旧的那一行还列着它们。
+    expect(screen.getByText(/新的连接不沿用这一行勾选的项目/)).toBeTruthy()
   })
 })
 
@@ -298,13 +300,6 @@ describe('从飞书授权回来', () => {
     setLocale('en')
     await mount('/?feishu=something_new')
     await vi.waitFor(() => expect(sonner.error).toHaveBeenCalledWith('Feishu authorization did not complete'))
-  })
-
-  it('授权期间团队换了应用，说这次没保存、请重新连接', async () => {
-    await mount('/?feishu=app_changed')
-    await vi.waitFor(() =>
-      expect(sonner.error).toHaveBeenCalledWith('授权期间团队换了飞书应用，这次授权没有保存，请重新连接')
-    )
   })
 
   it('成功了说成功', async () => {

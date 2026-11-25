@@ -14,6 +14,7 @@ from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
+from sqlalchemy import text as sa_text
 
 from app.core.config import settings
 from app.domain.integration import feishu, mail
@@ -352,14 +353,14 @@ class FeishuStub:
         self.bad_secrets: set[str] = set()
         #: What the tenant-token call answers instead, as (status, body) — an
         #: upstream echoing the request, or turning it away for now.
-        self.tenant_reply: tuple[int, dict] | None = None
+        self.tenant_reply: tuple[int, dict | list] | None = None
         #: What the OAuth token call answers instead, as (status, body): a body
         #: dict may echo the request (``{code}``, ``{refresh_token}``), a str is
         #: sent as it is — a gateway's HTML page.
-        self.token_reply: tuple[int, dict | str] | None = None
+        self.token_reply: tuple[int, dict | list | str] | None = None
         #: What a document call answers instead, as (status, body); ``{bearer}``
         #: in the body echoes the token the call carried.
-        self.doc_reply: tuple[int, dict] | None = None
+        self.doc_reply: tuple[int, dict | list] | None = None
         #: What the person agreed to on the authorization page, by the code it
         #: sent them back with: Feishu issues a refresh token only when that
         #: included ``offline_access``.
@@ -412,6 +413,8 @@ class FeishuStub:
             self.app_credentials.append((body["app_id"], body["app_secret"]))
             if self.tenant_reply is not None:
                 status, reply = self.tenant_reply
+                if isinstance(reply, list):
+                    return httpx.Response(status, json=reply)
                 return httpx.Response(
                     status,
                     json={
@@ -436,6 +439,8 @@ class FeishuStub:
             self.tokens.append(body)
             if self.token_reply is not None:
                 status, reply = self.token_reply
+                if isinstance(reply, list):
+                    return httpx.Response(status, json=reply)
                 if isinstance(reply, str):
                     return httpx.Response(
                         status, text=reply, headers={"content-type": "text/html"}
@@ -459,6 +464,8 @@ class FeishuStub:
             if self.doc_reply is not None:
                 status, reply = self.doc_reply
                 bearer = self.bearers[-1]
+                if isinstance(reply, list):
+                    return httpx.Response(status, json=reply)
                 return httpx.Response(
                     status,
                     json={
@@ -990,10 +997,14 @@ def test_a_row_with_its_own_app_keeps_working_and_asks_to_reconnect(
     assert "legacy-secret" not in str(row)
 
 
-def test_reconnecting_through_a_team_keeps_the_older_rows_projects(client, feishu_stub):
-    """Following「用团队的飞书应用重新连接」from an older row: the new
-    connection is lent to the same projects, so nothing needs granting again,
-    and it carries the marker that keeps an older build off it."""
+def test_reconnecting_through_a_team_lends_the_new_row_to_no_project(
+    client, feishu_stub
+):
+    """Following「用团队的飞书应用重新连接」from older rows: the new connection
+    starts lent to no project — it is not handed the union of whatever older
+    rows were lent to — and the older rows keep theirs, so the page still shows
+    which projects to grant again. It carries the marker that keeps an older
+    build off it."""
     person, project, _room = _setup(client)
     _seed_legacy(client, OWNER, {}, {}, grants=[project])
     _seed_legacy(
@@ -1004,8 +1015,11 @@ def test_reconnecting_through_a_team_keeps_the_older_rows_projects(client, feish
         grants=[project],
     )
     row = _connect_feishu(client, person)
-    assert row["grants"] == [str(project)]
+    assert row["grants"] == []
     assert row["config"]["app_id"] == f"team-app:{row['config']['team_id']}"
+    listed = client.get("/me/integrations", headers=person).json()["data"]["data"]
+    older = [r for r in listed if r["id"] != row["id"]]
+    assert [r["grants"] for r in older] == [[str(project)], [str(project)]]
 
 
 def test_a_row_made_under_the_platform_app_reads_as_needing_reconnect(
@@ -1163,13 +1177,16 @@ def test_a_token_kept_from_the_old_app_is_never_paired_with_the_new_one(
     assert read.status_code == 200, read.text
 
 
-def _switch_team_app(client, tid, app_id, by):
+def _switch_team_app(client, tid, app_id, by, lock_timeout=None):
     """The team's admin saves another App ID, in a session of its own — the way
-    a save from another browser lands while this request is still running."""
+    a save from another browser lands while this request is still running.
+    ``lock_timeout``: how long it waits for the team's app, as a request does."""
     from app.domain.integration.service import TeamFeishuAppService
 
     async def _save() -> None:
         async with client.test_factory() as s:
+            if lock_timeout:
+                await s.execute(sa_text(f"SET LOCAL lock_timeout = '{lock_timeout}'"))
             await TeamFeishuAppService(s).save(
                 team_id=tid, app_id=app_id, app_secret="", domain="feishu", by=by
             )
@@ -1188,22 +1205,27 @@ def _stored(client, row_id) -> tuple[dict, dict]:
     return asyncio.run(_read())
 
 
-def test_an_authorization_finished_after_the_team_switched_apps_keeps_nothing(
+def test_a_team_app_cannot_be_switched_while_an_authorization_is_kept(
     client, feishu_stub, monkeypatch
 ):
-    """Authorizing started under app A; while the code is being exchanged, the
-    team switches to app B. Tokens app A issued are not kept on a connection that
-    now goes through app B: the page says the app changed, and authorizing
-    again under B works."""
+    """Authorizing started under app A. While its code is exchanged, the team's
+    app stays app A: a save of app B in that moment waits (here, as a request
+    does, it gives up after its lock timeout — having proved B with Feishu and
+    written nothing). The tokens kept are A's and work; the switch made after
+    clears them, and authorizing again under B works."""
+    from sqlalchemy.exc import DBAPIError
+
     person, project, room = _setup(client)
     tid = _team(client, owner="fs_lead10", members=(OWNER,))
     lead = {"Authorization": f"Bearer {seed_user(client, 'fs_lead10')}"}
     _set_app(client, lead, tid, {**APP, "app_id": "cli_a"})
     row = _connect_feishu(client, person, tid)
+    client.patch(
+        f"/me/integrations/{row['id']}", json={"grants": [project]}, headers=person
+    )
     url = client.get(
         f"/me/integrations/{row['id']}/feishu/authorize", headers=person
     ).json()["data"]["url"]
-    assert "cli_a" in url
     code = feishu_stub.consent(url)
     state = parse_qs(urlparse(url).query)["state"][0]
     back = client.get(
@@ -1213,24 +1235,29 @@ def test_an_authorization_finished_after_the_team_switched_apps_keeps_nothing(
     )
 
     real = feishu.FeishuClient.exchange_code
+    switch: list[str] = []
 
     async def switch_midway(self, code, redirect_uri):
         await real(self, code, redirect_uri)
-        await _switch_team_app(client, tid, "cli_b", "fs_lead10")
+        try:
+            await _switch_team_app(client, tid, "cli_b", "fs_lead10", "300ms")
+            switch.append("switched")
+        except DBAPIError as exc:
+            switch.append(getattr(exc.orig, "sqlstate", "") or str(exc.orig))
 
     monkeypatch.setattr(feishu.FeishuClient, "exchange_code", switch_midway)
-    assert _claim(client, person, back.headers["location"]) == {"feishu": "app_changed"}
-    assert feishu_stub.tokens[-1]["client_id"] == "cli_a"
-    config, secret = _stored(client, row["id"])
-    assert "authorized_app_id" not in config
-    assert not secret.get("user_access_token") and not secret.get("refresh_token")
+    assert _claim(client, person, back.headers["location"]) == {"feishu": "ok"}
+    assert switch and switch[0] != "switched", "the app was switched mid-exchange"
+    assert _stored(client, row["id"])[0]["authorized_app_id"] == "cli_a"
+    read = client.get(f"/integrations/{row['id']}/feishu/docs/doc-ok?topic={room}")
+    assert read.status_code == 200, read.text
 
     monkeypatch.setattr(feishu.FeishuClient, "exchange_code", real)
+    asyncio.run(_switch_team_app(client, tid, "cli_b", "fs_lead10"))
+    config, secret = _stored(client, row["id"])
+    assert "authorized_app_id" not in config and not secret.get("refresh_token")
     _authorize(client, person, row["id"])
     assert feishu_stub.tokens[-1]["client_id"] == "cli_b"
-    client.patch(
-        f"/me/integrations/{row['id']}", json={"grants": [project]}, headers=person
-    )
     read = client.get(f"/integrations/{row['id']}/feishu/docs/doc-ok?topic={room}")
     assert read.status_code == 200, read.text
 
@@ -1565,6 +1592,285 @@ def test_a_failed_call_never_overwrites_a_reconnect_that_landed_meanwhile(
     assert listed["status"] == "ok"
 
 
+def test_a_refresh_is_kept_even_when_the_call_after_it_fails_while_another_waits(
+    client, feishu_stub
+):
+    """Two calls find the token expired. The first refreshes and its document
+    call then fails; the second was waiting meanwhile. The refreshed tokens are
+    in the database before any document call is made, so the second finds them
+    and does not spend the old refresh token again (Feishu would refuse it):
+    one refresh, the second call goes through, the connection stays working."""
+    person, project, _room = _setup(client)
+    row = _own_app_connection(client, person, project)
+    _expire_user_token(client, row["id"])
+
+    async def read(doc: str, *, wait_before: float, hold: float):
+        await asyncio.sleep(wait_before)
+        async with client.test_factory() as s:
+            found = await s.get(Integration, uuid.UUID(row["id"]))
+            assert found is not None
+            service = IntegrationService(s, None, None)  # type: ignore[arg-type]
+
+            async def slow_read(c):
+                await asyncio.sleep(hold)
+                return await c.read(doc)
+
+            try:
+                result = await service.feishu(found, slow_read)
+                await s.commit()
+                return result
+            except IntegrationError as exc:
+                await s.rollback()
+                return exc
+
+    async def both() -> list:
+        return await asyncio.gather(
+            read("doc-secret", wait_before=0, hold=0.4),
+            read("doc-ok", wait_before=0.1, hold=0),
+        )
+
+    first, second = asyncio.run(both())
+    assert isinstance(first, IntegrationError) and first.kind == "forbidden"
+    assert isinstance(second, dict), second
+    assert [t["grant_type"] for t in feishu_stub.tokens].count("refresh_token") == 1
+    (listed,) = client.get("/me/integrations", headers=person).json()["data"]["data"]
+    assert listed["status"] == "ok", listed
+
+
+def test_a_call_that_needed_no_refresh_never_writes_tokens_back(client, feishu_stub):
+    """A call that started before its owner finished authorizing must not
+    write its own (empty) tokens over the ones the authorization just kept."""
+    person, project, room = _setup(client)
+    fid = _seed_connection(client, person, OWNER, [project])
+
+    real = feishu.FeishuClient.read
+
+    async def authorized_meanwhile(self, document_id):
+        async with client.test_factory() as s:
+            found = await s.get(Integration, uuid.UUID(fid))
+            assert found is not None
+            seal(
+                found,
+                {
+                    "user_access_token": "oauth-token",
+                    "user_token_expires_at": time.time() + 3600,
+                    "refresh_token": "oauth-refresh",
+                },
+            )
+            found.config = {**found.config, "authorized_app_id": APP["app_id"]}
+            await s.commit()
+        return await real(self, document_id)
+
+    feishu.FeishuClient.read = authorized_meanwhile  # type: ignore[method-assign]
+    try:
+        r = client.get(f"/integrations/{fid}/feishu/docs/doc-ok?topic={room}")
+    finally:
+        feishu.FeishuClient.read = real  # type: ignore[method-assign]
+    assert r.status_code == 200, r.text
+    _config, secret = _stored(client, fid)
+    assert secret["refresh_token"] == "oauth-refresh"
+    assert secret["user_access_token"] == "oauth-token"
+
+
+def test_a_save_proves_the_app_before_locking_the_team_app(
+    client, feishu_stub, monkeypatch
+):
+    """While Feishu is being asked whether new credentials work, the team's app
+    is not locked: an authorization being finished under it is not kept
+    waiting on that call."""
+    from app.domain.integration.service import TeamFeishuAppService
+
+    person, _project, _room = _setup(client)
+    tid = _personal_team(client, person)
+    _set_app(client, person, tid)
+    real = feishu.FeishuClient.tenant_token
+    probe: list[str] = []
+
+    async def check_the_lock_while_proving(self):
+        async with client.test_factory() as other:
+            try:
+                await other.execute(
+                    sa_text(
+                        "SELECT 1 FROM team_feishu_apps WHERE team_id = :t "
+                        "FOR SHARE NOWAIT"
+                    ),
+                    {"t": tid},
+                )
+                probe.append("free")
+            except Exception as exc:  # the lock is held: what is being tested
+                probe.append(type(exc).__name__)
+            await other.rollback()
+        return await real(self)
+
+    monkeypatch.setattr(
+        feishu.FeishuClient, "tenant_token", check_the_lock_while_proving
+    )
+
+    async def save() -> None:
+        async with client.test_factory() as s:
+            await TeamFeishuAppService(s).save(
+                team_id=tid,
+                app_id="cli_own",
+                app_secret="s9",
+                domain="feishu",
+                by=OWNER,
+            )
+            await s.commit()
+
+    asyncio.run(save())
+    assert probe == ["free"], probe
+
+
+def test_a_save_keeping_the_secret_after_another_app_id_landed_is_refused(
+    client, feishu_stub, monkeypatch
+):
+    """A save that leaves the secret blank keeps the stored one. If another
+    save switched the team to another App ID meanwhile, the stored secret is
+    that app's, never proved for this App ID: the save says so and writes
+    nothing."""
+    from app.domain.integration.service import TeamFeishuAppService, team_app_secret
+
+    person, _project, _room = _setup(client)
+    tid = _personal_team(client, person)
+    _set_app(client, person, tid)
+    real = feishu.FeishuClient.tenant_token
+
+    async def slow_for_cli_own(self):
+        if self.settings.app_id == "cli_keep":
+            await asyncio.sleep(0.3)
+        return await real(self)
+
+    monkeypatch.setattr(feishu.FeishuClient, "tenant_token", slow_for_cli_own)
+
+    async def save(app_id: str, secret: str):
+        async with client.test_factory() as s:
+            try:
+                await TeamFeishuAppService(s).save(
+                    team_id=tid,
+                    app_id=app_id,
+                    app_secret=secret,
+                    domain="feishu",
+                    by=OWNER,
+                )
+                await s.commit()
+                return "saved"
+            except Exception as exc:
+                return exc
+
+    async def race():
+        async def later():
+            await asyncio.sleep(0.1)
+            return await save("cli_other", "other-secret")
+
+        return await asyncio.gather(save("cli_keep", ""), later())
+
+    kept, other = asyncio.run(race())
+    assert other == "saved"
+    assert "feishuTeamAppSavedMeanwhile" in str(getattr(kept, "i18n", "")) or (
+        "App ID" in str(kept)
+    ), kept
+
+    async def stored():
+        async with client.test_factory() as s:
+            row = await TeamFeishuAppService(s).get(tid)
+            assert row is not None
+            return row.app_id, team_app_secret(row)
+
+    assert asyncio.run(stored()) == ("cli_other", "other-secret")
+
+
+def test_a_refusal_feishu_redirects_back_with_does_not_carry_the_code(
+    client, feishu_stub
+):
+    person, _project, _room = _setup(client)
+    row = _connect_feishu(client, person)
+    url = client.get(
+        f"/me/integrations/{row['id']}/feishu/authorize", headers=person
+    ).json()["data"]["url"]
+    state = parse_qs(urlparse(url).query)["state"][0]
+    landed = _feishu_landing(
+        client,
+        code="secret-code-42",
+        state=state,
+        error="access_denied for secret-code-42",
+    )
+    assert landed["feishu"] == ["denied"]
+    assert "secret-code-42" not in landed["feishu_detail"][0]
+    assert state not in landed["feishu_detail"][0]
+
+
+def test_any_answer_that_is_not_feishus_json_object_is_said_as_what_it_is(
+    client, feishu_stub
+):
+    """A JSON array, an empty answer, an HTTP 404: Feishu busy (503, 408, 429)
+    or an upstream error, never a crash and never a wrong App Secret. Only
+    Feishu's own credential codes are the person's to correct (422)."""
+    person, project, room = _setup(client)
+    tid = _personal_team(client, person)
+
+    feishu_stub.tenant_reply = (503, ["unavailable"])
+    r = client.put(f"/teams/{tid}/feishu-app", json=APP, headers=person)
+    assert r.status_code == 503, r.text
+    assert r.json()["error"]["data"]["kind"] == "busy"
+
+    feishu_stub.tenant_reply = (404, {"msg": "no such route"})
+    r = client.put(f"/teams/{tid}/feishu-app", json=APP, headers=person)
+    assert r.status_code == 502, r.text
+    assert r.json()["error"]["data"]["kind"] == "error"
+    feishu_stub.tenant_reply = None
+
+    row = _own_app_connection(client, person, project)
+    _expire_user_token(client, row["id"])
+    feishu_stub.token_reply = (503, ["unavailable"])
+    r = client.get(f"/integrations/{row['id']}/feishu/docs/doc-ok?topic={room}")
+    assert r.status_code == 503, r.text
+    assert r.json()["error"]["data"]["kind"] == "busy"
+    feishu_stub.token_reply = None
+
+    # Refreshed, then the document call is answered with an array: the
+    # refreshed tokens stay (the old refresh token is spent at Feishu).
+    feishu_stub.doc_reply = (503, ["unavailable"])
+    r = client.get(f"/integrations/{row['id']}/feishu/docs/doc-ok?topic={room}")
+    assert r.status_code == 503, r.text
+    feishu_stub.doc_reply = None
+    spent = [
+        t["refresh_token"]
+        for t in feishu_stub.tokens
+        if t["grant_type"] == "refresh_token"
+    ]
+    assert _stored(client, row["id"])[1]["refresh_token"] not in spent
+    read = client.get(f"/integrations/{row['id']}/feishu/docs/doc-ok?topic={room}")
+    assert read.status_code == 200, read.text
+
+
+def test_checking_a_connection_holding_another_apps_tokens_says_it_lapsed(
+    client, feishu_stub
+):
+    """「测试连接」checks the authorization a call would use. Tokens kept with
+    another App ID than the team's are not one: the check says to authorize
+    again, and neither page counts the connection as authorized."""
+    person, project, _room = _setup(client)
+    tid = _team(client, owner="fs_lead12", members=(OWNER,))
+    lead = {"Authorization": f"Bearer {seed_user(client, 'fs_lead12')}"}
+    _set_app(client, lead, tid, {**APP, "app_id": "cli_a"})
+    row = _own_app_connection(client, person, project, tid)
+
+    async def issued_elsewhere() -> None:
+        async with client.test_factory() as s:
+            found = await s.get(Integration, uuid.UUID(row["id"]))
+            assert found is not None
+            found.config = {**found.config, "authorized_app_id": "cli_elsewhere"}
+            await s.commit()
+
+    asyncio.run(issued_elsewhere())
+    checked = client.post(f"/me/integrations/{row['id']}/check", headers=person)
+    assert checked.status_code == 200, checked.text
+    assert checked.json()["data"]["status"] == "auth_failed"
+    assert checked.json()["data"]["user_authorized"] is False
+    mine = client.get(f"/teams/{tid}/feishu-app", headers=person).json()["data"]
+    assert mine["connection"]["user_authorized"] is False
+
+
 def _feishu_landing(client, **params) -> dict[str, list[str]]:
     back = client.get(
         "/integrations/feishu/callback", params=params, follow_redirects=False
@@ -1778,14 +2084,14 @@ def test_the_renewal_scan_goes_on_past_a_row_that_breaks(
         _set_secret(client, row_id, refresh_token_expires_at=time.time() + 3600)
     before = _stored(client, fine["id"])[1]["refresh_token"]
 
-    real = integration_service._renewed
+    real = integration_service._refreshed
 
-    async def breaks_on_one(session, row, lapses, seen=None):
+    async def breaks_on_one(session, row, lapses):
         if str(row.id) == broken["id"]:
             raise RuntimeError("unexpected")
-        return await real(session, row, lapses, seen)
+        return await real(session, row, lapses)
 
-    monkeypatch.setattr(integration_service, "_renewed", breaks_on_one)
+    monkeypatch.setattr(integration_service, "_refreshed", breaks_on_one)
     asyncio.run(integration_service.renew_feishu(client.test_factory))
     assert _stored(client, fine["id"])[1]["refresh_token"] != before
 

@@ -63,7 +63,6 @@ const FEISHU_OUTCOMES: Record<string, string> = {
   denied: 'denied',
   deleted: 'deleted',
   exchange_failed: 'failed',
-  app_changed: 'appChanged',
 }
 const busy = ref('')
 

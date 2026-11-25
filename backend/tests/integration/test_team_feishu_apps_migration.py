@@ -4,8 +4,13 @@ one rolled back to — reads every row exactly as it wrote it. The steps are spl
 so a run cut short can be run again, and the foreign key to ``team`` never
 scans or blocks team writes under a lock."""
 
+import asyncio
 import json
+import threading
+import time
 import uuid
+
+import asyncpg
 
 from tests.integration.migration_replay import database_at
 
@@ -69,4 +74,65 @@ def test_a_run_cut_short_after_the_table_is_made_runs_again():
         assert (
             db.fetchval("SELECT to_regclass('uq_integrations_owner_feishu_team')")
             is not None
+        )
+
+
+def test_a_same_named_constraint_on_another_table_does_not_stand_in_for_the_key():
+    """The foreign key is recognised as there by its name on
+    ``team_feishu_apps``, not by its name anywhere."""
+    with database_at(BEFORE) as db:
+        db.upgrade("4288e24987e2")
+        db.execute("CREATE TABLE feishu_decoy (id integer)")
+        db.execute(f"ALTER TABLE feishu_decoy ADD CONSTRAINT {FK} CHECK (id > 0)")
+
+        db.upgrade(AFTER)
+
+        assert db.fetchval(
+            "SELECT convalidated FROM pg_constraint WHERE conname = $1"
+            " AND conrelid = 'team_feishu_apps'::regclass AND contype = 'f'",
+            FK,
+        )
+
+
+def _hold(dsn: str, sql: str, held: threading.Event, seconds: float) -> None:
+    async def go() -> None:
+        conn = await asyncpg.connect(dsn)
+        try:
+            async with conn.transaction():
+                await conn.execute(sql)
+                held.set()
+                await asyncio.sleep(seconds)
+        finally:
+            await conn.close()
+
+    asyncio.run(go())
+
+
+def test_validating_the_key_behind_a_live_lock_waits_its_turn():
+    """Validation that meets a lock held longer than the migration's lock
+    timeout lets go and tries again, and finishes once the lock is gone."""
+    with database_at(BEFORE) as db:
+        db.upgrade("6bfa39e854c4")
+        held = threading.Event()
+        holder = threading.Thread(
+            target=_hold,
+            args=(
+                db.url.replace("+asyncpg", ""),
+                "LOCK TABLE team_feishu_apps IN SHARE UPDATE EXCLUSIVE MODE",
+                held,
+                4.0,
+            ),
+        )
+        holder.start()
+        assert held.wait(10)
+        started = time.monotonic()
+        try:
+            db.upgrade("8a9d4083c7c7", {"MIGRATION_LOCK_TIMEOUT": "300ms"})
+        finally:
+            holder.join()
+        assert time.monotonic() - started > 1
+        assert db.fetchval(
+            "SELECT convalidated FROM pg_constraint WHERE conname = $1"
+            " AND conrelid = 'team_feishu_apps'::regclass",
+            FK,
         )

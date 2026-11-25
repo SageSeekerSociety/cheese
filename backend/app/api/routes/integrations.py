@@ -33,7 +33,7 @@ from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.block.models import Block, BlockKind
 from app.domain.event_author import AuthorType
 from app.domain.identity.actor import Actor
-from app.domain.integration.feishu import FeishuClient
+from app.domain.integration.feishu import FeishuClient, redact
 from app.domain.integration.mail import IntegrationError
 from app.domain.integration.models import Integration, MailDraft
 from app.domain.integration.service import (
@@ -42,8 +42,10 @@ from app.domain.integration.service import (
     draft_view,
     feishu_redirect_uri,
     feishu_settings_for,
-    keep_authorization,
+    hold_team_app,
+    keep_feishu_tokens,
     public,
+    team_app_ids,
 )
 from app.domain.library import service as library
 from app.domain.notice_meta import (
@@ -187,12 +189,17 @@ async def _usable(
 # ── the owner ──────────────────────────────────────────────────────────────
 
 
+async def _view(db: AsyncSession, row: Integration) -> dict:
+    return public(row, await team_app_ids(db, [row]))
+
+
 @router.get("/me/integrations")
 async def my_integrations(db: DbSession, resolver: ActorResolverDep) -> dict:
     actor = await _person(resolver)
     assert actor.user_id is not None
     rows = await _service(db).owned(actor.user_id)
-    items = [public(r) for r in rows]
+    app_ids = await team_app_ids(db, rows)
+    items = [public(r, app_ids) for r in rows]
     return ok(page(items, len(items)))
 
 
@@ -221,7 +228,7 @@ async def connect_mail(body: MailIn, db: DbSession, resolver: ActorResolverDep) 
         grants=body.grants,
     )
     await db.commit()
-    return ok(public(row))
+    return ok(await _view(db, row))
 
 
 @router.get("/me/integrations/feishu")
@@ -257,7 +264,7 @@ async def connect_feishu(
         owner_user_id=actor.user_id, owner_handle=actor.handle, team_id=body.team_id
     )
     await db.commit()
-    return ok(public(row))
+    return ok(await _view(db, row))
 
 
 @router.patch("/me/integrations/{integration_id}", dependencies=[ROUTE_DECIDES])
@@ -273,7 +280,7 @@ async def update_integration(
     row = await service.get_owned(integration_id, actor.user_id)
     if body.feishu_handoff is not None:
         outcome = await _claim_feishu(db, row, body.feishu_handoff)
-        return ok({**public(row), "authorization": outcome})
+        return ok({**(await _view(db, row)), "authorization": outcome})
     secret = {k: v for k, v in (("password", body.password),) if v}
     row = await service.update(
         row,
@@ -283,7 +290,7 @@ async def update_integration(
         secret=secret or None,
     )
     await db.commit()
-    return ok(public(row))
+    return ok(await _view(db, row))
 
 
 @router.post("/me/integrations/{integration_id}/check", dependencies=[ROUTE_DECIDES])
@@ -295,7 +302,7 @@ async def check_integration(
     service = _service(db)
     row = await service.recheck(await service.get_owned(integration_id, actor.user_id))
     await db.commit()
-    return ok(public(row))
+    return ok(await _view(db, row))
 
 
 @router.delete("/me/integrations/{integration_id}", dependencies=[ROUTE_DECIDES])
@@ -379,8 +386,11 @@ async def _hand_back_feishu(code: str, state: str, error: str) -> RedirectRespon
     if integration_id is None:
         return _connections({"feishu": "invalid_link"})
     if error or not code:
+        # Feishu's words go to the page's address; whatever of the request it
+        # echoes (the code, the state) is blanked first.
+        detail = redact(error, (code, state))[:200]
         return _connections(
-            {"feishu": "denied", **({"feishu_detail": error[:200]} if error else {})}
+            {"feishu": "denied", **({"feishu_detail": detail} if detail else {})}
         )
     try:
         held = await oauth_handoff.keep(
@@ -424,6 +434,9 @@ async def _finish_feishu(
         return query
 
     try:
+        # Held until the tokens are kept: the team's app cannot be switched
+        # between the exchange and the write (a switch then clears them).
+        await hold_team_app(db, row)
         config = await feishu_settings_for(db, row)
         await FeishuClient(config).exchange_code(code, _redirect_uri())
     except Exception as exc:  # the person reads why, on the page
@@ -436,8 +449,8 @@ async def _finish_feishu(
         if said is not None:
             return land(said["key"])
         return land("exchange_failed", getattr(exc, "reply", ""))
-    if not await keep_authorization(db, row, config):
-        return land("app_changed")
+    keep_feishu_tokens(row, config)
+    row.status, row.last_error = "ok", ""
     await db.commit()
     return land("ok")
 

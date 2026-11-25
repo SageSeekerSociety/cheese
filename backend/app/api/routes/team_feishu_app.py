@@ -79,14 +79,16 @@ async def read_team_feishu_app(
     assert actor.user_id is not None
     service = TeamFeishuAppService(db)
     await service.require_member(team_id, actor.user_id)
+    app = await service.get(team_id)
     return ok(
         {
-            **team_app_view(await service.get(team_id)),
+            **team_app_view(app),
             "can_manage": await TEAM.allows(
                 db, team_id, actor.user_id, TeamPermission.edit_settings
             ),
             "connection": feishu_connection_view(
-                await service.connection_for(actor.user_id, team_id)
+                await service.connection_for(actor.user_id, team_id),
+                app.app_id if app else None,
             ),
         }
     )

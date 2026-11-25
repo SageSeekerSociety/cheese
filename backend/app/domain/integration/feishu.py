@@ -43,6 +43,9 @@ FORBIDDEN_CODES = {99991672, 99991679, 1770032, 1770031, 91204, 131006, 1061004}
 #: Feishu turning a call away for now — its rate limit — rather than refusing it.
 BUSY_CODES = {99991400}
 NOT_FOUND_CODES = {1770002, 91402, 131005, 1061003}
+#: The tenant-token call refusing the app's own credentials: the App ID or App
+#: Secret is not one Feishu accepts. Only these are the person's to correct.
+CREDENTIAL_CODES = {10003, 10014, 10015}
 
 BLOCK_TEXT, BLOCK_H1, BLOCK_H2, BLOCK_H3, BLOCK_BULLET, BLOCK_ORDERED = (
     2,
@@ -94,6 +97,25 @@ class FeishuSettings:
         return DOMAINS.get(self.domain, DOMAINS["feishu"])
 
 
+def redact(text: str, secrets: tuple[str, ...]) -> str:
+    """``text`` with every one of ``secrets`` blanked out, whatever its length;
+    the longest first, so a secret that contains another is blanked whole."""
+    for secret in sorted({v for v in secrets if v}, key=len, reverse=True):
+        text = text.replace(secret, "***")
+    return text
+
+
+def _body(response: httpx.Response) -> dict:
+    """The answer as Feishu's JSON object, or ``{}`` for anything else — empty,
+    a gateway's HTML page, a JSON array — which is then judged by its HTTP
+    status alone."""
+    try:
+        body = response.json() if response.content else {}
+    except ValueError:
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
 def _reply(status: int, body: dict | None, secrets: tuple[str, ...]) -> str:
     """What Feishu answered, in its own words, with any credential this call
     carried blanked out: its message is passed on to the person and the logs,
@@ -101,10 +123,7 @@ def _reply(status: int, body: dict | None, secrets: tuple[str, ...]) -> str:
     code = (body or {}).get("code")
     msg = (body or {}).get("msg") or (body or {}).get("message") or ""
     reply = f"{code if code is not None else status} {msg}".strip()
-    # Longest first, so a secret that contains another is blanked whole.
-    for secret in sorted({v for v in secrets if v}, key=len, reverse=True):
-        reply = reply.replace(secret, "***")
-    return reply
+    return redact(reply, secrets)
 
 
 def _busy(status: int, body: dict | None) -> bool:
@@ -178,13 +197,10 @@ class FeishuClient:
                 say("feishuActionUnreachable", action=action, error=str(exc)),
                 str(exc),
             ) from exc
-        try:
-            body = response.json()
-        except ValueError:
-            body = None
-        if response.status_code >= 400 or (body or {}).get("code", 0) != 0:
+        body = _body(response)
+        if response.status_code >= 400 or body.get("code", 0) != 0:
             _raise(response.status_code, body, action, (*self._secrets, bearer))
-        return (body or {}).get("data") or {}
+        return body.get("data") or {}
 
     async def tenant_token(self) -> str:
         if self._tenant and self._tenant[1] > time.time() + 60:
@@ -202,34 +218,30 @@ class FeishuClient:
             raise IntegrationError(
                 "unreachable", say("feishuUnreachable", error=str(exc))
             ) from exc
-        try:
-            body = response.json() if response.content else {}
-        except ValueError:
-            body = {}
-        if _busy(response.status_code, body):
-            _raise(
-                response.status_code,
-                body,
-                say("feishuActionTenantToken"),
-                self._secrets,
-            )
-        if response.status_code >= 400 or body.get("code", 0) != 0:
-            # This call carries nothing but the app's own credentials, so a
-            # refusal of it (10003, 10014, 10015 and the like) is Feishu saying
-            # the App ID or App Secret is not one it accepts.
-            reply = _reply(response.status_code, body, self._secrets)
+        body = _body(response)
+        reply = _reply(response.status_code, body, self._secrets)
+        detail = say(
+            "feishuReplied", action=say("feishuActionTenantToken"), reply=reply
+        )
+        if body.get("code") in CREDENTIAL_CODES:
+            # Feishu saying the App ID or App Secret is not one it accepts.
             raise IntegrationError(
                 "credentials_invalid",
-                say(
-                    "feishuAppCredentialsRefused",
-                    detail=say(
-                        "feishuReplied",
-                        action=say("feishuActionTenantToken"),
-                        reply=reply,
-                    ),
-                ),
+                say("feishuAppCredentialsRefused", detail=detail),
                 reply,
             )
+        if (
+            response.status_code >= 400
+            or body.get("code", 0) != 0
+            or not body.get("tenant_access_token")
+        ):
+            # Anything else is Feishu busy or down, or an answer we cannot read
+            # — said as what it is, never as a wrong App Secret.
+            if _busy(response.status_code, body):
+                raise IntegrationError(
+                    "busy", say("feishuBusyAfter", detail=detail), reply
+                )
+            raise IntegrationError("error", detail, reply)
         token = body["tenant_access_token"]
         self._tenant = (token, time.time() + int(body.get("expire", 7200)))
         return token
@@ -272,13 +284,7 @@ class FeishuClient:
                 say("feishuActionUnreachable", action=action, error=str(exc)),
                 str(exc),
             ) from exc
-        try:
-            body = response.json() if response.content else {}
-        except ValueError:
-            # A gateway's HTML error page: judged by its status alone.
-            body = {}
-        if not isinstance(body, dict):
-            body = {}
+        body = _body(response)
         if (
             response.status_code >= 400
             or body.get("code", 0) != 0

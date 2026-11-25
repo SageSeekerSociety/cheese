@@ -118,5 +118,6 @@
   "mcpApprovalOwnerOnly": "只有设备所属团队的管理员能决定",
   "mcpCommandInvalid": "无法解析这条命令",
   "mcpEnvNameInvalid": "环境变量名只能用字母、数字和下划线，且不以数字开头",
-  "mcpServerUrlRequired": "地址不能为空"
+  "mcpServerUrlRequired": "地址不能为空",
+  "feishuTeamAppSavedMeanwhile": "团队的飞书应用刚被别人改成了另一个 App ID，请刷新后连同 App Secret 一起再保存"
 }
