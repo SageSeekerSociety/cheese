@@ -155,3 +155,26 @@ def test_connections_the_old_api_allowed_twice_upgrade_untouched():
 
         assert _rows(db) == before
         assert {first, second} <= set(_rows(db))
+
+
+def test_dropping_the_platform_app_table_leaves_every_connection_and_team_app():
+    """3918c99203cd drops ``feishu_apps`` (release two of removing the platform
+    app) and touches nothing else: connections and team apps stay as they were;
+    stepping back puts an empty table back."""
+    with database_at(AFTER) as db:
+        db.execute(
+            "INSERT INTO feishu_apps (id, app_id, domain, secret, updated_by,"
+            " created_at, updated_at) VALUES (1, 'cli_platform', 'feishu',"
+            " 'v1:k:sealed', 'admin', now(), now())"
+        )
+        _connection(db, 9301, {"app_id": "cli_a", "domain": "feishu"}, "v1:k:a")
+        before = _rows(db)
+
+        db.upgrade("3918c99203cd")
+
+        assert db.fetchval("SELECT to_regclass('feishu_apps')") is None
+        assert db.fetchval("SELECT to_regclass('team_feishu_apps')") is not None
+        assert _rows(db) == before
+
+        db.downgrade(AFTER)
+        assert db.fetchval("SELECT count(*) FROM feishu_apps") == 0
