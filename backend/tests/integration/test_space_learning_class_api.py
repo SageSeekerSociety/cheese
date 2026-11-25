@@ -5,7 +5,8 @@
 是什么。规则（先写下来、再写的代码）：
 
 - 门是「数据」页那一道：管理员读得到，普通成员、板外的人读不到；
-- 任何一组不足 3 人不分析：只报 ``analysed: false``，人数与内容一概不给；
+- 任何一组不足 3 人不分析：只报 ``analysed: false``，人数与内容一概不给。常见误解不
+  按这条：有人归到它就列，按人数降序（2026-11-24 起）；
 - 例句、摘录只标本空间固定代号（同一个人在同一块板上不变），返回里没有成员的 handle
   或名字；原话里的学号、手机号遮掉；
 - 「查看原文」的坐标只给读得了那个项目的人；
@@ -276,9 +277,11 @@ class TestFewerThanThreeAreNotAnalysed:
         assert focus["knowledgePointId"] == board["points"][0]
         assert focus["stuck"] == 3
 
-    def test_a_misconception_or_a_cluster_held_by_two_is_not_shown(
+    def test_a_misconception_held_by_two_is_still_shown_but_a_cluster_is_not(
         self, user_client: UserCreator, api_client: TestClient, _portal, db_session
     ):
+        # 常见误解不设人数下限（2026-11-24 起）：两个人归到它也列，按人数降序；一簇
+        # 问题按老规矩，不到 3 人不列。两者都是「一组」，界不同。
         board = _board(user_client, api_client)
         common = _misconception(_portal, db_session, board, 0, "内层不知道怎样引用外层")
         rare = _misconception(_portal, db_session, board, 0, "以为子查询一定比 JOIN 慢")
@@ -293,10 +296,10 @@ class TestFewerThanThreeAreNotAnalysed:
         detail = _get(api_client, board, f"points/{board['points'][0]}")
         assert detail["analysed"] is True
         assert [(m["label"], m["people"]) for m in detail["misconceptions"]] == [
-            ("内层不知道怎样引用外层", 3)
+            ("内层不知道怎样引用外层", 3),
+            ("以为子查询一定比 JOIN 慢", 2),
         ]
-        assert detail["hiddenMisconceptions"] == 1
-        assert "JOIN 慢" not in str(detail)
+        assert "hiddenMisconceptions" not in detail
 
         questions = _get(api_client, board, "questions")
         assert [(c["id"], c["people"]) for c in questions["clusters"]] == [(big, 3)]
@@ -310,6 +313,17 @@ class TestFewerThanThreeAreNotAnalysed:
         assert resp.status_code == 200, resp.text
         assert resp.json()["data"]["analysed"] is False
         assert resp.json()["data"]["excerpts"] == []
+
+        # 列出来的误解，点「看匿名对话」都要读得到它的摘录 —— 两个人那条也一样，
+        # 不能只在列表里有、弹窗却说「不足 3 人，不分析」。
+        shown = api_client.get(
+            f"/spaces/{board['space_id']}/learning-analysis/class/excerpts",
+            params={"misconception": rare},
+            headers=_auth(board["token"]),
+        )
+        assert shown.status_code == 200, shown.text
+        assert shown.json()["data"]["analysed"] is True
+        assert len(shown.json()["data"]["excerpts"]) == 2
 
 
 class TestOnlyTheClassAsAWhole:

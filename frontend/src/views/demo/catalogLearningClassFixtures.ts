@@ -130,8 +130,19 @@ export const LEARNING_CLASS_POINT: LearningClassPointDetail = {
       ],
     },
     { id: 12, label: '把 WHERE 和 HAVING 混用', people: 8, examples: [] },
+    {
+      id: 13,
+      label: '以为子查询一定比 JOIN 慢',
+      people: 2,
+      examples: [
+        {
+          code: '6C2E',
+          quote: '听说子查询性能差，是不是都该改成 JOIN？',
+          taskName: 'T3 子查询与聚合',
+        },
+      ],
+    },
   ],
-  hiddenMisconceptions: 1,
   advice: {
     text: '用一张「外层逐行扫描、内层每次重算」的示意，配同一题的相关子查询和派生表两种写法对照，5 分钟左右。',
     generatedAt: at,

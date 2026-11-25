@@ -67,7 +67,8 @@ def sections(report: dict) -> tuple[str, list[str], list[Section]]:
         f"生成于 {generated.astimezone(LOCAL_ZONE):%Y-%m-%d %H:%M}，"
         f"纳入分析的成员 {report['members']} 人。",
         "这份报告只含全班整体，不含任何成员的姓名或个人结果；摘录只标本空间固定代号，"
-        "对话里的姓名、学号、手机号、邮箱已遮掉。任何一组不足 3 人时不做分析。",
+        "对话里的姓名、学号、手机号、邮箱已遮掉。常见误解按人数从多到少列出（只列人数）。"
+        "其余成组的分析（知识点、问题簇、时段）不足 3 人时不做。",
     ]
     out: list[Section] = []
     if report.get("tasks") is not None:
@@ -112,7 +113,7 @@ def sections(report: dict) -> tuple[str, list[str], list[Section]]:
         out.append(
             Section(
                 title="各知识点卡住的人数和常见误解",
-                paragraphs=["「卡住」= AI 判断为不稳或薄弱；人数不足 3 人的误解不列。"],
+                paragraphs=["「卡住」= AI 判断为不稳或薄弱；误解按人数从多到少列出。"],
                 tables=[summary, wrong],
             )
         )
