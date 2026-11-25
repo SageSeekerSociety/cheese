@@ -9,9 +9,12 @@
 - **只有整体**：没有一个方法收「看谁」，返回值里没有成员 id、handle 或名字。要引用原
   话的地方（例句、摘录）只标本空间固定代号（``learning_privacy.member_code``），原话
   先遮掉姓名、学号、手机号、邮箱（``learning_privacy.Masker``）。
-- **不足 3 人，不分析**：任何一组 —— 一个知识点、一簇问题、一种误解、一道题、一个
-  词、一个时段 —— 不到 ``MIN_PEOPLE`` 个不同的人，就只报 ``analysed: false``，人数、
-  内容一概不给。
+- **不足 3 人，不分析**：任何一组 —— 一个知识点、一簇问题、一道题、一个词、一个时段
+  —— 不到 ``MIN_PEOPLE`` 个不同的人，就只报 ``analysed: false``，人数、内容一概不给。
+  **常见误解不按这条**：一种误解列不列，只看有没有人归到它，按人数降序列出（见
+  ``point_detail``）。误解的话是模型归纳的通用说法、提示里不让写人名；摘录取自被归到
+  它的那些人，只标本空间代号（不可逆、不落映射），所以一两个人的误解不指向谁。承载它
+  的知识点本身仍要够 ``MIN_PEOPLE`` 人，详情页才出得来。
 - **只统计开了学情分析的板**：没开的板每个方法都答 ``enabled: false`` 与空内容。
 
 「查看原文」的入口照旧只给读得了那个项目的人（``may_read_project``，导师）：摘录里的
@@ -367,7 +370,6 @@ class SpaceLearningClassService:
             "tasks": [],
             "mastery": None,
             "misconceptions": [],
-            "hiddenMisconceptions": 0,
             "advice": None,
             "practice": None,
             "lastPush": None,
@@ -399,16 +401,17 @@ class SpaceLearningClassService:
         judged = {row.user_id for row in on_point}
         labels = await self._reads.misconception_labels(space.id)
         masker = await self._masker(space.id)
+        # 常见误解不设人数下限：有人归到它就列，按人数降序（同为一种误解的人越多越
+        # 靠前）。label 是模型归纳的通用说法、提示里不让写人名，摘录也只标不可逆的
+        # 代号，所以一两个人的误解不指向谁 —— 这条与上面那条「不足 3 人不分析」不同，
+        # 那条守的是能反推出「是谁」的组，误解不在此列。
         shown = sorted(
             (
                 (mid, people)
                 for mid, people in counts.misconceptions.items()
-                if len(people) >= MIN_PEOPLE and mid in labels
+                if mid in labels
             ),
             key=lambda item: (-len(item[1]), item[0]),
-        )
-        hidden = sum(
-            1 for people in counts.misconceptions.values() if len(people) < MIN_PEOPLE
         )
         evidence_of: dict[int, list[tuple[int, uuid.UUID]]] = {}
         for row in on_point:
@@ -470,7 +473,6 @@ class SpaceLearningClassService:
                 "untouched": max(len(board.members - judged), 0),
             },
             "misconceptions": misconceptions,
-            "hiddenMisconceptions": hidden,
             "advice": (
                 {
                     "text": masker.mask(advice.advice),
@@ -591,7 +593,9 @@ class SpaceLearningClassService:
         cluster_id: int | None,
         misconception_id: int | None,
     ) -> tuple[list[tuple[int, uuid.UUID]] | None, str]:
-        """(成员, 消息) 至多三对、三个不同的人；这一组不足 3 人时为 None。"""
+        """(成员, 消息) 至多三对、三个不同的人。簇不足 3 人时为 None（那一组不做
+        分析）；误解永不回 None —— 它不设人数下限，一个人归到它也算，没有可摘的话就
+        是一张空表，弹窗写「没有可摘录的对话」。"""
         if cluster_id is not None:
             stats = await self._reads.cluster_stats(
                 space_id,
@@ -624,9 +628,9 @@ class SpaceLearningClassService:
             and row.level in STUCK_LEVELS
         ]
         label = labels[misconception_id][1]
-        if len({row.user_id for row in rows}) < MIN_PEOPLE:
-            return None, label
         rows.sort(key=lambda row: row.created_at, reverse=True)
+        # 误解不设人数下限，所以这里永不回 None：一个人归到它、又没有可摘的话时，
+        # 回的是一张空表（列表照列，「看匿名对话」点进去写「没有可摘录的对话」）。
         return (
             _distinct_people(
                 (row.user_id, row.evidence[0]) for row in rows if row.evidence

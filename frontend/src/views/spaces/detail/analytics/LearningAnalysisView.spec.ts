@@ -87,6 +87,9 @@ describe('学情分析的画面', () => {
 
     const detail = mount({ pointId: 2, pointDetail: LEARNING_CLASS_POINT })
     expect(detail.queryByText('内层不知道怎样引用外层当前行')).not.toBeNull()
+    // 两个人的误解也列出来（2026-11-24 起不设 3 人下限），不再有「不足 3 人，不列」。
+    expect(detail.queryByText('以为子查询一定比 JOIN 慢')).not.toBeNull()
+    expect(detail.queryByText(/不足 3 人，不列/)).toBeNull()
     expect(detail.queryByText(t('spaces.analytics.learning.class.detail.noList', { n: 22 }))).not.toBeNull()
     await fireEvent.click(detail.getByRole('button', { name: t('spaces.analytics.learning.class.detail.exportPoint') }))
     expect(detail.emitted().export).toEqual([[2]])

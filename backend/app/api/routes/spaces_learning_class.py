@@ -211,7 +211,6 @@ class LearningClassPointDetailOut(BaseModel):
     tasks: list[str]
     mastery: MasteryOut | None
     misconceptions: list[MisconceptionOut]
-    hidden_misconceptions: int = Field(alias="hiddenMisconceptions")
     advice: AdviceOut | None
     practice: PracticeOutcomeOut | None
     last_push: LastPushOut | None = Field(alias="lastPush")

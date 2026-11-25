@@ -50,9 +50,6 @@
                 {{ t('spaces.analytics.learning.class.detail.viewExcerpts') }}
               </BaseButton>
             </div>
-            <p v-if="detail.hiddenMisconceptions" class="an-note lc-gap">
-              {{ t('spaces.analytics.learning.class.detail.misHidden', { n: detail.hiddenMisconceptions }) }}
-            </p>
           </template>
         </section>
 
@@ -120,7 +117,8 @@
 </template>
 
 <script setup lang="ts">
-// 知识点详情：卡住几人、常见误解（按人数）与代号例句、掌握分布、讲课建议。不列名单。
+// 知识点详情：卡住几人、常见误解（按人数降序，有多少列多少，不设 3 人下限）与代号例句、
+// 掌握分布、讲课建议。不列名单。
 // 第 4 步加了两样：「做过巩固题的人里几人升档」（不足 3 人不报）和「推送巩固题给卡住的成员」
 // （老师只看到人数）。
 import type { LearningClassPointDetail, LearningPushResult } from '@/types/apiSpaces'
