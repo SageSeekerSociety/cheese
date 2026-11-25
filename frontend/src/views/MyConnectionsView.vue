@@ -64,6 +64,7 @@ const FEISHU_OUTCOMES: Record<string, string> = {
   deleted: 'deleted',
   exchange_failed: 'failed',
   busy: 'busy',
+  authorize_again: 'authorizeAgain',
   app_changed: 'appChanged',
 }
 const busy = ref('')
@@ -181,7 +182,8 @@ async function landedFeishu(): Promise<Record<string, unknown>> {
   void router.replace({ query: rest, hash: route.hash })
   try {
     const outcome = (await claimFeishuHandoff(integration, handoff)).authorization
-    // 团队的应用正被保存、这次没领：领取号还在，放回地址栏，刷新一下就能再领。
+    // 只有「这次没领」（busy）的领取号还在：放回地址栏，刷新一下就能再领。领过了、
+    // 授权码也换过了（authorize_again、app_changed）就只能重新连接，不放回去。
     if (outcome.feishu === 'busy') void router.replace({ query: landed, hash: route.hash })
     return { ...rest, ...outcome }
   } catch {

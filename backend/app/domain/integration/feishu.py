@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from urllib.parse import urlencode
 
@@ -114,7 +115,9 @@ def _body(response: httpx.Response) -> dict | None:
         body = response.json() if response.content else None
     except ValueError:
         return None
-    if not isinstance(body, dict) or not isinstance(body.get("code"), int):
+    # ``type(...) is int``: JSON ``true`` is a Python bool, which ``isinstance``
+    # would take for the integer 1.
+    if not isinstance(body, dict) or type(body.get("code")) is not int:
         return None
     return body
 
@@ -171,9 +174,14 @@ class FeishuClient:
         settings: FeishuSettings,
         *,
         transport: httpx.AsyncBaseTransport | None = None,
+        renew: Callable[[FeishuSettings], Awaitable[None]] | None = None,
     ):
         self.settings = settings
         self._transport = transport
+        #: How a lapsing user token is renewed in the middle of a call: the
+        #: service's locked, stored renewal, which fills ``settings`` with what
+        #: it stored. Without it the client refreshes by itself.
+        self._renew = renew
         self._tenant: tuple[str, float] | None = None
 
     @property
@@ -261,7 +269,10 @@ class FeishuClient:
             raise IntegrationError("auth_failed", say("feishuAuthExpired"))
         if self.settings.user_access_token:
             if (self.settings.user_token_expires_at or 0) <= time.time() + 60:
-                await self.refresh_user_token()
+                if self._renew is not None:
+                    await self._renew(self.settings)
+                else:
+                    await self.refresh_user_token()
             return self.settings.user_access_token or ""
         return await self.tenant_token()
 

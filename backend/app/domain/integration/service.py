@@ -28,10 +28,11 @@ from datetime import UTC, date, datetime
 from email.message import EmailMessage
 
 import httpx
-from sqlalchemy import func, select, text, update
+from sqlalchemy import event, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.crypto import Purpose, decrypt, encrypt
@@ -483,6 +484,26 @@ def _refresh_lapses(settings: FeishuSettings) -> bool:
     return ends is None or ends <= time.time() + RENEW_BEFORE_S
 
 
+_WROTE = "integration.wrote_in_transaction"
+
+
+@event.listens_for(Session, "after_flush")
+def _note_flushed_writes(session: Session, _context) -> None:
+    if session.new or session.dirty or session.deleted:
+        session.info[_WROTE] = True
+
+
+@event.listens_for(Session, "after_commit")
+@event.listens_for(Session, "after_soft_rollback")
+def _forget_flushed_writes(session: Session, *_args) -> None:
+    session.info.pop(_WROTE, None)
+
+
+def _wrote(session: AsyncSession) -> bool:
+    """Whether this transaction has flushed changes through the ORM."""
+    return bool(session.sync_session.info.get(_WROTE))
+
+
 async def _refreshed(
     session: AsyncSession,
     row: Integration,
@@ -501,16 +522,30 @@ async def _refreshed(
     good marks the row failed in the same transaction.
 
     It runs on ``session``'s own connection: the transaction so far has only
-    read (nothing may be pending), so it ends first. Asking the pool for a
-    second connection while holding this one would leave concurrent callers
-    each holding one and waiting for another.
+    read, so it ends first. Asking the pool for a second connection while
+    holding this one would leave concurrent callers each holding one and
+    waiting for another. So it must be called before anything is written
+    through ``session`` in this transaction: pending changes, and changes
+    already flushed through the ORM (``_wrote``), are refused rather than
+    committed along with the refresh. (A Core ``UPDATE`` run through the
+    session is not seen; no caller runs one before a refresh.)
     """
     settings = await feishu_settings_for(session, row)
     if not lapses(settings):
         return settings, row.secret
-    if session.new or session.dirty or session.deleted:
+    return await _renew_locked(session, row, lapses)
+
+
+async def _renew_locked(
+    session: AsyncSession,
+    row: Integration,
+    lapses: Callable[[FeishuSettings], bool],
+) -> tuple[FeishuSettings, str]:
+    """The locked, stored renewal of ``_refreshed`` — also what a client asks
+    for when its token lapses in the middle of a long call."""
+    if session.new or session.dirty or session.deleted or _wrote(session):
         # i18n-exempt: a programming error, never shown to a reader
-        raise RuntimeError("a Feishu refresh needs a session with nothing pending")
+        raise RuntimeError("a Feishu refresh needs a session that has written nothing")
     await session.commit()
     # Waiting on another refresh of this row is a few seconds at most.
     await session.execute(text("SET LOCAL lock_timeout = '25s'"))
@@ -530,6 +565,9 @@ async def _refreshed(
             await session.commit()
             raise
         keep_feishu_tokens(locked, settings)
+        # A refresh that went through is a working authorization: a failure
+        # recorded against the older credentials no longer holds.
+        locked.status, locked.last_error = "ok", ""
     used = locked.secret
     await session.commit()
     return settings, used
@@ -702,6 +740,15 @@ def guard_mail_hosts(config: dict) -> None:
         refuse_internal_host(str(config.get(key) or ""), say("nounMailServer"))
 
 
+def _checked_status(exc: IntegrationError) -> str:
+    """The status a failed check leaves a connection in."""
+    return {
+        "auth_failed": "auth_failed",
+        "credentials_invalid": "auth_failed",
+        "unreachable": "unreachable",
+    }.get(exc.kind, "error")
+
+
 class IntegrationService:
     def __init__(
         self, session: AsyncSession, room_files: RoomFiles, teammates: TeammateNames
@@ -750,39 +797,75 @@ class IntegrationService:
         (``_refreshed``), which takes this row's lock."""
         if row.provider == "mail":
             await asyncio.to_thread(guard_mail_hosts, row.config)
-        try:
-            if row.provider == "mail":
+            try:
                 await asyncio.to_thread(mail.check, mail_settings(row))
-            else:
-                settings = await feishu_settings_for(self._session, row)
-                # The app is proved first, so a check that fails on the app has
-                # spent nothing of the owner's.
-                await FeishuClient(settings).tenant_token()
-                # A connection that may act only as its owner and holds no
-                # token a call would use (never authorized on a shared team,
-                # tokens from another App ID, its team's app switched) serves
-                # nothing: an authorization to give, not a working one.
-                if settings.user_only and not (
-                    settings.refresh_token or settings.user_access_token
-                ):
-                    raise IntegrationError("auth_failed", say("feishuAuthExpired"))
-                # The owner's authorization is proved by refreshing it: a token
-                # still in its two hours says nothing of whether it will be
-                # renewed, and the refresh is what stops working when it lapses.
-                if settings.user_access_token or settings.refresh_token:
-                    await _refreshed(self._session, row, lambda _: True)
-        except IntegrationError as exc:
+            except IntegrationError as exc:
+                row.last_checked_at = _now()
+                row.status, row.last_error = _checked_status(exc), str(exc.args[0])
+                raise
             row.last_checked_at = _now()
-            row.status = {
-                "auth_failed": "auth_failed",
-                "credentials_invalid": "auth_failed",
-                "unreachable": "unreachable",
-            }.get(exc.kind, "error")
-            row.last_error = str(exc.args[0])
+            row.status, row.last_error = "ok", ""
+            return
+        # What this check proves is about the credentials it used — the
+        # owner's (the row's sealed secret) and the team app's — so its verdict
+        # is written only if both are still those: a check that started before
+        # the app's secret was rotated and the owner authorized again does not
+        # mark the new authorization failed.
+        used = row.secret
+        team_id = row.config.get("team_id")
+        app = await self._session.get(TeamFeishuApp, int(team_id)) if team_id else None
+        app_used = app.secret if app is not None else None
+        try:
+            settings = await feishu_settings_for(self._session, row)
+            # The app is proved first, so a check that fails on the app has
+            # spent nothing of the owner's.
+            await FeishuClient(settings).tenant_token()
+            # A connection that may act only as its owner and holds no token a
+            # call would use (never authorized on a shared team, tokens from
+            # another App ID, its team's app switched) serves nothing: an
+            # authorization to give, not a working one.
+            if settings.user_only and not (
+                settings.refresh_token or settings.user_access_token
+            ):
+                raise IntegrationError("auth_failed", say("feishuAuthExpired"))
+            # The owner's authorization is proved by refreshing it: a token
+            # still in its two hours says nothing of whether it will be
+            # renewed, and the refresh is what stops working when it lapses.
+            if settings.user_access_token or settings.refresh_token:
+                _settings, used = await _refreshed(self._session, row, lambda _: True)
+        except IntegrationError as exc:
+            await self._settle(
+                row, used, app_used, _checked_status(exc), str(exc.args[0])
+            )
             raise
-        row.last_checked_at = _now()
-        row.status = "ok"
-        row.last_error = ""
+        await self._settle(row, used, app_used, "ok", "")
+
+    async def _settle(
+        self,
+        row: Integration,
+        used: str,
+        app_used: str | None,
+        status: str,
+        last_error: str,
+    ) -> None:
+        """Write a check's verdict onto ``row`` only if its credentials are
+        still the ones the check used (see ``_check``)."""
+        still = Integration.secret == used
+        team_id = row.config.get("team_id")
+        if team_id:
+            still = still & (
+                select(TeamFeishuApp.secret)
+                .where(TeamFeishuApp.team_id == int(team_id))
+                .scalar_subquery()
+                .is_not_distinct_from(app_used)
+            )
+        await self._session.execute(
+            update(Integration)
+            .where(Integration.id == row.id, still)
+            .values(status=status, last_error=last_error, last_checked_at=_now())
+            .execution_options(synchronize_session=False)
+        )
+        await self._session.refresh(row)
 
     async def connect(
         self,
@@ -1106,68 +1189,49 @@ class IntegrationService:
         except IntegrationError as exc:
             await self._write_back(row, read, exc=exc)
             raise
-        # Refreshed (and stored) with minutes to spare, so a call rarely needs
-        # the client to refresh midway. When a long one does, the new tokens
-        # are written back like everything else about this call: only onto the
-        # credentials it started with (``used``), never over an authorization
-        # given meanwhile, and never empty.
-        before = settings.refresh_token
-        client = FeishuClient(settings)
+        # Refreshed (and stored) with minutes to spare. A long call whose
+        # token lapses midway renews through the same locked, stored renewal —
+        # never by the client alone — so there is nothing to write back after.
+        held = {"used": used}
+
+        async def renew_midway(current: FeishuSettings) -> None:
+            fresh, held["used"] = await _renew_locked(
+                self._session, row, _access_lapses
+            )
+            if not fresh.user_access_token:
+                raise IntegrationError("auth_failed", say("feishuAuthExpired"))
+            current.user_access_token = fresh.user_access_token
+            current.user_token_expires_at = fresh.user_token_expires_at
+            current.refresh_token = fresh.refresh_token
+            current.refresh_token_expires_at = fresh.refresh_token_expires_at
+
+        client = FeishuClient(settings, renew=renew_midway)
         try:
-            result = await action(client)
+            return await action(client)
         except IntegrationError as exc:
-            refreshed = settings if settings.refresh_token != before else None
-            await self._write_back(row, used, exc=exc, refreshed=refreshed)
+            await self._write_back(row, held["used"], exc=exc)
             raise
-        if settings.refresh_token and settings.refresh_token != before:
-            await self._write_back(row, used, refreshed=settings)
-        return result
 
     async def _write_back(
-        self,
-        row: Integration,
-        used: str,
-        *,
-        exc: IntegrationError | None = None,
-        refreshed: FeishuSettings | None = None,
+        self, row: Integration, used: str, *, exc: IntegrationError
     ) -> None:
-        """What a call leaves on its row: tokens the client refreshed during
-        it, and — when it failed — a failure only the owner can mend. Written
-        only onto the credentials the call used (``used``, the sealed secret
-        its tokens came from): a row reauthorized or renewed meanwhile is left
-        as it is. Only the fields this owns are written.
-
-        A failed call's request is rolled back, so its write ends this
-        transaction first and commits on its own, on the same connection; a
-        call that went through writes into the request's transaction."""
-        values: dict = {}
-        row_id = row.id
-        if refreshed is not None and refreshed.refresh_token:
-            fresh = Integration(id=row_id, config=dict(row.config), secret=used)
-            keep_feishu_tokens(fresh, refreshed)
-            values["secret"] = fresh.secret
-            issuer = fresh.config.get("authorized_app_id")
-            if issuer:
-                values["config"] = Integration.config.op("||")(
-                    func.jsonb_build_object("authorized_app_id", issuer)
-                )
-        if exc is not None and exc.kind in NEEDS_OWNER:
-            values |= {
-                "status": "auth_failed",
-                "last_error": str(exc.args[0]),
-                "last_checked_at": _now(),
-            }
-        if not values:
+        """A failed call's request is rolled back; a failure only the owner
+        can mend is still recorded — and only onto the credentials the call
+        used (``used``, the sealed secret its tokens came from): a row
+        reauthorized or renewed meanwhile is left as it is. Written after
+        ending the request's transaction, on the same connection."""
+        if exc.kind not in NEEDS_OWNER:
             return
-        write = (
+        row_id = row.id
+        await self._session.rollback()
+        await self._session.execute(
             update(Integration)
             .where(Integration.id == row_id, Integration.secret == used)
-            .values(**values)
+            .values(
+                status="auth_failed",
+                last_error=str(exc.args[0]),
+                last_checked_at=_now(),
+            )
             .execution_options(synchronize_session=False)
         )
-        if exc is None:
-            await self._session.execute(write)
-            return
-        await self._session.rollback()
-        await self._session.execute(write)
         await self._session.commit()

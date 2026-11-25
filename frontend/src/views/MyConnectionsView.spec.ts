@@ -93,6 +93,9 @@ const TEAM = {
   connection: null,
 }
 
+/** 最近一次 mount 用的路由：看地址栏里还留着什么。 */
+let mounted: ReturnType<typeof createRouter> | undefined
+
 async function mount(url = '/') {
   const router = createRouter({
     history: createMemoryHistory(),
@@ -105,6 +108,7 @@ async function mount(url = '/') {
   })
   await router.push(url)
   await router.isReady()
+  mounted = router
   return render(MyConnectionsView as unknown as Component, {
     global: {
       plugins: [createVuetify({ components, directives }), router],
@@ -337,6 +341,20 @@ describe('从飞书授权回来', () => {
     await mount('/?feishu_integration=i1&feishu_handoff=h1')
     await vi.waitFor(() => expect(sonner.success).toHaveBeenCalledWith('飞书授权成功'))
     expect(claimFeishuHandoff).toHaveBeenCalledWith('i1', 'h1')
+  })
+
+  it('团队的应用正被保存、这次没领：说稍后刷新，领取号放回地址栏', async () => {
+    claimFeishuHandoff.mockResolvedValueOnce({ authorization: { feishu: 'busy' } })
+    await mount('/?feishu_integration=i1&feishu_handoff=h3')
+    await vi.waitFor(() => expect(sonner.error).toHaveBeenCalledWith(expect.stringMatching(/稍后刷新/)))
+    await vi.waitFor(() => expect(mounted!.currentRoute.value.query.feishu_handoff).toBe('h3'))
+  })
+
+  it('换过授权码之后没存下：说重新连接，领取号不放回去', async () => {
+    claimFeishuHandoff.mockResolvedValueOnce({ authorization: { feishu: 'authorize_again' } })
+    await mount('/?feishu_integration=i1&feishu_handoff=h4')
+    await vi.waitFor(() => expect(sonner.error).toHaveBeenCalledWith(expect.stringMatching(/请重新连接/)))
+    expect(mounted!.currentRoute.value.query.feishu_handoff).toBeUndefined()
   })
 
   it('领不到（别人的授权、过期了）就说链接无效，不当成功', async () => {

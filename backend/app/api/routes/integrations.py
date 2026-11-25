@@ -12,7 +12,7 @@ from urllib.parse import quote, urlencode
 from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -413,8 +413,11 @@ async def _claim_feishu(
     finished in this browser — is spent and saves nothing.
 
     An administrator saving the team's app at this moment holds it: the
-    person is told to try again (``busy``) and the hand-off is left unspent,
-    since nothing has been exchanged yet."""
+    person is told to claim again in a moment (``busy``) and the hand-off is
+    left unspent, since nothing has been exchanged yet. Once the code is
+    exchanged the hand-off is spent, so anything that stops the tokens being
+    kept after that asks the person to authorize again
+    (``authorize_again``, ``app_changed``)."""
     if not await _team_app_lock(db, row, release=True):
         return {"feishu": "busy"}
     held = await oauth_handoff.take(handoff)
@@ -432,39 +435,54 @@ async def _claim_feishu(
 TEAM_APP_LOCK_WAIT = "3s"
 
 
-async def _team_app_lock(
-    db: AsyncSession, row: Integration, *, release: bool = False
-) -> bool:
-    """Share-lock the team's app of ``row`` (a row with its own app has none),
-    waiting at most ``TEAM_APP_LOCK_WAIT``. ``False``: a save holds it. Taken
-    in a savepoint, so losing the wait never leaves the request's transaction
-    aborted; ``release``: only to see that it is free, the lock is let go at
-    once."""
-    team_id = row.config.get("team_id")
-    if not team_id:
-        return True
-    lock = (
-        select(TeamFeishuApp.team_id)
-        .where(TeamFeishuApp.team_id == int(team_id))
-        .with_for_update(read=True)
-    )
+async def _within_wait(db: AsyncSession, statement, *, release: bool = False) -> bool:
+    """Run ``statement`` waiting at most ``TEAM_APP_LOCK_WAIT`` for its locks,
+    in a savepoint: losing the wait (``False``) never leaves the request's
+    transaction aborted, and the shorter wait applies to this statement only.
+    ``release``: the savepoint is rolled back after, letting its locks go."""
+    outer = await db.scalar(text("SELECT current_setting('lock_timeout')"))
     savepoint = await db.begin_nested()
     try:
         await db.execute(
             text("SELECT set_config('lock_timeout', :wait, true)"),
             {"wait": TEAM_APP_LOCK_WAIT},
         )
-        await db.execute(lock)
+        await db.execute(statement)
     except DBAPIError as exc:
         await savepoint.rollback()
-        if getattr(exc.orig, "sqlstate", None) == "55P03":
+        if _lock_lost(exc):
             return False
         raise
     if release:
         await savepoint.rollback()
-    else:
-        await savepoint.commit()
+        return True
+    await savepoint.commit()
+    # A released savepoint keeps its settings: put the request's wait back.
+    await db.execute(
+        text("SELECT set_config('lock_timeout', :wait, true)"), {"wait": outer}
+    )
     return True
+
+
+async def _team_app_lock(
+    db: AsyncSession, row: Integration, *, release: bool = False
+) -> bool:
+    """Share-lock the team's app of ``row`` (a row with its own app has none).
+    ``False``: a save holds it. ``release``: only to see that it is free."""
+    team_id = row.config.get("team_id")
+    if not team_id:
+        return True
+    return await _within_wait(
+        db,
+        select(TeamFeishuApp.team_id)
+        .where(TeamFeishuApp.team_id == int(team_id))
+        .with_for_update(read=True),
+        release=release,
+    )
+
+
+def _lock_lost(exc: DBAPIError) -> bool:
+    return getattr(exc.orig, "sqlstate", None) == "55P03"
 
 
 async def _finish_feishu(
@@ -480,8 +498,23 @@ async def _finish_feishu(
             query["feishu_detail"] = detail[:200]
         return query
 
+    team_id = row.config.get("team_id")
     try:
         config = await feishu_settings_for(db, row)
+        # The team app as the code is exchanged under it. Its sealed secret is
+        # resealed on every save that sets one and on every re-creation, so an
+        # app removed and set up again with the same App ID is not this one.
+        exchanged_under = (
+            (
+                await db.execute(
+                    select(TeamFeishuApp.app_id, TeamFeishuApp.secret).where(
+                        TeamFeishuApp.team_id == int(team_id)
+                    )
+                )
+            ).one_or_none()
+            if team_id
+            else None
+        )
         await FeishuClient(config).exchange_code(code, _redirect_uri())
     except Exception as exc:  # the person reads why, on the page
         # Feishu's answer goes by Feishu's own words, under the code the page
@@ -494,22 +527,42 @@ async def _finish_feishu(
             return land(said["key"])
         return land("exchange_failed", getattr(exc, "reply", ""))
     # The code is exchanged holding no lock. Only now, for the write, is the
-    # team's app locked, and the tokens are kept only if its App ID is still the
-    # one they were issued under; a switch that landed meanwhile already sent
-    # this connection back to authorize again.
+    # team's app locked, and the tokens are kept only if it is still the app
+    # they were issued under; a save that landed meanwhile already sent this
+    # connection back to authorize again.
     if not await _team_app_lock(db, row):
-        return land("busy")
-    if row.config.get("team_id"):
-        current = await db.scalar(
-            select(TeamFeishuApp.app_id).where(
-                TeamFeishuApp.team_id == int(row.config["team_id"])
+        return land("authorize_again")
+    if team_id:
+        current = (
+            await db.execute(
+                select(TeamFeishuApp.app_id, TeamFeishuApp.secret).where(
+                    TeamFeishuApp.team_id == int(team_id)
+                )
             )
-        )
-        if current != config.app_id:
+        ).one_or_none()
+        if current is None or tuple(current) != tuple(exchanged_under or ()):
             return land("app_changed")
-    keep_feishu_tokens(row, config)
-    row.status, row.last_error = "ok", ""
+    # Only what the authorization owns is written: the tokens, the App ID they
+    # were issued under and the status — never the rest of ``config``, which
+    # the owner may have changed (folders) while the code was exchanged.
+    fresh = Integration(id=row.id, config=dict(row.config), secret=row.secret)
+    keep_feishu_tokens(fresh, config)
+    values: dict = {"secret": fresh.secret, "status": "ok", "last_error": ""}
+    if team_id:
+        values["config"] = Integration.config.op("||")(
+            func.jsonb_build_object("authorized_app_id", config.app_id)
+        )
+    kept = await _within_wait(
+        db,
+        update(Integration)
+        .where(Integration.id == row.id)
+        .values(**values)
+        .execution_options(synchronize_session=False),
+    )
+    if not kept:
+        return land("authorize_again")
     await db.commit()
+    await db.refresh(row)
     return land("ok")
 
 
