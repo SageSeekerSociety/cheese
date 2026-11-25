@@ -17,7 +17,9 @@
     "denied": "没有授权",
     "failed": "飞书授权没有完成",
     "invalidLink": "授权链接无效",
-    "withDetail": "{sentence}：{detail}"
+    "withDetail": "{sentence}：{detail}",
+    "busy": "团队的飞书应用正在被修改，请稍后再试",
+    "appChanged": "授权期间团队换了飞书应用，这次授权没有保存，请重新连接"
   },
   "form": {
     "address": "邮箱地址",

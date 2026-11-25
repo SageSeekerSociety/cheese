@@ -105,15 +105,18 @@ def redact(text: str, secrets: tuple[str, ...]) -> str:
     return text
 
 
-def _body(response: httpx.Response) -> dict:
-    """The answer as Feishu's JSON object, or ``{}`` for anything else — empty,
-    a gateway's HTML page, a JSON array — which is then judged by its HTTP
-    status alone."""
+def _body(response: httpx.Response) -> dict | None:
+    """Feishu's answer when it is Feishu's envelope — a JSON object carrying an
+    integer ``code`` — else ``None``: an empty answer, a gateway's HTML page,
+    a JSON array or an object without a code is not Feishu speaking, and is
+    never taken as success."""
     try:
-        body = response.json() if response.content else {}
+        body = response.json() if response.content else None
     except ValueError:
-        return {}
-    return body if isinstance(body, dict) else {}
+        return None
+    if not isinstance(body, dict) or not isinstance(body.get("code"), int):
+        return None
+    return body
 
 
 def _reply(status: int, body: dict | None, secrets: tuple[str, ...]) -> str:
@@ -140,6 +143,11 @@ def _raise(
     detail = say("feishuReplied", action=action, reply=reply)
     if _busy(status, body):
         raise IntegrationError("busy", say("feishuBusyAfter", detail=detail), reply)
+    if body is None:
+        # Not Feishu's envelope (a gateway or proxy answered): by its status it
+        # is Feishu busy (above) or an upstream error — never a missing
+        # document or a lapsed authorization, which only Feishu can say.
+        raise IntegrationError("error", detail, reply)
     if status == 401 or code in AUTH_CODES:
         raise IntegrationError(
             "auth_failed", say("feishuAuthExpiredAfter", detail=detail), reply
@@ -198,8 +206,9 @@ class FeishuClient:
                 str(exc),
             ) from exc
         body = _body(response)
-        if response.status_code >= 400 or body.get("code", 0) != 0:
+        if body is None or response.status_code >= 400 or body["code"] != 0:
             _raise(response.status_code, body, action, (*self._secrets, bearer))
+        assert body is not None
         return body.get("data") or {}
 
     async def tenant_token(self) -> str:
@@ -218,7 +227,7 @@ class FeishuClient:
             raise IntegrationError(
                 "unreachable", say("feishuUnreachable", error=str(exc))
             ) from exc
-        body = _body(response)
+        body = _body(response) or {}
         reply = _reply(response.status_code, body, self._secrets)
         detail = say(
             "feishuReplied", action=say("feishuActionTenantToken"), reply=reply
@@ -286,8 +295,9 @@ class FeishuClient:
             ) from exc
         body = _body(response)
         if (
-            response.status_code >= 400
-            or body.get("code", 0) != 0
+            body is None
+            or response.status_code >= 400
+            or body["code"] != 0
             or "access_token" not in body
         ):
             # The grant itself (the OAuth code, the refresh token) is a credential too.
@@ -295,6 +305,7 @@ class FeishuClient:
                 str(grant[k]) for k in ("code", "refresh_token") if grant.get(k)
             )
             _raise(response.status_code, body, action, (*self._secrets, *carried))
+        assert body is not None
         self.settings.user_access_token = body["access_token"]
         self.settings.user_token_expires_at = time.time() + int(
             body.get("expires_in", 7200)

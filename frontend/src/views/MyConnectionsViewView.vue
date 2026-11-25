@@ -162,10 +162,18 @@ const teamLabel = (team: FeishuTeamChoice) => (team.personal ? t('integrations.m
 /** 这个团队的「飞书应用」那一栏：个人团队的在个人设置里。连接就在那里做。 */
 const settingsOf = (team: FeishuTeamChoice) =>
   team.personal ? { name: 'UserSettingsFeishu' } : { name: 'TeamsDetailFeishu', params: { handle: team.team_handle } }
-/** 这一行能不能在这里授权：平台应用那时候的旧连接（既不属于团队，也没带自己的应用）
- *  没有应用可以授权，点了只会被拒，只能从团队的飞书应用重新连接。 */
+/** 团队连接属于哪个团队（列表里有的话）。 */
+const teamOf = (row: Integration) =>
+  row.config.team_id == null ? undefined : props.feishuTeams.find((team) => team.team_id === Number(row.config.team_id))
+/** 团队连接、而那个团队的飞书应用已经被移除：这里没有应用可授权，只能到团队那一栏去。 */
+const teamAppGone = (row: Integration) => {
+  const team = teamOf(row)
+  return !!team && !team.app
+}
+/** 这一行能不能在这里授权：平台应用那时候的旧连接（既不属于团队，也没带自己的应用），
+ *  和团队已经移除了飞书应用的团队连接，都没有应用可以授权，点了只会被拒。 */
 const canAuthorize = (row: Integration) =>
-  row.provider === 'feishu' && !(row.reconnect === 'team_app' && !row.config.app_id)
+  row.provider === 'feishu' && !(row.reconnect === 'team_app' && !row.config.app_id) && !teamAppGone(row)
 /** 本人在这个团队的应用上连到哪一步。 */
 function mineOf(team: FeishuTeamChoice): string {
   if (!team.app) return t('integrations.member.teams.unset')
@@ -286,6 +294,10 @@ function save() {
                  凭据没问题」为止。 -->
             <div v-if="row.reconnect === 'team_app'" class="conn-row__sub">
               {{ t('integrations.member.teams.reconnect') }}
+            </div>
+            <div v-else-if="teamAppGone(row)" class="conn-row__sub">
+              {{ t('integrations.member.teams.appGone') }}
+              <NavLink :to="settingsOf(teamOf(row)!)">{{ t('integrations.member.teams.open') }}</NavLink>
             </div>
             <div v-else-if="!row.last_error && row.provider === 'feishu' && !row.user_authorized" class="conn-row__sub">
               {{ t('integrations.member.notConnected') }}

@@ -138,9 +138,14 @@ def feishu_settings(
     else:
         tokens = issued_under is None or issued_under == app_id
     # Tokens it may not use leave the row to its owner's own authorization:
-    # falling back to the app's identity would answer as someone else. A row
-    # that never held a person's token reads with the app's, as it always has.
+    # falling back to the app's identity would answer as someone else. So does
+    # a team connection that was authorized once (``authorized_app_id`` is on
+    # record — ``None`` after its team switched or removed its app): until its
+    # owner authorizes again it serves nothing, personal team included. A row
+    # never authorized reads with the app's identity, as it always has.
     held = bool(secret.get("user_access_token") or secret.get("refresh_token"))
+    if app is not None and "authorized_app_id" in row.config:
+        held = True
     return FeishuSettings(
         app_id=app_id,
         app_secret=app_secret,
@@ -203,20 +208,6 @@ async def feishu_settings_for(
     return feishu_settings(
         row, app, user_only=team.personal_owner_user_id != row.owner_user_id
     )
-
-
-async def hold_team_app(session: AsyncSession, row: Integration) -> None:
-    """Share-lock the team's app for the rest of this transaction, before an
-    authorization code is exchanged under it: a save of another App ID (which
-    takes this row's lock only for its write) waits until the tokens are kept,
-    and then clears them. The exchange and the write see one app throughout."""
-    team_id = row.config.get("team_id")
-    if team_id:
-        await session.execute(
-            select(TeamFeishuApp.team_id)
-            .where(TeamFeishuApp.team_id == int(team_id))
-            .with_for_update(read=True)
-        )
 
 
 def member_authorized(row: Integration, app_id: str | None) -> bool:
@@ -389,9 +380,9 @@ class TeamFeishuAppService:
         )
         for member in rows:
             seal(member, {})
-            member.config = {
-                k: v for k, v in member.config.items() if k != "authorized_app_id"
-            }
+            # Authorized once, under no App ID now: serves nothing until its
+            # owner authorizes again (``feishu_settings``).
+            member.config = {**member.config, "authorized_app_id": None}
             member.status = "auth_failed"
             member.last_error = str(say(key, team=member.label))
 
@@ -496,45 +487,52 @@ async def _refreshed(
     session: AsyncSession,
     row: Integration,
     lapses: Callable[[FeishuSettings], bool],
-) -> FeishuSettings:
-    """The row's settings, its user token refreshed first when ``lapses`` says so.
+) -> tuple[FeishuSettings, str]:
+    """The row's settings, its user token refreshed first when ``lapses`` says
+    so, and the sealed secret those settings were read from — what a later
+    write about this call compares against.
 
     A refresh token is good for one refresh, and the one spent is gone at
-    Feishu. So a refresh is one short transaction of its own: lock the row,
-    read it again, refresh only if it still lapses, write the new tokens and
-    commit — before any document call. Nobody ever holds tokens that are not in
-    the database, and a call that waited on the lock finds them there instead
-    of spending the old refresh token a second time. A refresh Feishu refuses
-    for good marks the row failed in the same transaction.
+    Feishu. So a refresh is a short transaction of its own: lock the row, read
+    it again, refresh only if it still lapses, write the new tokens and commit
+    — before any document call. Nobody ever holds tokens that are not in the
+    database, and a call that waited on the lock finds them there instead of
+    spending the old refresh token a second time. A refresh Feishu refuses for
+    good marks the row failed in the same transaction.
 
-    ``session`` (the request's) must not hold this row's lock: nothing has
-    been written to the row through it yet.
+    It runs on ``session``'s own connection: the transaction so far has only
+    read (nothing may be pending), so it ends first. Asking the pool for a
+    second connection while holding this one would leave concurrent callers
+    each holding one and waiting for another.
     """
     settings = await feishu_settings_for(session, row)
     if not lapses(settings):
-        return settings
-    async with AsyncSession(session.bind, expire_on_commit=False) as own:
-        # Waiting on another refresh of this row is a few seconds at most.
-        await own.execute(text("SET LOCAL lock_timeout = '25s'"))
-        locked = await own.get(
-            Integration, row.id, with_for_update=True, populate_existing=True
-        )
-        if locked is None:
-            raise NotFoundError(say("integrationNotFound"))
-        settings = await feishu_settings_for(own, locked)
-        if lapses(settings):
-            try:
-                await FeishuClient(settings).refresh_user_token()
-            except IntegrationError as exc:
-                if exc.kind in NEEDS_OWNER:
-                    locked.status = "auth_failed"
-                    locked.last_error = str(exc.args[0])
-                    await own.commit()
-                raise
-            keep_feishu_tokens(locked, settings)
-            await own.commit()
-    await session.refresh(row)
-    return settings
+        return settings, row.secret
+    if session.new or session.dirty or session.deleted:
+        # i18n-exempt: a programming error, never shown to a reader
+        raise RuntimeError("a Feishu refresh needs a session with nothing pending")
+    await session.commit()
+    # Waiting on another refresh of this row is a few seconds at most.
+    await session.execute(text("SET LOCAL lock_timeout = '25s'"))
+    locked = await session.get(
+        Integration, row.id, with_for_update=True, populate_existing=True
+    )
+    if locked is None:
+        raise NotFoundError(say("integrationNotFound"))
+    settings = await feishu_settings_for(session, locked)
+    if lapses(settings):
+        try:
+            await FeishuClient(settings).refresh_user_token()
+        except IntegrationError as exc:
+            if exc.kind in NEEDS_OWNER:
+                locked.status = "auth_failed"
+                locked.last_error = str(exc.args[0])
+            await session.commit()
+            raise
+        keep_feishu_tokens(locked, settings)
+    used = locked.secret
+    await session.commit()
+    return settings, used
 
 
 async def renew_feishu(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -760,13 +758,13 @@ class IntegrationService:
                 # The app is proved first, so a check that fails on the app has
                 # spent nothing of the owner's.
                 await FeishuClient(settings).tenant_token()
-                # Tokens the row holds that a call would not use (issued under
-                # another App ID, or with none on record) are an authorization
-                # to give again, not a working one.
-                held = unseal(row)
-                if (
-                    held.get("refresh_token") or held.get("user_access_token")
-                ) and not (settings.refresh_token or settings.user_access_token):
+                # A connection that may act only as its owner and holds no
+                # token a call would use (never authorized on a shared team,
+                # tokens from another App ID, its team's app switched) serves
+                # nothing: an authorization to give, not a working one.
+                if settings.user_only and not (
+                    settings.refresh_token or settings.user_access_token
+                ):
                     raise IntegrationError("auth_failed", say("feishuAuthExpired"))
                 # The owner's authorization is proved by refreshing it: a token
                 # still in its two hours says nothing of whether it will be
@@ -1102,44 +1100,50 @@ class IntegrationService:
     async def feishu(self, row: Integration, action):
         if row.provider != "feishu":
             raise ValidationError(say("integrationNotFeishu"))
+        read = row.secret
         try:
-            settings = await _refreshed(self._session, row, _access_lapses)
+            settings, used = await _refreshed(self._session, row, _access_lapses)
         except IntegrationError as exc:
-            await self._mark_apart(row, exc)
+            await self._write_back(row, read, exc=exc)
             raise
-        # Refreshed (and stored) with minutes to spare, so the client has no
-        # reason to refresh during the call; tokens are written back only if
-        # it did all the same, and never emptied.
+        # Refreshed (and stored) with minutes to spare, so a call rarely needs
+        # the client to refresh midway. When a long one does, the new tokens
+        # are written back like everything else about this call: only onto the
+        # credentials it started with (``used``), never over an authorization
+        # given meanwhile, and never empty.
         before = settings.refresh_token
         client = FeishuClient(settings)
         try:
             result = await action(client)
         except IntegrationError as exc:
-            await self._mark_apart(
-                row, exc, settings if settings.refresh_token != before else None
-            )
+            refreshed = settings if settings.refresh_token != before else None
+            await self._write_back(row, used, exc=exc, refreshed=refreshed)
             raise
         if settings.refresh_token and settings.refresh_token != before:
-            keep_feishu_tokens(row, settings)
-            await self._session.flush()
+            await self._write_back(row, used, refreshed=settings)
         return result
 
-    async def _mark_apart(
+    async def _write_back(
         self,
         row: Integration,
-        exc: IntegrationError,
+        used: str,
+        *,
+        exc: IntegrationError | None = None,
         refreshed: FeishuSettings | None = None,
     ) -> None:
-        """What a failing call leaves although the request is rolled back: a
-        failure only the owner can mend, and any tokens the client refreshed
-        during the call. Written in a session of its own, and only onto the row
-        as this call read it (its sealed secret unchanged): a row reconnected
-        or renewed meanwhile is left as it is. Only the fields this owns are
-        written; the request has written nothing to the row, so holds no lock
-        on it."""
+        """What a call leaves on its row: tokens the client refreshed during
+        it, and — when it failed — a failure only the owner can mend. Written
+        only onto the credentials the call used (``used``, the sealed secret
+        its tokens came from): a row reauthorized or renewed meanwhile is left
+        as it is. Only the fields this owns are written.
+
+        A failed call's request is rolled back, so its write ends this
+        transaction first and commits on its own, on the same connection; a
+        call that went through writes into the request's transaction."""
         values: dict = {}
+        row_id = row.id
         if refreshed is not None and refreshed.refresh_token:
-            fresh = Integration(id=row.id, config=dict(row.config), secret=row.secret)
+            fresh = Integration(id=row_id, config=dict(row.config), secret=used)
             keep_feishu_tokens(fresh, refreshed)
             values["secret"] = fresh.secret
             issuer = fresh.config.get("authorized_app_id")
@@ -1147,7 +1151,7 @@ class IntegrationService:
                 values["config"] = Integration.config.op("||")(
                     func.jsonb_build_object("authorized_app_id", issuer)
                 )
-        if exc.kind in NEEDS_OWNER:
+        if exc is not None and exc.kind in NEEDS_OWNER:
             values |= {
                 "status": "auth_failed",
                 "last_error": str(exc.args[0]),
@@ -1155,11 +1159,15 @@ class IntegrationService:
             }
         if not values:
             return
-        async with AsyncSession(self._session.bind) as apart:
-            await apart.execute(text("SET LOCAL lock_timeout = '25s'"))
-            await apart.execute(
-                update(Integration)
-                .where(Integration.id == row.id, Integration.secret == row.secret)
-                .values(**values)
-            )
-            await apart.commit()
+        write = (
+            update(Integration)
+            .where(Integration.id == row_id, Integration.secret == used)
+            .values(**values)
+            .execution_options(synchronize_session=False)
+        )
+        if exc is None:
+            await self._session.execute(write)
+            return
+        await self._session.rollback()
+        await self._session.execute(write)
+        await self._session.commit()

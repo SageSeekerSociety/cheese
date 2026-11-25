@@ -12,6 +12,8 @@ from urllib.parse import quote, urlencode
 from fastapi import APIRouter, Request
 from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel, Field
+from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.app_return import back_in_app, started_in_app
@@ -35,14 +37,13 @@ from app.domain.event_author import AuthorType
 from app.domain.identity.actor import Actor
 from app.domain.integration.feishu import FeishuClient, redact
 from app.domain.integration.mail import IntegrationError
-from app.domain.integration.models import Integration, MailDraft
+from app.domain.integration.models import Integration, MailDraft, TeamFeishuApp
 from app.domain.integration.service import (
     IntegrationService,
     TeamFeishuAppService,
     draft_view,
     feishu_redirect_uri,
     feishu_settings_for,
-    hold_team_app,
     keep_feishu_tokens,
     public,
     team_app_ids,
@@ -409,7 +410,13 @@ async def _claim_feishu(
     """Finish the authorization the callback held for ``row``, whose owner is
     the one asking (`update_integration` checked it before anything is
     taken). A hand-off for another connection — somebody else's flow,
-    finished in this browser — is spent and saves nothing."""
+    finished in this browser — is spent and saves nothing.
+
+    An administrator saving the team's app at this moment holds it: the
+    person is told to try again (``busy``) and the hand-off is left unspent,
+    since nothing has been exchanged yet."""
+    if not await _team_app_lock(db, row, release=True):
+        return {"feishu": "busy"}
     held = await oauth_handoff.take(handoff)
     if (
         held is None
@@ -418,6 +425,46 @@ async def _claim_feishu(
     ):
         return {"feishu": "invalid_link"}
     return await _finish_feishu(db, row, held["code"])
+
+
+#: How long finishing an authorization waits for an administrator's save of
+#: the team's app, which holds it only for its own write.
+TEAM_APP_LOCK_WAIT = "3s"
+
+
+async def _team_app_lock(
+    db: AsyncSession, row: Integration, *, release: bool = False
+) -> bool:
+    """Share-lock the team's app of ``row`` (a row with its own app has none),
+    waiting at most ``TEAM_APP_LOCK_WAIT``. ``False``: a save holds it. Taken
+    in a savepoint, so losing the wait never leaves the request's transaction
+    aborted; ``release``: only to see that it is free, the lock is let go at
+    once."""
+    team_id = row.config.get("team_id")
+    if not team_id:
+        return True
+    lock = (
+        select(TeamFeishuApp.team_id)
+        .where(TeamFeishuApp.team_id == int(team_id))
+        .with_for_update(read=True)
+    )
+    savepoint = await db.begin_nested()
+    try:
+        await db.execute(
+            text("SELECT set_config('lock_timeout', :wait, true)"),
+            {"wait": TEAM_APP_LOCK_WAIT},
+        )
+        await db.execute(lock)
+    except DBAPIError as exc:
+        await savepoint.rollback()
+        if getattr(exc.orig, "sqlstate", None) == "55P03":
+            return False
+        raise
+    if release:
+        await savepoint.rollback()
+    else:
+        await savepoint.commit()
+    return True
 
 
 async def _finish_feishu(
@@ -434,9 +481,6 @@ async def _finish_feishu(
         return query
 
     try:
-        # Held until the tokens are kept: the team's app cannot be switched
-        # between the exchange and the write (a switch then clears them).
-        await hold_team_app(db, row)
         config = await feishu_settings_for(db, row)
         await FeishuClient(config).exchange_code(code, _redirect_uri())
     except Exception as exc:  # the person reads why, on the page
@@ -449,6 +493,20 @@ async def _finish_feishu(
         if said is not None:
             return land(said["key"])
         return land("exchange_failed", getattr(exc, "reply", ""))
+    # The code is exchanged holding no lock. Only now, for the write, is the
+    # team's app locked, and the tokens are kept only if its App ID is still the
+    # one they were issued under; a switch that landed meanwhile already sent
+    # this connection back to authorize again.
+    if not await _team_app_lock(db, row):
+        return land("busy")
+    if row.config.get("team_id"):
+        current = await db.scalar(
+            select(TeamFeishuApp.app_id).where(
+                TeamFeishuApp.team_id == int(row.config["team_id"])
+            )
+        )
+        if current != config.app_id:
+            return land("app_changed")
     keep_feishu_tokens(row, config)
     row.status, row.last_error = "ok", ""
     await db.commit()

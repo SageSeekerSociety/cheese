@@ -273,6 +273,29 @@ describe('平台应用那时候的旧连接', () => {
   })
 })
 
+describe('团队移除了飞书应用', () => {
+  it('那一行不给授权按钮，指到团队的「飞书应用」那一栏', async () => {
+    listMyIntegrations.mockResolvedValue({
+      data: [
+        {
+          ...FEISHU_ROW,
+          config: { team_id: 12, app_id: 'team-app:12', folders: [] },
+          status: 'auth_failed',
+          last_error: '',
+          user_authorized: false,
+        },
+      ],
+    })
+    feishuChoices.mockResolvedValue({ teams: [PERSONAL, { ...TEAM, app: null }], redirect_uri: 'r' })
+    await mount()
+
+    expect(await screen.findByText(/这个团队的飞书应用已经移除/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /授权个人账号/ })).toBeNull()
+    const links = screen.getAllByText('打开') as HTMLAnchorElement[]
+    expect(links.some((a) => a.getAttribute('href') === '/teams/course-team/feishu')).toBe(true)
+  })
+})
+
 describe('已经有的连接', () => {
   it('飞书那一行没授权完时说还没连上，并留着它自己的授权按钮', async () => {
     listMyIntegrations.mockResolvedValue({ data: [FEISHU_ROW] })

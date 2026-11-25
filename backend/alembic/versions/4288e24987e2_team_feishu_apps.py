@@ -1,7 +1,7 @@
 """team_feishu_apps：一个团队连接成员飞书用的那一个企业自建应用
 
 Revision ID: 4288e24987e2
-Revises: fbdb95e20845
+Revises: c5e1a7d39f20
 Create Date: 2026-11-24
 
 企业自建应用只在它那家企业的飞书里能用，团队是持有它的那一层：公司的团队设公司的应用，
@@ -22,7 +22,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "4288e24987e2"
-down_revision: str | Sequence[str] | None = "fbdb95e20845"
+down_revision: str | Sequence[str] | None = "c5e1a7d39f20"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

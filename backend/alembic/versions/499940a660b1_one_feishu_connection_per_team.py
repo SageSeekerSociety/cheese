@@ -6,8 +6,9 @@ Create Date: 2026-11-25
 
 成员通过团队的应用连的飞书（``provider='feishu'``、``config`` 带 ``team_id`` 的行）只记
 ``team_id`` 和本人的 token；这个部分唯一索引让两次连接同时插入时后到的撞上它，服务端转成
-对先建那一行的重连。建在已有的 ``integrations`` 上，所以 CONCURRENTLY（同
-``fbdb95e20845``），单独一个迁移。已有的行没有 ``team_id``，不在索引里。
+对先建那一行的重连。建在已有的 ``integrations`` 上，所以 CONCURRENTLY，单独一个迁移。已有的行没有
+``team_id``，不在索引里——旧的 API 允许同一个人、同一个 App ID 有好几行，这些行原样留着，
+这个索引一行也不碰它们。
 """
 
 from collections.abc import Sequence

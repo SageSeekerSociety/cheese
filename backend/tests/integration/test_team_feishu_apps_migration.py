@@ -14,7 +14,7 @@ import asyncpg
 
 from tests.integration.migration_replay import database_at
 
-BEFORE = "fbdb95e20845"
+BEFORE = "c5e1a7d39f20"
 AFTER = "499940a660b1"
 FK = "fk_team_feishu_apps_team_id_team"
 
@@ -136,3 +136,22 @@ def test_validating_the_key_behind_a_live_lock_waits_its_turn():
             " AND conrelid = 'team_feishu_apps'::regclass",
             FK,
         )
+
+
+def test_connections_the_old_api_allowed_twice_upgrade_untouched():
+    """The release before this one let a person connect the same App ID more
+    than once. Those rows are left exactly as they are, and the upgrade goes
+    through: nothing here indexes them."""
+    with database_at(BEFORE) as db:
+        first = _connection(
+            db, 9201, {"app_id": "cli_twice", "domain": "feishu"}, "v1:k:a"
+        )
+        second = _connection(
+            db, 9201, {"app_id": "cli_twice", "domain": "feishu"}, "v1:k:b"
+        )
+        before = _rows(db)
+
+        db.upgrade(AFTER)
+
+        assert _rows(db) == before
+        assert {first, second} <= set(_rows(db))

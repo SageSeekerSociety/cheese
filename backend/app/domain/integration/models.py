@@ -22,15 +22,6 @@ from app.domain.common import Timestamps, UuidPk
 class Integration(UuidPk, Timestamps, Base):
     __tablename__ = "integrations"
     __table_args__ = (
-        # One Feishu connection per owner and app: the same App ID entered
-        # again is that connection (``IntegrationService.connect_feishu``).
-        Index(
-            "uq_integrations_owner_feishu_app",
-            "owner_user_id",
-            text("(config ->> 'app_id')"),
-            unique=True,
-            postgresql_where=text("provider = 'feishu'"),
-        ),
         # One connection per member per team app: connecting through the same
         # team again is that connection (``IntegrationService.connect_feishu``).
         Index(
