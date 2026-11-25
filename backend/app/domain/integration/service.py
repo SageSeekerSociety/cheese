@@ -237,9 +237,7 @@ class TeamFeishuAppService:
         setting to manage from outside. A personal team's one member is its
         owner. Anyone else is answered as if there were no such team."""
         if not await team_service(self._session).is_team_member(team_id, user_id):
-            raise NotFoundError(
-                "Resource team not found", data={"type": "team", "id": team_id}
-            )
+            raise NotFoundError(say("teamNotFoundById", team_id=team_id))
 
     async def save(
         self, *, team_id: int, app_id: str, app_secret: str, domain: str, by: str
