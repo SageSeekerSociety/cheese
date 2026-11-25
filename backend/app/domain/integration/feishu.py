@@ -40,6 +40,8 @@ AUTH_CODES = {
     20073,
 }
 FORBIDDEN_CODES = {99991672, 99991679, 1770032, 1770031, 91204, 131006, 1061004}
+#: Feishu turning a call away for now — its rate limit — rather than refusing it.
+BUSY_CODES = {99991400}
 NOT_FOUND_CODES = {1770002, 91402, 131005, 1061003}
 
 BLOCK_TEXT, BLOCK_H1, BLOCK_H2, BLOCK_H3, BLOCK_BULLET, BLOCK_ORDERED = (
@@ -92,11 +94,31 @@ class FeishuSettings:
         return DOMAINS.get(self.domain, DOMAINS["feishu"])
 
 
-def _raise(status: int, body: dict | None, action: str) -> None:
+def _reply(status: int, body: dict | None, secrets: tuple[str, ...]) -> str:
+    """What Feishu answered, in its own words, with any credential this call
+    carried blanked out: its message is passed on to the person and the logs,
+    and an upstream that echoes the request must not hand the secret back."""
     code = (body or {}).get("code")
     msg = (body or {}).get("msg") or (body or {}).get("message") or ""
     reply = f"{code if code is not None else status} {msg}".strip()
+    for secret in secrets:
+        if secret and len(secret) >= 4:
+            reply = reply.replace(secret, "***")
+    return reply
+
+
+def _busy(status: int, body: dict | None) -> bool:
+    return status == 429 or status >= 500 or (body or {}).get("code") in BUSY_CODES
+
+
+def _raise(
+    status: int, body: dict | None, action: str, secrets: tuple[str, ...] = ()
+) -> None:
+    code = (body or {}).get("code")
+    reply = _reply(status, body, secrets)
     detail = say("feishuReplied", action=action, reply=reply)
+    if _busy(status, body):
+        raise IntegrationError("busy", say("feishuBusyAfter", detail=detail), reply)
     if status == 401 or code in AUTH_CODES:
         raise IntegrationError(
             "auth_failed", say("feishuAuthExpiredAfter", detail=detail), reply
@@ -125,6 +147,16 @@ class FeishuClient:
         self._transport = transport
         self._tenant: tuple[str, float] | None = None
 
+    @property
+    def _secrets(self) -> tuple[str, ...]:
+        """Every credential a call of this client may carry."""
+        s = self.settings
+        return tuple(
+            v
+            for v in (s.app_secret, s.user_access_token, s.refresh_token)
+            if v is not None
+        )
+
     def _http(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(
             base_url=self.settings.base, timeout=20, transport=self._transport
@@ -148,7 +180,7 @@ class FeishuClient:
         except ValueError:
             body = None
         if response.status_code >= 400 or (body or {}).get("code", 0) != 0:
-            _raise(response.status_code, body, action)
+            _raise(response.status_code, body, action, self._secrets)
         return (body or {}).get("data") or {}
 
     async def tenant_token(self) -> str:
@@ -167,18 +199,22 @@ class FeishuClient:
             raise IntegrationError(
                 "unreachable", say("feishuUnreachable", error=str(exc))
             ) from exc
-        body = response.json() if response.content else {}
-        if response.status_code >= 500:
-            _raise(response.status_code, body, say("feishuActionTenantToken"))
+        try:
+            body = response.json() if response.content else {}
+        except ValueError:
+            body = {}
+        if _busy(response.status_code, body):
+            _raise(
+                response.status_code,
+                body,
+                say("feishuActionTenantToken"),
+                self._secrets,
+            )
         if response.status_code >= 400 or body.get("code", 0) != 0:
             # This call carries nothing but the app's own credentials, so a
             # refusal of it (10003, 10014, 10015 and the like) is Feishu saying
             # the App ID or App Secret is not one it accepts.
-            code = body.get("code")
-            msg = body.get("msg") or body.get("message") or ""
-            reply = (
-                f"{code if code is not None else response.status_code} {msg}".strip()
-            )
+            reply = _reply(response.status_code, body, self._secrets)
             raise IntegrationError(
                 "credentials_invalid",
                 say(
@@ -239,7 +275,7 @@ class FeishuClient:
             or body.get("code", 0) != 0
             or "access_token" not in body
         ):
-            _raise(response.status_code, body, action)
+            _raise(response.status_code, body, action, self._secrets)
         self.settings.user_access_token = body["access_token"]
         self.settings.user_token_expires_at = time.time() + int(
             body.get("expires_in", 7200)

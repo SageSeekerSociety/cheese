@@ -31,6 +31,15 @@ class Integration(UuidPk, Timestamps, Base):
             unique=True,
             postgresql_where=text("provider = 'feishu'"),
         ),
+        # One connection per member per team app: connecting through the same
+        # team again is that connection (``IntegrationService.connect_feishu``).
+        Index(
+            "uq_integrations_owner_feishu_team",
+            "owner_user_id",
+            text("(config ->> 'team_id')"),
+            unique=True,
+            postgresql_where=text("provider = 'feishu' AND config ? 'team_id'"),
+        ),
     )
 
     owner_user_id: Mapped[int] = mapped_column(BigInteger, index=True)
@@ -39,7 +48,9 @@ class Integration(UuidPk, Timestamps, Base):
     provider: Mapped[str] = mapped_column(String(16))
     #: What the owner sees it as: the address, or the Feishu app's name.
     label: Mapped[str] = mapped_column(String(200))
-    #: Non-secret settings (hosts, ports, username; app_id, domain, folder).
+    #: Non-secret settings (hosts, ports, username; for Feishu the team whose
+    #: app it uses, ``team_id``, and the App ID its tokens were issued under,
+    #: ``authorized_app_id``; older rows carry their own ``app_id`` / ``domain``).
     config: Mapped[dict] = mapped_column(JSONB, default=dict)
     #: {"password": …} / {"app_secret": …, "user_access_token": …, …}, sealed.
     secret: Mapped[str] = mapped_column(Text)

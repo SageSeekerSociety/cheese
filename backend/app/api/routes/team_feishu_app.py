@@ -2,9 +2,9 @@
 自己通过它的连接（连接本身走 `/me/integrations/feishu`，用的是本人的飞书授权）。
 
 企业自建应用只在它自己那家企业的飞书里能用，所以应用设在团队上：公司的团队设公司的
-应用，一个人自己用就设在他的个人团队上。团队里每个成员都读得到它（不含 Secret）；能改
-团队设置的人（团队管理员；个人团队是它的主人）能设、改、删，门和团队的其他设置一样
-（`Can(TeamPermission.edit_settings)`）。
+应用，一个人自己用就设在他的个人团队上。只有团队里的人读得到它（不含 Secret）；其中能改
+团队设置的人（团队管理员；个人团队是它的主人）能设、改、删（`Can(TeamPermission.edit_settings)`
+之外还要真在团队里：没有席位、只凭平台管理员身份管着这个团队的人碰不到它）。
 
 **Secret 只写不回显。** 读回来的结构里没有它；`PUT` 的空串表示不改已经存下的那一个。
 保存前先拿这套凭据向飞书换一次应用令牌，Secret 不对当场报错、什么也不存。成员的连接
@@ -78,6 +78,7 @@ async def read_team_feishu_app(
     actor = await resolver.resolve()
     assert actor.user_id is not None
     service = TeamFeishuAppService(db)
+    await service.require_member(team_id, actor.user_id)
     return ok(
         {
             **team_app_view(await service.get(team_id)),
@@ -104,7 +105,10 @@ async def save_team_feishu_app(
     resolver: ActorResolverDep,
 ) -> dict:
     actor = await resolver.resolve()
-    row = await TeamFeishuAppService(db).save(
+    assert actor.user_id is not None
+    service = TeamFeishuAppService(db)
+    await service.require_member(team_id, actor.user_id)
+    row = await service.save(
         team_id=team_id,
         app_id=body.app_id.strip(),
         app_secret=body.app_secret.strip(),
@@ -121,7 +125,13 @@ async def save_team_feishu_app(
     summary="Remove the Team's Feishu App",
     dependencies=[Can(TeamPermission.edit_settings)],
 )
-async def remove_team_feishu_app(team_id: TeamId, db: DbSession) -> dict:
-    await TeamFeishuAppService(db).remove(team_id)
+async def remove_team_feishu_app(
+    team_id: TeamId, db: DbSession, resolver: ActorResolverDep
+) -> dict:
+    actor = await resolver.resolve()
+    assert actor.user_id is not None
+    service = TeamFeishuAppService(db)
+    await service.require_member(team_id, actor.user_id)
+    await service.remove(team_id)
     await db.commit()
     return ok(team_app_view(None))

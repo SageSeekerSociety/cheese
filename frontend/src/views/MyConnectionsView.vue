@@ -40,6 +40,8 @@ const projects = ref<Project[]>([])
 /** 本人所在的团队、它们设的飞书应用和本人通过它连没连（「连接飞书」那一格，每个团队指到
  *  它自己的「飞书应用」那一栏，连接在那里做）。读不到就是空的。 */
 const feishuTeams = ref<FeishuTeamChoice[]>([])
+/** 团队那一格没读到时那句原话：没读到不是「没有团队设了应用」，画面要说读失败。 */
+const feishuError = ref('')
 const loading = ref(false)
 const error = ref('')
 /** 从飞书授权回来时地址栏里的结果（`?feishu=`）：一个结果码，或者平台那句拒绝的
@@ -68,10 +70,7 @@ async function load() {
   loading.value = true
   error.value = ''
   // 飞书应用与下面三项并行发起，但单独结算：问不到不该把整页的连接一起掀掉。
-  const feishuRead = feishuChoices().then(
-    (got) => got.teams,
-    () => [] as FeishuTeamChoice[]
-  )
+  const feishuRead = loadFeishuTeams()
   try {
     const [mine, waiting, projectList] = await Promise.all([
       listMyIntegrations(),
@@ -86,7 +85,16 @@ async function load() {
   } finally {
     loading.value = false
   }
-  feishuTeams.value = await feishuRead
+  await feishuRead
+}
+
+async function loadFeishuTeams() {
+  try {
+    feishuTeams.value = (await feishuChoices()).teams
+    feishuError.value = ''
+  } catch (e) {
+    feishuError.value = e instanceof Error ? e.message : t('integrations.member.teams.loadFailed')
+  }
 }
 
 function replace(row: Integration) {
@@ -124,7 +132,10 @@ async function authorize(row: Integration) {
 
 async function remove(row: Integration) {
   const out = await act(`${row.id}:delete`, () => deleteIntegration(row.id))
-  if (out) integrations.value = integrations.value.filter((x) => x.id !== row.id)
+  if (!out) return
+  integrations.value = integrations.value.filter((x) => x.id !== row.id)
+  // 删的是飞书连接时，团队那一格说的「已连接」也跟着变。
+  if (row.provider === 'feishu') await loadFeishuTeams()
 }
 
 async function send(draft: MailDraft) {
@@ -191,7 +202,9 @@ onMounted(async () => {
     :error="error"
     :busy="busy"
     :feishu-teams="feishuTeams"
+    :feishu-error="feishuError"
     @refresh="load"
+    @retry-feishu="loadFeishuTeams"
     @discard="discard"
     @send="send"
     @set-grants="setGrants"

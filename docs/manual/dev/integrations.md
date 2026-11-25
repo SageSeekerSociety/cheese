@@ -62,7 +62,11 @@ API 分成两半，`backend/app/api/routes/integrations.py` 开头就写明：`/
 
 连接在团队的「飞书应用」那一栏里做。团队里每个成员都读得到这一栏（`GET /teams/{teamId}/feishu-app`，门是 `view_members`）：团队用的是哪个应用（不含 Secret）、本人能不能设（`can_manage`）、本人通过它的连接（`connection`：行 id、状态、授权完没有）。成员点「连接我的飞书账号」，`POST /me/integrations/feishu`（`{team_id}`，只认本人所在、且设了应用的团队）落一行：这一行只记 `config.team_id`，不复制应用的任何凭据；同一个团队再连一次是同一行。随后 `GET /me/integrations/{id}/feishu/authorize` 拿授权地址跳过去，用的是本人自己的飞书账号，回调把 `user_access_token` / `refresh_token` 写进**这一行**；「重新连接」对已有的那一行再走一次授权，「断开」删掉这一行。「我的连接」是总览：`GET /me/integrations/feishu` 回本人所在每个团队（个人团队在前）、它的应用和本人的连接，每个团队指到它的「飞书应用」那一栏；一个都没设时，指到个人设置里个人团队的那一栏。
 
-`feishu_settings_for(session, row)` 每次调用时从团队读应用：换了 Secret，所有连接下一次调用就用新的；团队删了应用，或者主人已不在这个团队，连接当场报 `auth_failed`、说清楚到「我的连接」重新连接。共享团队的应用对成员只走本人授权，不借应用自己的身份（`FeishuSettings.user_only`），所以只持有一个连接、没授权的人读不到分享给团队应用的文档；个人团队的应用是本人自己的，照旧可以用。
+`feishu_settings_for(session, row)` 每次调用时从团队读应用：换了 Secret，所有连接下一次调用就用新的；团队换了 App ID，成员的授权是在原来那个应用下给的，保存时就把这些连接的令牌清掉、标成要重新授权，令牌记着它是在哪个 App ID 下发的（`config.authorized_app_id`），不会和新应用的凭据拼在一起用；团队删了应用，或者主人已不在这个团队，连接报 `auth_failed`、说清楚到哪里重新连接。共享团队的应用对成员只走本人授权，不借应用自己的身份（`FeishuSettings.user_only`），所以只持有一个连接、没授权的人读不到分享给团队应用的文档；个人团队的应用是本人自己的，照旧可以用。团队的应用只有团队里的人读写得到：没有席位、只凭平台管理员身份管着这个团队的人也不行。两次保存同时到会一个接一个来（预留并锁住团队那一行），空着 Secret 的那一次读到的是前一次写下的值。一个人在一个团队上只有一个连接（`uq_integrations_owner_feishu_team`），两次连接同时插入时后到的拿先建的那一行。
+
+**较早的连接原样读。** 迁移 `4288e24987e2` 只建 `team_feishu_apps` 和那个索引，一行已有的连接都不改：自带 `app_id` / `app_secret` 的连接照旧用它自己那套凭据（续期也是），页面提示主人用团队的飞书应用重新连接；平台应用时代建的、`config` 为空的连接显示需要重新连接（不算正常），续期跳过它。
+
+**一次失败的调用记下的东西不随请求回滚。** 只有主人能修的失败（授权失效、应用凭据不对）和这次调用刚刷新出来的令牌（刷新令牌只能用一次，用掉的那个在飞书那边已经没了），先结束请求自己的事务（它可能还锁着这一行），再用同一个引擎上的另一个会话写下（`IntegrationService._keep_apart`）。转给人的飞书原话里去掉这次调用带的任何凭据；飞书限流（429、99991400）或它自己出错（5xx）回 503 `busy`、可以重试，只有应用凭据被拒才是 422 `credentials_invalid`。
 
 平台应用时代建的行 `config` 里没有 `app_id`：`feishu_settings` 对它抛 `credentials_invalid`，说明要删掉它、用自己公司的应用重新连接；每小时的续期把它标成 `auth_failed` 后接着处理别的行。`feishu_apps` 表这一版不再读写、仍留在库里，按两次发布的规矩由下一个 PR 删。随后 `GET /me/integrations/{id}/feishu/authorize` 拿授权地址跳过去，回调把 `user_access_token` / `refresh_token` 写进**这一行**。`feishu_settings(row)` 只从这一行取凭据，授权、换 token、续期都用它。
 

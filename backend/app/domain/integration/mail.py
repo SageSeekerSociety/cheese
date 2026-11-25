@@ -35,16 +35,20 @@ class IntegrationError(BaseError):
 
     #: ``credentials_invalid`` is credentials a person just typed and the
     #: service refused: the request is what is wrong, so it is a 422.
+    #: ``busy`` is the service turning the call away for now (a rate limit, a
+    #: failure on its side): the same request may well succeed later.
     STATUS = {
         "auth_failed": 401,
         "forbidden": 403,
         "not_found": 404,
         "credentials_invalid": 422,
+        "busy": 503,
     }
 
     def __init__(self, kind: str, message: str, reply: str = "") -> None:
         super().__init__(self.STATUS.get(kind, 502), message, {"kind": kind})
         self.kind = kind
+        self.retryable = kind in ("busy", "unreachable")
         #: What the service itself answered, in its own words, without ours.
         self.reply = reply
 

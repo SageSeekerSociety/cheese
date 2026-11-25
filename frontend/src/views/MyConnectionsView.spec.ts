@@ -11,7 +11,7 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { createVuetify } from 'vuetify'
 import * as components from 'vuetify/components'
 import * as directives from 'vuetify/directives'
-import { cleanup, render, screen } from '@testing-library/vue'
+import { cleanup, fireEvent, render, screen } from '@testing-library/vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const listMyIntegrations = vi.fn()
@@ -20,12 +20,14 @@ const listProjects = vi.fn()
 const feishuChoices = vi.fn()
 const feishuAuthorizeUrl = vi.fn()
 const claimFeishuHandoff = vi.fn()
+const deleteIntegration = vi.fn()
 
 vi.mock('../api', async () => ({
   ...(await vi.importActual<typeof import('../api')>('../api')),
   listMyIntegrations: () => listMyIntegrations(),
   listMyMailDrafts: () => listMyMailDrafts(),
   listProjects: () => listProjects(),
+  deleteIntegration: (id: string) => deleteIntegration(id),
 }))
 
 // 飞书那几个函数住它们自己的模块（`../api/feishu`），所以按模块分别挡。
@@ -132,6 +134,7 @@ beforeEach(() => {
   listProjects.mockReset().mockResolvedValue({ data: [] })
   feishuChoices.mockReset().mockResolvedValue({ teams: [PERSONAL, TEAM], redirect_uri: 'r' })
   feishuAuthorizeUrl.mockReset()
+  deleteIntegration.mockReset()
   sonner.success.mockReset()
   sonner.error.mockReset()
 })
@@ -170,6 +173,51 @@ describe('「连接飞书」那一格', () => {
     await mount()
 
     expect(await screen.findByText('还没连接飞书')).toBeTruthy()
+  })
+})
+
+describe('「连接飞书」那一格跟着连接走', () => {
+  it('在这里删掉飞书连接，团队那一格不再说已连接', async () => {
+    const connected = { ...TEAM, connection: { id: 'feishu-own', status: 'ok', user_authorized: true } }
+    listMyIntegrations.mockResolvedValue({ data: [FEISHU_ROW] })
+    feishuChoices
+      .mockResolvedValueOnce({ teams: [PERSONAL, connected], redirect_uri: 'r' })
+      .mockResolvedValue({ teams: [PERSONAL, TEAM], redirect_uri: 'r' })
+    deleteIntegration.mockResolvedValue({ deleted: 'feishu-own' })
+    await mount()
+
+    expect(await screen.findByText('cli_team · 已连接')).toBeTruthy()
+    await fireEvent.click(screen.getByRole('button', { name: '删除' }))
+    await fireEvent.click(screen.getAllByRole('button', { name: '删除' }).at(-1)!)
+    expect(await screen.findByText('cli_team · 还没连接')).toBeTruthy()
+    expect(screen.queryByText('cli_team · 已连接')).toBeNull()
+  })
+
+  it('团队那一格读不到时说读不到，不说「没有团队设了应用」，并能再读', async () => {
+    feishuChoices
+      .mockRejectedValueOnce(new Error('网络断了'))
+      .mockResolvedValue({ teams: [PERSONAL, TEAM], redirect_uri: 'r' })
+    await mount()
+
+    expect(await screen.findByText(/网络断了/)).toBeTruthy()
+    expect(screen.queryByText(/你所在的团队都还没设置飞书应用/)).toBeNull()
+    await fireEvent.click(screen.getByRole('button', { name: '重试' }))
+    expect(await screen.findByText('cli_team · 还没连接')).toBeTruthy()
+  })
+
+  it('较早的飞书连接提示用团队的飞书应用重新连接', async () => {
+    listMyIntegrations.mockResolvedValue({
+      data: [
+        {
+          ...FEISHU_ROW,
+          config: { app_id: 'cli_old', domain: 'feishu' },
+          user_authorized: true,
+          reconnect: 'team_app',
+        },
+      ],
+    })
+    await mount()
+    expect(await screen.findByText(/用团队的飞书应用重新连接/)).toBeTruthy()
   })
 })
 

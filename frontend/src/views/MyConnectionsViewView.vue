@@ -34,10 +34,14 @@ const props = defineProps<{
   busy: string
   /** 本人所在的团队和它们设的飞书应用，个人团队在前；没读到时是空的。 */
   feishuTeams: FeishuTeamChoice[]
+  /** 团队那一格读失败时那句原话；`''` 表示没失败。 */
+  feishuError: string
 }>()
 
 const emit = defineEmits<{
   refresh: []
+  /** 再读一次团队那一格。 */
+  'retry-feishu': []
   discard: [draft: MailDraft]
   send: [draft: MailDraft]
   'set-grants': [row: Integration, grants: string[]]
@@ -276,6 +280,9 @@ function save() {
             <!-- 飞书那一行在授权回来之前搜不了（搜索只认个人授权），所以这里说的是「连结上
                  了没有」，不是「工作正常」—— 旁边那个状态在授权之前说的「正常」只到「应用
                  凭据没问题」为止。 -->
+            <div v-else-if="row.reconnect === 'team_app'" class="conn-row__sub">
+              {{ t('integrations.member.teams.reconnect') }}
+            </div>
             <div v-else-if="row.provider === 'feishu' && !row.user_authorized" class="conn-row__sub">
               {{ t('integrations.member.notConnected') }}
             </div>
@@ -321,7 +328,13 @@ function save() {
          section, which each row links to. -->
     <section class="settings-card" :aria-label="t('integrations.member.connect')" data-feishu-teams>
       <div class="settings-card__title">{{ t('integrations.member.connect') }}</div>
-      <p class="settings-card__desc">
+      <p v-if="feishuError" role="alert" class="settings-card__desc c-danger">
+        {{ feishuError }}
+        <BaseButton kind="ghost" size="sm" @click="emit('retry-feishu')">{{
+          t('integrations.member.teams.retry')
+        }}</BaseButton>
+      </p>
+      <p v-else class="settings-card__desc">
         {{ anyApp ? t('integrations.member.teams.lede') : t('integrations.member.teams.none') }}
       </p>
       <div v-for="team in feishuTeams" :key="team.team_id" class="conn-team" :data-team="team.team_id">
