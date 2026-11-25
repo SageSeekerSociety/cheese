@@ -10,7 +10,7 @@ Create Date: 2026-11-25
 ``feishu_apps``，这一步按两次发布的规矩删表：部署时还在服务的上一版不碰它。
 
 先用 ``with_lock_retries`` 拿下这张表（没有指向它、也没有它指向别处的外键），拿不到就放手
-稍后再试，不排在活着的请求后面占着锁。``IF EXISTS``：中途断掉之后重跑不报错。
+稍后再试，不排在活着的请求后面占着锁。表已经不在（中途断掉之后重跑）就直接返回，不去锁一张不存在的表。
 """
 
 from collections.abc import Sequence
@@ -28,6 +28,13 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # Already gone (a run cut short after the drop, or dropped by hand): there
+    # is nothing to lock, and locking a missing table would fail the upgrade.
+    if (
+        op.get_bind().execute(sa.text("SELECT to_regclass('feishu_apps')")).scalar()
+        is None
+    ):
+        return
     with_lock_retries("feishu_apps")
     op.execute("DROP TABLE IF EXISTS feishu_apps")
 
