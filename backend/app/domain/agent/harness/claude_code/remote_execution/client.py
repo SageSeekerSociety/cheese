@@ -166,6 +166,18 @@ PRIVATE_INSTRUCTIONS = (
 # Where the runner has the bootstrap mark its steps for the platform's log
 # (`claude_code.runner.LAUNCH_MARKS_FILE`, which this file cannot import).
 LAUNCH_MARKS_FILE = "CHEESE_LAUNCH_MARKS_FILE"
+# What the launcher's floor check got from the binary it chose: the version,
+# a space, and that binary's path (`device_launch`). Asking a build its version
+# costs a start of it, about a fifth of a second; the bootstrap is handed the
+# same binary moments later, so it takes the answer rather than ask again.
+CLAUDE_CHECKED = "CHEESE_CLAUDE_CHECKED"
+
+
+def checked_version(claude: str) -> str | None:
+    """The version the launcher read off ``claude``, or None when it read it
+    off another binary or did not say: then the bootstrap asks for itself."""
+    version, _, path = os.environ.get(CLAUDE_CHECKED, "").partition(" ")
+    return version if version and path == claude else None
 
 
 def mark_launch(phase: str) -> None:
@@ -281,8 +293,12 @@ def prepare(
     home_override=None,
     config_override=None,
     workspace_override=None,
+    version=None,
 ):
-    version = subprocess.check_output([claude, "--version"], text=True).split()[0]
+    """``version``: what ``claude --version`` already answered for this binary,
+    when its caller asked; asked here otherwise."""
+    if version is None:
+        version = subprocess.check_output([claude, "--version"], text=True).split()[0]
     if version != PINNED_VERSION:
         raise RuntimeError(
             f"Remote execution requires Claude Code {PINNED_VERSION}; found {version}"
@@ -1327,12 +1343,14 @@ def main():
             home_override=os.environ["HOME"],
             config_override=config_dir,
             workspace_override=os.environ["CHEESE_WORK"],
+            version=checked_version(args.args[0]),
         )
         mark_launch("bootstrap_prepared")
         os.chdir(launch["cwd"])
         # The marks are the runner's to report, not the session's to inherit.
         env = dict(os.environ, **launch["env"])
         env.pop(LAUNCH_MARKS_FILE, None)
+        env.pop(CLAUDE_CHECKED, None)
         env = with_gateway(launch["execution"], env)
         mark_launch("bootstrap_gateway_started")
         run_in_place(launch["command"], env)
