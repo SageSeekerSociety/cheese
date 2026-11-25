@@ -2,6 +2,7 @@
 
 import contextlib
 import hashlib
+import io
 import json
 import os
 import re
@@ -14,6 +15,7 @@ import tempfile
 import threading
 import time
 import uuid
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -21,6 +23,9 @@ import pytest
 from app.domain.agent import machine_launcher, place
 from app.domain.agent.harness.claude_code import ClaudeLaunch, device_launch
 from app.domain.agent.harness.claude_code.cli import DISALLOWED_TOOLS, LAUNCH_ARGS
+from app.domain.agent.harness.claude_code.remote_execution import (
+    client as executor_client,
+)
 from app.domain.agent.harness.claude_code.remote_execution import (
     release as resident_release,
 )
@@ -586,8 +591,8 @@ def test_the_runner_keeps_its_state_in_the_owners_home(tmp_path):
     state = owner / STATE.removeprefix("$HOME/")
     assert state.is_dir()
     assert oct(state.stat().st_mode & 0o777) == "0o700"
-    (artifact,) = state.glob("runner-*.pyz")
-    assert artifact.read_bytes() == device_launch.build()
+    (artifact,) = state.glob("runner-*")
+    assert _modules(artifact) == _shipped_modules()
     line = (session / "runner").read_text().strip()
     assert _argv(line, cwd=tmp_path) == [
         "python3",
@@ -601,25 +606,71 @@ def test_the_runner_keeps_its_state_in_the_owners_home(tmp_path):
     assert line.endswith(f'2>>"{state}/runner.log"')
 
 
-def test_a_live_runners_archive_is_never_overwritten(tmp_path):
-    """The archive is named by its digest: a launch that ships the same runner
-    writes nothing, and one that ships a new one leaves the old file in place
+def _shipped_modules() -> dict[str, bytes]:
+    with zipfile.ZipFile(io.BytesIO(device_launch.build())) as archive:
+        return {name: archive.read(name) for name in archive.namelist()}
+
+
+def _modules(folder: Path) -> dict[str, bytes]:
+    """The runner's modules as they are on the machine, without the compiled
+    copies Python keeps beside them."""
+    return {
+        path.relative_to(folder).as_posix(): path.read_bytes()
+        for path in folder.rglob("*")
+        if path.is_file() and "__pycache__" not in path.parts
+    }
+
+
+def _runner_of(session: Path) -> Path:
+    """The runner a launch hands the session, as its command names it."""
+    return Path(_argv((session / "runner").read_text().strip(), cwd=session)[3])
+
+
+def test_a_live_runners_modules_are_never_overwritten(tmp_path):
+    """The runner is named by its digest: a launch that ships the same runner
+    writes nothing, and one that ships a new one leaves the old one in place
     for the runner still importing from it."""
     _stand_in_claude(tmp_path / "owner/.local/bin/claude")
     owner, _, first = _run_prepare(tmp_path)
     assert first.returncode == 0, first.stderr
     state = owner / STATE.removeprefix("$HOME/")
-    (artifact,) = state.glob("runner-*.pyz")
-    stamp = artifact.stat().st_mtime_ns
-    live = state / "runner-0000.pyz"
-    live.write_bytes(b"in use")
+    (artifact,) = state.glob("runner-*")
+    stamps = {path: path.stat().st_mtime_ns for path in artifact.rglob("*.py")}
+    live = state / "runner-0000"
+    live.mkdir()
+    (live / "__main__.py").write_text("in use")
 
     shutil.rmtree(owner / ".cheese/home")
-    _, _, second = _run_prepare(tmp_path)
+    _, session, second = _run_prepare(tmp_path)
 
     assert second.returncode == 0, second.stderr
-    assert artifact.stat().st_mtime_ns == stamp
-    assert live.read_bytes() == b"in use"
+    assert _runner_of(session) == artifact
+    assert {path: path.stat().st_mtime_ns for path in artifact.rglob("*.py")} == stamps
+    assert (live / "__main__.py").read_text() == "in use"
+
+
+@pytest.mark.parametrize("damage", ["deleted", "changed"])
+def test_a_runner_damaged_on_the_machine_is_not_the_one_started(tmp_path, damage):
+    """A module removed or edited on the machine since it was unpacked would
+    fail the session halfway, or run code the platform did not ship: the next
+    launch runs the release as shipped, and leaves the damaged copy to any
+    runner still using it."""
+    _stand_in_claude(tmp_path / "owner/.local/bin/claude")
+    owner, _, first = _run_prepare(tmp_path)
+    assert first.returncode == 0, first.stderr
+    state = owner / STATE.removeprefix("$HOME/")
+    (artifact,) = state.glob("runner-*")
+    module = artifact / "app/domain/agent/harness/claude_code/runner.py"
+    if damage == "deleted":
+        module.unlink()
+    else:
+        module.write_text("raise SystemExit('not the shipped runner')\n")
+
+    shutil.rmtree(owner / ".cheese/home")
+    _, session, second = _run_prepare(tmp_path)
+
+    assert second.returncode == 0, second.stderr
+    assert _modules(_runner_of(session)) == _shipped_modules()
 
 
 def test_a_build_under_the_floor_is_refused_by_name(tmp_path):
@@ -631,6 +682,22 @@ def test_a_build_under_the_floor_is_refused_by_name(tmp_path):
         result.stderr
     )
     assert not (session / "command").exists()
+
+
+def test_the_bootstrap_takes_a_version_only_from_the_binary_it_was_read_off(
+    monkeypatch,
+):
+    """The launcher hands on the version it read so the bootstrap need not
+    start the build again to ask; an answer about any other binary is no
+    answer about this one, and the bootstrap asks for itself."""
+    monkeypatch.setenv(executor_client.CLAUDE_CHECKED, "2.1.316 /opt/a b/claude")
+
+    assert executor_client.checked_version("/opt/a b/claude") == "2.1.316"
+    assert executor_client.checked_version("/usr/local/bin/claude") is None
+
+    monkeypatch.delenv(executor_client.CLAUDE_CHECKED)
+
+    assert executor_client.checked_version("/opt/a b/claude") is None
 
 
 def test_no_claude_anywhere_is_named_not_started(tmp_path):

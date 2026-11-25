@@ -11,11 +11,13 @@ the two renderings to each other rather than to a second copy of the table.
 """
 
 import contextlib
+import http.server
 import os
-import re
+import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import types
 import urllib.request
 import uuid
@@ -103,54 +105,52 @@ def _room_payload():
     )
 
 
-def _stub_curl(tmp_path, codes):
-    """A `curl` on PATH that answers with `codes` by URL, and logs its calls.
+class _Quiet(http.server.BaseHTTPRequestHandler):
+    """A mirror that is there: it answers every HEAD, with a 404."""
 
-    The one question a test cannot ask the internet is whether a mirror answers
-    right now, so the machine's curl is replaced by this. It reads the URL out
-    of whatever the launcher passes (`--head -o /dev/null ... <url>`) and
-    nothing more, and it logs, because how MANY probes a call makes is half of
-    what is being pinned.
-    """
-    bin_dir = tmp_path / "stubbin"
-    bin_dir.mkdir(exist_ok=True)
-    log = tmp_path / "curl.log"
-    cases = "".join(
-        f"  {url.rstrip('/')}/*) exit {code};;\n" for url, code in codes.items()
-    )
-    curl = bin_dir / "curl"
-    curl.write_text(
-        "#!/bin/sh\n"
-        'url=""\n'
-        'for a in "$@"; do case "$a" in http*) url="$a";; esac; done\n'
-        f'printf "%s\\n" "$url" >> "{log}"\n'
-        'case "$url" in\n'
-        f"{cases}"
-        "esac\n"
-        "exit 0\n"
-    )
-    curl.chmod(0o755)
-    return bin_dir, log
+    def do_HEAD(self):
+        self.send_response(404)
+        self.end_headers()
+
+    def log_message(self, *_):
+        pass
 
 
-def _run_shell_block(tmp_path, block, *, env=None, codes=None):
-    """Run a rendered block the way the launcher runs it and report what it
-    leaves behind.
+@pytest.fixture
+def mirror_host():
+    """An address that answers, on this machine: the one thing a test cannot
+    ask the internet is whether a mirror answers right now."""
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Quiet)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_port}"
+    server.shutdown()
+    server.server_close()
+
+
+# An address nothing answers: connecting is refused at once.
+_NOBODY = "http://127.0.0.1:1"
+
+
+def _run_launcher_block(tmp_path, block, *, env=None, path=None, store=""):
+    """Run a rendered block the way the launcher runs it (`set -e`, POSIX sh)
+    and report what it leaves behind.
 
     An unset variable reports as an empty value, never as a missing key, so
-    "did this export anything" is only ever a question about the value.
+    "did this export anything" is only ever a question about the value. No
+    proxy is inherited: the addresses under test are this machine's own.
     """
-    bin_dir, _log = _stub_curl(tmp_path, codes or {})
     dump = tmp_path / "env.dump"
+    dump.unlink(missing_ok=True)
     probe = "".join(
         f'printf "%s=%s\\n" {name} "${{{name}:-}}" >> "{dump}"\n' for name in _ALL_NAMES
     )
     result = subprocess.run(
-        ["sh", "-c", f"{block}\n{probe}"],
-        env={
-            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
-            **(env or {}),
-        },
+        [
+            shutil.which("sh"),
+            "-c",
+            f"set -e\nCS={shlex.quote(store)}\n{block}\n{probe}",
+        ],
+        env={"PATH": path or os.environ["PATH"], **(env or {})},
         capture_output=True,
         text=True,
         timeout=30,
@@ -254,7 +254,7 @@ def test_the_feature_can_be_turned_off(monkeypatch):
     config = mirrors.configuration(off)
 
     assert mirrors.environment(config) == {}
-    assert mirrors.shell(config) == ""
+    assert mirrors.shell(config, '""') == ""
     assert probes == []
     assert set(mirrors.governed(config)) == set(_ALL_NAMES)
 
@@ -348,83 +348,87 @@ def test_an_answer_about_other_addresses_is_probed_again(monkeypatch, tmp_path):
     assert len(probes) > before
 
 
-def test_the_launcher_and_the_executor_export_the_same_variables(monkeypatch):
-    """The same policy, rendered twice by code that cannot share any.
-
-    Compared as pairs rather than as names, because a mirror in the environment
-    and the same name pointed somewhere else in the launcher is exactly the
-    drift a table is supposed to prevent.
-    """
-    monkeypatch.setattr(mirrors, "_answers", _answers_except(_DEAD))
-    environment = mirrors.environment(_CONFIG)
-    block = mirrors.shell(_CONFIG)
-
-    assert set(re.findall(r"export (\w+)=", block)) == set(environment)
-    for name, value in environment.items():
-        assert f"export {name}='{value}'" in block, name
-
-
-def test_the_launcher_uses_a_mirror_only_when_it_answers(tmp_path):
+def test_the_launcher_uses_a_mirror_only_when_it_answers(tmp_path, mirror_host):
     """The probe is a property of the machine, which is why the launcher makes
     it there — the backend that builds this script is not on the network of
-    every machine it launches on."""
-    block = mirrors.shell(_CONFIG)
-    alive = _run_shell_block(
-        tmp_path,
-        block,
-        codes={
-            _CONFIG["npm"]: 7,
-            _CONFIG["pypi"]: 22,
-            _CONFIG["playwright"]: 0,
-            _CONFIG["uv_python"]: 6,
-        },
-    )
+    every machine it launches on. A mirror answering 404 is a mirror that is
+    there; one that refuses the connection is not."""
+    config = {
+        **_CONFIG,
+        "pypi": f"{mirror_host}/simple",
+        "playwright": f"{mirror_host}/binaries/playwright",
+        "npm": _NOBODY,
+        "uv_python": f"{_NOBODY}/cpython",
+    }
+    alive = _run_launcher_block(tmp_path, mirrors.shell(config, '"$CS"'))
 
-    # 22 is a mirror refusing the HEAD: it is there, and a browser mirror
-    # answers exactly that for the directory above its browsers.
-    assert alive["PIP_INDEX_URL"] == _CONFIG["pypi"]
-    assert alive["PLAYWRIGHT_DOWNLOAD_HOST"] == _CONFIG["playwright"]
-    # 7 and 6 are a mirror that is not there.
+    assert alive["PIP_INDEX_URL"] == config["pypi"]
+    assert alive["UV_DEFAULT_INDEX"] == config["pypi_official"]
+    assert alive["PLAYWRIGHT_DOWNLOAD_HOST"] == config["playwright"]
     assert "npm_config_registry" not in alive
     assert "UV_PYTHON_INSTALL_MIRROR" not in alive
 
 
-def test_the_launcher_keeps_what_the_machine_already_had(tmp_path):
+def test_the_launcher_keeps_what_the_machine_already_had(tmp_path, mirror_host):
     """A project's own setup scripts run under this, and a project that names
     an index of its own keeps it — the same rule the executor follows."""
-    seen = _run_shell_block(
+    config = {**_CONFIG, "pypi": f"{mirror_host}/simple"}
+    seen = _run_launcher_block(
         tmp_path,
-        mirrors.shell(_CONFIG),
+        mirrors.shell(config, '"$CS"'),
         env={"PIP_INDEX_URL": "https://internal.test/simple"},
     )
 
     assert seen["PIP_INDEX_URL"] == "https://internal.test/simple"
-    assert seen["UV_INDEX"] == _CONFIG["pypi"]
+    assert seen["UV_INDEX"] == config["pypi"]
 
 
-def test_the_launcher_probes_without_a_curl_and_launches_anyway(tmp_path):
-    """A machine without curl gets no mirrors and no failure. `set -e` is in
-    force in the launcher, so a probe that cannot run has to be survivable by
-    construction rather than by luck."""
-    block = mirrors.shell(_CONFIG)
-    bin_dir = tmp_path / "emptybin"
-    bin_dir.mkdir()
-    dump = tmp_path / "env.dump"
-    result = subprocess.run(
-        # By its absolute path: this PATH is the machine's, and it has no sh.
-        [shutil.which("sh"), "-c", f"set -e\n{block}\nprintf ok > {dump}"],
-        env={"PATH": str(bin_dir)},
-        capture_output=True,
-        text=True,
-        timeout=30,
+def test_a_launch_is_told_what_the_rooms_tool_calls_were_told(tmp_path, monkeypatch):
+    """One answer per project and machine: a launch that follows the room's
+    tool calls reads what the executor last found (`bootstrap.prepared`)
+    instead of asking the network again, which every launch used to do, one
+    mirror after another, before anything else could start."""
+    # Every address is one nothing answers now, so only the kept answer can
+    # export anything.
+    config = {
+        **_CONFIG,
+        **{
+            key: f"{_NOBODY}/{key}"
+            for key in ("pypi", "npm", "playwright", "uv_python")
+        },
+    }
+    store = tmp_path / "store"
+    monkeypatch.setattr(mirrors, "_answers", lambda url: True)
+    told = mirrors.environment(config, store)
+    assert told
+
+    kept = _run_launcher_block(
+        tmp_path, mirrors.shell(config, '"$CS"'), store=str(store)
+    )
+    fresh = _run_launcher_block(
+        tmp_path, mirrors.shell(config, '"$CS"'), store=str(tmp_path / "other")
     )
 
-    assert result.returncode == 0, result.stderr
-    assert dump.read_text() == "ok"
+    assert kept == told
+    assert fresh == {}
 
 
-def test_a_device_launch_carries_the_mirrors(tmp_path):
-    """The launcher half, out of the script a device actually runs.
+def test_a_launch_without_python_launches_anyway(tmp_path):
+    """A machine without python3 gets no mirrors and no failure. `set -e` is in
+    force in the launcher, so a probe that cannot run has to be survivable by
+    construction rather than by luck."""
+    bin_dir = tmp_path / "emptybin"
+    bin_dir.mkdir()
+    seen = _run_launcher_block(
+        tmp_path, mirrors.shell(_CONFIG, '"$CS"'), path=str(bin_dir)
+    )
+
+    assert seen == {}
+
+
+def test_a_device_launch_carries_the_mirrors(tmp_path, monkeypatch):
+    """The launcher half, out of the script a device actually runs, with the
+    deployment's own addresses and the project's store as the launcher names it.
 
     The launcher's own downloads are not the agent's and not the same
     environment, but a launch that fetched its toolchain and a project's
@@ -433,10 +437,14 @@ def test_a_device_launch_carries_the_mirrors(tmp_path):
     """
     from app.domain.agent import machine_launcher
 
+    store = tmp_path / "store"
+    monkeypatch.setattr(mirrors, "_answers", lambda url: True)
+    mirrors.environment(mirrors.configuration(settings), store)
     script = machine_launcher.launch_script(command='"$AGENT"')
-    start = script.index("# Where this room's package downloads come from.")
-    closing = script.index("\nfi\n", script.index("if command -v curl", start))
-    seen = _run_shell_block(tmp_path, script[start : closing + 4], codes={})
+    start = script.index("# Where this room's package downloads come from")
+    end = "unset -f cheese_package_mirrors\n"
+    block = script[start : script.index(end, start) + len(end)]
+    seen = _run_launcher_block(tmp_path, f"CSLIVE=1\n{block}", store=str(store))
 
     assert seen["UV_INDEX"] == settings.package_mirror_pypi_index
     assert seen["PIP_EXTRA_INDEX_URL"] == settings.package_mirror_pypi_fallback

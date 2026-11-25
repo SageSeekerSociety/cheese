@@ -7,12 +7,17 @@ fetches from a domestic mirror where one answers, and from the official source
 otherwise. None of this reaches an agent's prompt, its skills or its memory:
 it is process environment and nothing else.
 
-ONE TABLE, TWO RENDERINGS. The same policy has to hold in two places that
-cannot share code: the Python executor, whose environment an agent's tools
-inherit (`bootstrap.prepared`), and the launcher script a device runs
+ONE TABLE, ONE ANSWER PER STORE. The same policy has to hold in two places:
+the Python executor, whose environment an agent's tools inherit
+(`bootstrap.prepared`), and the launcher script a device runs
 (`machine_launcher.launch_script`), which is POSIX shell assembled from
-strings. `MIRRORS` below is the one table, `environment` renders it as a
-mapping, `shell` renders it as statements, and a test holds the two together.
+strings. Both run THIS file on the machine — the executor from its release, the
+launcher by piping this source to `python3` (`shell`) — so there is one table,
+one probe and one kept answer, under the project's store that both of them
+name. A launch that follows a room's tool calls by less than `ANSWER_KEPT_S`
+asks nothing of the network; it used to probe every mirror again, one after
+another, on every launch, and that was most of the second a session spent
+before its files were written.
 
 WHY EVERY MIRROR IS PROBED FIRST. PyPI is the only one of these that admits a
 second, lower-priority index — `UV_DEFAULT_INDEX` for uv, `PIP_EXTRA_INDEX_URL`
@@ -56,39 +61,21 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
-import urllib.error
-import urllib.request
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 
-# One probe's budget, which is also what a launcher spends on the same probe
-# (`shell` renders these). A mirror on a direct path answers in tens of
-# milliseconds; these are the ceiling for one that never answers at all.
-PROBE_CONNECT_S = 1.0
+# One probe's budget. A mirror on a direct path answers in tens of
+# milliseconds; this is the ceiling for one that never answers at all, and
+# the probes run together, so it is also the ceiling for all of them.
 PROBE_TIMEOUT_S = 2.0
 # How long an answer is kept, under the room's store. The executor prepares on
 # every tool call it serves, so probing each time would be a probe per call and
 # a room whose network is gone would pay the ceiling every call; this is also
 # how long a mirror that goes down keeps taking a room's installs with it.
 ANSWER_KEPT_S = 900.0
-
-# What a probe of a mirror asks for: a URL on it that any mirror can answer.
-# Curl exits 0 for a reply OF ANY KIND — including the 404 a browser mirror
-# gives over the directory above its browsers, which is the mirror being there
-# — and 22 when it is asked to refuse error statuses (`-f`), which nothing here
-# passes but a machine's own `curl` wrapper might. Every other exit is the
-# mirror not answering at all.
-_ANSWERED_EXITS = (0, 22)
-# The `curl` a launcher runs. Present on every machine a room launches on —
-# Git Bash carries one on Windows — and a machine without it exports nothing.
-#
-# `--head`: the answer is whether the host replies, and a mirror should not
-# have to serve a body to say so. Spelled out as one recognizable word because
-# a probe is not a download — the launcher's own downloads are GETs, and a
-# fixture counting them can tell the two apart by exactly this.
-_CURL = "curl -s --head -o /dev/null"
 
 
 @dataclass(frozen=True)
@@ -220,51 +207,60 @@ def environment(config, store=None, *, now=None) -> dict:
     return exports
 
 
-def shell(config) -> str:
-    """`environment(config)`, as the statements a launcher script runs.
+def shell(config, store: str) -> str:
+    """`environment(config, store)`, as the statements a launcher runs.
 
-    The probe happens there rather than here on purpose: whether a mirror
-    answers is a property of the machine the room runs on, and the backend that
-    builds this script is not on the network of every machine it launches on.
+    ``store`` is a shell word naming the project's store on the machine, empty
+    when there is none: the one directory the executor keeps its answer in
+    (`bootstrap.prepared`), so a launch reads what the room's tool calls were
+    last told and a launch's own probe is what they are told next.
+
+    The probe happens on the machine rather than here: whether a mirror answers
+    is a property of the machine the room runs on, and the backend that builds
+    this script is not on the network of every machine it launches on. It is
+    this module that answers there, read from the room's store when the
+    executor or an earlier launch has asked within `ANSWER_KEPT_S`, so a launch
+    and the room's tool calls are told the same thing.
+
+    Nothing here fails the launch: a machine without `python3`, or one whose
+    probes all fail, leaves the environment exactly as it was without this.
+    A variable the machine already has is kept, the same rule `bootstrap.prepared`
+    follows with the room's configured variables.
     """
     if not config.get("enabled", True):
         return ""
-    live = [
-        (_probe_url(config[mirror.key]), _exports(mirror, config))
-        for mirror in MIRRORS
-        if config.get(mirror.key)
-    ]
-    live = [(url, exports) for url, exports in live if exports]
-    if not live:
+    if not governed(config):
         return ""
-    connect, total = int(PROBE_CONNECT_S), int(PROBE_TIMEOUT_S)
-    answered = " || ".join(f'[ "$_probe" = {code} ]' for code in _ANSWERED_EXITS)
-    lines = [
-        "# Where this room's package downloads come from. A mirror is used only",
-        "# once this says it answers; one that does not stays unset, and the tool",
-        "# is on its official source. Nothing here fails the launch: a probe that",
-        "# cannot run and a mirror that is not there both leave the environment",
-        "# exactly as it was without this block.",
-        "if command -v curl >/dev/null 2>&1; then",
-    ]
-    for url, exports in live:
-        lines.append("  _probe=0")
-        lines.append(
-            f"  {_CURL} --connect-timeout {connect} --max-time {total} "
-            f"{_quoted(url)} || _probe=$?"
-        )
-        lines.append(f"  if {answered}; then")
-        # Each variable on its own, so a room that sets one of them itself
-        # keeps it — the same rule `bootstrap.prepared` follows with the
-        # room's configured variables.
-        for name, value in exports:
-            lines.append(
-                f'    [ -n "${{{name}:-}}" ] || export {name}={_quoted(value)}'
-            )
-        lines.append("  fi")
-    lines.append("  unset _probe")
-    lines.append("fi")
-    return "\n".join(lines)
+    # A function, so this module's source is not inside the command
+    # substitution: bash before 4 scans `$(...)` without knowing heredocs, and
+    # would read the quotes and parentheses in it as its own.
+    return (
+        "# Where this room's package downloads come from (`package_mirrors`).\n"
+        "cheese_package_mirrors() {\n"
+        f"python3 - {_quoted(json.dumps(config, sort_keys=True))} "
+        f"{store} 2>/dev/null <<'CHEESE_PACKAGE_MIRRORS'\n"
+        f"{_source()}CHEESE_PACKAGE_MIRRORS\n"
+        "}\n"
+        '_mirrors="$(cheese_package_mirrors)" || _mirrors=""\n'
+        'eval "$_mirrors"\n'
+        "unset _mirrors\n"
+        "unset -f cheese_package_mirrors\n"
+    )
+
+
+@cache
+def _source() -> str:
+    """This file, as the launcher carries it to the machine. Read once per
+    process: it is the image's own code and does not change under it."""
+    return Path(__file__).read_text(encoding="utf-8").rstrip("\n") + "\n"
+
+
+def _statements(exports) -> str:
+    """Shell that exports each variable the machine does not already have."""
+    return "".join(
+        f'[ -n "${{{name}:-}}" ] || export {name}={_quoted(value)}\n'
+        for name, value in exports.items()
+    )
 
 
 def _exports(mirror, config):
@@ -304,6 +300,9 @@ def _live(config, store, *, now=None):
     # Together: a probe that gets no answer waits out its whole budget, and
     # three of those in a row is a room that starts a tool call nine seconds
     # late. In parallel it is one budget, whatever the answer.
+    # deferred-import: start-up cost; a launch answered from the store never probes
+    from concurrent.futures import ThreadPoolExecutor
+
     with ThreadPoolExecutor(max_workers=len(wanted)) as probing:
         # Answering with the key rather than zipping a second sequence back up:
         # this module is shipped to rooms that run Python 3.9, which has no
@@ -316,6 +315,10 @@ def _live(config, store, *, now=None):
 def _answers(url) -> bool:
     """Whether the host behind `url` answers at all. Any status counts: a
     mirror refusing a HEAD is a mirror that is there."""
+    # deferred-import: start-up cost; a launch answered from the store never probes
+    import urllib.error
+    import urllib.request
+
     try:
         with urllib.request.urlopen(
             urllib.request.Request(url, method="HEAD"), timeout=PROBE_TIMEOUT_S
@@ -380,3 +383,15 @@ def _cache_path(store):
 def _quoted(value) -> str:
     """A string as one POSIX word, whatever it holds."""
     return "'" + value.replace("'", "'\\''") + "'"
+
+
+if __name__ == "__main__":
+    # The launcher's half (`shell`): the configuration, and the store whose
+    # kept answer it shares with the executor; empty when the room has none.
+    # Bytes, not text: Python on Windows would end each line with a carriage
+    # return, and Git Bash would keep it as the last character of the value.
+    sys.stdout.buffer.write(
+        _statements(environment(json.loads(sys.argv[1]), sys.argv[2] or None)).encode(
+            "utf-8"
+        )
+    )

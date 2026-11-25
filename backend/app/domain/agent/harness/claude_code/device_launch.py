@@ -565,6 +565,9 @@ if [ -z "$CLAUDE_V" ] || [ "$(printf '%s\\n%s\\n' "{pinned_version}" "$CLAUDE_V"
 {pinned_version}, and the platform's pinned build is not at $_pin." >&2
   exit 1
 fi
+# The bootstrap holds the same binary to the exact pin, and is handed this
+# answer instead of starting it a second time to ask (`client.CLAUDE_CHECKED`).
+export CHEESE_CLAUDE_CHECKED="$CLAUDE_V $CLAUDE_BIN"
 CLAUDE="\\"$CLAUDE_BIN\\"{claude_args}"
 # The platform system prompt (written beside the seat's base settings). The path is
 # embedded QUOTED so a home dir with spaces survives the runner's `sh -c`.
@@ -581,18 +584,46 @@ case "$CLAUDE_STATE" in
 esac
 mkdir -p "$CLAUDE_STATE"
 chmod 700 "$CLAUDE_STATE"
+# The runner is unpacked, not run from its archive: Python keeps no compiled
+# modules for a zip, so every start compiled the runner again, about half of
+# its start. Unpacked into a directory named by the archive's digest, it is
+# compiled once per release and machine, and Python keeps that beside it.
 CLAUDE_ARTIFACT="$(python3 - "$CLAUDE_STATE" <<'CLAUDERUNNER'
-import base64, hashlib, os, sys, tempfile
+import base64, hashlib, io, shutil, sys, tempfile, zipfile
 from pathlib import Path
 state = Path(sys.argv[1])
 archive = base64.b64decode("{archive}", validate=True)
+with zipfile.ZipFile(io.BytesIO(archive)) as unpacked:
+    members = {{name: unpacked.read(name) for name in unpacked.namelist()}}
 # A new deployment never overwrites the modules a live runner is already using.
-artifact = state / f"runner-{{hashlib.sha256(archive).hexdigest()}}.pyz"
-if not artifact.exists():
-    with tempfile.NamedTemporaryFile(dir=state, delete=False) as output:
-        output.write(archive)
-    os.replace(output.name, artifact)
-print(artifact, end="")
+runner = state / f"runner-{{hashlib.sha256(archive).hexdigest()}}"
+
+
+def intact(folder):
+    # Every module as shipped: a file deleted or changed on the machine is a
+    # runner that would fail, or run something else, halfway through a session.
+    try:
+        return all((folder / n).read_bytes() == b for n, b in members.items())
+    except OSError:
+        return False
+
+
+if not intact(runner):
+    # Unpacked aside and moved into place whole, so a launch beside this one
+    # sees no runner or all of it. A damaged one is left where it is, since a
+    # runner may still be using it, and this launch runs from its own copy.
+    fresh = Path(tempfile.mkdtemp(dir=state, prefix=runner.name + "."))
+    for name, content in members.items():
+        (fresh / name).parent.mkdir(parents=True, exist_ok=True)
+        (fresh / name).write_bytes(content)
+    try:
+        fresh.rename(runner)
+    except OSError:
+        if intact(runner):
+            shutil.rmtree(fresh, ignore_errors=True)
+        else:
+            runner = fresh
+print(runner, end="")
 CLAUDERUNNER
 )"
 # The command reaches the runner in its environment: it is a shell string, and

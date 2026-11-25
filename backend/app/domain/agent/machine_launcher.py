@@ -537,7 +537,13 @@ def launch_script(
     # answers. The room's agent inherits a different environment, built on the
     # machine by the executor (`bootstrap.prepared`), which applies the same
     # policy there; this one is the launch's own share of it.
-    mirror_env = package_mirrors.shell(package_mirrors.configuration(settings))
+    #
+    # The store is named only once it exists (`CSLIVE`): until then the
+    # variable still holds the backend's literal `$HOME`, a path no program
+    # should make.
+    mirror_env = package_mirrors.shell(
+        package_mirrors.configuration(settings), '"${CSLIVE:+$CS}"'
+    )
     return f"""set -e
 # A session the platform capped runs in a systemd scope of its own, under that
 # cap (#1544). tmux puts each pane in a scope under the user manager, outside
