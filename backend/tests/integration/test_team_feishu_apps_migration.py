@@ -12,7 +12,7 @@ import uuid
 
 import asyncpg
 
-from tests.integration.migration_replay import database_at
+from tests.integration.migration_replay import database_at, seed_room
 
 BEFORE = "c5e1a7d39f20"
 AFTER = "499940a660b1"
@@ -155,3 +155,57 @@ def test_connections_the_old_api_allowed_twice_upgrade_untouched():
 
         assert _rows(db) == before
         assert {first, second} <= set(_rows(db))
+
+
+def test_dropping_the_platform_app_table_leaves_every_connection_and_team_app():
+    """3918c99203cd drops ``feishu_apps`` (release two of removing the platform
+    app) and touches nothing else: connections and team apps stay as they were;
+    stepping back puts an empty table back."""
+    with database_at(AFTER) as db:
+        db.execute(
+            "INSERT INTO feishu_apps (id, app_id, domain, secret, updated_by,"
+            " created_at, updated_at) VALUES (1, 'cli_platform', 'feishu',"
+            " 'v1:k:sealed', 'admin', now(), now())"
+        )
+        _connection(db, 9301, {"app_id": "cli_a", "domain": "feishu"}, "v1:k:a")
+        project, _room = seed_room(db)
+        team_id = db.fetchval("SELECT team_id FROM projects WHERE id = $1", project)
+        db.execute(
+            "INSERT INTO team_feishu_apps (team_id, app_id, domain, secret,"
+            " updated_by, created_at, updated_at) VALUES ($1, 'cli_team', 'lark',"
+            " 'v1:k:team', 'lead', now(), now())",
+            team_id,
+        )
+        before = _rows(db)
+        apps = _team_apps(db)
+        assert len(apps) == 1
+
+        db.upgrade("3918c99203cd")
+
+        assert db.fetchval("SELECT to_regclass('feishu_apps')") is None
+        assert _team_apps(db) == apps
+        assert _rows(db) == before
+
+        db.downgrade(AFTER)
+        assert db.fetchval("SELECT count(*) FROM feishu_apps") == 0
+
+
+def _team_apps(db) -> list:
+    return [
+        tuple(r)
+        for r in db.fetch(
+            "SELECT team_id, app_id, domain, secret, updated_by, created_at,"
+            " updated_at FROM team_feishu_apps ORDER BY team_id"
+        )
+    ]
+
+
+def test_dropping_the_platform_app_table_when_it_is_already_gone_goes_through():
+    """A run cut short after the drop (or a table removed by hand): the upgrade
+    finds nothing to lock or drop and records its revision."""
+    with database_at(AFTER) as db:
+        db.execute("DROP TABLE feishu_apps")
+
+        db.upgrade("3918c99203cd")
+
+        assert db.fetchval("SELECT version_num FROM alembic_version") == "3918c99203cd"
