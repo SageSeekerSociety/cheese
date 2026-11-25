@@ -49,9 +49,17 @@ async function load() {
 }
 watch(teamId, load, { immediate: true })
 
-/** 写回来的那一份不带「本人能不能设、本人的连接」，留着读到的那两样。 */
-function keep(saved: TeamFeishuApp) {
-  app.value = { ...saved, can_manage: app.value?.can_manage, connection: app.value?.connection ?? null }
+/** 存或删了应用之后重读一遍：换了 App ID 或删掉应用，服务端已经把本人的连接打回「需要
+ *  重新授权」，写回来的那一份不带连接，留着旧的就会把已经作废的连接说成正常。读不到就说读不到，
+ *  画面上有重试。 */
+async function reread() {
+  const id = teamId.value
+  try {
+    const got = await getTeamFeishuApp(id)
+    if (teamId.value === id) app.value = got
+  } catch (e) {
+    if (teamId.value === id) loadError.value = e instanceof Error ? e.message : t('integrations.team.loadFailed')
+  }
 }
 
 async function save(
@@ -59,7 +67,8 @@ async function save(
   done: (ok: boolean, message?: string) => void
 ) {
   try {
-    keep(await saveTeamFeishuApp(teamId.value, body))
+    await saveTeamFeishuApp(teamId.value, body)
+    await reread()
     done(true)
     toast.success(t('integrations.team.saved'))
   } catch (e) {
@@ -69,7 +78,8 @@ async function save(
 
 async function remove() {
   try {
-    keep(await removeTeamFeishuApp(teamId.value))
+    await removeTeamFeishuApp(teamId.value)
+    await reread()
   } catch (e) {
     toast.error(e instanceof Error ? e.message : t('integrations.team.saveFailed'))
   }

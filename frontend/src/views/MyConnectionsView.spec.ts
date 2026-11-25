@@ -21,6 +21,7 @@ const feishuChoices = vi.fn()
 const feishuAuthorizeUrl = vi.fn()
 const claimFeishuHandoff = vi.fn()
 const deleteIntegration = vi.fn()
+const checkIntegration = vi.fn()
 
 vi.mock('../api', async () => ({
   ...(await vi.importActual<typeof import('../api')>('../api')),
@@ -28,6 +29,7 @@ vi.mock('../api', async () => ({
   listMyMailDrafts: () => listMyMailDrafts(),
   listProjects: () => listProjects(),
   deleteIntegration: (id: string) => deleteIntegration(id),
+  checkIntegration: (id: string) => checkIntegration(id),
 }))
 
 // 飞书那几个函数住它们自己的模块（`../api/feishu`），所以按模块分别挡。
@@ -135,6 +137,7 @@ beforeEach(() => {
   feishuChoices.mockReset().mockResolvedValue({ teams: [PERSONAL, TEAM], redirect_uri: 'r' })
   feishuAuthorizeUrl.mockReset()
   deleteIntegration.mockReset()
+  checkIntegration.mockReset()
   sonner.success.mockReset()
   sonner.error.mockReset()
 })
@@ -221,6 +224,53 @@ describe('「连接飞书」那一格跟着连接走', () => {
   })
 })
 
+describe('「连接飞书」那一格跟着检查走', () => {
+  it('测试连接查出授权失效，团队那一格也跟着说失效，不再说已连接', async () => {
+    const connected = { ...TEAM, connection: { id: 'feishu-own', status: 'ok', user_authorized: true } }
+    const lapsed = { ...TEAM, connection: { id: 'feishu-own', status: 'auth_failed', user_authorized: true } }
+    listMyIntegrations.mockResolvedValue({ data: [{ ...FEISHU_ROW, user_authorized: true }] })
+    feishuChoices
+      .mockResolvedValueOnce({ teams: [PERSONAL, connected], redirect_uri: 'r' })
+      .mockResolvedValue({ teams: [PERSONAL, lapsed], redirect_uri: 'r' })
+    checkIntegration.mockResolvedValue({ ...FEISHU_ROW, status: 'auth_failed', last_error: '授权已过期' })
+    await mount()
+
+    expect(await screen.findByText('cli_team · 已连接')).toBeTruthy()
+    await fireEvent.click(screen.getByRole('button', { name: '测试连接' }))
+    expect(await screen.findByText('cli_team · 授权已失效，请重新连接')).toBeTruthy()
+    expect(screen.queryByText('cli_team · 已连接')).toBeNull()
+  })
+})
+
+describe('平台应用那时候的旧连接', () => {
+  it('没有应用可授权：不给授权按钮，只说用团队的飞书应用重新连接', async () => {
+    listMyIntegrations.mockResolvedValue({
+      data: [
+        {
+          ...FEISHU_ROW,
+          config: {},
+          status: 'auth_failed',
+          last_error: '这个连接要改用团队的飞书应用',
+          reconnect: 'team_app',
+        },
+      ],
+    })
+    await mount()
+
+    expect(await screen.findByText(/用团队的飞书应用重新连接/)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: /授权个人账号/ })).toBeNull()
+  })
+
+  it('带着自己应用的旧连接还能在原地重新授权', async () => {
+    listMyIntegrations.mockResolvedValue({
+      data: [{ ...FEISHU_ROW, config: { app_id: 'cli_old' }, user_authorized: true, reconnect: 'team_app' }],
+    })
+    await mount()
+
+    expect(await screen.findByRole('button', { name: '重新授权个人账号' })).toBeTruthy()
+  })
+})
+
 describe('已经有的连接', () => {
   it('飞书那一行没授权完时说还没连上，并留着它自己的授权按钮', async () => {
     listMyIntegrations.mockResolvedValue({ data: [FEISHU_ROW] })
@@ -248,6 +298,13 @@ describe('从飞书授权回来', () => {
     setLocale('en')
     await mount('/?feishu=something_new')
     await vi.waitFor(() => expect(sonner.error).toHaveBeenCalledWith('Feishu authorization did not complete'))
+  })
+
+  it('授权期间团队换了应用，说这次没保存、请重新连接', async () => {
+    await mount('/?feishu=app_changed')
+    await vi.waitFor(() =>
+      expect(sonner.error).toHaveBeenCalledWith('授权期间团队换了飞书应用，这次授权没有保存，请重新连接')
+    )
   })
 
   it('成功了说成功', async () => {

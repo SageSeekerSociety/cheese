@@ -101,14 +101,16 @@ def _reply(status: int, body: dict | None, secrets: tuple[str, ...]) -> str:
     code = (body or {}).get("code")
     msg = (body or {}).get("msg") or (body or {}).get("message") or ""
     reply = f"{code if code is not None else status} {msg}".strip()
-    for secret in secrets:
-        if secret and len(secret) >= 4:
-            reply = reply.replace(secret, "***")
+    # Longest first, so a secret that contains another is blanked whole.
+    for secret in sorted({v for v in secrets if v}, key=len, reverse=True):
+        reply = reply.replace(secret, "***")
     return reply
 
 
 def _busy(status: int, body: dict | None) -> bool:
-    return status == 429 or status >= 500 or (body or {}).get("code") in BUSY_CODES
+    return (
+        status in (408, 429) or status >= 500 or (body or {}).get("code") in BUSY_CODES
+    )
 
 
 def _raise(
@@ -149,12 +151,12 @@ class FeishuClient:
 
     @property
     def _secrets(self) -> tuple[str, ...]:
-        """Every credential a call of this client may carry."""
+        """Every credential a call of this client may carry: the app's secret,
+        its tenant token, and the person's tokens."""
         s = self.settings
+        tenant = self._tenant[0] if self._tenant else None
         return tuple(
-            v
-            for v in (s.app_secret, s.user_access_token, s.refresh_token)
-            if v is not None
+            v for v in (s.app_secret, tenant, s.user_access_token, s.refresh_token) if v
         )
 
     def _http(self) -> httpx.AsyncClient:
@@ -165,7 +167,8 @@ class FeishuClient:
     async def _call(
         self, method: str, path: str, action: str, *, token: str | None = None, **kwargs
     ) -> dict:
-        headers = {"Authorization": f"Bearer {token or await self.token()}"}
+        bearer = token or await self.token()
+        headers = {"Authorization": f"Bearer {bearer}"}
         try:
             async with self._http() as http:
                 response = await http.request(method, path, headers=headers, **kwargs)
@@ -180,7 +183,7 @@ class FeishuClient:
         except ValueError:
             body = None
         if response.status_code >= 400 or (body or {}).get("code", 0) != 0:
-            _raise(response.status_code, body, action, self._secrets)
+            _raise(response.status_code, body, action, (*self._secrets, bearer))
         return (body or {}).get("data") or {}
 
     async def tenant_token(self) -> str:
@@ -269,13 +272,23 @@ class FeishuClient:
                 say("feishuActionUnreachable", action=action, error=str(exc)),
                 str(exc),
             ) from exc
-        body = response.json() if response.content else {}
+        try:
+            body = response.json() if response.content else {}
+        except ValueError:
+            # A gateway's HTML error page: judged by its status alone.
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
         if (
             response.status_code >= 400
             or body.get("code", 0) != 0
             or "access_token" not in body
         ):
-            _raise(response.status_code, body, action, self._secrets)
+            # The grant itself (the OAuth code, the refresh token) is a credential too.
+            carried = tuple(
+                str(grant[k]) for k in ("code", "refresh_token") if grant.get(k)
+            )
+            _raise(response.status_code, body, action, (*self._secrets, *carried))
         self.settings.user_access_token = body["access_token"]
         self.settings.user_token_expires_at = time.time() + int(
             body.get("expires_in", 7200)

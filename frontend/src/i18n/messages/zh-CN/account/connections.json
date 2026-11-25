@@ -13,6 +13,7 @@
   "discard": "丢弃",
   "feishuAuthorized": "飞书授权成功",
   "feishuOutcome": {
+    "appChanged": "授权期间团队换了飞书应用，这次授权没有保存，请重新连接",
     "deleted": "连接已删除",
     "denied": "没有授权",
     "failed": "飞书授权没有完成",

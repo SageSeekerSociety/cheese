@@ -63,6 +63,7 @@ const FEISHU_OUTCOMES: Record<string, string> = {
   denied: 'denied',
   deleted: 'deleted',
   exchange_failed: 'failed',
+  app_changed: 'appChanged',
 }
 const busy = ref('')
 
@@ -123,6 +124,8 @@ async function setGrants(row: Integration, grants: string[]) {
 async function recheck(row: Integration) {
   const out = await act(`${row.id}:check`, () => checkIntegration(row.id))
   if (out) replace(out)
+  // 团队那一格说的连接状态是同一行：重新检查出了问题，那里也不能还说正常。
+  if (row.provider === 'feishu') await loadFeishuTeams()
 }
 
 async function authorize(row: Integration) {

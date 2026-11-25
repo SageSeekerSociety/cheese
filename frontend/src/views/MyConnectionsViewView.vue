@@ -162,6 +162,10 @@ const teamLabel = (team: FeishuTeamChoice) => (team.personal ? t('integrations.m
 /** 这个团队的「飞书应用」那一栏：个人团队的在个人设置里。连接就在那里做。 */
 const settingsOf = (team: FeishuTeamChoice) =>
   team.personal ? { name: 'UserSettingsFeishu' } : { name: 'TeamsDetailFeishu', params: { handle: team.team_handle } }
+/** 这一行能不能在这里授权：平台应用那时候的旧连接（既不属于团队，也没带自己的应用）
+ *  没有应用可以授权，点了只会被拒，只能从团队的飞书应用重新连接。 */
+const canAuthorize = (row: Integration) =>
+  row.provider === 'feishu' && !(row.reconnect === 'team_app' && !row.config.app_id)
 /** 本人在这个团队的应用上连到哪一步。 */
 function mineOf(team: FeishuTeamChoice): string {
   if (!team.app) return t('integrations.member.teams.unset')
@@ -280,10 +284,10 @@ function save() {
             <!-- 飞书那一行在授权回来之前搜不了（搜索只认个人授权），所以这里说的是「连结上
                  了没有」，不是「工作正常」—— 旁边那个状态在授权之前说的「正常」只到「应用
                  凭据没问题」为止。 -->
-            <div v-else-if="row.reconnect === 'team_app'" class="conn-row__sub">
+            <div v-if="row.reconnect === 'team_app'" class="conn-row__sub">
               {{ t('integrations.member.teams.reconnect') }}
             </div>
-            <div v-else-if="row.provider === 'feishu' && !row.user_authorized" class="conn-row__sub">
+            <div v-else-if="!row.last_error && row.provider === 'feishu' && !row.user_authorized" class="conn-row__sub">
               {{ t('integrations.member.notConnected') }}
             </div>
           </div>
@@ -308,9 +312,10 @@ function save() {
           <BaseButton kind="ghost" size="sm" :loading="busy === `${row.id}:check`" @click="emit('recheck', row)">
             {{ t('account.connections.check') }}
           </BaseButton>
-          <!-- 授权个人账号：连接时跳过一次飞书；没授权完、授权过期或想换账号时从这里再走一次。 -->
+          <!-- 授权个人账号：连接时跳过一次飞书；没授权完、授权过期或想换账号时从这里再走一次。
+               平台应用那时候的旧连接没有应用可授权，只能从团队的飞书应用重新连接。 -->
           <BaseButton
-            v-if="row.provider === 'feishu'"
+            v-if="canAuthorize(row)"
             kind="ghost"
             size="sm"
             :loading="busy === `${row.id}:auth`"

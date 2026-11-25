@@ -42,7 +42,7 @@ from app.domain.integration.service import (
     draft_view,
     feishu_redirect_uri,
     feishu_settings_for,
-    keep_feishu_tokens,
+    keep_authorization,
     public,
 )
 from app.domain.library import service as library
@@ -436,8 +436,8 @@ async def _finish_feishu(
         if said is not None:
             return land(said["key"])
         return land("exchange_failed", getattr(exc, "reply", ""))
-    keep_feishu_tokens(row, config)
-    row.status, row.last_error = "ok", ""
+    if not await keep_authorization(db, row, config):
+        return land("app_changed")
     await db.commit()
     return land("ok")
 
