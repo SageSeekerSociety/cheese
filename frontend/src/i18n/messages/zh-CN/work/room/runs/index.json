@@ -1,0 +1,18 @@
+{
+  "title": "运行记录",
+  "named": "固定的命令",
+  "ran": "{name}运行过的命令",
+  "run": "再运行",
+  "pin": "固定",
+  "remove": "移除「{name}」",
+  "nameLabel": "名称",
+  "save": "保存",
+  "nameFailed": "保存失败",
+  "failed": "失败",
+  "running": "运行中",
+  "background": "已在后台运行，输出不在这里",
+  "loading": "正在读取",
+  "empty": "暂无运行记录",
+  "readFailed": "读取失败",
+  "older": "更早的命令"
+}

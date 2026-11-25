@@ -52,6 +52,7 @@ import { useQuery } from '@tanstack/vue-query'
 import { provideAcceptCard } from '../composables/useAcceptCard'
 import { usePanelChanges } from '../composables/usePanelChanges'
 import { useRoomFileProbe } from '../composables/useRoomFileProbe'
+import { useRunRecords } from '../composables/useRunRecords'
 import { useTaskFiles } from '../composables/useTaskFiles'
 import { useTaskFileTree } from '../composables/useTaskFileTree'
 import { useTaskLanguage } from '../composables/useTaskLanguage'
@@ -82,6 +83,7 @@ import { diffKey, diffPath, FILE_TABS, paneOfCentre, useEditorTabs } from './wor
 import PanelChangesHost from './work/PanelChangesHost.vue'
 import PanelPreviewHost from './work/PanelPreviewHost.vue'
 import PanelSiteHost from './work/PanelSiteHost.vue'
+import RunRecordsMenu from './work/RunRecordsMenu.vue'
 import TaskFilePicker from './work/TaskFilePicker.vue'
 import TaskFilesHost from './work/TaskFilesHost.vue'
 import TerminalHost from './work/TerminalHost.vue'
@@ -946,6 +948,36 @@ function openTerminals() {
 }
 const terminalChoices = computed(() => terminals.ids.value.map((id) => ({ id, title: terminalTitle(id) })))
 
+// 运行记录：项目里固定的命令和 AI 队友跑过的命令。「再运行」在此刻显示着的那个终端里跑（编辑器
+// 下面那一排翻到的终端，或终端那一块显示的那个），一个终端都没有时新开一个，并把它翻到眼前。
+const runRecords = useRunRecords(
+  () => props.taskId,
+  () => projectId.value
+)
+const runs = ref<Record<string, { command: string; seq: number }>>({})
+let runSeq = 0
+async function runAgain(command: string) {
+  if (!offersTerminals.value) return
+  const below = editorForm.value && bottomShown.value.startsWith(TERMINAL_KEY)
+  let id = below ? bottomShown.value.slice(TERMINAL_KEY.length) : shownTerminal.value
+  if (!id) {
+    id = terminals.add()
+    // The page declares the new tab, then the layout places it.
+    await nextTick()
+    await nextTick()
+  }
+  runs.value = { ...runs.value, [id]: { command, seq: ++runSeq } }
+  if (blocks.value) {
+    chosenTerminal.value = id
+    await setTab(TERMINAL_BLOCK)
+  } else {
+    await setTab(TERMINAL_KEY + id, { guard: false })
+  }
+}
+async function nameRun(label: string, command: string, done: (kept: boolean) => void) {
+  done(await runRecords.name(label, command))
+}
+
 /** 「+」里选了能开好几格的那一种：新开一格，翻到它。 */
 async function spawnTab(key: string) {
   if (key !== TERMINAL_TAB.key || !offersTerminals.value) return
@@ -1664,6 +1696,21 @@ defineExpose({
               </v-list>
             </v-menu>
           </template>
+          <RunRecordsMenu
+            :named="runRecords.named.value"
+            :ran="runRecords.ran.value"
+            :more="!!runRecords.next.value"
+            :loading="runRecords.loading.value"
+            :failed="runRecords.failed.value"
+            :name-failed="runRecords.nameFailed.value"
+            :can-name="!!projectId"
+            :agent-name="agentName"
+            @open="runRecords.load()"
+            @run="runAgain"
+            @name="nameRun"
+            @remove="runRecords.remove"
+            @more="runRecords.more()"
+          />
           <BaseButton
             kind="ghost"
             size="sm"
@@ -1722,6 +1769,22 @@ defineExpose({
               />
             </template>
             <template #end>
+              <RunRecordsMenu
+                v-if="offersTerminals"
+                :named="runRecords.named.value"
+                :ran="runRecords.ran.value"
+                :more="!!runRecords.next.value"
+                :loading="runRecords.loading.value"
+                :failed="runRecords.failed.value"
+                :name-failed="runRecords.nameFailed.value"
+                :can-name="!!projectId"
+                :agent-name="agentName"
+                @open="runRecords.load()"
+                @run="runAgain"
+                @name="nameRun"
+                @remove="runRecords.remove"
+                @more="runRecords.more()"
+              />
               <BaseButton
                 kind="ghost"
                 size="sm"
@@ -1990,6 +2053,7 @@ defineExpose({
                 :task-id="taskId"
                 :terminal-id="id"
                 :active="terminalShown(id)"
+                :run="runs[id] ?? null"
                 @named="terminals.named(id, $event)"
               />
             </WorkPane>
