@@ -286,7 +286,7 @@ function save() {
           <div class="conn-row__id">
             <div class="conn-row__name">
               {{ row.provider === 'mail' ? t('account.connections.mail') : t('account.connections.feishu') }} ·
-              {{ row.label }}
+              <span data-user-content>{{ row.label }}</span>
             </div>
             <div v-if="row.last_error" class="conn-row__sub c-danger">{{ row.last_error }}</div>
             <!-- 飞书那一行在授权回来之前搜不了（搜索只认个人授权），所以这里说的是「连结上
@@ -356,7 +356,8 @@ function save() {
       </p>
       <div v-for="team in feishuTeams" :key="team.team_id" class="conn-team" :data-team="team.team_id">
         <div class="conn-team__id">
-          <div class="conn-row__name">{{ teamLabel(team) }}</div>
+          <!-- 共享团队的名字是人起的，不翻译；个人团队那一行是我们的文案，照常翻译。 -->
+          <div class="conn-row__name" :data-user-content="team.personal ? undefined : ''">{{ teamLabel(team) }}</div>
           <div class="conn-row__sub">
             {{ team.app ? `${team.app.app_id} · ${mineOf(team)}` : mineOf(team) }}
           </div>
