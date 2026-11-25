@@ -119,5 +119,6 @@
   "mcpCommandInvalid": "This command could not be parsed",
   "mcpEnvNameInvalid": "Environment variable names use only letters, digits and underscores, and do not start with a digit",
   "mcpServerUrlRequired": "The address cannot be empty",
-  "feishuTeamAppSavedMeanwhile": "The team's Feishu app was just changed to another App ID; reload and save again with its App Secret"
+  "feishuTeamAppSavedMeanwhile": "The team's Feishu app was just changed to another App ID; reload and save again with its App Secret",
+  "feishuReauthorizedMidway": "This Feishu connection was just authorized under another app, so this call did not finish. Try again"
 }

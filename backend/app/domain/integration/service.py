@@ -159,6 +159,7 @@ def feishu_settings(
         ),
         folders=list(row.config.get("folders") or []),
         user_only=user_only or (held and not tokens),
+        app_sealed=app.secret if app is not None else None,
     )
 
 
@@ -196,7 +197,13 @@ async def feishu_settings_for(
     team_id = int(row.config["team_id"])
     teams = team_service(session)
     team = await teams.get_team(team_id)
-    app = await session.get(TeamFeishuApp, team_id) if team is not None else None
+    # Read afresh: a session that renewed (and so committed) earlier in the
+    # request must not keep using an app it read before a rotation.
+    app = (
+        await session.get(TeamFeishuApp, team_id, populate_existing=True)
+        if team is not None
+        else None
+    )
     if team is None or app is None:
         raise IntegrationError(
             "auth_failed", say("feishuTeamAppRemoved", team=row.label)
@@ -493,10 +500,12 @@ def _note_flushed_writes(session: Session, _context) -> None:
         session.info[_WROTE] = True
 
 
-@event.listens_for(Session, "after_commit")
-@event.listens_for(Session, "after_soft_rollback")
-def _forget_flushed_writes(session: Session, *_args) -> None:
-    session.info.pop(_WROTE, None)
+@event.listens_for(Session, "after_transaction_end")
+def _forget_flushed_writes(session: Session, transaction) -> None:
+    # Only when the outermost transaction ends: a savepoint released or rolled
+    # back inside it leaves what the transaction flushed before it in place.
+    if transaction.parent is None:
+        session.info.pop(_WROTE, None)
 
 
 def _wrote(session: AsyncSession) -> bool:
@@ -556,10 +565,13 @@ async def _renew_locked(
         raise NotFoundError(say("integrationNotFound"))
     settings = await feishu_settings_for(session, locked)
     if lapses(settings):
+        client = FeishuClient(settings)
         try:
-            await FeishuClient(settings).refresh_user_token()
+            await client.refresh_user_token()
         except IntegrationError as exc:
-            if exc.kind in NEEDS_OWNER:
+            if exc.kind in NEEDS_OWNER and await _owners_to_mend(
+                session, locked, client
+            ):
                 locked.status = "auth_failed"
                 locked.last_error = str(exc.args[0])
             await session.commit()
@@ -571,6 +583,28 @@ async def _renew_locked(
     used = locked.secret
     await session.commit()
     return settings, used
+
+
+async def _owners_to_mend(
+    session: AsyncSession, row: Integration, client: FeishuClient
+) -> bool:
+    """Whether a refused refresh is the owner's authorization failing, to be
+    recorded on their connection — not the app's credentials: the team's app
+    secret rotated since it was read (the refresh went out with the old one),
+    or the app's own credentials refused outright."""
+    team_id = row.config.get("team_id")
+    if team_id:
+        current = await session.scalar(
+            select(TeamFeishuApp.secret).where(TeamFeishuApp.team_id == int(team_id))
+        )
+        if current != client.settings.app_sealed:
+            return False
+    try:
+        await client.tenant_token()
+    except IntegrationError as exc:
+        if exc.kind == "credentials_invalid":
+            return False
+    return True
 
 
 async def renew_feishu(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -1200,6 +1234,16 @@ class IntegrationService:
             )
             if not fresh.user_access_token:
                 raise IntegrationError("auth_failed", say("feishuAuthExpired"))
+            # Authorized again under another app (or the app's secret
+            # rotated) while this call ran: its tokens belong to that app, not
+            # to the one this client calls as. The call stops; tried again, it
+            # starts with the new app.
+            if (fresh.app_id, fresh.domain, fresh.app_secret) != (
+                current.app_id,
+                current.domain,
+                current.app_secret,
+            ):
+                raise IntegrationError("busy", say("feishuReauthorizedMidway"))
             current.user_access_token = fresh.user_access_token
             current.user_token_expires_at = fresh.user_token_expires_at
             current.refresh_token = fresh.refresh_token

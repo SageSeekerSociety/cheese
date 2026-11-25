@@ -92,6 +92,11 @@ class FeishuSettings:
     #: Never fall back to the app's own identity: a member of a shared team acts
     #: only as themselves, not as the team's app.
     user_only: bool = False
+    #: The team app's sealed secret these settings were read from (``None``
+    #: for a row carrying its own app): what tells, later, whether the app is
+    #: still the one they were made with — every save that sets a secret, and
+    #: every re-creation, seals it anew.
+    app_sealed: str | None = None
 
     @property
     def base(self) -> str:

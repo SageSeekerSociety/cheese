@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select, text, update
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.api.app_return import back_in_app, started_in_app
 from app.api.auth import ActorResolver, ActorResolverDep
@@ -435,11 +436,14 @@ async def _claim_feishu(
 TEAM_APP_LOCK_WAIT = "3s"
 
 
-async def _within_wait(db: AsyncSession, statement, *, release: bool = False) -> bool:
+async def _within_wait(
+    db: AsyncSession, statement, *, release: bool = False
+) -> list | None:
     """Run ``statement`` waiting at most ``TEAM_APP_LOCK_WAIT`` for its locks,
-    in a savepoint: losing the wait (``False``) never leaves the request's
-    transaction aborted, and the shorter wait applies to this statement only.
-    ``release``: the savepoint is rolled back after, letting its locks go."""
+    in a savepoint, and return the rows it returned: losing the wait (``None``)
+    never leaves the request's transaction aborted, and the shorter wait
+    applies to this statement only. ``release``: the savepoint is rolled back
+    after, letting its locks go."""
     outer = await db.scalar(text("SELECT current_setting('lock_timeout')"))
     savepoint = await db.begin_nested()
     try:
@@ -447,21 +451,22 @@ async def _within_wait(db: AsyncSession, statement, *, release: bool = False) ->
             text("SELECT set_config('lock_timeout', :wait, true)"),
             {"wait": TEAM_APP_LOCK_WAIT},
         )
-        await db.execute(statement)
+        result = await db.execute(statement)
+        rows = list(result.all())
     except DBAPIError as exc:
         await savepoint.rollback()
         if _lock_lost(exc):
-            return False
+            return None
         raise
     if release:
         await savepoint.rollback()
-        return True
+        return rows
     await savepoint.commit()
     # A released savepoint keeps its settings: put the request's wait back.
     await db.execute(
         text("SELECT set_config('lock_timeout', :wait, true)"), {"wait": outer}
     )
-    return True
+    return rows
 
 
 async def _team_app_lock(
@@ -472,13 +477,14 @@ async def _team_app_lock(
     team_id = row.config.get("team_id")
     if not team_id:
         return True
-    return await _within_wait(
+    taken = await _within_wait(
         db,
         select(TeamFeishuApp.team_id)
         .where(TeamFeishuApp.team_id == int(team_id))
         .with_for_update(read=True),
         release=release,
     )
+    return taken is not None
 
 
 def _lock_lost(exc: DBAPIError) -> bool:
@@ -501,20 +507,11 @@ async def _finish_feishu(
     team_id = row.config.get("team_id")
     try:
         config = await feishu_settings_for(db, row)
-        # The team app as the code is exchanged under it. Its sealed secret is
+        # The team app as the code is exchanged under it, from the same read
+        # as the credentials above (``app_sealed``). Its sealed secret is
         # resealed on every save that sets one and on every re-creation, so an
         # app removed and set up again with the same App ID is not this one.
-        exchanged_under = (
-            (
-                await db.execute(
-                    select(TeamFeishuApp.app_id, TeamFeishuApp.secret).where(
-                        TeamFeishuApp.team_id == int(team_id)
-                    )
-                )
-            ).one_or_none()
-            if team_id
-            else None
-        )
+        exchanged_under = (config.app_id, config.app_sealed) if team_id else None
         await FeishuClient(config).exchange_code(code, _redirect_uri())
     except Exception as exc:  # the person reads why, on the page
         # Feishu's answer goes by Feishu's own words, under the code the page
@@ -544,25 +541,45 @@ async def _finish_feishu(
             return land("app_changed")
     # Only what the authorization owns is written: the tokens, the App ID they
     # were issued under and the status — never the rest of ``config``, which
-    # the owner may have changed (folders) while the code was exchanged.
-    fresh = Integration(id=row.id, config=dict(row.config), secret=row.secret)
+    # the owner may have changed (folders) while the code was exchanged. The
+    # tokens go into the sealed secret as it is now, under the row's lock: an
+    # older row keeps its own App Secret there, which may have changed too.
+    locked = await _within_wait(
+        db,
+        select(Integration.secret).where(Integration.id == row.id).with_for_update(),
+    )
+    if locked is None:
+        return land("authorize_again")
+    if not locked:
+        return land("deleted")  # disconnected while the code was exchanged
+    fresh = Integration(id=row.id, config=dict(row.config), secret=locked[0][0])
     keep_feishu_tokens(fresh, config)
     values: dict = {"secret": fresh.secret, "status": "ok", "last_error": ""}
     if team_id:
         values["config"] = Integration.config.op("||")(
             func.jsonb_build_object("authorized_app_id", config.app_id)
         )
-    kept = await _within_wait(
-        db,
-        update(Integration)
-        .where(Integration.id == row.id)
-        .values(**values)
-        .execution_options(synchronize_session=False),
-    )
-    if not kept:
-        return land("authorize_again")
+    kept = (
+        await db.execute(
+            update(Integration)
+            .where(Integration.id == row.id)
+            .values(**values)
+            .returning(
+                Integration.secret,
+                Integration.config,
+                Integration.status,
+                Integration.last_error,
+            )
+            .execution_options(synchronize_session=False)
+        )
+    ).one()
     await db.commit()
-    await db.refresh(row)
+    # What was written, onto the row the page is shown from — without reading
+    # it again, which a disconnect right after this commit would make fail.
+    for name, value in zip(
+        ("secret", "config", "status", "last_error"), kept, strict=True
+    ):
+        set_committed_value(row, name, value)
     return land("ok")
 
 
