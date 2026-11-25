@@ -289,6 +289,13 @@ class RoomSessions:
             return live
         return None
 
+    def starts_sessions(self) -> bool:
+        """Whether this process is the one that starts sessions now: the one
+        handing the running work over must not start what the next one is
+        about to read."""
+        provider = self._owns_sessions_provider
+        return provider is None or provider().owns_sessions
+
     def _went_quiet(self, session: SessionRef) -> None:
         if self._quiet is not None and self.prewarm_due(session) is not None:
             self._quiet(session)

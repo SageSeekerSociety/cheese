@@ -90,6 +90,7 @@ export function usePanelSurface(parts: {
     awaitingReply: parts.turns.awaitingReply,
     agentFaces: parts.turns.faces,
     activityLines: parts.activity.activityLines,
+    noteAddressing: parts.activity.activity.addressing,
     timeline: parts.timeline,
     hasMore: parts.timeline.hasMore,
     hasNewer: parts.timeline.hasNewer,

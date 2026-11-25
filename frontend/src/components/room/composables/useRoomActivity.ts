@@ -6,7 +6,8 @@
  * 是短命的：帧上带着 `expires_in`，到点没有新的一下就自己撤掉，不等一帧「停了」。
  *
  * 另一半是我自己打字：输入框的内容变了，至多每三秒告诉房间一次「我在打字」；清空了
- * 就说一声停了。
+ * 就说一声停了。这条草稿会交给哪位 AI 队友（后端的回答，`useAddressing`）跟着这一下
+ * 一起说：后端趁人还在打字先把那位队友的会话启动好，消息到的时候不用再等它启动。
  */
 
 import type { WsClientMessage } from '../../../cx_types'
@@ -25,6 +26,8 @@ export function useRoomActivity(options: {
 }) {
   // 上一次告诉房间「我在打字」是什么时候；0 = 没在打。
   let lastPing = 0
+  // 这条草稿此刻会交给的那位 AI 队友，和它所在的那段对话；谁也不交给时为空。
+  let addressed: { agent: string; place: string } | null = null
   // `${member}:${kind}` → 那一条。
   const entries = ref<Record<string, MemberActivity>>({})
   const expiry = new Map<string, ReturnType<typeof setTimeout>>()
@@ -85,10 +88,19 @@ export function useRoomActivity(options: {
     const now = Date.now()
     if (now - lastPing < TYPING_PING_MS) return
     lastPing = now
-    options.send({ type: 'typing' })
+    options.send({ type: 'typing', ...addressed })
+  }
+
+  /** 这条草稿会交给谁变了。正打着字时刚变成交给某一位，立刻说一次，不等下一个三秒。 */
+  function addressing(to: { agent: string; place: string } | null) {
+    const changed = to?.agent !== addressed?.agent || to?.place !== addressed?.place
+    addressed = to
+    if (!to || !changed || !lastPing) return
+    lastPing = Date.now()
+    options.send({ type: 'typing', ...to })
   }
 
   onScopeDispose(reset)
 
-  return { others, apply, snapshot, reset, composing }
+  return { others, apply, snapshot, reset, composing, addressing }
 }

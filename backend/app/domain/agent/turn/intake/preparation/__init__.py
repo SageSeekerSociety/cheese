@@ -101,7 +101,7 @@ class TurnPreparation:
         return await held_blocks(session, **kwargs)
 
     async def launch_inputs(
-        self, topic_id: uuid.UUID, agent_handle: str, *, acting: str
+        self, topic_id: uuid.UUID, agent_handle: str, *, acting: str | None = None
     ) -> Launch | None:
         return await launch.launch_inputs(self, topic_id, agent_handle, acting=acting)
 

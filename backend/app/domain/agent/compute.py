@@ -276,6 +276,17 @@ class ComputePool:
         """The backend holding this seat's session, if this process holds it."""
         return self._owners.get((topic_id, agent_handle))
 
+    def holder(
+        self, conversation_id: uuid.UUID, agent_handle: str
+    ) -> "RoomSessions | None":
+        """The backend with a session on this conversation's seat that this
+        process can still reach, on whichever harness; None when there is
+        none."""
+        for runtime in self._runtimes():
+            if runtime.holds(conversation_id, agent_handle):
+                return runtime
+        return None
+
     async def memory(self, session: "SessionRef", request: dict) -> dict | None:
         """Relay a memory reconciliation to whichever runtime holds this seat.
 
