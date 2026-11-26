@@ -523,7 +523,7 @@ describe('队友技能面板', () => {
     expect(s.market.value?.mcp.map((c) => c.name)).toEqual(['Acme'])
   })
 
-  it('市场读不到：说一声，机器那一段照常', async () => {
+  it('市场读不到：失败和原因留给市场那块，不另弹提示，机器那一段照常', async () => {
     vi.mocked(fetchSkillMarket).mockRejectedValue(new Error('offline'))
     const fail = vi.fn()
     const s = skills(fail)
@@ -532,8 +532,46 @@ describe('队友技能面板', () => {
     await vi.waitFor(() => expect(s.marketLoading.value).toBe(false))
 
     expect(s.market.value).toBeNull()
-    expect(fail).toHaveBeenCalledWith('offline')
+    expect(s.marketFailed.value).toBe(true)
+    expect(s.marketFailureReason.value).toBe('offline')
+    expect(s.marketForbidden.value).toBe(false)
+    expect(fail).not.toHaveBeenCalled()
     expect(s.machineSkills.value.map((m) => m.name)).toEqual(['ponytail', 'draft-skill'])
+  })
+
+  it('市场重读：开头清掉上一次的失败；正在读时再点一次，不会被第二份的结果搅乱', async () => {
+    vi.mocked(fetchSkillMarket).mockRejectedValueOnce(new Error('offline'))
+    const s = skills()
+    await s.openSkills()
+    await vi.waitFor(() => expect(s.marketFailed.value).toBe(true))
+
+    // 在路上的这一份最终读到目录；要是又发了第二份，它会失败并把失败留在面板上。
+    let finish: (v: unknown) => void = () => {}
+    vi.mocked(fetchSkillMarket)
+      .mockImplementationOnce(() => new Promise((r) => (finish = r)) as never)
+      .mockRejectedValueOnce(new Error('重复请求'))
+    void s.openMarket()
+    void s.openMarket()
+
+    expect(s.marketFailed.value).toBe(false)
+    expect(s.marketLoading.value).toBe(true)
+    finish({ ...MARKET_EMPTY })
+    await vi.waitFor(() => expect(s.marketLoading.value).toBe(false))
+    expect(s.market.value).not.toBeNull()
+    expect(s.marketFailed.value).toBe(false)
+    expect(s.marketFailureReason.value).toBeNull()
+  })
+
+  const MARKET_EMPTY = { skills: [], plugins: [], plugin_total: 0, mcp: [], notes: [] }
+
+  it('市场 403：标成不给看', async () => {
+    vi.mocked(fetchSkillMarket).mockRejectedValue(new ApiError(403, 'forbidden'))
+    const s = skills()
+
+    await s.openSkills()
+    await vi.waitFor(() => expect(s.marketLoading.value).toBe(false))
+
+    expect(s.marketForbidden.value).toBe(true)
   })
 
   it('装一枚插件：kind 跟着地址发上去并自动安装', async () => {
@@ -568,5 +606,88 @@ describe('队友技能面板', () => {
 
     expect(fail).toHaveBeenCalledWith('skillWebSpec')
     expect(s.machineSkills.value.map((m) => m.name)).toEqual(['ponytail', 'draft-skill'])
+  })
+
+  it('别人正占着、面板只读：网上取技能既不落到机器上，也不写队友的名单', async () => {
+    vi.mocked(setAgentEditing).mockRejectedValue(new ApiError(409, 'conflict'))
+    const s = skills()
+    await s.openSkills()
+    await s.holdAgent('a1')
+    expect(s.editingBlocked.value).toBe(true)
+
+    await s.fetchWebSkill('https://github.com/anthropics/skills/tree/main/skills/pdf')
+
+    expect(fetchMachineSkill).not.toHaveBeenCalled()
+    expect(updateProjectAgent).not.toHaveBeenCalled()
+    expect(s.carried.value).toEqual(['wolfram'])
+    expect(s.scanning.value).toBe(false)
+  })
+
+  it('取到一半才得知别人正占着：落盘那一步收不回，名单照样不写', async () => {
+    let releaseScan: () => void = () => {}
+    const held = new Promise<void>((resolve) => (releaseScan = resolve))
+    vi.mocked(fetchMachineSkill).mockImplementationOnce(async () => {
+      await held
+      return {
+        landed: true,
+        plan: [{ name: 'pdf', description: '读 PDF', files: ['SKILL.md'] }],
+        skills: [
+          { name: 'pdf', description: '读 PDF', source_root: '/w/pdf', digest: 'x', state: 'seen', adopted: false },
+        ],
+        problems: [],
+        roots: [],
+        workspaces: [],
+      } as never
+    })
+    let refuse: (e: unknown) => void = () => {}
+    vi.mocked(setAgentEditing).mockImplementationOnce(() => new Promise((_, reject) => (refuse = reject)))
+    const s = skills()
+    await s.openSkills()
+    const holding = s.holdAgent('a1')
+    const installing = s.fetchWebSkill('https://github.com/anthropics/skills/tree/main/skills/pdf')
+    refuse(new ApiError(409, 'conflict'))
+    await holding
+    releaseScan()
+    await installing
+
+    expect(fetchMachineSkill).toHaveBeenCalledTimes(1)
+    expect(updateProjectAgent).not.toHaveBeenCalled()
+    expect(s.carried.value).toEqual(['wolfram'])
+  })
+
+  it('别人正占着、面板只读：去掉一颗也不写队友的名单', async () => {
+    vi.mocked(setAgentEditing).mockRejectedValue(new ApiError(409, 'conflict'))
+    const s = skills(() => {}, undefined, ['wolfram', 'documents'])
+    await s.openSkills()
+    await s.holdAgent('a1')
+
+    await s.removeSkill('documents')
+
+    expect(updateProjectAgent).not.toHaveBeenCalled()
+    expect(s.carried.value).toEqual(['wolfram', 'documents'])
+  })
+
+  it('占用请求自己失败（不是别人占着）：说一声，面板照常可改，装上的技能照样带上', async () => {
+    const fail = vi.fn()
+    vi.mocked(setAgentEditing).mockRejectedValue(new ApiError(503, 'unavailable'))
+    vi.mocked(fetchMachineSkill).mockResolvedValue({
+      landed: true,
+      plan: [{ name: 'pdf', description: '读 PDF', files: ['SKILL.md'] }],
+      skills: [
+        { name: 'pdf', description: '读 PDF', source_root: '/w/pdf', digest: 'x', state: 'seen', adopted: false },
+      ],
+      problems: [],
+      roots: [],
+      workspaces: [],
+    } as never)
+    const s = skills(fail)
+    await s.openSkills()
+    await s.holdAgent('a1')
+
+    expect(fail).toHaveBeenCalled()
+    expect(s.editingBlocked.value).toBe(false)
+    await s.fetchWebSkill('https://github.com/anthropics/skills/tree/main/skills/pdf')
+    expect(updateProjectAgent).toHaveBeenCalledWith('p1', 'a1', expect.objectContaining({ expected_version: 1 }))
+    expect(s.carried.value).toEqual(['wolfram', 'pdf'])
   })
 })

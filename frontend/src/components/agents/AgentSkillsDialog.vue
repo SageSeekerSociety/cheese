@@ -1,7 +1,8 @@
 <script setup lang="ts">
 // 技能面板：带什么、还能从哪儿加。黄底一块灯板，一颗一颗「洞」按下去就亮。
 //
-// 技能名来自队友装备清单；灯亮表示当前可用，灯灭表示不可用或状态未知。
+// 技能名来自队友装备清单；灯亮表示当前可用，灯灭表示不可用或状态未知。灯只说能不能用，
+// 不说带没带：带没带由哪些格子在板上决定。
 //
 // 只管画、只往上发：池子、机器索引、落库都在 `useAgentSkills` 里。桌面上是居中
 // 弹窗，手机上是一整页 —— 外壳由 AdaptiveDialog 决定，这一块在两边都是同一张灯板。
@@ -21,6 +22,8 @@ interface SkillItem {
   name: string
   description: string
   source: 'platform' | 'machine' | 'project'
+  /** 带着、但池子里查不到：来源是猜的。 */
+  unresolved?: boolean
 }
 interface SkillHealthItem {
   status: 'ok' | 'degraded' | 'unavailable'
@@ -52,6 +55,12 @@ const props = withDefaults(
     deviceId: string | null
     market?: MarketItem | null
     marketLoading?: boolean
+    /** 市场目录读失败了；没读过、正在读都不算。 */
+    marketFailed?: boolean
+    /** 目录读失败时服务端给的那句原因。 */
+    marketFailureReason?: string | null
+    /** 目录读失败是 401/403：说没权限、不给重试。 */
+    marketForbidden?: boolean
     /** 别人正占着这个队友的「编辑中」租约：这一轮面板只读。 */
     editingBlocked?: boolean
     /** 占着租约的那个人的 handle，画在人看的那一句里。 */
@@ -64,6 +73,9 @@ const props = withDefaults(
   {
     market: null,
     marketLoading: false,
+    marketFailed: false,
+    marketFailureReason: null,
+    marketForbidden: false,
     editingBlocked: false,
     editingBy: null,
     loading: false,
@@ -75,14 +87,24 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   (e: 'install', payload: { url: string; kind: 'skill' | 'plugin' }): void
+  /** 点了已带的那一格：从这位队友身上去掉它。 */
+  (e: 'remove', name: string): void
+  /** 市场目录读失败后点了「重试」。 */
+  (e: 'retryMarket'): void
 }>()
 
 const status = (name: string): SkillHealthItem['status'] | 'unknown' => props.health[name]?.status ?? 'unknown'
 const availableNow = (skill: SkillItem) => (skill.source === 'platform' ? status(skill.name) === 'ok' : true)
 
+// 灯板画的是这位队友身上真有的：带上的，加上平台与项目发给每位队友的那几条（它们本来
+// 就到了每个执行器，见后端 `project_skills.py` 技能目录那段）。机器上的技能要带上才跟着
+// 走，`available` 里机器那几条只是「还能加」，不进这份名单 —— 不然一个什么都没带的队友
+// 会被画成带着 pdf。
+const shippedToEveryone = (skill: SkillItem) => skill.source !== 'machine'
+
 const boardSkills = computed(() => {
   const seen = new Set<string>()
-  return [...props.carried, ...props.available].filter((skill) => {
+  return [...props.carried, ...props.available.filter(shippedToEveryone)].filter((skill) => {
     if (seen.has(skill.name)) return false
     seen.add(skill.name)
     return true
@@ -100,6 +122,14 @@ watch(open, () => {
 // 改队友的 userskill 项目里每个人都做得的（后端 `projects_agents.py` 不再要 manager）；
 // 别人正占着「编辑中」的租约时改不动 —— 那是同一件事的另一半：现在改会撞上他。
 const locked = () => !props.canManage || props.editingBlocked
+
+// 已带的技能能去掉：格子里铺一颗和格子一样大的按钮，点一下从队友身上拿掉它。格子本身
+// 仍是灯板名单里的一项、仍说灯亮没亮。平台与项目发给每位队友的那几格即使在队友名单上也
+// 不给按钮：去掉之后它从「还能加」里又回到板上（`shippedToEveryone`），点下去看着像没反应。
+// 池子里查不到的（机器离线之类）来源是猜的，照样能去掉：去掉后它不在「还能加」里，不会回来。
+const carriedNames = computed(() => new Set(props.carried.map((skill) => skill.name)))
+const removable = (skill: SkillItem) =>
+  carriedNames.value.has(skill.name) && (skill.unresolved === true || !shippedToEveryone(skill))
 </script>
 
 <template>
@@ -120,12 +150,17 @@ const locked = () => !props.canManage || props.editingBlocked
             }}
           </p>
           <p v-else-if="locked()" class="skills__note t-meta-read">{{ t('work.room.skills.managerOnly') }}</p>
-          <div class="skills__grid">
+          <!-- The board is a list named after the teammate; each socket says whether it is lit, so the light is not colour alone. -->
+          <div class="skills__grid" role="list" :aria-label="t('work.room.skills.carriedTitle', { name: agentName })">
             <div
               v-for="s in boardSkills"
               :key="s.name"
               class="socket"
               :class="{ 'socket--on': availableNow(s) }"
+              role="listitem"
+              :aria-label="
+                t(availableNow(s) ? 'work.room.skills.socketLit' : 'work.room.skills.socketUnlit', { name: s.name })
+              "
               :title="s.description || s.name"
             >
               <span class="socket__hole"
@@ -133,6 +168,15 @@ const locked = () => !props.canManage || props.editingBlocked
               >
               <span class="socket__name t-meta-read">{{ s.name }}</span>
               <span class="socket__desc t-meta-read">{{ s.description }}</span>
+              <button
+                v-if="removable(s)"
+                type="button"
+                class="socket__remove"
+                :disabled="locked() || saving"
+                :aria-label="t('work.room.skills.remove', { agent: agentName, name: s.name })"
+                :title="s.description || s.name"
+                @click="!locked() && !saving && emit('remove', s.name)"
+              />
             </div>
           </div>
           <p v-if="!boardSkills.length" class="skills__note t-meta-read">{{ t('work.room.skills.emptyCarried') }}</p>
@@ -149,7 +193,12 @@ const locked = () => !props.canManage || props.editingBlocked
       :device-id="deviceId"
       :scanning="scanning"
       :saving="saving"
+      :failed="marketFailed"
+      :failure-reason="marketFailureReason"
+      :forbidden="marketForbidden"
+      :disabled="locked()"
       @install="emit('install', $event)"
+      @retry="emit('retryMarket')"
     />
   </AdaptiveDialog>
 </template>
@@ -195,6 +244,7 @@ const locked = () => !props.canManage || props.editingBlocked
   gap: 10px;
 }
 .socket {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -203,6 +253,27 @@ const locked = () => !props.canManage || props.editingBlocked
   border: 0;
   border-radius: var(--radius-md);
   background: transparent;
+}
+/* 铺满已带那一格的按钮：悬停时整格淡淡一层，键盘停上来有一圈琥珀；按不动时光标照常，
+   灯不变暗 —— 只读时灯说的仍是「能不能用」，不该因为改不了就看着像坏了。 */
+.socket__remove {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.socket__remove:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--warn-ink) 8%, transparent);
+}
+.socket__remove:focus-visible {
+  outline: 2px solid var(--warn);
+  outline-offset: 2px;
+}
+.socket__remove:disabled {
+  cursor: default;
 }
 /* 那颗「洞」：底色跟浮层自己的背景走（`--surface`，对话框里重映射成 `--raised`，
    浅色即 #fff），不再用 `--code-bg` 那口近黑的井 —— 两套主题下它都从底上「长」出来，
