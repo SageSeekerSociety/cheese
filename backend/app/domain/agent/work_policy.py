@@ -8,12 +8,16 @@ close a loop through the harness packages.
 import uuid
 
 from app.core.turn_ceiling import max_concurrent_turns_for
-from app.domain.agent_instance.own import owned_instance
+from app.domain.agent_instance.own import Owned, owned_instance
 from app.domain.project.repositories import ProjectRepository
 from app.domain.room_task.place import PlaceResolver
 from app.domain.room_task.services import TaskService
 from app.domain.usage.budgets import CreditBudgets
 from app.domain.usage.ledger import Ledger, payer_for_project
+
+
+def uses_session_host(owned: Owned | None) -> bool:
+    return owned is None or owned.on_account
 
 
 async def work_policy(
@@ -61,5 +65,5 @@ async def work_policy(
         # shows), or None when they admit it.
         "credits_exhausted": refused.message if refused is not None else None,
         # One on a connection its owner's account holds runs there too.
-        "on_session_host": provider is not None and (owned is None or owned.on_account),
+        "on_session_host": provider is not None and uses_session_host(owned),
     }
