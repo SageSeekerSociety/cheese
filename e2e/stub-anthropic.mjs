@@ -13,6 +13,9 @@
 // STUB_ANTHROPIC_EXPIRES_IN sets the initial token lifetime in seconds.
 // STUB_ANTHROPIC_RATE_LIMIT_AFTER_REFRESH changes the limit for the new token.
 // Set STUB_ANTHROPIC_SOCKET to the Unix socket path for the executor's proxy bridge.
+// Set STUB_ANTHROPIC_METER to `{ "placeholder": "...", "project": "...", "topic": "..." }`
+// to serve the production control table and replace the session placeholder on model calls.
+// Without it, OAuth and model requests use the simulated Anthropic account.
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
@@ -27,6 +30,12 @@ const rateLimit = process.env.STUB_ANTHROPIC_RATE_LIMIT ?? 'allowed';
 const rateLimitAfterRefresh = process.env.STUB_ANTHROPIC_RATE_LIMIT_AFTER_REFRESH ?? rateLimit;
 const initialExpiry = Number(process.env.STUB_ANTHROPIC_EXPIRES_IN ?? 3600);
 const tool = JSON.parse(process.env.STUB_ANTHROPIC_TOOL ?? 'null');
+const meter = JSON.parse(process.env.STUB_ANTHROPIC_METER ?? 'null');
+const controlRows = meter ? JSON.parse(readFileSync(
+  new URL('../deploy/metering-proxy/control_answers.json', import.meta.url),
+  'utf8',
+)).rows : [];
+const defaultAnswerHosts = ['api.anthropic.com'];
 if (!['max', 'pro'].includes(plan)) throw new Error('STUB_ANTHROPIC_PLAN must be max or pro');
 
 const levels = { allowed: 0.2, allowed_warning: 0.95, rejected: 1 };
@@ -40,10 +49,12 @@ if (!Number.isSafeInteger(initialExpiry) || initialExpiry < 0) {
 const accessToken = 'stub-access-token';
 const refreshToken = 'stub-refresh-token';
 const refreshedToken = 'stub-refreshed-access-token';
+const platformToken = 'stub-platform-access-token';
 const authorizationCode = 'stub-authorization-code';
 const scopes = 'user:profile user:inference';
 const hosts = new Set([
   'api.anthropic.com', 'claude.com', 'claude.ai', 'platform.claude.com', 'console.anthropic.com',
+  ...controlRows.flatMap((row) => row.hosts ?? defaultAnswerHosts),
 ]);
 const reply = 'Hi there!';
 const fiveHours = 5 * 3600;
@@ -96,6 +107,45 @@ async function readBody(request) {
     return Object.fromEntries(new URLSearchParams(data));
   }
   return JSON.parse(data);
+}
+
+function fillControlBody(value) {
+  if (Array.isArray(value)) return value.map(fillControlBody);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, fillControlBody(item)]));
+  }
+  if (value === '{project}') return meter.project;
+  if (value === '{topic}') return meter.topic;
+  return value;
+}
+
+function controlAnswer(host, path) {
+  return controlRows.find((row) => {
+    if (!(row.hosts ?? defaultAnswerHosts).includes(host)) return false;
+    if (Object.hasOwn(row, 'exact')) return path === row.exact;
+    if (Object.hasOwn(row, 'prefix')) return path.startsWith(row.prefix);
+    return true;
+  });
+}
+
+function meterRequest(request, response, route, url) {
+  const row = controlAnswer(request.socket.tunnelHost, request.url.split('?', 1)[0]);
+  if (row) {
+    response.source = 'table';
+    response.writeHead(row.status, { 'content-type': 'application/json' });
+    response.end(row.body === null ? '' : JSON.stringify(fillControlBody(row.body)));
+    return;
+  }
+  if (route !== 'POST /v1/messages' && route !== 'POST /v1/messages/count_tokens') {
+    return error(response, 404, 'not_found_error', 'No metering control answer');
+  }
+  response.source = 'upstream';
+  if (request.headers.authorization !== `Bearer ${meter.placeholder}`) {
+    return error(response, 401, 'authentication_error', 'Meter expected the session placeholder');
+  }
+  request.headers.authorization = `Bearer ${platformToken}`;
+  console.log(`Upstream bearer ***${request.headers.authorization.slice(-4)} (placeholder ***${meter.placeholder.slice(-4)})`);
+  return handle(request, response, route, url);
 }
 
 function tokenGrant(response, body) {
@@ -199,7 +249,8 @@ async function handle(request, response, route, url) {
 
   const bearer = request.headers.authorization;
   const refreshed = bearer === `Bearer ${refreshedToken}`;
-  if (!refreshed && bearer !== `Bearer ${accessToken}`) {
+  const expected = meter ? platformToken : accessToken;
+  if ((!refreshed || meter) && bearer !== `Bearer ${expected}`) {
     return error(response, 401, 'authentication_error', 'Invalid bearer token');
   }
   if (route === 'GET /api/oauth/profile') return json(response, 200, profile);
@@ -241,12 +292,16 @@ const api = createServer(async (request, response) => {
   const host = request.socket.tunnelHost;
   const url = URL.parse(request.url, `https://${host}`);
   const route = `${request.method} ${url?.pathname ?? request.url.split('?')[0]}`;
-  response.on('finish', () => console.log(`${host} ${route} -> ${response.statusCode}`));
+  if (meter) response.source = 'uncovered';
+  response.on('finish', () => console.log(
+    `${host} ${route} -> ${response.statusCode}${response.source ? ` (${response.source})` : ''}`,
+  ));
   try {
     if (url?.host !== host || ![host, `${host}:443`].includes(request.headers.host?.toLowerCase())) {
       return error(response, 421, 'invalid_request_error', 'Host does not match CONNECT');
     }
-    await handle(request, response, route, url);
+    if (meter) await meterRequest(request, response, route, url);
+    else await handle(request, response, route, url);
   } catch (err) {
     if (response.headersSent) return response.destroy();
     if (err instanceof SyntaxError) return error(response, 400, 'invalid_request_error', 'Invalid JSON');
