@@ -874,6 +874,9 @@ export const VIEW_SPACE_TASKS_ENTRIES: CatalogEntry[] = [
       failed: false,
       failureReason: null,
       busyId: null,
+      // 预览站没有服务器：拒绝、设截止一律当作成了。
+      reject: async () => null,
+      deadline: async () => null,
     },
     states: [
       {

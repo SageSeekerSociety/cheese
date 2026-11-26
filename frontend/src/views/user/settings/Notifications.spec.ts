@@ -83,7 +83,7 @@ beforeEach(() => {
   getMock.mockResolvedValue(defaults())
   saveMock.mockImplementation((prefs: NotificationPreferences) => Promise.resolve(prefs))
   disableMock.mockResolvedValue(undefined)
-  enableMock.mockResolvedValue(true)
+  enableMock.mockResolvedValue('enabled')
 })
 
 afterEach(() => cleanup())
@@ -167,6 +167,34 @@ describe('notification settings', () => {
     await waitFor(() => expect(saveMock).toHaveBeenCalledTimes(1))
     expect(saveMock.mock.calls[0][0].pushEnabled).toBe(false)
     expect(enableMock).not.toHaveBeenCalled()
+  })
+
+  it('turns push on: subscribes this browser and saves it as on', async () => {
+    getMock.mockResolvedValue({ ...defaults(), pushEnabled: false })
+    const view = show()
+    const control = await pushSwitch(view)
+    await fireEvent.input(control, { target: { checked: true } })
+    await waitFor(() => expect(saveMock).toHaveBeenCalledTimes(1))
+    expect(saveMock.mock.calls[0][0].pushEnabled).toBe(true)
+  })
+
+  it('push that could not be turned on is not saved as on: the switch goes back and the page says why', async () => {
+    enableMock.mockResolvedValue('denied')
+    getMock.mockResolvedValue({ ...defaults(), pushEnabled: false })
+    const view = show()
+    const control = await pushSwitch(view)
+    await fireEvent.input(control, { target: { checked: true } })
+
+    await waitFor(() =>
+      expect(
+        view
+          .getAllByRole('alert')
+          .map((a) => a.textContent)
+          .join()
+      ).toContain('浏览器未允许本站发送通知')
+    )
+    expect(saveMock.mock.calls.some(([prefs]) => prefs.pushEnabled === true)).toBe(false)
+    expect((await pushSwitch(view)).checked).toBe(false)
   })
 
   it('puts a change back when the server refuses it', async () => {

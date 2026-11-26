@@ -55,7 +55,7 @@ const taskDataModule = useTaskData()
 const { taskId, taskData, loading, error, isTaskCreator, isSpaceAdmin, participationInfo, loadTaskData } =
   taskDataModule
 
-const { onJoinTaskClicked, openApprovedClaim, confirmLeaveTask, handleVerifyInfoSubmit, leaveTaskWithTeam } =
+const { joining, onJoinTaskClicked, openApprovedClaim, confirmLeaveTask, handleVerifyInfoSubmit, leaveTaskWithTeam } =
   useTaskParticipation(taskDataModule)
 const {
   availableTeams,
@@ -203,7 +203,8 @@ const claim = computed(() => {
 /** 这一颗按钮不自己发请求：发 `join-clicked`，由 `TaskDialogs` 与 `useTaskParticipation` 接着走
  *  （实名确认、团队选择都在里面）。通过了还没开始的，打开开始的确认框。 */
 function onClaim() {
-  if (claim.value?.disabled) return
+  // 领取的请求还在路上：再点一次只会再领一次。
+  if (claim.value?.disabled || joining.value) return
   const approved = myIdentity.value
   if (approvedWithoutProject.value && approved?.approved === 'APPROVED') {
     openApprovedClaim({ type: approved.type, memberId: approved.memberId })
@@ -437,7 +438,8 @@ onMounted(() => {
           class="td__claim"
           data-testid="task-claim"
           :kind="claim.disabled ? 'ghost' : canManage ? 'secondary' : 'primary'"
-          :disabled="claim.disabled"
+          :disabled="claim.disabled || joining"
+          :loading="joining"
           @click="onClaim"
         >
           {{ claim.label }}

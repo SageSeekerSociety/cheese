@@ -10,7 +10,9 @@ import type { ReviewComment, ReviewCommentDraft } from '@/types/reviewComment'
 
 import { computed, ref, watch } from 'vue'
 
+import { axiosErrorMessage } from '@/api/axiosHttp'
 import { deleteReviewComment, editReviewComment, listReviewComments, writeReviewComment } from '@/api/reviewComments'
+import { t } from '@/i18n'
 import { myHandle } from '@/me'
 import { keys } from '@/query/keys'
 import { fromSnapshot, lastSeen, seen } from '@/query/snapshot'
@@ -81,34 +83,45 @@ export function useReviewComments(host: ReviewCommentsHost) {
     }
   }
 
-  async function add(draft: ReviewCommentDraft) {
+  // 写、改、删都等服务器答应了才算数：返回 null 是成了，返回一句话是没成的原因，
+  // 写批注的框据此决定收起还是留着（留着的框里字还在）。
+  async function add(draft: ReviewCommentDraft): Promise<string | null> {
     const task = host.taskId()
-    if (!task) return
+    if (!task) return t('work.room.review.saveFailed')
     busy.value = true
     try {
       const made = await writeReviewComment(task, draft)
       items.value = [...items.value, made]
+      return null
+    } catch (e) {
+      return axiosErrorMessage(e, t('work.room.review.saveFailed'))
     } finally {
       busy.value = false
     }
   }
 
-  async function edit(id: string, body: string, suggestion: string | null) {
+  async function edit(id: string, body: string, suggestion: string | null): Promise<string | null> {
     busy.value = true
     try {
       const made = await editReviewComment(id, body, suggestion)
       items.value = items.value.map((c) => (c.id === id ? made : c))
+      return null
+    } catch (e) {
+      return axiosErrorMessage(e, t('work.room.review.saveFailed'))
     } finally {
       busy.value = false
     }
   }
 
-  async function remove(id: string) {
+  async function remove(id: string): Promise<string | null> {
     busy.value = true
     try {
       await deleteReviewComment(id)
       items.value = items.value.filter((c) => c.id !== id)
       held.value.delete(id)
+      return null
+    } catch (e) {
+      return axiosErrorMessage(e, t('work.room.review.deleteFailed'))
     } finally {
       busy.value = false
     }

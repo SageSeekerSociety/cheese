@@ -31,6 +31,12 @@
     "title": "按类型",
     "waitsOnMe": "待你审阅的改动 / 决策请求"
   },
+  "pushNotEnabled": {
+    "denied": "浏览器未允许本站发送通知，需在浏览器的网站设置中允许",
+    "failed": "未能开启浏览器推送",
+    "unavailable": "浏览器推送暂不可用",
+    "unsupported": "这个浏览器不支持推送通知"
+  },
   "quiet": {
     "daily": "每天",
     "digest": "摘要频率",

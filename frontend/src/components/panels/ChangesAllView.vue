@@ -219,9 +219,6 @@ async function pick(path: string) {
         :expanded="props.expanded"
         @open="emit('select-file', $event)"
         @toggle-section="emit('toggle-section', $event)"
-        @comment="(d) => void props.review?.add(d)"
-        @edit-comment="(id, b, s) => void props.review?.edit(id, b, s)"
-        @remove-comment="(id) => void props.review?.remove(id)"
       />
     </div>
     <!-- The thin bar after scrolling past the head: which file of how many. It

@@ -11,8 +11,8 @@
     :busy-id="busyId"
     :rejudging="rejudging"
     @approve="approve"
-    @reject="reject"
-    @deadline="setDeadline"
+    :reject="reject"
+    :deadline="setDeadline"
     @retry="load"
     @rejudge="rejudge"
     @review="events.emit('review-participant', $event)"
@@ -127,28 +127,31 @@ async function approve(id: number) {
   }
 }
 
-async function reject(id: number, reason: string) {
+/** 拒绝与设截止：成了返回 null，没成返回原因（服务端说了就是它那一句），写在对话框里。 */
+async function reject(id: number, reason: string): Promise<string | null> {
   const task = props.taskData
-  if (!task) return
+  if (!task) return t('tasks.roster.rejectFailed')
   try {
     await TaskBoardApi.updateParticipant(task.id, id, { approved: 'DISAPPROVED', rejectReason: reason || undefined })
-    toast.success(t('tasks.roster.rejectDone', { name: nameOf(id) }))
-    events.emit('participation-changed')
-  } catch {
-    toast.error(t('tasks.roster.rejectFailed'))
+  } catch (e) {
+    return axiosErrorMessage(e, t('tasks.roster.rejectFailed'))
   }
+  toast.success(t('tasks.roster.rejectDone', { name: nameOf(id) }))
+  events.emit('participation-changed')
+  return null
 }
 
-async function setDeadline(id: number, at: number) {
+async function setDeadline(id: number, at: number): Promise<string | null> {
   const task = props.taskData
-  if (!task) return
+  if (!task) return t('tasks.roster.deadlineFailed')
   try {
     await TaskBoardApi.updateParticipant(task.id, id, { deadline: at })
-    toast.success(t('tasks.roster.deadlineSaved'))
-    events.emit('participation-changed')
-  } catch {
-    toast.error(t('tasks.roster.deadlineFailed'))
+  } catch (e) {
+    return axiosErrorMessage(e, t('tasks.roster.deadlineFailed'))
   }
+  toast.success(t('tasks.roster.deadlineSaved'))
+  events.emit('participation-changed')
+  return null
 }
 
 const rejudging = ref(false)

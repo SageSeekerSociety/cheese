@@ -65,11 +65,15 @@ export interface DiffReview {
   agentName: string
 }
 
+/** What writing, editing or deleting a comment comes back with: null once the
+ *  server took it, otherwise the reason it did not, to show where it was written. */
+export type ReviewWriteResult = Promise<string | null>
+
 /** The 改动 tab's comments: what to draw, and what writing one does. */
 export interface ReviewBundle extends DiffReview {
-  add: (draft: ReviewCommentDraft) => Promise<void>
-  edit: (id: string, body: string, suggestion: string | null) => Promise<void>
-  remove: (id: string) => Promise<void>
+  add: (draft: ReviewCommentDraft) => ReviewWriteResult
+  edit: (id: string, body: string, suggestion: string | null) => ReviewWriteResult
+  remove: (id: string) => ReviewWriteResult
 }
 
 /** A run of words in a rewritten paragraph or slide. */

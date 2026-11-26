@@ -1,7 +1,7 @@
 // 上传的文件进项目的资料库，消息里引用的是它自己的地址 {path, mime}，不是拷贝。
 import type { ChatAttachment } from '../cx_types'
 
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 
 import { attachLibraryFile, uploadAttachment } from '../api'
 import { t } from '../i18n'
@@ -113,7 +113,20 @@ export function usePendingAttachments(
   onError?: (message: string) => void
 ) {
   const pending = ref<PendingAttachment[]>([])
-  const uploading = ref(false)
+  // 还在路上的几件事：传文件、重试、从资料库取一份。几件可以同时在走（取着一份资料时又
+  // 拖进来一个文件），所以按件数，不是一个开关——一个开关会被先回来的那件关掉，而另一件
+  // 的占位还没换成真的附件，这时发出去，那一枚就被悄悄丢了。
+  const inFlight = ref(0)
+  /** 有一枚占位还在传或在取：这时不能发送。 */
+  const uploading = computed(() => inFlight.value > 0)
+  async function track<T>(work: () => Promise<T>): Promise<T> {
+    inFlight.value++
+    try {
+      return await work()
+    } finally {
+      inFlight.value--
+    }
+  }
 
   function drop(slot: PendingAttachment) {
     const at = pending.value.indexOf(slot)
@@ -162,8 +175,7 @@ export function usePendingAttachments(
     if (!topicId) return
     const all = [...files]
     if (!all.length) return
-    uploading.value = true
-    try {
+    await track(async () => {
       for (const f of all) {
         if (pending.value.length >= MAX_PENDING) {
           onError?.(t('work.room.attachments.tooMany'))
@@ -186,21 +198,15 @@ export function usePendingAttachments(
         pending.value.push(slot)
         await uploadInto(slot, f)
       }
-    } finally {
-      uploading.value = false
-    }
+    })
   }
 
   /** 重试 one failed upload: the same slot, the same bytes — no second frame. */
   async function retry(i: number) {
     const slot = pending.value[i]
     if (!slot || slot.uploading || !slot.error || !slot.file) return
-    uploading.value = true
-    try {
-      await uploadInto(slot, slot.file)
-    } finally {
-      uploading.value = false
-    }
+    const file = slot.file
+    await track(() => uploadInto(slot, file))
   }
 
   /** 资料库里已经有的一份文件：不重新上传，取这个项目里那一份。 */
@@ -224,20 +230,22 @@ export function usePendingAttachments(
       const at = pending.value.indexOf(slot)
       if (at >= 0) pending.value.splice(at, 1)
     }
-    let attachment
-    try {
-      attachment = await attachLibraryFile(topicId, libraryPath)
-    } catch (e) {
-      dropSlot()
-      onError?.(e instanceof Error ? e.message : t('work.room.attachments.addFailed'))
-      return
-    }
-    if (getTopicId() !== topicId) {
-      dropSlot()
-      return
-    }
-    const at = pending.value.indexOf(slot)
-    if (at >= 0) pending.value.splice(at, 1, attachment)
+    await track(async () => {
+      let attachment
+      try {
+        attachment = await attachLibraryFile(topicId, libraryPath)
+      } catch (e) {
+        dropSlot()
+        onError?.(e instanceof Error ? e.message : t('work.room.attachments.addFailed'))
+        return
+      }
+      if (getTopicId() !== topicId) {
+        dropSlot()
+        return
+      }
+      const at = pending.value.indexOf(slot)
+      if (at >= 0) pending.value.splice(at, 1, attachment)
+    })
   }
 
   // Composer paste handler: pasted image data (e.g. a screenshot) uploads

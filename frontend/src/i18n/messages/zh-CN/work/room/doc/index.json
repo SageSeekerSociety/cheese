@@ -46,6 +46,7 @@
   "loading": "加载中…",
   "noEditAccess": "你没有这篇文档的编辑权限",
   "offlineSync": "没连上，改动会在连上后同步",
+  "openFailed": "无法打开这篇文档",
   "options": "文档选项",
   "outdated": "页面已更新，刷新后继续编辑",
   "outline": "大纲",

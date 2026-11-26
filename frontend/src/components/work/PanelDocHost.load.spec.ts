@@ -51,7 +51,7 @@ vi.mock('../../composables/useDocCollab', async () => ({
 
 import PanelDocHost from './PanelDocHost.vue'
 
-import { setLocale } from '@/i18n'
+import { setLocale, t } from '@/i18n'
 
 beforeEach(() => setLocale('zh-CN'))
 
@@ -101,10 +101,21 @@ describe('打开一篇协同文档', () => {
     seedRoom('t1', '', { error: '你不是这个房间的成员' })
     const { container } = open(room('t1'))
 
-    await waitFor(() =>
-      expect(container.querySelector('.doc-error-toast')?.textContent).toContain('不是这个房间的成员')
-    )
+    await waitFor(() => expect(container.textContent).toContain('不是这个房间的成员'))
+    expect(container.textContent).toContain(t('work.room.doc.openFailed'))
     expect(container.querySelector('.doc-prose')).toBeNull()
+  })
+
+  it('打不开时不说「改动会在连上后同步」：没打开的文档什么也同步不了；重试打得开就打开', async () => {
+    seedRoom('t1', '', { error: '服务暂时不可用' })
+    const { container, findByRole } = open(room('t1'))
+    await waitFor(() => expect(container.textContent).toContain('服务暂时不可用'))
+
+    expect(container.textContent).not.toContain(t('work.room.doc.offlineSync'))
+
+    seedRoom('t1', '第一段')
+    ;(await findByRole('button', { name: t('global.loadError.retry') })).click()
+    await waitFor(() => expect(prose(container)).toContain('第一段'))
   })
 
   it('协同服务换了文档格式时，不摆编辑器，点刷新重新载入页面', async () => {

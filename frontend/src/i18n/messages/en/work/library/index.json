@@ -19,7 +19,7 @@
   "downloadOnly": "This format cannot be previewed yet; download it to view",
   "dropHint": "Drop files here to upload",
   "empty": "No files yet",
-  "folderEmpty": "No files yet",
+  "folderEmpty": "No files yet. This folder is kept once a file is added",
   "folderField": "Folder",
   "folderMeta": "{n} files · {when}",
   "headOnly": "Showing the start of {path}; download it for the whole file",

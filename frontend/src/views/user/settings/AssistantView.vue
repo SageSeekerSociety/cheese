@@ -37,6 +37,11 @@ const props = defineProps<{
   saving: boolean
   saved: boolean
   error: string
+  /** 存下一条例行事务：`null` 是新建；回来的那句是失败原因，空串是成功。表等它回来，
+   *  成了才收起，没成留着填的东西、把原因写在表里。 */
+  saveRoutine: (id: string | null, body: AssistantRoutineForm) => Promise<string>
+  /** 改一条记忆：回来的那句是失败原因，空串是成功。 */
+  memoryEdit: (name: string, description: string, text: string) => Promise<string>
 }>()
 
 const emit = defineEmits<{
@@ -46,12 +51,9 @@ const emit = defineEmits<{
   removeItem: [list: 'ask' | 'allow', index: number]
   routine: [id: string, action: 'pause' | 'resume' | 'delete' | 'run-now']
   memoryEnabled: [on: boolean]
-  memoryEdit: [name: string, description: string, text: string]
   memoryDelete: [name: string]
   memoryClear: []
   openConversation: [id: string]
-  /** 存下一条：`null` 是新建；回来的那句是失败原因，空串是成功。 */
-  saveRoutine: [id: string | null, body: AssistantRoutineForm]
 }>()
 
 const { t, locale } = useI18n()
@@ -69,15 +71,19 @@ function add(list: 'ask' | 'allow') {
 const editing = ref<{ name: string; description: string; text: string } | null>(null)
 const clearing = ref(false)
 
+/** 改记忆没存上时的原因，写在改的那一格里。 */
+const editError = ref('')
+
 function edit(item: AssistantMemoryItem) {
+  editError.value = ''
   editing.value = { name: item.name, description: item.description, text: item.text }
 }
 
-function saveEdit() {
+async function saveEdit() {
   const now = editing.value
-  if (!now || !now.description.trim() || !now.text.trim()) return
-  emit('memoryEdit', now.name, now.description.trim(), now.text.trim())
-  editing.value = null
+  if (!now || props.saving || !now.description.trim() || !now.text.trim()) return
+  editError.value = await props.memoryEdit(now.name, now.description.trim(), now.text.trim())
+  if (!editError.value && editing.value === now) editing.value = null
 }
 
 function confirmClear() {
@@ -162,9 +168,9 @@ function momentOf(): Record<string, unknown> {
   }
 }
 
-function submitForm() {
+async function submitForm() {
   const now = form.value
-  if (!now) return
+  if (!now || props.saving) return
   if (!draft.value.note.trim()) {
     formError.value = t('account.assistant.routines.form.goalRequired')
     return
@@ -177,7 +183,7 @@ function submitForm() {
   const event = !draft.value.onTime && draft.value.condition
   formError.value = ''
   const moment = momentOf()
-  emit('saveRoutine', now.routine?.id ?? null, {
+  const failed = await props.saveRoutine(now.routine?.id ?? null, {
     title: draft.value.title.trim(),
     note: draft.value.note.trim(),
     explain: draft.value.explain.trim(),
@@ -194,7 +200,8 @@ function submitForm() {
     outcome: event && draft.value.condition === 'decided' ? draft.value.outcome : '',
     once: Boolean(event) && draft.value.once,
   })
-  form.value = null
+  formError.value = failed
+  if (!failed && form.value === now) form.value = null
 }
 
 /** 「任务被采纳」和「任务被退回」是同一件事的两种结果（后端叫 ``decided``，
@@ -383,6 +390,7 @@ function last(r: AssistantRoutine): string {
                 autocomplete="off"
                 :aria-label="t('account.assistant.memory.text')"
               />
+              <p v-if="editError" role="alert" class="ast__reason c-danger">{{ editError }}</p>
               <div class="ast__actions">
                 <BaseButton kind="ghost" size="sm" @click="editing = null">
                   {{ t('account.assistant.routines.cancel') }}
@@ -391,6 +399,7 @@ function last(r: AssistantRoutine): string {
                   kind="secondary"
                   size="sm"
                   type="submit"
+                  :loading="saving"
                   :disabled="saving || !editing.description.trim() || !editing.text.trim()"
                 >
                   {{ t('account.assistant.memory.save') }}
@@ -532,7 +541,7 @@ function last(r: AssistantRoutine): string {
             <BaseButton kind="ghost" size="sm" type="button" @click="form = null">
               {{ t('account.assistant.routines.cancel') }}
             </BaseButton>
-            <BaseButton kind="primary" size="sm" type="submit" :disabled="saving">
+            <BaseButton kind="primary" size="sm" type="submit" :loading="saving" :disabled="saving">
               {{ t('account.assistant.routines.save') }}
             </BaseButton>
           </div>

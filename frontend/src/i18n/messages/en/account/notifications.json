@@ -31,6 +31,12 @@
     "title": "By type",
     "waitsOnMe": "A change or decision request waits on my review"
   },
+  "pushNotEnabled": {
+    "denied": "The browser has not allowed notifications from this site. Allow them in its site settings.",
+    "failed": "Could not turn on browser push",
+    "unavailable": "Browser push is not available",
+    "unsupported": "This browser does not support push notifications"
+  },
   "quiet": {
     "daily": "Daily",
     "digest": "Digest frequency",

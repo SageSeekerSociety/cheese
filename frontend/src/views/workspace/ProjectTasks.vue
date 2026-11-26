@@ -14,7 +14,7 @@ import { useInfiniteQuery, useQuery } from '@tanstack/vue-query'
 
 import { getAvatarUrl } from '@/utils/materials'
 
-import { newTask } from '@/commands/topicActions'
+import { creatingTaskIn, newTask } from '@/commands/topicActions'
 import { agentNames, memberName } from '@/lib/agentNames'
 import { liveTasks } from '@/lib/board'
 import { channelGlyph, topicTitle } from '@/lib/topicState'
@@ -144,10 +144,12 @@ function openTask(task: RoomTask) {
   })
 }
 // 新建任务建在筛选着的那个频道里；没选频道时建在「综合」。
-function create() {
+const createIn = computed(() => {
   const topics = store.topics as Topic[]
-  const channel = (channelId.value && topics.find((topic) => topic.id === channelId.value)) || store.rootTopic
-  if (channel) void newTask(channel, router)
+  return (channelId.value && topics.find((topic) => topic.id === channelId.value)) || store.rootTopic
+})
+function create() {
+  if (createIn.value) void newTask(createIn.value, router)
 }
 </script>
 
@@ -172,6 +174,7 @@ function create() {
     :closed-loading="closedLoading"
     :closed-failed="closedFailed"
     @open-task="openTask"
+    :creating="creatingTaskIn(createIn?.id)"
     @new-task="create"
     @retry="retry"
     @pick-channel="pickChannel"

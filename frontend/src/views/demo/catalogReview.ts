@@ -3,9 +3,9 @@
  * 和 AI 队友的修改重叠时逐处选版本的那一块。
  *
  * 单独一份，理由同 `catalogAccept.ts`：`catalog.ts` 已经顶着行数上限。三件都只吃
- * props、只往上发事件，批注从哪来、送到哪去在 `composables/useReviewComments.ts`。
+ * props，批注从哪来、送到哪去在 `composables/useReviewComments.ts`。
  */
-import type { DiffReview, MergeRegion, OfficeComparison, ReviewComment } from '@/types/reviewComment'
+import type { MergeRegion, OfficeComparison, ReviewBundle, ReviewComment } from '@/types/reviewComment'
 import type { CatalogEntry, CatalogNeed } from './catalog'
 
 import OfficeCompare from '@/components/review/OfficeCompare.vue'
@@ -150,12 +150,18 @@ const DOC_COMMENT: ReviewComment = {
   body: '和问卷汇总表对不上，那边是 96',
 }
 
-const DOC_REVIEW: DiffReview = {
+// 预览站没有服务器：写、改、删一律当作成了。
+const saved = async () => null
+
+const DOC_REVIEW: ReviewBundle = {
   comments: [DOC_COMMENT],
   writable: true,
   me: 'pengwenbo',
   busy: false,
   agentName: '芝士',
+  add: saved,
+  edit: saved,
+  remove: saved,
 }
 
 export const REVIEW_ENTRIES: CatalogEntry[] = [
@@ -212,6 +218,7 @@ export const REVIEW_ENTRIES: CatalogEntry[] = [
     file: 'src/components/review/ReviewCommentBox.vue',
     component: ReviewCommentBox,
     needs: UI_T,
+    args: { send: saved },
     states: [
       {
         name: '刚点开',
@@ -234,7 +241,7 @@ export const REVIEW_ENTRIES: CatalogEntry[] = [
     file: 'src/components/review/ReviewCommentCard.vue',
     component: ReviewCommentCard,
     needs: UI_T,
-    args: { where: '第 208 行', agentName: '芝士', writable: true },
+    args: { where: '第 208 行', agentName: '芝士', writable: true, edit: saved, remove: saved, reply: saved },
     states: [
       {
         name: '自己的，未发送',

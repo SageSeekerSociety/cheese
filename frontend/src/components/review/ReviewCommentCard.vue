@@ -3,7 +3,9 @@
 //
 // 自己没送出的那条能改、能删；上一轮送出的那条带着芝士说的处理结果，待审阅时能回复，
 // 回复下次退回时一起带上。修改建议画成一小段差异：原来的几行和建议的几行。
-import type { ReviewComment } from '@/types/reviewComment'
+//
+// 改、删、回复都等服务器答应：没成的话框和字都留着，删不掉的原因写在这一条下面。
+import type { ReviewComment, ReviewWriteResult } from '@/types/reviewComment'
 
 import { computed, ref } from 'vue'
 
@@ -24,15 +26,12 @@ const props = withDefaults(
     writable: boolean
     agentName: string
     busy?: boolean
+    edit: (id: string, body: string, suggestion: string | null) => ReviewWriteResult
+    remove: (id: string) => ReviewWriteResult
+    reply: (parentId: string, body: string) => ReviewWriteResult
   }>(),
   { replies: () => [], busy: false }
 )
-
-const emit = defineEmits<{
-  (e: 'edit', id: string, body: string, suggestion: string | null): void
-  (e: 'remove', id: string): void
-  (e: 'reply', parentId: string, body: string): void
-}>()
 
 const editing = ref<string | null>(null)
 const replying = ref(false)
@@ -55,13 +54,28 @@ const newLines = computed(() =>
   (props.comment.suggestion ?? '').split('\n').filter((l, i, a) => i < a.length - 1 || l !== '')
 )
 
-function saveEdit(id: string, body: string, suggestion: string | null) {
-  emit('edit', id, body, suggestion)
-  editing.value = null
+async function saveEdit(id: string, body: string, suggestion: string | null) {
+  const failed = await props.edit(id, body, suggestion)
+  if (!failed) editing.value = null
+  return failed
 }
-function sendReply(body: string) {
-  emit('reply', props.comment.id, body)
-  replying.value = false
+async function sendReply(body: string) {
+  const failed = await props.reply(props.comment.id, body)
+  if (!failed) replying.value = false
+  return failed
+}
+
+const removing = ref(false)
+const removeError = ref('')
+async function removeOne(id: string) {
+  if (removing.value) return
+  removing.value = true
+  removeError.value = ''
+  try {
+    removeError.value = (await props.remove(id)) ?? ''
+  } finally {
+    removing.value = false
+  }
 }
 </script>
 
@@ -79,7 +93,7 @@ function sendReply(body: string) {
       :suggestion="comment.suggestion"
       :submit-label="t('work.room.review.save')"
       :busy="busy"
-      @submit="(b, s) => saveEdit(comment.id, b, s)"
+      :send="(b, s) => saveEdit(comment.id, b, s)"
       @cancel="editing = null"
     />
     <template v-else>
@@ -107,7 +121,7 @@ function sendReply(body: string) {
         :allow-suggestion="false"
         :submit-label="t('work.room.review.save')"
         :busy="busy"
-        @submit="(b) => saveEdit(r.id, b, null)"
+        :send="(b) => saveEdit(r.id, b, null)"
         @cancel="editing = null"
       />
       <template v-else>
@@ -115,7 +129,7 @@ function sendReply(body: string) {
         <div v-if="r.state === 'draft'" class="comment-card__actions">
           <span class="comment-card__tag comment-card__tag--plain">{{ t('work.room.review.unsent') }}</span>
           <BaseButton kind="ghost" size="sm" @click="editing = r.id">{{ t('work.room.review.edit') }}</BaseButton>
-          <BaseButton kind="ghost" size="sm" :disabled="busy" @click="emit('remove', r.id)">
+          <BaseButton kind="ghost" size="sm" :disabled="busy || removing" @click="removeOne(r.id)">
             {{ t('work.room.review.delete') }}
           </BaseButton>
         </div>
@@ -126,13 +140,13 @@ function sendReply(body: string) {
       :allow-suggestion="false"
       :submit-label="t('work.room.review.reply')"
       :busy="busy"
-      @submit="(b) => sendReply(b)"
+      :send="(b) => sendReply(b)"
       @cancel="replying = false"
     />
     <div v-if="editing !== comment.id && !replying" class="comment-card__actions">
       <template v-if="draft && mine">
         <BaseButton kind="ghost" size="sm" @click="editing = comment.id">{{ t('work.room.review.edit') }}</BaseButton>
-        <BaseButton kind="ghost" size="sm" :disabled="busy" @click="emit('remove', comment.id)">
+        <BaseButton kind="ghost" size="sm" :disabled="busy || removing" @click="removeOne(comment.id)">
           {{ t('work.room.review.delete') }}
         </BaseButton>
       </template>
@@ -140,6 +154,7 @@ function sendReply(body: string) {
         {{ t('work.room.review.reply') }}
       </BaseButton>
     </div>
+    <p v-if="removeError" role="alert" class="t-meta c-danger comment-card__error">{{ removeError }}</p>
   </div>
 </template>
 
@@ -216,7 +231,8 @@ function sendReply(body: string) {
   background: var(--ok-wash);
   color: var(--ok-ink);
 }
-.comment-card__answer {
+.comment-card__answer,
+.comment-card__error {
   margin: 0;
 }
 .comment-card__reply {

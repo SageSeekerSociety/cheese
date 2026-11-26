@@ -84,8 +84,9 @@ export function useFakeDocCollab(room: () => string | null) {
     if (!rooms.has(id)) seedRoom(id, '')
     const entry = rooms.get(id)!
     if (entry.error) {
+      // The ticket did not come: the document never opened.
       error.value = entry.error
-      connection.value = 'offline'
+      connection.value = 'unopened'
       return
     }
     if (entry.outdated) {
@@ -122,6 +123,7 @@ export function useFakeDocCollab(room: () => string | null) {
   watch(room, open, { immediate: true })
   onBeforeUnmount(() => close?.())
   return {
+    reopen: () => open(room()),
     session,
     connection,
     synced,

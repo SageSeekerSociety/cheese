@@ -11,7 +11,7 @@
 //
 // 它不自己滚：外面那一列（顶部还有这次交付的情况）一起滚，所以段头里的位置由外面问
 // （`scrollTo`）。
-import type { DiffReview, ReviewComment, ReviewCommentDraft } from '@/types/reviewComment'
+import type { ReviewBundle, ReviewComment, ReviewWriteResult } from '@/types/reviewComment'
 import type { FileDiff } from '../../lib/diff'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
@@ -30,7 +30,7 @@ import { whenIdle } from '@/lib/idle'
 const props = withDefaults(
   defineProps<{
     diffs: FileDiff[]
-    review?: DiffReview | null
+    review?: ReviewBundle | null
     /** 哪几段铺开着（路径）。默认一段都不铺：「改了哪些文件」是这一面第一眼要看的东西。 */
     expanded?: Set<string>
   }>(),
@@ -43,9 +43,6 @@ const linesByPath = computed(() => new Map(props.diffs.map((d) => [d.path, parse
 
 const emit = defineEmits<{
   (e: 'open', path: string): void
-  (e: 'comment', draft: ReviewCommentDraft): void
-  (e: 'edit-comment', id: string, body: string, suggestion: string | null): void
-  (e: 'remove-comment', id: string): void
   /** 点了段头：这一段铺开或收起。状态在 `PanelChangesView`（见文件头）。 */
   (e: 'toggle-section', path: string): void
 }>()
@@ -96,16 +93,32 @@ function where(c: ReviewComment) {
 function onPick(path: string, start: number, end: number, text: string) {
   composing.value = { path, start, end, text }
 }
-function submitNew(body: string, suggestion: string | null) {
+// 写、改、删都等服务器答应了才收框（见 `ReviewCommentBox`）；没有批注可写时不会走到这里。
+const unavailable = async () => t('work.room.review.saveFailed')
+async function submitNew(body: string, suggestion: string | null): ReviewWriteResult {
   const c = composing.value
-  if (!c) return
-  emit('comment', { path: c.path, line_start: c.start, line_end: c.end, line_text: c.text, body, suggestion })
-  composing.value = null
+  if (!c || !props.review) return unavailable()
+  const failed = await props.review.add({
+    path: c.path,
+    line_start: c.start,
+    line_end: c.end,
+    line_text: c.text,
+    body,
+    suggestion,
+  })
+  if (!failed && composing.value === c) composing.value = null
+  return failed
 }
-function reply(parentId: string, body: string) {
+function editComment(id: string, body: string, suggestion: string | null): ReviewWriteResult {
+  return props.review ? props.review.edit(id, body, suggestion) : unavailable()
+}
+function removeComment(id: string): ReviewWriteResult {
+  return props.review ? props.review.remove(id) : unavailable()
+}
+function reply(parentId: string, body: string): ReviewWriteResult {
   const parent = topLevel.value.find((c) => c.id === parentId)
-  if (!parent) return
-  emit('comment', {
+  if (!parent || !props.review) return unavailable()
+  return props.review.add({
     path: parent.path,
     line_start: parent.line_start,
     line_end: parent.line_end,
@@ -251,9 +264,9 @@ defineExpose({ scrollTo })
           :writable="!!review?.writable"
           :agent-name="review?.agentName ?? ''"
           :busy="review?.busy"
-          @edit="(id, b, s) => emit('edit-comment', id, b, s)"
-          @remove="(id) => emit('remove-comment', id)"
-          @reply="reply"
+          :edit="editComment"
+          :remove="removeComment"
+          :reply="reply"
         />
         <ChangesDiff
           :lines="linesByPath.get(d.path) ?? []"
@@ -273,16 +286,16 @@ defineExpose({ scrollTo })
               :writable="!!review?.writable"
               :agent-name="review?.agentName ?? ''"
               :busy="review?.busy"
-              @edit="(id, b, s) => emit('edit-comment', id, b, s)"
-              @remove="(id) => emit('remove-comment', id)"
-              @reply="reply"
+              :edit="editComment"
+              :remove="removeComment"
+              :reply="reply"
             />
             <ReviewCommentBox
               v-if="composing && composing.path === d.path && composing.end === line"
               :line-text="composing.text"
               :submit-label="t('work.room.review.add')"
               :busy="review?.busy"
-              @submit="submitNew"
+              :send="submitNew"
               @cancel="composing = null"
             />
           </template>

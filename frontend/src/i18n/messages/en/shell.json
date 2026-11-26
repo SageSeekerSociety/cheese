@@ -24,7 +24,7 @@
     "end": "No more"
   },
   "loading": "Loading",
-  "offline": "Offline · New messages can’t be sent or received. Reconnects when the network is back",
+  "offline": "You are offline. New messages cannot arrive until the network is back, and messages you send will go out then",
   "version": {
     "title": "Deployed build {sha} (click to copy)"
   },

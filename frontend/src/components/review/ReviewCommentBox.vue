@@ -3,6 +3,10 @@
 //
 // 「修改建议」把选中的那几行原样填进下面的等宽框里，直接改成想要的样子；送出后芝士
 // 看到的是一段确切的写法，不用再猜。回复和编辑也用这一个框，回复没有修改建议。
+//
+// 送出等服务器答应：`send` 成了由外面把框收起，没成就留着框和字，原因写在框里。
+import type { ReviewWriteResult } from '@/types/reviewComment'
+
 import { nextTick, onMounted, ref } from 'vue'
 
 import BaseButton from '@/components/base/BaseButton.vue'
@@ -18,16 +22,19 @@ const props = withDefaults(
     allowSuggestion?: boolean
     submitLabel: string
     busy?: boolean
+    /** 送出：null 是成了，否则是没成的原因。 */
+    send: (body: string, suggestion: string | null) => ReviewWriteResult
   }>(),
   { lineText: '', body: '', suggestion: null, allowSuggestion: true, busy: false }
 )
 
 const emit = defineEmits<{
-  (e: 'submit', body: string, suggestion: string | null): void
   (e: 'cancel'): void
 }>()
 
 const text = ref(props.body)
+const sending = ref(false)
+const error = ref('')
 const suggesting = ref(props.suggestion !== null)
 const replacement = ref(props.suggestion ?? props.lineText)
 
@@ -39,19 +46,26 @@ function toggleSuggestion() {
   if (suggesting.value && props.suggestion === null) replacement.value = props.lineText
 }
 
-function submit() {
+async function submit() {
+  if (sending.value || props.busy) return
   const suggestion = suggesting.value ? replacement.value : null
   if (!text.value.trim() && suggestion === null) return
-  emit('submit', text.value, suggestion)
+  sending.value = true
+  error.value = ''
+  try {
+    error.value = (await props.send(text.value, suggestion)) ?? ''
+  } finally {
+    sending.value = false
+  }
 }
 
 function onKeydown(e: KeyboardEvent) {
   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
     e.preventDefault()
-    submit()
+    void submit()
   } else if (e.key === 'Escape') {
     e.preventDefault()
-    emit('cancel')
+    if (!sending.value) emit('cancel')
   }
 }
 </script>
@@ -81,6 +95,7 @@ function onKeydown(e: KeyboardEvent) {
       :rows="Math.min(12, Math.max(2, replacement.split('\n').length))"
       :aria-label="t('work.room.review.suggestion')"
     />
+    <p v-if="error" role="alert" class="t-meta c-danger comment-box__error">{{ error }}</p>
     <div class="comment-box__bar">
       <BaseButton
         v-if="allowSuggestion"
@@ -94,10 +109,16 @@ function onKeydown(e: KeyboardEvent) {
         {{ t('work.room.review.suggestion') }}
       </BaseButton>
       <span class="comment-box__grow" />
-      <BaseButton kind="ghost" size="sm" :disabled="busy" @click="emit('cancel')">
+      <BaseButton kind="ghost" size="sm" :disabled="busy || sending" @click="emit('cancel')">
         {{ t('work.room.accept.cancel') }}
       </BaseButton>
-      <BaseButton kind="secondary" size="sm" :loading="busy" :disabled="busy" @click="submit">
+      <BaseButton
+        kind="secondary"
+        size="sm"
+        :loading="busy || sending"
+        :disabled="busy || sending"
+        @click="void submit()"
+      >
         {{ submitLabel }}
       </BaseButton>
     </div>
@@ -133,6 +154,9 @@ function onKeydown(e: KeyboardEvent) {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.comment-box__error {
+  margin: 0;
 }
 .comment-box__grow {
   flex: 1 1 auto;
