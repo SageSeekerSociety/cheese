@@ -421,12 +421,29 @@ class RemoteDeviceHub:
                     connect=min(OWNER_CONNECT_TIMEOUT_S, remaining_budget),
                 )
             path = f"/internal/device-connection/call/{name}"
+            # Encoded here, off the loop: `exec` carries a launcher script, and
+            # a launch's payload is 472 KiB of script — 649 KiB of JSON once
+            # encoded. httpx would do that encode inside the request it builds
+            # on this loop; production's stall board has a 108 ms stall whose
+            # whole stack is that encode.
+            body = await asyncio.to_thread(_json_body, payload)
+            # The header httpx would have set for `json=`: without it the
+            # owner has no reason to read these bytes as JSON.
+            body_headers = {"Content-Type": "application/json"}
             if on_stderr is not None:
                 return await self._streamed(
-                    path, on_stderr=on_stderr, json=payload, timeout=answer_timeout
+                    path,
+                    on_stderr=on_stderr,
+                    content=body,
+                    headers=body_headers,
+                    timeout=answer_timeout,
                 )
             return await self._request(
-                "POST", path, json=payload, timeout=answer_timeout
+                "POST",
+                path,
+                content=body,
+                headers=body_headers,
+                timeout=answer_timeout,
             )
 
         return await AsyncRetrying(
@@ -585,6 +602,17 @@ class RemoteDeviceHub:
         except DeviceCallError as error:
             _name_gone_runner_asker(device_id, state, method, error)
             raise
+
+
+def _json_body(payload: dict[str, Any]) -> bytes:
+    """`payload` as the JSON body httpx would have built from it.
+
+    The same encoder httpx uses (`separators=(",", ":")`, no ASCII escaping),
+    so the bytes on the wire do not change — only the thread they are made on.
+    """
+    return json.dumps(
+        payload, ensure_ascii=False, separators=(",", ":"), allow_nan=False
+    ).encode("utf-8")
 
 
 def _jsonable(value: dict[str, Any]) -> dict[str, Any]:
