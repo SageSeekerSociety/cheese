@@ -33,6 +33,7 @@ vi.mock('@/stores/workspace', () => ({
   useWorkspaceStore: () => ({
     topics: [TOPIC],
     members: [],
+    projects: [],
     unreadMap: {},
     rememberPlace: vi.fn(),
     loadingTopics: false,

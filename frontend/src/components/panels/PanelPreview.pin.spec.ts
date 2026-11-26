@@ -268,6 +268,7 @@ function commentsWith(anchors: (Record<string, unknown> | null)[], state: (at: n
   const open = ref(false)
   return {
     target: computed(() => ({ topicId: 'room', path: 'deck.pdf', version: 'v7' })),
+    writable: computed(() => true),
     open,
     toggle: () => (open.value = !open.value),
     author: 'me',
