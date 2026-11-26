@@ -56,6 +56,14 @@ def test_refuses_a_title_of_more_than_one_line():
     assert said == "提交标题只能有一行；解释写进正文（body）"
 
 
+def test_a_carriage_return_cannot_split_a_commit_title():
+    """A bare carriage return is a line break, just like CRLF or LF."""
+    subject = "fix: one\rfix: two"
+    with pytest.raises(InvalidSubject):
+        check_subject(subject)
+    assert valid_subject(subject) is None
+
+
 def test_valid_subject_is_the_non_raising_read_path():
     assert valid_subject("修复分页越界") == "修复分页越界"
     assert valid_subject("a\nb") is None
