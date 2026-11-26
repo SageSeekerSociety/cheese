@@ -7,12 +7,19 @@ team 是项目里所有人共看的一份；private 是「这个人 × 这个项
 在一起。
 """
 
+import uuid
+
+from app.api.auth import ActorResolver
+from app.api.doc_access import asked_of, reach
+from app.domain.agent.document import question
+from app.domain.living_doc.services import Documents
 from app.domain.memory.files_store import MemoryFileStore
 from tests.integration.conftest import (
     _register,
     join_project_team,
     post_project,
     session_auth_headers,
+    session_token,
 )
 
 _TEAM_FILE = """---
@@ -468,3 +475,106 @@ def test_a_mentor_reads_the_shared_memory_but_does_not_change_it(client):
     assert "answer-first.md" in {row["path"] for row in seen.json()["data"]["data"]}
     refused = _put(client, project_id, "teacher", path="mentor.md", content=_TEAM_FILE)
     assert refused.status_code == 403, refused.text
+
+
+def _shared_room(client, project_id: str) -> str:
+    """A room alice and bob both sit in."""
+    made = client.post(
+        "/topics",
+        json={"project_id": project_id, "title": "两个人的房间", "members_only": True},
+        headers=session_auth_headers("alice"),
+    )
+    assert made.status_code == 200, made.text
+    room = made.json()["data"]["id"]
+    added = client.post(
+        f"/topics/{room}/members",
+        json={"handle": "bob"},
+        headers=session_auth_headers("alice"),
+    )
+    assert added.status_code == 200, added.text
+    return room
+
+
+def _answering_alice_in(client, project_id: str, room: str) -> dict[str, str]:
+    """The credential 芝士 answers alice's question on a document of the shared
+    room with, minted the way the platform mints it (`question.credential`)."""
+
+    async def minted() -> str:
+        async with client.test_request_factory() as db:
+            doc = await Documents(db).create(
+                project_id=uuid.UUID(project_id),
+                room_id=uuid.UUID(room),
+                title="一份说明",
+                author="alice",
+            )
+            await db.commit()
+            resolver = ActorResolver(
+                session=db, bearer=session_token("alice"), cheese_token=""
+            )
+            asked = asked_of(await reach(db, resolver, doc.id))
+            assert asked is not None
+            return await question.credential(
+                db,
+                asked=asked,
+                agent="芝士",
+                asker="alice",
+                work=uuid.uuid4(),
+                may_edit=True,
+            )
+
+    return {"Authorization": f"Bearer {client.portal.call(minted)}"}
+
+
+def test_an_answer_in_a_shared_room_does_not_reach_the_askers_private_memory(
+    client,
+):
+    """private 只在一个人和芝士的私聊里用（#4985）。替她在多人房间里回答的那张
+    凭证代表她，但不是她的私聊：它读得到 team，读不到、也写不动她的 private。"""
+    project_id = _project(client)
+    room = _shared_room(client, project_id)
+    assert (
+        _put(
+            client, project_id, "alice", path="answer-first.md", content=_TEAM_FILE
+        ).status_code
+        == 200
+    )
+    assert (
+        _put(
+            client,
+            project_id,
+            "alice",
+            scope="private",
+            owner="alice",
+            path="prefers-tabs.md",
+            content=_PRIVATE_FILE,
+        ).status_code
+        == 200
+    )
+    answering = _answering_alice_in(client, project_id, room)
+    private = f"project_id={project_id}&scope=private&owner_handle=alice"
+
+    team = client.get(f"/memory/files?project_id={project_id}", headers=answering)
+    assert team.status_code == 200, team.text
+    assert [r["path"] for r in team.json()["data"]["data"]] == ["answer-first.md"]
+
+    listed = client.get(f"/memory/files?{private}", headers=answering)
+    assert listed.status_code == 403, listed.text
+    changes = client.get(f"/memory/files/history?{private}", headers=answering)
+    assert changes.status_code == 403, changes.text
+    written = client.put(
+        "/memory/files",
+        json={
+            "project_id": project_id,
+            "scope": "private",
+            "owner_handle": "alice",
+            "path": "planted.md",
+            "content": "不是她写的",
+        },
+        headers=answering,
+    )
+    assert written.status_code == 403, written.text
+
+    # 她自己照样读得到，那一条也没被写进去。
+    own = _get(client, project_id, "alice", scope="private", owner="alice")
+    assert own.status_code == 200, own.text
+    assert [r["path"] for r in own.json()["data"]["data"]] == ["prefers-tabs.md"]
