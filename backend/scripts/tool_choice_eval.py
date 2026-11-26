@@ -4,10 +4,12 @@ the resident list — can be checked against the last run.
 
 Each case is one turn in a channel, a task, a thread or a private chat: the
 system prompt and the tools a session of that kind gets, what a new session is
-told about where it is, and one message. The model takes up to eight steps; a
-call that only reads gets a plain answer and the turn goes on, until it makes a
-call that does something. A case passes when the call it expects comes before
-any other call that does something. Beside the verdict each run records whether
+told about where it is, and one message. The model takes up to twelve steps.
+A call that only reads is answered by a second model playing the platform and
+its machine from the facts the case states (`WORLD`, `FACTS`), so what the
+teammate finds agrees with the message and with what it found a step earlier;
+the turn goes on until it makes a call that does something. A case passes when
+the call it expects comes before any other call that does something. Beside the verdict each run records whether
 the platform would have taken the call's arguments, how large the request was
 and how long the first token took.
 
@@ -21,8 +23,8 @@ gateway, reached with the evaluation key the personal-assistant evals use
     uv run python scripts/tool_choice_eval.py run deepseek-flash < cases.jsonl > runs.jsonl
     uv run python scripts/tool_choice_eval.py summary < runs.jsonl
 
-One step of a new session is not a whole session: earlier turns, compaction and
-what a tool really answers are missing. Compare runs of this script with each
+One turn of a new session is not a whole session: earlier turns and compaction
+are missing, and the platform's answers are played, not real. Compare runs of this script with each
 other, not with what rooms do.
 """
 
@@ -33,10 +35,12 @@ import time
 from pathlib import Path
 
 REPEATS = 3
-MAX_STEPS = 8
+MAX_STEPS = 12
 WORKERS = 6
 
 GATEWAY = os.environ.get("EVAL_GATEWAY", "http://127.0.0.1:14000")
+#: The model that plays the platform (`played`).
+WORLD_MODEL = os.environ.get("EVAL_WORLD_MODEL", "glm-5.2")
 KEY_FILE = Path.home() / ".config/cheese-eval/key"
 
 DOC = """## 目标
@@ -437,47 +441,42 @@ READ_TOOLS = {
     "Bash",
 }
 
-CHAT = (
-    "[zhangheng]: 验证码服务用哪家\n[linzhixing]: 阿里云的便宜\n"
-    "[zhangheng]: 那就阿里云，定了"
-)
-#: What looking something up finds, in a case that expects the lookup.
-LOOKUPS = {
-    "cheese_chat.search": CHAT,
-    "cheese_find": "频道「后端」里的消息：\n" + CHAT,
-    "platform_request": "POST /topics/{topic_id}/members  加入成员，body: {handle}",
+#: What is true in every case: the project the turn happens in, as the
+#: platform would answer about it.
+WORLD = f"""项目「校园二手书」，一个前端仓库。频道「前端」，成员张衡（owner，handle: zhangheng）、林知行（member，handle: linzhixing）；项目里还有一位成员王萌（handle: wangmeng），不在这个频道。
+任务 #12「登录页改版」是这个频道里唯一的任务，由芝士在做，张衡提出并审阅。它改了 src/login.vue、src/login.css、tests/login.spec.ts。
+任务的机器：目录 /home/cheese/work/login-rework，分支 task/12-login-rework，工作区干净，最近的提交是 a1b2c3d「登录页改版：新样式与手机适配」；文件有 README.md、package.json、report.md、src/、tests/。命令都能正常执行。
+实况文档的内容：
+{DOC}
+资料库：设计稿.pdf、接口文档.md、题目/说明.md（第一阶段交 report.md；第二阶段交 report.md 和 src/login.vue）。
+例行事务只有一条：r1，每周一 09:00「上周进展汇总」，运行中。
+反馈中心里没有关于预览或输入框的反馈。团队技能库里没有写 LaTeX 报告的技能。画布上有两个分组：「进行中」「已完成」。
+上个月在频道「后端」里，张衡和林知行定了验证码服务用阿里云。除此之外，项目里没有和这条消息有关的其他讨论，记忆文件里也没有。
+这一轮开始前，当前对话里除了这条消息没有别的内容。"""
+
+#: What is true in one place or one case beyond `WORLD`.
+FACTS = {
+    "channel": "当前对话是频道「前端」。任务 #12 等待张衡审阅。",
+    "task": "当前对话是任务 #12，由张衡开、张衡负责。还没有提交过审阅。",
+    "led": "当前对话是任务 #12，由频道里的芝士开的。调研结论已经发在对话里，没有要审阅的东西。",
+    "thread": "当前对话是频道「前端」里的一条讨论串，挂在张衡的消息「首页打开太慢了，想把首屏的图片改成懒加载」下面；芝士在讨论串里建议过用浏览器自带的懒加载。任务 #12 等待张衡审阅。",
+    "private": "当前对话是张衡和芝士的私聊。",
+    "task-close": "任务 #12 的交付都已被张衡采纳并合并，没有待处理的审阅，步骤清单全部完成。",
+    "task-run-records": "运行记录里上一轮写的是：模型服务连接中断，已自动续上。",
 }
-#: What any command on the task's machine prints: where it is and what is there.
-MACHINE = """$ pwd
-/home/cheese/work/login-rework
-$ git status --short --branch
-## task/12-login-rework
-$ git log --oneline -2
-a1b2c3d 登录页改版：新样式与手机适配
-9f8e7d6 初始化项目
-$ ls
-README.md  package.json  report.md  src  tests"""
-#: What a call answers, by key; a call not listed answers "已完成。". Loading a
-#: skill answers with the skill's own text (`skill_bodies`).
-ANSWERS = {
-    "chat_send": "已发送。",
-    "todo_write": "清单已更新。",
-    "cheese_doc.get": DOC,
-    "cheese_doc.list": "- 12《登录页改版方案》张衡最近改过",
-    "cheese_task.look": "任务 #12 登录页改版：等待审阅。改动 3 个文件：src/login.vue、src/login.css、tests/login.spec.ts。",
-    "cheese_session.status": "运行正常。之前的交付都已采纳，没有待处理的审阅。",
-    "cheese_library.list": "- 设计稿.pdf\n- 接口文档.md",
-    "cheese_room.members": "张衡（owner，handle: zhangheng）\n林知行（member，handle: linzhixing）",
-    "cheese_routine.list": "- r1 每周一 09:00 上周进展汇总（运行中）",
-    "cheese_feedback.list": "没有匹配的反馈。",
-    "cheese_skill.search": "没有匹配的技能。",
-    "cheese_canvas.get": "画布上有 2 个分组：「进行中」「已完成」。",
-    "cheese_run_records": "上一轮：模型服务连接中断，已自动续上。",
-    "cheese_help": "任务页右上角「更多操作」里选「转交负责人」。",
-    "cheese_web.search": "1. https://example.org/release 最新正式版说明",
-    "Bash": MACHINE,
-    "Read": "没有这个文件。",
-}
+
+#: What the model playing the platform is told.
+PLATFORM = """你扮演一个协作平台和它的一台电脑，回答 AI 队友的工具调用。只输出这次调用的返回内容，不解释，不反问，不加前后缀。
+
+规则：
+- 按下面的事实回答。事实没有提到的，给出与事实不矛盾的、平常的结果；查不到的就说没有匹配的内容或文件不存在。
+- 读取和查询返回内容；会改动东西的调用返回一句已完成的回执。
+- 命令行调用返回这条命令在那台电脑上会打印的内容，像终端那样。
+- 同一轮里前后回答要一致。
+
+事实：
+"""
+
 
 #: Claude Code's own tools a room session keeps, enough for the model to look
 #: around; their real definitions are the build's, not the repository's. The
@@ -653,7 +652,17 @@ def build() -> None:
                     "system": system,
                     "tools": tools + CLAUDE_TOOLS,
                     "skills": skills,
-                    "said": f"[zhangheng]: {text}",
+                    "facts": "\n".join(
+                        filter(
+                            None,
+                            [
+                                WORLD,
+                                FACTS[place],
+                                FACTS.get(case_id),
+                                f"这一轮的消息是张衡说的：{text}",
+                            ],
+                        )
+                    ),
                     "messages": [
                         {
                             "role": "user",
@@ -736,21 +745,47 @@ def step(model: str, case: dict, messages: list[dict]) -> tuple[list[dict], dict
     return out, cost
 
 
-def answer(case: dict, name: str, given: dict) -> str:
-    key = _key(name, given)
-    if name == "Skill":
-        return case["skills"].get(str(given.get("skill")), "没有这个技能。")
-    if key == "cheese_chat.list":
-        # Nothing was said here before the message the turn is about.
-        return case["said"]
-    if key in LOOKUPS:
-        # A lookup finds something only in a case that is about looking it up.
-        return LOOKUPS[key] if key in case["expect"] else "没有匹配的内容。"
-    return ANSWERS.get(key, "已完成。")
+def played(world: str, case: dict, history: list[dict], call: dict) -> str:
+    """What the platform answers to one call: the text of the skill for a skill
+    load, and for anything else what a model playing the platform says, held
+    to the case's facts and to what it answered earlier in the turn."""
+    import httpx
+
+    if call["name"] == "Skill":
+        return case["skills"].get(str(call["input"].get("skill")), "没有这个技能。")
+    history.append(
+        {
+            "role": "user",
+            "content": json.dumps(
+                {"tool": call["name"], "input": call["input"]}, ensure_ascii=False
+            ),
+        }
+    )
+    r = httpx.post(
+        GATEWAY + "/v1/messages",
+        headers={
+            "Authorization": f"Bearer {KEY_FILE.read_text().strip()}",
+            "anthropic-version": "2023-06-01",
+        },
+        json={
+            "model": world,
+            "max_tokens": 1024,
+            "system": PLATFORM + case["facts"],
+            "messages": history,
+        },
+        timeout=300,
+    )
+    r.raise_for_status()
+    said = "".join(
+        b.get("text", "") for b in r.json()["content"] if b.get("type") == "text"
+    )
+    history.append({"role": "assistant", "content": said or "已完成。"})
+    return said or "已完成。"
 
 
-def run_case(model: str, case: dict) -> dict:
+def run_case(model: str, world: str, case: dict) -> dict:
     messages = list(case["messages"])
+    history: list[dict] = []
     actions: list[dict] = []
     first: dict = {}
     for _ in range(MAX_STEPS):
@@ -770,7 +805,7 @@ def run_case(model: str, case: dict) -> dict:
                     {
                         "type": "tool_result",
                         "tool_use_id": c["id"],
-                        "content": answer(case, c["name"], c["input"]),
+                        "content": played(world, case, history, c),
                     }
                     for c in calls
                 ],
@@ -796,7 +831,7 @@ def run(models: list[str]) -> None:
     def one(job: tuple[str, dict, int]) -> dict:
         model, case, attempt = job
         try:
-            result = run_case(model, case)
+            result = run_case(model, WORLD_MODEL, case)
         except Exception as error:  # one failed call must not lose the rest
             result = {"error": str(error)[:300]}
         result.update(
