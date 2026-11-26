@@ -32,8 +32,11 @@ const PHONE = '(max-width: 600px)'
 const SHOT_WIDTHS = [400, 720]
 /** The address parameter that opens an app full screen: what 复制链接 copies. */
 const LINK_PARAM = 'app'
-/** How long the shell, about a megabyte over the wire, has to say it is ready
- *  before the block says the app did not load. */
+/** How long the shell has to show it can be had — its first bytes say
+ *  `arriving` — and, once all of it has arrived, to say it is ready, before the
+ *  block says the app did not load. Not a limit on the download in between:
+ *  the shell is over a megabyte, which a slow link takes longer than this to
+ *  bring, and while it is arriving the block says it is loading. */
 const READY_MS = 15_000
 /** How long an app that has its code has to draw before it counts as stuck. */
 const DRAW_MS = 10_000
@@ -396,17 +399,30 @@ export function appBlock(initial: AppAttrs, opts: AppBlockOptions = {}): AppBloc
     loading.append(pill)
     stage.classList.add('is-loading')
     teardown.push(() => stage.classList.remove('is-loading'))
-    let waiting = after(READY_MS, () => say(label('loadFailed'), () => run(v)))
+    const notLoaded = () => say(label('loadFailed'), () => run(v))
+    let waiting = after(READY_MS, notLoaded)
     teardown.push(() => waiting())
+    let ready = false
     let loads = 0
-    // A second load is the app sending its own frame elsewhere: stop it there.
     el.addEventListener('load', () => {
-      if (++loads > 1) void fail(label('navigated'))
+      // A second load is the app sending its own frame elsewhere: stop it there.
+      if (++loads > 1) return void fail(label('navigated'))
+      // The first is the shell having arrived whole (or a page of the browser's
+      // own in its place): from here it has READY_MS to say it is ready.
+      if (ready) return
+      waiting()
+      waiting = after(READY_MS, notLoaded)
     })
     const listen = (event: MessageEvent) => {
       const data = event.data
       if (event.source !== el.contentWindow || !data || data.ch !== CHANNEL) return
-      if (data.type === 'ready') {
+      if (data.type === 'arriving') {
+        // The shell's first bytes: it can be had and the rest is on its way.
+        // How long that takes is the link's, and the frame's load says when it
+        // is done.
+        if (loads === 0) waiting()
+      } else if (data.type === 'ready') {
+        ready = true
         waiting()
         waiting = after(DRAW_MS, () => void fail(label('stuck')))
         const full = dom.classList.contains('is-full')
