@@ -52,6 +52,12 @@ const props = withDefaults(
     deviceId: string | null
     market?: MarketItem | null
     marketLoading?: boolean
+    /** 市场目录读失败了；没读过、正在读都不算。 */
+    marketFailed?: boolean
+    /** 目录读失败时服务端给的那句原因。 */
+    marketFailureReason?: string | null
+    /** 目录读失败是 401/403：说没权限、不给重试。 */
+    marketForbidden?: boolean
     /** 别人正占着这个队友的「编辑中」租约：这一轮面板只读。 */
     editingBlocked?: boolean
     /** 占着租约的那个人的 handle，画在人看的那一句里。 */
@@ -64,6 +70,9 @@ const props = withDefaults(
   {
     market: null,
     marketLoading: false,
+    marketFailed: false,
+    marketFailureReason: null,
+    marketForbidden: false,
     editingBlocked: false,
     editingBy: null,
     loading: false,
@@ -75,6 +84,8 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   (e: 'install', payload: { url: string; kind: 'skill' | 'plugin' }): void
+  /** 市场目录读失败后点了「重试」。 */
+  (e: 'retryMarket'): void
 }>()
 
 const status = (name: string): SkillHealthItem['status'] | 'unknown' => props.health[name]?.status ?? 'unknown'
@@ -149,7 +160,11 @@ const locked = () => !props.canManage || props.editingBlocked
       :device-id="deviceId"
       :scanning="scanning"
       :saving="saving"
+      :failed="marketFailed"
+      :failure-reason="marketFailureReason"
+      :forbidden="marketForbidden"
       @install="emit('install', $event)"
+      @retry="emit('retryMarket')"
     />
   </AdaptiveDialog>
 </template>

@@ -254,6 +254,12 @@ export const SKILL_ENTRIES: CatalogEntry[] = [
         props: { showAgents: true, tab: 'agents' },
         expect: '还没有 Agent 模板。',
       },
+      {
+        name: '目录读失败',
+        note: '目录没读出来：换成失败块和一颗「重试」，点了往上发 retry 让宿主重读；401/403 只说没权限。',
+        props: { market: null, failed: true, failureReason: 'Failed to fetch' },
+        expect: '市场读不出来',
+      },
     ],
   },
 ]
