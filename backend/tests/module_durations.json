@@ -392,7 +392,6 @@
     "tests/unit/test_session_host_relaunch.py": [0.1, 2],
     "tests/unit/test_session_launch.py": [0.6, 7],
     "tests/unit/test_session_opening_prompt.py": [0.04, 9],
-    "tests/unit/test_session_transfer.py": [2.28, 4],
     "tests/unit/test_settle_turn.py": [0.29, 6],
     "tests/unit/test_sheets_script.py": [1.07, 15],
     "tests/unit/test_shell.py": [0.1, 13],
