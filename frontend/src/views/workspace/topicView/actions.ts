@@ -12,7 +12,7 @@
 // 它只在下一轮被读一次。
 import type { Ref } from 'vue'
 import type TaskOverview from '@/components/task/TaskOverview.vue'
-import type { AgentControlState, Block } from '@/cx_types'
+import type { AgentControlState, Block, WsServerFrame } from '@/cx_types'
 import type { DeliveryAct } from '@/lib/channelTasks'
 import type { DocReviewRequest, OpenedDocument } from '@/lib/docReview'
 import type { MemberActivityLine } from '@/lib/memberActivity'
@@ -88,6 +88,7 @@ export function useTopicActions(opts: {
     activity: (lines: MemberActivityLine[]) => (opts.activity.value = lines),
     'agent-control': (state: AgentControlState) => (opts.agentControl.value = state),
     'site-block': (block: Block) => opts.panelRef.value?.siteBlock?.(block),
+    'agent-frame': (frame: WsServerFrame) => opts.panelRef.value?.agentFrame?.(frame),
     'site-turns': (turns: Record<string, number>) => (opts.siteTurns.value = turns),
     'state-changed': opts.handleStateChanged,
     // 芝士摆出来一份东西：面板立刻看一眼当前预览，不等轮询。

@@ -21,6 +21,7 @@
 import type { OpenTaskFile, TaskFilesBundle } from '../../composables/useTaskFiles'
 import type { TaskFileTreeState } from '../../composables/useTaskFileTree'
 import type { LanguageLink } from '../../lib/lsp/link'
+import type { AgentEditMark } from '../CodeEditor.vue'
 
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 
@@ -60,8 +61,11 @@ const props = withDefaults(
     light?: boolean
     /** The tabs are drawn around the panel (the 编辑器 form's centre): no tab strip and no head line. */
     framed?: boolean
+    /** The AI teammate's change and the file it is in (跟随): drawn when that file is shown. */
+    agentEdit?: { file: string; mark: AgentEditMark } | null
   }>(),
   {
+    agentEdit: null,
     changed: () => [],
     readOnly: false,
     phone: false,
@@ -77,6 +81,8 @@ const props = withDefaults(
 const emit = defineEmits<{
   /** Open this file in a cell of its own beside this one. */
   'open-beside': [path: string]
+  /** The person acted in the editor: following ends. */
+  person: []
 }>()
 
 const f = props.files
@@ -378,7 +384,9 @@ function pickQuick(path: string) {
             :lines="editorFile.path === f.openPath.value ? f.lines.value : null"
             :language="props.language"
             :keep="keptTabs"
+            :agent="props.agentEdit && props.agentEdit.file === editorFile.path ? props.agentEdit.mark : null"
             @update:model-value="onEdit"
+            @person="emit('person')"
             @save="f.saveNow()"
             @quick-open="quickOpen = !props.single"
           />

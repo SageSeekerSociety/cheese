@@ -1,5 +1,5 @@
 // 拆出来的那几个模块共用的东西：这一页在说什么，以及它手里那两块要往回够的组件。
-import type { Block, ChatAttachment } from '@/cx_types'
+import type { Block, ChatAttachment, WsServerFrame } from '@/cx_types'
 import type { DocReviewRequest, OpenedDocument } from '@/lib/docReview'
 import type { SubmitPreviewQuestion } from '@/lib/previewQuestion'
 
@@ -18,6 +18,8 @@ export interface WorkPanelHandle {
   showOverview: () => Promise<void>
   openFile?: (path: string, taskId?: string | null) => void
   siteBlock?: (block: Block) => void
+  /** AI 队友正在写、刚跑完的工具调用：编辑器的「跟随」读它。 */
+  agentFrame?: (frame: WsServerFrame) => void
   openDocument?: (document: OpenedDocument, review?: DocReviewRequest) => Promise<void>
   openSkill?: (skill: { id: string; title: string }) => Promise<void>
   previewShown?: () => void

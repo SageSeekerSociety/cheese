@@ -16,3 +16,14 @@ export interface LiveFrame {
   agent: string
   blocks: LiveBlock[]
 }
+
+/**
+ * Tool calls of an agent that have run: their records just landed (backend
+ * `app/domain/agent/landed_frames.py`). `call_id` is the `id` the call's `live` block
+ * carried. Not stored, not replayed, like `live`.
+ */
+export interface LandedFrame {
+  type: 'landed'
+  agent: string
+  calls: { call_id: string; failed: boolean }[]
+}

@@ -26,6 +26,7 @@ import { UI } from './needs'
 import PanelChangesView from '@/components/panels/PanelChangesView.vue'
 import PanelDocView from '@/components/panels/PanelDocView.vue'
 import PanelPreviewView from '@/components/panels/PanelPreviewView.vue'
+import FollowButton from '@/components/work/FollowButton.vue'
 
 /** 一份很长的网页源码：正文行数超过一个窗口（`PreviewCode` 的 1000 行），底下那条
  * 「还能接着看」因此露出来。内容不重要，行数才重要。 */
@@ -366,6 +367,30 @@ export const PANEL_VIEW_ENTRIES: CatalogEntry[] = [
         note: '只读由凭证决定：横条上写着只读，点不回编辑，⋯ 里也没有那一项。',
         props: docPanelProps({ session: docSession('只能看，不能改。'), editable: false, readOnly: true }),
         expect: '只读',
+      },
+    ],
+  },
+  {
+    id: 'follow-button',
+    title: 'FollowButton',
+    about: '编辑器栏上的「跟随」：按下后编辑器跟到 AI 队友正在改的文件；没在跟随而队友正在改时，头像旁有一个圆点。',
+    file: 'src/components/work/FollowButton.vue',
+    component: FollowButton,
+    needs: ['vuetify', 'i18n'],
+    args: { name: AGENT_NAME, color: avatarColor('cheese'), on: false, editing: false },
+    states: [
+      { name: '没在跟随', note: '平时的样子：头像和「跟随」两个字。', props: {}, expect: '跟随' },
+      {
+        name: '队友正在改文件',
+        note: '没在跟随，队友正在改一份文件：头像旁一个圆点（减少动效时不闪）。',
+        props: { editing: true },
+        expectSelector: '.follow__live',
+      },
+      {
+        name: '正在跟随',
+        note: '按下的样子；在编辑器里点、敲、滚都会结束跟随。',
+        props: { on: true, editing: true },
+        expectSelector: '.follow--on',
       },
     ],
   },

@@ -14,6 +14,7 @@
 import type { TaskFilesBundle } from '../../composables/useTaskFiles'
 import type { TaskFileTreeState } from '../../composables/useTaskFileTree'
 import type { LanguageLink } from '../../lib/lsp/link'
+import type { AgentEditMark } from '../CodeEditor.vue'
 
 import { watch } from 'vue'
 
@@ -47,6 +48,8 @@ const props = withDefaults(
     light?: boolean
     /** The tabs are drawn around it: the 编辑器 form's centre. */
     framed?: boolean
+    /** The AI teammate's change and the file it is in (跟随). */
+    agentEdit?: { file: string; mark: AgentEditMark } | null
   }>(),
   {
     readOnly: false,
@@ -55,6 +58,7 @@ const props = withDefaults(
     changed: () => [],
     phone: false,
     agentName: '',
+    agentEdit: null,
     path: null,
     files: null,
     tree: null,
@@ -64,7 +68,7 @@ const props = withDefaults(
   }
 )
 
-const emit = defineEmits<{ 'open-beside': [path: string] }>()
+const emit = defineEmits<{ 'open-beside': [path: string]; person: [] }>()
 
 // Whether the files are given or held here is decided once, when the cell is made.
 const given = props.files
@@ -116,6 +120,8 @@ defineExpose({
     :framed="props.framed"
     :tree="given ? props.tree : ownTree"
     :language="given ? props.language : ownLanguage ?? null"
+    :agent-edit="props.agentEdit"
     @open-beside="emit('open-beside', $event)"
+    @person="emit('person')"
   />
 </template>

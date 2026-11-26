@@ -173,3 +173,21 @@ describe('一个资源变了的帧往上报', () => {
     expect(view.emitted<[string, string?]>('state-changed')).toContainEqual(['topics', undefined])
   })
 })
+
+describe('对话栏把 AI 队友改文件的帧转给编辑器', () => {
+  it('正在写的调用和刚跑完的调用转过去；别的帧不转', async () => {
+    const { view, socket } = await open()
+
+    socket.emit({
+      type: 'live',
+      turn_id: 'turn-a',
+      agent: 'cheese',
+      blocks: [{ type: 'tool', id: 'e1', name: 'Edit', arguments: '{"file_path":"/work/proc.c"' }],
+    })
+    socket.emit({ type: 'landed', agent: 'cheese', calls: [{ call_id: 'e1', failed: false }] })
+    socket.emit({ type: 'event_block', block: event('step-1') })
+    await flush()
+
+    expect(view.emitted<[WsServerFrame]>('agent-frame').map(([frame]) => frame.type)).toEqual(['live', 'landed'])
+  })
+})

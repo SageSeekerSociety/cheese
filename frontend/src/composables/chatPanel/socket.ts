@@ -332,6 +332,7 @@ export function usePanelSocket(deps: {
     }
     deps.liveSteps().follow(frame)
     deps.typing().follow(frame, !deps.awaitingReply.value)
+    if (frame.type === 'live' || frame.type === 'landed') deps.emit('agent-frame', frame)
   }
 
   return {

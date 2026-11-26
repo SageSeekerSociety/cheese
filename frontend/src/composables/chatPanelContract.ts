@@ -5,7 +5,7 @@
 // the panel itself is the socket, the window of history and the timers, and a
 // list of events is neither.
 import type { PostedMessage } from '../api/messages'
-import type { AgentControlState, Block, ProjectMemberRow, Topic } from '../cx_types'
+import type { AgentControlState, Block, ProjectMemberRow, Topic, WsServerFrame } from '../cx_types'
 import type { AgentFailureLine } from '../lib/agentFailures'
 import type { DocReviewRequest } from '../lib/docReview'
 import type { OpenedDocument } from '../lib/docReview'
@@ -57,6 +57,9 @@ export interface ChatPanelEmit {
   // 现场那格的时间线上多了一行，或者已有的一行变了（挂了、重试次数涨了）。socket
   // 在这一栏，现场自己听不到。
   (e: 'site-block', block: Block): void
+  // AI 队友正在写的工具调用（`live`）和刚跑完的调用（`landed`）：编辑器的「跟随」读它。
+  // socket 在这一栏，编辑器自己听不到。
+  (e: 'agent-frame', frame: WsServerFrame): void
   // 正在跑的轮次，各自从什么时候开始（毫秒）。现场靠它分出哪一组还在进行。
   (e: 'site-turns', turns: Record<string, number>): void
   // 一位 AI 队友在某条支线里开始或停下回答（主线上那一行写「正在回复」）。

@@ -12,6 +12,7 @@ from app.core.config import settings
 from app.core.db import async_session_factory, engine, get_db
 from app.core.ownership import Ownership
 from app.core.redis import get_redis_client
+from app.domain.agent import landed_frames
 
 # Registers the listener that publishes committed platform notices live.
 from app.domain.agent import live_notices as live_notices
@@ -48,7 +49,6 @@ from app.domain.oauth.services import OAuthService
 from app.domain.passkey.repositories import PasskeyRepository
 from app.domain.passkey.services import PasskeyService
 from app.domain.routine import personal as routine_personal
-from app.domain.session_record import service as session_records
 from app.domain.space.services import SpaceLabels
 from app.domain.user.realname_services import UserRealNameService
 from app.domain.user.repositories import (
@@ -129,7 +129,7 @@ def get_session_host() -> SessionHost:
     return SessionHost(
         device_hub,
         on_alive=_note_alive,
-        records=partial(session_records.append, async_session_factory),
+        records=partial(landed_frames.keep_and_tell, async_session_factory),
     )
 
 
