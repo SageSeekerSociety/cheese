@@ -7,6 +7,7 @@ would see.
 """
 
 import asyncio
+import contextlib
 import socket
 import threading
 import time
@@ -110,3 +111,36 @@ def test_a_connection_past_app_router_stays_up(served):
         hand_over()
         tunnel.send("still here")
         assert tunnel.recv(timeout=5) == "still here"
+
+
+async def test_a_handler_that_stops_reading_leaves_nothing_waiting():
+    """A handler cancels its own read loop when it leaves (the notification
+    sockets do, on every exit but the browser's own close). The read it
+    abandoned must not leave a waiter behind: one left pending is collected
+    with the socket and logged as an error ("Task was destroyed but it is
+    pending!")."""
+    never = asyncio.Event()
+
+    async def receive():
+        await never.wait()
+        return {"type": "websocket.disconnect", "code": 1000}
+
+    async def send(_message):
+        return None
+
+    async def handler(_scope, receive, _send):
+        reading = asyncio.ensure_future(receive())
+        await asyncio.sleep(0)
+        reading.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await reading
+
+    before = asyncio.all_tasks()
+    await EndBusinessSocketsAtHandover(handler, BusinessSockets())(
+        {"type": "websocket", "path": "/notifications/live"}, receive, send
+    )
+    for _ in range(3):
+        await asyncio.sleep(0)
+
+    left = [t for t in asyncio.all_tasks() - before if not t.done()]
+    assert left == []

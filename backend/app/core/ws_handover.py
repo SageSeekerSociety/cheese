@@ -95,13 +95,21 @@ class EndBusinessSocketsAtHandover:
                 return ended
             incoming = asyncio.ensure_future(receive())
             handed_over = asyncio.ensure_future(socket.ended.wait())
-            await asyncio.wait(
-                {incoming, handed_over}, return_when=asyncio.FIRST_COMPLETED
-            )
-            handed_over.cancel()
-            if incoming.done():
+            # In a finally: a handler that stops reading (it cancels its own
+            # read loop when it leaves) cancels this wait, and a waiter left
+            # pending is collected with the socket and logged as "Task was
+            # destroyed but it is pending!".
+            try:
+                await asyncio.wait(
+                    {incoming, handed_over}, return_when=asyncio.FIRST_COMPLETED
+                )
+            finally:
+                handed_over.cancel()
+                received = incoming.done()
+                if not received:
+                    incoming.cancel()
+            if received:
                 return incoming.result()
-            incoming.cancel()
             # The handler leaves the way it does when the browser goes.
             return ended
 
