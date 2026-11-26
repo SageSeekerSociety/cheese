@@ -1,26 +1,50 @@
-// Loopback Anthropic API for tests using synthetic subscription OAuth tokens.
-// Start with `node e2e/stub-anthropic.mjs` and export the printed ANTHROPIC_BASE_URL.
-// With a fresh CLAUDE_CONFIG_DIR, run `node e2e/seed-claude-subscription.mjs`
-// and then run Claude Code with those same two variables. Other HTTP clients
-// send Authorization: Bearer stub-access-token and anthropic-beta: oauth-2025-04-20.
+// Local fixture for the Anthropic subscription API. Like Cheese's metering proxy, it uses
+// HTTPS CONNECT and a CA trusted through NODE_EXTRA_CA_CERTS.
+// Run `node e2e/stub-anthropic.mjs` with openssl on PATH and export the printed
+// HTTPS_PROXY and NODE_EXTRA_CA_CERTS. Use a fresh CLAUDE_CONFIG_DIR and run
+// `claude auth login --claudeai`. Fetch the authorize URL and paste the
+// code from the callback page into the CLI.
+// curl -L --proxy "$HTTPS_PROXY" --cacert "$NODE_EXTRA_CA_CERTS" '<authorize URL>'
 //
 // Set STUB_ANTHROPIC_PLAN=max (default) or pro. Set STUB_ANTHROPIC_RATE_LIMIT to
 // allowed (default), allowed_warning, or rejected. STUB_ANTHROPIC_TOOL is a
 // JSON object with name and input. When the request lists that tool in tools,
 // the stub requests it and returns a fixed greeting after a tool_result.
+// STUB_ANTHROPIC_EXPIRES_IN sets the initial token lifetime in seconds.
+// STUB_ANTHROPIC_RATE_LIMIT_AFTER_REFRESH changes the limit for the new token.
+// Set STUB_ANTHROPIC_SOCKET to the Unix socket path for the executor's proxy bridge.
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createSecureContext, TLSSocket } from 'node:tls';
 
 const port = Number(process.env.STUB_ANTHROPIC_PORT ?? 4011);
+const socketPath = process.env.STUB_ANTHROPIC_SOCKET;
 const plan = process.env.STUB_ANTHROPIC_PLAN ?? 'max';
 const rateLimit = process.env.STUB_ANTHROPIC_RATE_LIMIT ?? 'allowed';
+const rateLimitAfterRefresh = process.env.STUB_ANTHROPIC_RATE_LIMIT_AFTER_REFRESH ?? rateLimit;
+const initialExpiry = Number(process.env.STUB_ANTHROPIC_EXPIRES_IN ?? 3600);
 const tool = JSON.parse(process.env.STUB_ANTHROPIC_TOOL ?? 'null');
 if (!['max', 'pro'].includes(plan)) throw new Error('STUB_ANTHROPIC_PLAN must be max or pro');
 
 const levels = { allowed: 0.2, allowed_warning: 0.95, rejected: 1 };
-if (!Object.hasOwn(levels, rateLimit)) throw new Error('Invalid STUB_ANTHROPIC_RATE_LIMIT');
+if (![rateLimit, rateLimitAfterRefresh].every((level) => Object.hasOwn(levels, level))) {
+  throw new Error('Invalid subscription rate-limit status');
+}
+if (!Number.isSafeInteger(initialExpiry) || initialExpiry < 0) {
+  throw new Error('STUB_ANTHROPIC_EXPIRES_IN must be a nonnegative integer');
+}
 
 const accessToken = 'stub-access-token';
 const refreshToken = 'stub-refresh-token';
+const refreshedToken = 'stub-refreshed-access-token';
+const authorizationCode = 'stub-authorization-code';
+const scopes = 'user:profile user:inference';
+const hosts = new Set([
+  'api.anthropic.com', 'claude.com', 'claude.ai', 'platform.claude.com', 'console.anthropic.com',
+]);
 const reply = 'Hi there!';
 const fiveHours = 5 * 3600;
 const sevenDays = 7 * 24 * 3600;
@@ -35,7 +59,7 @@ const profile = {
   },
 };
 
-function limits() {
+function limits(rateLimit) {
   const now = Math.floor(Date.now() / 1000);
   return {
     'anthropic-ratelimit-unified-status': rateLimit,
@@ -75,18 +99,41 @@ async function readBody(request) {
 }
 
 function tokenGrant(response, body) {
-  const valid = (body?.grant_type === 'refresh_token' && body.refresh_token === refreshToken)
-    || (body?.grant_type === 'authorization_code' && body.code === 'stub-authorization-code');
+  const refreshing = body?.grant_type === 'refresh_token';
+  const valid = refreshing ? body.refresh_token === refreshToken
+    : body?.grant_type === 'authorization_code' && body.code === authorizationCode;
   if (!valid) return json(response, 400, { error: 'invalid_grant' }, { 'cache-control': 'no-store' });
+  console.log(`OAuth ${body.grant_type} -> issued access token`);
   json(response, 200, {
-    access_token: accessToken,
+    access_token: refreshing ? refreshedToken : accessToken,
     refresh_token: refreshToken,
     token_type: 'Bearer',
-    expires_in: 3600,
-    scope: 'user:profile user:inference',
+    expires_in: refreshing ? 3600 : initialExpiry,
+    scope: body.scope ?? scopes,
     account: profile.account,
     organization: profile.organization,
   }, { 'cache-control': 'no-store' });
+}
+
+function authorize(response, url) {
+  const state = url.searchParams.get('state');
+  const callback = URL.parse(url.searchParams.get('redirect_uri') ?? '');
+  if (!state || callback?.origin !== 'https://platform.claude.com'
+    || callback.pathname !== '/oauth/code/callback') {
+    return error(response, 400, 'invalid_request_error', 'Expected state and the manual callback URL');
+  }
+  callback.search = new URLSearchParams({ code: authorizationCode, state }).toString();
+  response.writeHead(302, { location: callback.href, 'cache-control': 'no-store' }).end();
+}
+
+function callback(response, url) {
+  const code = url.searchParams.get('code');
+  const state = url.searchParams.get('state');
+  if (code !== authorizationCode || !/^[\w-]+$/.test(state ?? '')) {
+    return error(response, 400, 'invalid_request_error', 'Invalid authorization code');
+  }
+  response.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store' });
+  response.end(`<!doctype html><p>Paste this code into your terminal.</p><code>${code}#${state}</code>`);
 }
 
 function messageFor(body) {
@@ -139,7 +186,9 @@ function streamMessage(response, message, headers) {
   response.end();
 }
 
-async function handle(request, response, route) {
+async function handle(request, response, route, url) {
+  if (route === 'GET /cai/oauth/authorize' || route === 'GET /oauth/authorize') return authorize(response, url);
+  if (route === 'GET /oauth/code/callback') return callback(response, url);
   if (route === 'POST /v1/oauth/token') return tokenGrant(response, await readBody(request));
   if (![
     'POST /v1/messages', 'POST /v1/messages/count_tokens',
@@ -148,14 +197,17 @@ async function handle(request, response, route) {
     return error(response, 404, 'not_found_error', 'Unknown endpoint');
   }
 
-  if (request.headers.authorization !== `Bearer ${accessToken}`) {
+  const bearer = request.headers.authorization;
+  const refreshed = bearer === `Bearer ${refreshedToken}`;
+  if (!refreshed && bearer !== `Bearer ${accessToken}`) {
     return error(response, 401, 'authentication_error', 'Invalid bearer token');
   }
   if (route === 'GET /api/oauth/profile') return json(response, 200, profile);
   if (route === 'GET /api/oauth/claude_cli/roles') {
     return json(response, 200, { organization_role: 'admin', workspace_role: null, organization_name: profile.organization.name });
   }
-  const headers = limits();
+  const currentLimit = refreshed ? rateLimitAfterRefresh : rateLimit;
+  const headers = limits(currentLimit);
   if (route === 'GET /api/oauth/usage') {
     return json(response, 200, Object.fromEntries([['five_hour', '5h'], ['seven_day', '7d']].map(
       ([name, window]) => [name, {
@@ -167,7 +219,7 @@ async function handle(request, response, route) {
   if (!request.headers['anthropic-beta']?.split(',').some((beta) => beta.trim() === 'oauth-2025-04-20')) {
     return error(response, 400, 'invalid_request_error', 'Missing OAuth beta header');
   }
-  if (rateLimit === 'rejected' && route === 'POST /v1/messages') {
+  if (currentLimit === 'rejected' && route === 'POST /v1/messages') {
     return error(response, 429, 'rate_limit_error', 'You have reached your subscription rate limit.', {
       ...headers, 'retry-after': fiveHours,
     });
@@ -185,17 +237,81 @@ async function handle(request, response, route) {
   json(response, 200, message, { ...headers, 'request-id': 'req_stub' });
 }
 
-createServer(async (request, response) => {
-  const route = `${request.method} ${request.url.split('?')[0]}`;
-  response.on('finish', () => console.log(`${route} -> ${response.statusCode}`));
+const api = createServer(async (request, response) => {
+  const host = request.socket.tunnelHost;
+  const url = URL.parse(request.url, `https://${host}`);
+  const route = `${request.method} ${url?.pathname ?? request.url.split('?')[0]}`;
+  response.on('finish', () => console.log(`${host} ${route} -> ${response.statusCode}`));
   try {
-    await handle(request, response, route);
+    if (url?.host !== host || ![host, `${host}:443`].includes(request.headers.host?.toLowerCase())) {
+      return error(response, 421, 'invalid_request_error', 'Host does not match CONNECT');
+    }
+    await handle(request, response, route, url);
   } catch (err) {
     if (response.headersSent) return response.destroy();
     if (err instanceof SyntaxError) return error(response, 400, 'invalid_request_error', 'Invalid JSON');
     console.error(err.name);
     error(response, 500, 'api_error', 'Stub could not complete request');
   }
-}).listen(port, '127.0.0.1', function () {
-  console.log(`ANTHROPIC_BASE_URL=http://127.0.0.1:${this.address().port}`);
+});
+
+const certDir = mkdtempSync(join(tmpdir(), 'cheese-anthropic-ca-'));
+process.on('exit', () => rmSync(certDir, { recursive: true, force: true }));
+for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => process.exit(0));
+const caPath = join(certDir, 'ca.pem');
+writeFileSync(join(certDir, 'cert.cnf'), `
+[req]
+distinguished_name = name
+[name]
+[ca]
+basicConstraints = critical,CA:TRUE
+keyUsage = critical,keyCertSign,cRLSign
+[server]
+basicConstraints = critical,CA:FALSE
+keyUsage = critical,digitalSignature,keyEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = ${[...hosts].map((host) => `DNS:${host}`).join(',')}
+`);
+function openssl(...args) {
+  execFileSync('openssl', args, { cwd: certDir, stdio: ['ignore', 'ignore', 'pipe'] });
+}
+openssl('req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-sha256', '-days', '1', '-config',
+  'cert.cnf', '-extensions', 'ca', '-subj', '/CN=Cheese Anthropic Test CA', '-keyout', 'ca.key', '-out', 'ca.pem');
+openssl('req', '-new', '-newkey', 'rsa:2048', '-nodes', '-config', 'cert.cnf', '-subj',
+  '/CN=api.anthropic.com', '-keyout', 'leaf.key', '-out', 'leaf.csr');
+openssl('x509', '-req', '-in', 'leaf.csr', '-CA', 'ca.pem', '-CAkey', 'ca.key', '-set_serial', '1',
+  '-days', '1', '-sha256', '-extfile', 'cert.cnf', '-extensions', 'server', '-out', 'leaf.pem');
+const secureContext = createSecureContext({
+  key: readFileSync(join(certDir, 'leaf.key')),
+  cert: readFileSync(join(certDir, 'leaf.pem')),
+});
+
+const proxy = createServer((request, response) => {
+  console.log(`${request.method} without CONNECT -> 403`);
+  response.writeHead(403).end();
+});
+proxy.on('connect', (request, socket, head) => {
+  const authority = request.url.toLowerCase();
+  const [host] = authority.split(':');
+  if (!hosts.has(host) || authority !== `${host}:443`) {
+    console.log(`CONNECT ${request.url} -> 403`);
+    socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');
+    return;
+  }
+  console.log(`CONNECT ${request.url} -> 200`);
+  socket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+  if (head.length) socket.unshift(head);
+  const tls = new TLSSocket(socket, { isServer: true, secureContext, ALPNProtocols: ['http/1.1'] });
+  tls.tunnelHost = host;
+  tls.on('error', (err) => console.log(`TLS ${host} -> ${err.code}`));
+  api.emit('connection', tls);
+});
+proxy.listen(socketPath ? { path: socketPath } : { port, host: '127.0.0.1' }, function () {
+  if (socketPath) {
+    process.on('exit', () => rmSync(socketPath, { force: true }));
+    console.log(`STUB_ANTHROPIC_SOCKET=${socketPath}`);
+  } else {
+    console.log(`HTTPS_PROXY=http://127.0.0.1:${this.address().port}`);
+  }
+  console.log(`NODE_EXTRA_CA_CERTS=${caPath}`);
 });

@@ -44,9 +44,12 @@
   ],
   "cli": [
     "cli/**",
+    "backend/app/domain/agent/harness/claude_code/remote_execution/**",
+    "backend/app/domain/agent/toolchain.py",
     "backend/tests/fixtures/wire/**",
     "e2e/stub-anthropic.mjs",
-    "e2e/seed-claude-subscription.mjs",
+    ".github/scripts/allow-user-namespaces.sh",
+    ".github/scripts/sandbox-disk.sh",
     ".github/workflows/cli.yml"
   ],
   "guards": [

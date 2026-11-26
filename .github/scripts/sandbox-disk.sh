@@ -9,22 +9,9 @@
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
-"$here/ensure-apt.sh" xfsprogs
-slot="${CHEESE_CI_SLOT:-0}"
-image="/var/lib/cheese-ci/sandbox-disk-$slot.img"
-mount="/mnt/cheese-ci-sandbox-disk-$slot"
-if ! mountpoint -q "$mount"; then
-  sudo mkdir -p "$(dirname "$image")" "$mount"
-  sudo rm -f "$image"
-  sudo truncate -s 4G "$image"
-  sudo mkfs.xfs -q "$image"
-  sudo mount -o loop,prjquota "$image" "$mount"
-fi
-sudo install -d -o "$(id -u)" -g "$(id -g)" "$mount/tests"
-echo "CHEESE_TEST_SANDBOX_DISK=$mount/tests" >> "$GITHUB_ENV"
-
-# The overlay tests need the same bwrap capabilities as cloud enrollment.
-PYTHONPATH="$here/../../backend" python3 - <<'PY'
+install_bwrap() {
+  # The tests use the same bubblewrap artifact as cloud enrollment.
+  PYTHONPATH="$here/../../backend" python3 - <<'PY'
 import hashlib
 import io
 import os
@@ -51,6 +38,28 @@ with open(os.environ["GITHUB_ENV"], "a") as output:
 with open(os.environ["GITHUB_PATH"], "a") as output:
     output.write(str(directory) + "\n")
 PY
+}
+
+if [ "${1:-}" = --bwrap-only ]; then
+  install_bwrap
+  exit 0
+fi
+
+"$here/ensure-apt.sh" xfsprogs
+slot="${CHEESE_CI_SLOT:-0}"
+image="/var/lib/cheese-ci/sandbox-disk-$slot.img"
+mount="/mnt/cheese-ci-sandbox-disk-$slot"
+if ! mountpoint -q "$mount"; then
+  sudo mkdir -p "$(dirname "$image")" "$mount"
+  sudo rm -f "$image"
+  sudo truncate -s 4G "$image"
+  sudo mkfs.xfs -q "$image"
+  sudo mount -o loop,prjquota "$image" "$mount"
+fi
+sudo install -d -o "$(id -u)" -g "$(id -g)" "$mount/tests"
+echo "CHEESE_TEST_SANDBOX_DISK=$mount/tests" >> "$GITHUB_ENV"
+
+install_bwrap
 
 # Keep lower separate from the live root that contains the test's upper/work.
 lower="$RUNNER_TEMP/cheese-native-rootfs"
