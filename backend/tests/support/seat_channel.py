@@ -10,7 +10,9 @@ does: opening a seat's runner (``open``), and answering a call to it
 
 import ast
 import atexit
+import fcntl
 import json
+import os
 import re
 import shutil
 import tempfile
@@ -35,6 +37,60 @@ from app.domain.delivery.receipts import hand_to
 # The driver's read of a launch's ending from its runner log
 # (`ClaudeCodeDriver._ended`): the record's marker is what it searches for.
 _ENDING_READ = re.compile(r'sed -n "/([^/]+)/,')
+
+
+class _Roots:
+    """Where this process keeps its channels' roots: one directory under a
+    parent every test process shares, locked for as long as the process lives.
+
+    A process killed before its ``atexit`` runs (a timeout's SIGTERM, Ctrl-C,
+    SIGKILL, a timed-out xdist worker) leaves its directory behind, and the
+    kernel releases its lock when it dies. So the first channel a process
+    makes removes every directory in the parent whose lock it can take: those
+    are exactly the ones whose process is gone. A lock, not a pid, says who is
+    alive, because a pid is reused and a sandbox that unshares the pid
+    namespace while sharing ``TMPDIR`` sees a live neighbour's pid as dead.
+    """
+
+    def __init__(self) -> None:
+        self.mine: Path | None = None
+        self._lock: int | None = None
+
+    def new(self) -> Path:
+        if self.mine is None:
+            parent = Path(tempfile.gettempdir()) / f"test-seats-{os.getuid()}"
+            parent.mkdir(exist_ok=True)
+            self._sweep(parent)
+            # Locked under a hidden name and only then shown, so a sweep
+            # running in another process never finds it unlocked.
+            staging = Path(tempfile.mkdtemp(prefix=".", dir=parent))
+            self._lock = os.open(staging / ".lock", os.O_RDWR | os.O_CREAT)
+            fcntl.flock(self._lock, fcntl.LOCK_EX)
+            self.mine = parent / f"{os.getpid()}-{staging.name[1:]}"
+            staging.rename(self.mine)
+            atexit.register(shutil.rmtree, self.mine, True)
+        return Path(tempfile.mkdtemp(prefix="test-seats-", dir=self.mine))
+
+    @staticmethod
+    def _sweep(parent: Path) -> None:
+        for directory in parent.iterdir():
+            if directory.name.startswith("."):
+                continue
+            try:
+                lock = os.open(directory / ".lock", os.O_RDWR)
+            except OSError:
+                continue
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError:
+                continue  # its process is alive
+            else:
+                shutil.rmtree(directory, ignore_errors=True)
+            finally:
+                os.close(lock)
+
+
+_ROOTS = _Roots()
 
 
 class _Epochs:
@@ -136,10 +192,9 @@ class SeatChannel:
         self.screens: list[dict] = []
         self.epochs: dict[SeatKey, int] = {}
         self.policy = policy
-        self.root = Path(tempfile.mkdtemp(prefix="test-seats-"))
-        # Removed when the test process exits, not when this channel goes: a test
+        # Removed when the test process ends, not when this channel goes: a test
         # standing in for a restarted backend hands this root to the next one.
-        atexit.register(shutil.rmtree, self.root, True)
+        self.root = _ROOTS.new()
         self.runtime = self.next_process(harness)
 
     def next_process(self, harness: str | None = None) -> RoomSessions:
