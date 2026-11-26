@@ -90,7 +90,7 @@ class TurnPreparation:
 
     async def _backend_for(
         self, session, agent, project
-    ) -> tuple[str, RoomSessions | None]:
+    ) -> tuple[str, RoomSessions | None, bool]:
         return await launch.backend_for(self, session, agent, project)
 
     async def _held_blocks(self, session, **kwargs):

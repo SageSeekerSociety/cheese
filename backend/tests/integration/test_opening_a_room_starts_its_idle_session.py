@@ -1,14 +1,14 @@
-"""Opening a room, or typing in it, starts the session its runner let go.
+"""Room activity brings up a session before the next message needs it.
 
-A session that sat idle for ten minutes is let go by its runner, and the next
-message used to wait for it to start again. Somebody opening the room or typing
-in it is the sign that a message is coming, so the session is started then —
-once a minute at most, and only when the session host has room for it.
+Opening a room or typing in it brings back the session its runner let go.
+Typing to a teammate can also start its first session. A session that runs
+on the session host needs room in that host's memory.
 """
 
 import asyncio
 import uuid
 from collections.abc import Callable
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -26,14 +26,23 @@ from app.domain.agent.compute import ComputePool
 from app.domain.agent.device_hub import DeviceCallError
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
-from app.domain.agent_instance.models import AgentInstance
+from app.domain.agent.owner_provider import AccountChannel, OwnerChannel
+from app.domain.agent_instance import account_connections
+from app.domain.agent_instance.models import AgentInstance, OwnAgent
+from app.domain.device.login_kind import ConnectionKind
+from app.domain.device.models import DeviceClaudeLoginRow
+from app.domain.project.models import Project
 from app.domain.skill_library import native_skill_doc
+from app.domain.topic.models import Topic
+from app.domain.user.models import User
 from app.main import app
 from tests.integration import test_central_room_sessions as central_sessions
 from tests.integration.conftest import open_task, room_socket
 from tests.integration.test_a_release_restarts_quiet_sessions import IDLE, ReleaseHub
+from tests.integration.test_archive_retires_storage import _seed_device
 from tests.integration.test_central_room_sessions import sessions
 from tests.support.hang import HANG_S
+from tests.turn_log import a_topic
 
 #: A project with its agent and one room in it.
 room = central_sessions.room
@@ -46,12 +55,15 @@ class IdleHub(ReleaseHub):
         super().__init__()
         self.gone = False
 
+    def is_online(self, device_id: str) -> bool:
+        return device_id == "owner-machine" or super().is_online(device_id)
+
     async def open_screen(self, device_id, command, **kw):
         self.gone = False
         return await super().open_screen(device_id, command, **kw)
 
     async def call_executor(self, device_id, state, method, params, **options):
-        if device_id == "center" and self.gone:
+        if device_id != "executor" and self.gone:
             if method == "ping":
                 return {"alive": False}
             raise DeviceCallError("the runner let its idle session go")
@@ -64,18 +76,26 @@ async def _until(condition: Callable[[], bool]) -> None:
             await asyncio.sleep(0.02)
 
 
-def _backend(client, hub, tmp_path):
-    executor = DeviceChannel(hub=hub, session_factory=client.test_request_factory)
-    central: Any = CentralChannel(executor)
-    central._device_api_base = AsyncMock(return_value="http://central-api")
-    claude = sessions(central)
-    claude.bind_owns_sessions(lambda: SimpleNamespace(owns_sessions=True))
+def _backend(factory, hub, tmp_path):
+    executor = DeviceChannel(hub=hub, session_factory=factory)
+    channels: tuple[Any, ...] = (
+        CentralChannel(executor),
+        OwnerChannel(executor),
+        AccountChannel(executor),
+    )
+    for channel in channels:
+        channel._device_api_base = AsyncMock(return_value="http://central-api")
+    claude, owned, account = (sessions(channel) for channel in channels)
+    for runtime in (claude, owned, account):
+        runtime.bind_owns_sessions(lambda: SimpleNamespace(owns_sessions=True))
     service = ChatService(
         work_runner=session_turn_deps.get_work_runner(),
-        session_factory=client.test_request_factory,
+        session_factory=factory,
         base_system_prompt="System",
         workspace_root=str(tmp_path / "ws"),
-        compute=ComputePool([claude]),
+        compute=ComputePool(
+            [claude], owned={(CLAUDE_CODE, False): owned, (CLAUDE_CODE, True): account}
+        ),
     )
     return service, claude
 
@@ -114,7 +134,7 @@ def idle_room(client, room, monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
     hub = IdleHub()
     hub.ping = dict(IDLE)
-    service, claude = _backend(client, hub, tmp_path)
+    service, claude = _backend(client.test_request_factory, hub, tmp_path)
     app.dependency_overrides[get_chat_service] = lambda: service
     yield room, hub, service, claude
     app.dependency_overrides.pop(get_chat_service, None)
@@ -234,10 +254,101 @@ def fresh_room(client, room, monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
     hub = IdleHub()
     hub.ping = dict(IDLE)
-    service, claude = _backend(client, hub, tmp_path)
+    service, claude = _backend(client.test_request_factory, hub, tmp_path)
     app.dependency_overrides[get_chat_service] = lambda: service
     yield room, hub, service, claude
     app.dependency_overrides.pop(get_chat_service, None)
+
+
+async def _connect_seat(factory, topic_id, seat, connection):
+    async with factory() as db:
+        topic = await db.get(Topic, topic_id)
+        project = await db.get(Project, topic.project_id)
+        agent = await db.scalar(
+            select(AgentInstance).where(
+                AgentInstance.project_id == project.id, AgentInstance.handle == seat
+            )
+        )
+        owner = await db.scalar(select(User).where(User.username == "u"))
+        own = OwnAgent(
+            instance_id=agent.id, owner_user_id=owner.id, harness=CLAUDE_CODE
+        )
+        if connection == "device":
+            await _seed_device(db, "owner-machine", project_id=project.id)
+            login = DeviceClaudeLoginRow(
+                device_id="owner-machine",
+                team_id=project.team_id,
+                installed=True,
+                logged_in=True,
+                auth_method="claude.ai",
+                checked_at=datetime.now(UTC),
+                allowed_models=["sonnet"],
+            )
+            db.add(login)
+            await db.flush()
+            own.login_id = login.id
+        else:
+            account = await account_connections.create(
+                db,
+                project.team_id,
+                kind=ConnectionKind.api_key,
+                key="fixture-key",
+                base_url=None,
+                model=None,
+                name=None,
+                allowed_models=["sonnet"],
+            )
+            own.account_connection_id = account.id
+        db.add(own)
+        await db.commit()
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("entry", ["start", "prewarm"])
+@pytest.mark.parametrize("connection", ["device", "platform", "account"])
+async def test_only_sessions_on_the_session_host_wait_for_memory(
+    db_factory, monkeypatch, tmp_path, entry, connection
+):
+    topic = await a_topic(db_factory)
+    monkeypatch.setattr(settings, "agent_session_device_id", "center")
+    hub = IdleHub()
+    hub.ping = dict(IDLE)
+    service, _claude = _backend(db_factory, hub, tmp_path)
+    monkeypatch.setattr(account_connections, "probe", AsyncMock(return_value=None))
+    monkeypatch.setattr(account_connections, "refuse_internal_host", lambda *_: None)
+    memory = AsyncMock(return_value=True)
+    monkeypatch.setattr(service.prewarm._memory, "has_room", memory)
+
+    async def warm():
+        seat = await service._turn_seat_handle(topic)
+        if connection != "platform":
+            await _connect_seat(db_factory, topic, seat, connection)
+        if entry == "start":
+            memory.return_value = False
+            return await service.prewarm._start(topic, topic, seat)
+
+        assert await service.prewarm._start(topic, topic, seat) == "started"
+        runtime = service._compute.seat_runtime(topic, seat)
+        live = runtime.live[(topic, seat)]
+        runtime._listen((topic, seat))
+        hub.gone = True
+        await _until(lambda: runtime.host.answers(live.ref) is False)
+        memory.return_value = False
+        return await service.prewarm._prewarm(live.session)
+
+    expected = {"start": "started", "prewarm": "current"}[entry]
+    try:
+        outcome = await warm()
+    finally:
+        await service.stop_listening(0)
+    assert outcome == (expected if connection == "device" else "host_full")
+    if connection == "device":
+        assert [screen.device_id for screen in hub.opened] == ["owner-machine"]
+    elif entry == "start":
+        assert hub.opened == []
+    assert len(hub.closed) == (
+        1 if connection == "device" and entry == "prewarm" else 0
+    )
 
 
 @pytest.mark.anyio

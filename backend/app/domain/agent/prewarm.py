@@ -179,7 +179,7 @@ class SeatPrewarm:
             launch = await read(conversation_id, agent_handle)
             if launch is None or launch.session != seen.session:
                 return "not_here"
-            if not await self._memory.has_room(room_id):
+            if launch.on_session_host and not await self._memory.has_room(room_id):
                 return "host_full"
             await chat._compute.activate(launch.session, launch.runtime)
             await launch.runtime.ensure(
@@ -251,8 +251,6 @@ class SeatPrewarm:
             live = runtime.prewarm_due(session)
             if live is None:
                 return "not_due"
-            if not await self._memory.has_room(topic_id):
-                return "host_full"
             launch = await chat.turn_preparation.launch_inputs(
                 conversation_id, seat, acting=live.acting
             )
@@ -260,6 +258,8 @@ class SeatPrewarm:
                 # Archived, gone, or now on another harness: that move is the
                 # next turn's to make (`ComputePool.activate`).
                 return "not_here"
+            if launch.on_session_host and not await self._memory.has_room(topic_id):
+                return "host_full"
             await runtime.ensure(
                 launch.session,
                 system_prompt=launch.system_prompt,

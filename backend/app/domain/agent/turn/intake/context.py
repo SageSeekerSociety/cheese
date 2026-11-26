@@ -111,6 +111,7 @@ class Launch:
 
     session: SessionRef
     runtime: RoomSessions
+    on_session_host: bool
     system_prompt: str
     resume_token: str | None
     #: The conversation it must not take up again (`Continuation.retired`).

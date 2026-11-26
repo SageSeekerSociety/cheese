@@ -31,6 +31,7 @@ from app.domain.agent.turn.intake.context import (
     living_doc_text,
 )
 from app.domain.agent.turn.intake.rooms import _is_dm
+from app.domain.agent.work_policy import uses_session_host
 from app.domain.agent_instance.own import current_role, owned_instance
 from app.domain.agent_instance.services import AgentInstanceService
 from app.domain.agent_session.services import AgentSessionService
@@ -53,7 +54,7 @@ async def backend_for(
     session: AsyncSession,
     agent: ResolvedAgent,
     project: Project | None,
-) -> tuple[str, RoomSessions | None]:
+) -> tuple[str, RoomSessions | None, bool]:
     """The harness this agent's turn runs and the backend it runs on.
 
     A member's own coding agent runs its own harness where its model
@@ -61,10 +62,11 @@ async def backend_for(
     agent runs the project's harness on the room's machine."""
     owned = await owned_instance(session, agent.instance_id)
     if owned is not None:
-        return owned.harness, prep.compute.owned(
-            owned.harness, on_account=owned.on_account
-        )
-    return prep.compute.choose(project.settings if project else None)
+        harness = owned.harness
+        provider = prep.compute.owned(harness, on_account=owned.on_account)
+    else:
+        harness, provider = prep.compute.choose(project.settings if project else None)
+    return harness, provider, uses_session_host(owned)
 
 
 async def launch_inputs(
@@ -112,7 +114,9 @@ async def launch_inputs(
         role = await current_role(session, agent.instance_id) or (
             await agents.system_prompt(agent)
         )
-        harness, provider = await prep._backend_for(session, agent, project)
+        harness, provider, on_session_host = await prep._backend_for(
+            session, agent, project
+        )
         if provider is None:
             return None
         continuation = await AgentSessionService(session).continuation(
@@ -149,6 +153,7 @@ async def launch_inputs(
             inner_id=place.inner_id,
         ),
         runtime=provider,
+        on_session_host=on_session_host,
         system_prompt=session_system_prompt(
             prep.base_prompt,
             kind=kind,

@@ -281,7 +281,7 @@ async def prepare(
         # 骨架是这个项目跑的那一个（结论 28），不是这个参与者的属
         # 性。这一轮只解析这一次，往下每一处都读它：会话行的键里有骨架，两处
         # 各自解析一次就够把一条会话拆成两条。
-        wanted_harness, provider = await prep._backend_for(session, agent, project)
+        wanted_harness, provider, _ = await prep._backend_for(session, agent, project)
         agent_pool = memory_pool(topic.project_id, agent)
         # Roster so 芝士 can @ real teammates (not just name them in prose).
         # 私聊里没有第三个人可点名，名册也就不进提示词——`[]` 和「没有名册这
