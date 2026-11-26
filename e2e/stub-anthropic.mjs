@@ -13,8 +13,8 @@
 // STUB_ANTHROPIC_EXPIRES_IN sets the initial token lifetime in seconds.
 // STUB_ANTHROPIC_RATE_LIMIT_AFTER_REFRESH changes the limit for the new token.
 // Set STUB_ANTHROPIC_SOCKET to the Unix socket path for the executor's proxy bridge.
-// Set STUB_ANTHROPIC_METER to `{ "placeholder": "...", "project": "...", "topic": "..." }`
-// to serve the production control table and replace the session placeholder on model calls.
+// STUB_ANTHROPIC_METER takes a placeholder, project, topic, and optional noLoginAnswers.
+// It serves the production control table before forwarding to the simulated Anthropic API.
 // Without it, OAuth and model requests use the simulated Anthropic account.
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -129,22 +129,30 @@ function controlAnswer(host, path) {
 }
 
 function meterRequest(request, response, route, url) {
-  const row = controlAnswer(request.socket.tunnelHost, request.url.split('?', 1)[0]);
+  const host = request.socket.tunnelHost;
+  const path = request.url.split('?', 1)[0];
+  const row = controlAnswer(host, path);
   if (row) {
     response.source = 'table';
     response.writeHead(row.status, { 'content-type': 'application/json' });
     response.end(row.body === null ? '' : JSON.stringify(fillControlBody(row.body)));
     return;
   }
-  if (route !== 'POST /v1/messages' && route !== 'POST /v1/messages/count_tokens') {
-    return error(response, 404, 'not_found_error', 'No metering control answer');
+  if (request.headers.authorization === `Bearer ${meter.placeholder}`) {
+    if (meter.noLoginAnswers) {
+      if (host === 'api.anthropic.com' && Object.hasOwn(meter.noLoginAnswers, path)) {
+        response.source = 'no-login';
+        response.writeHead(200, { 'content-type': 'application/json' });
+        return response.end(meter.noLoginAnswers[path]);
+      }
+      response.source = 'no-credential';
+      return error(response, 400, 'invalid_request_error',
+        "cheese: the platform has no Claude login, so this project's subscription model cannot be served");
+    }
+    request.headers.authorization = `Bearer ${platformToken}`;
+    console.log(`Upstream bearer ***${request.headers.authorization.slice(-4)} (placeholder ***${meter.placeholder.slice(-4)})`);
   }
   response.source = 'upstream';
-  if (request.headers.authorization !== `Bearer ${meter.placeholder}`) {
-    return error(response, 401, 'authentication_error', 'Meter expected the session placeholder');
-  }
-  request.headers.authorization = `Bearer ${platformToken}`;
-  console.log(`Upstream bearer ***${request.headers.authorization.slice(-4)} (placeholder ***${meter.placeholder.slice(-4)})`);
   return handle(request, response, route, url);
 }
 
@@ -243,17 +251,19 @@ async function handle(request, response, route, url) {
   if (![
     'POST /v1/messages', 'POST /v1/messages/count_tokens',
     'GET /api/oauth/profile', 'GET /api/oauth/usage', 'GET /api/oauth/claude_cli/roles',
+    'GET /api/claude_cli/bootstrap', 'GET /api/claude_code_penguin_mode', 'GET /api/oauth/validate',
   ].includes(route)) {
     return error(response, 404, 'not_found_error', 'Unknown endpoint');
   }
 
   const bearer = request.headers.authorization;
   const refreshed = bearer === `Bearer ${refreshedToken}`;
-  const expected = meter ? platformToken : accessToken;
-  if ((!refreshed || meter) && bearer !== `Bearer ${expected}`) {
+  if (!refreshed && bearer !== `Bearer ${accessToken}` && bearer !== `Bearer ${platformToken}`) {
     return error(response, 401, 'authentication_error', 'Invalid bearer token');
   }
   if (route === 'GET /api/oauth/profile') return json(response, 200, profile);
+  if (route === 'GET /api/claude_cli/bootstrap' || route === 'GET /api/oauth/validate') return json(response, 200, {});
+  if (route === 'GET /api/claude_code_penguin_mode') return json(response, 200, { enabled: false });
   if (route === 'GET /api/oauth/claude_cli/roles') {
     return json(response, 200, { organization_role: 'admin', workspace_role: null, organization_name: profile.organization.name });
   }
@@ -292,9 +302,9 @@ const api = createServer(async (request, response) => {
   const host = request.socket.tunnelHost;
   const url = URL.parse(request.url, `https://${host}`);
   const route = `${request.method} ${url?.pathname ?? request.url.split('?')[0]}`;
-  if (meter) response.source = 'uncovered';
+  const caller = request.headers.authorization === `Bearer ${meter?.placeholder}` ? 'placeholder' : 'other';
   response.on('finish', () => console.log(
-    `${host} ${route} -> ${response.statusCode}${response.source ? ` (${response.source})` : ''}`,
+    `${host} ${route} -> ${response.statusCode}${meter ? ` (${response.source ?? 'unrouted'}, ${caller})` : ''}`,
   ));
   try {
     if (url?.host !== host || ![host, `${host}:443`].includes(request.headers.host?.toLowerCase())) {

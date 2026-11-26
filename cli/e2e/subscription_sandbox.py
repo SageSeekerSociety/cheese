@@ -8,14 +8,16 @@ import shutil
 import subprocess
 import sys
 import time
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 HERE = Path(__file__).resolve()
 BACKEND = HERE.parents[2] / "backend"
 REMOTE = BACKEND / "app/domain/agent/harness/claude_code/remote_execution"
+METER = HERE.parents[2] / "deploy/metering-proxy/cheese_billing_core.py"
 
 
-def stage_launch(home, case, ca, project, topic):
+def stage_launch(home, case, ca, project, topic, owner):
     sys.path.insert(0, str(BACKEND))
     os.environ["WORKSPACE_ROOT"] = str(home / "platform-data")
     os.environ["SUBSCRIPTION_CA_BACKEND_PATH"] = ca
@@ -29,7 +31,7 @@ def stage_launch(home, case, ca, project, topic):
     from app.domain.device.login_kind import FIRST_LOGIN
     from app.domain.project_skill.service import session_skill_bundle
 
-    owner = home / "owner"
+    owner = Path(owner)
     workspace = home / "workspace"
     workspace.mkdir()
     subprocess.run(["git", "init", "-q", str(workspace)], check=True)
@@ -95,34 +97,46 @@ def redact(env):
     }
 
 
-def run_session(runtime, home, state, platform, case, binary, action):
+def run_session(runtime, home, state, platform, case, binary, action, *proxy_settings):
     case_env = json.loads((home / "production.json").read_text())
     production = case_env["env"]
-    bridge = runtime["_start_forge_bridge"](platform / "forge.sock")
-    proxy = f"http://127.0.0.1:{bridge.server_address[1]}"
-    additions = {"HTTPS_PROXY": proxy}
-    if case == "owned":
-        additions["NODE_EXTRA_CA_CERTS"] = str(platform / "ca.pem")
+    owned = case == "owned"
+    if owned:
+        proxy, ca = proxy_settings
+        additions = {"HTTPS_PROXY": proxy, "NODE_EXTRA_CA_CERTS": ca}
     else:
+        bridge = runtime["_start_forge_bridge"](platform / "forge.sock")
         # The meter tunnel publishes its selected loopback port to the launch.
-        production["HTTPS_PROXY"] = proxy
+        production["HTTPS_PROXY"] = f"http://127.0.0.1:{bridge.server_address[1]}"
+        additions = {}
 
     if action == "status":
         return subprocess.run(
             [binary, "auth", "status"], env={**production, **additions}, check=False
         ).returncode
 
-    service = subprocess.Popen(
-        [sys.executable, str(REMOTE / "runtime.py"), "serve", "--state", str(state)],
-        env=production,
-        stdin=subprocess.DEVNULL,
-    )
+    service_command = [sys.executable, str(REMOTE / "runtime.py"), "serve", "--state", str(state)]
+    with ExitStack() as stack:
+        fds = ()
+        if owned:
+            service_command, fds = stack.enter_context(
+                sandbox(runtime, home, state, platform, binary, service_command, network=False)
+            )
+        service = subprocess.Popen(
+            service_command, env=production, pass_fds=fds, stdin=subprocess.DEVNULL,
+        )
+    public = Path(runtime["socket_path"](state))
     try:
+        ready = public
+        if owned:
+            ready = Path(runtime["socket_directory"](state)) / "executor.sock"
         until = time.monotonic() + 5
-        while not Path(runtime["socket_path"](state)).exists():
+        while not ready.exists():
             if service.poll() is not None or time.monotonic() >= until:
                 raise RuntimeError("Executor did not open its socket")
             time.sleep(0.01)
+        if owned:
+            public.symlink_to(ready)
         os.environ.update(production)
         client = runpy.run_path(str(REMOTE / "client.py"))
         directory = Path((home / "session-dir").read_text().strip())
@@ -160,10 +174,16 @@ def run_session(runtime, home, state, platform, case, binary, action):
                 if key in expected and value != expected[key]
             }
             audit = {
-                "case": case, "pid": process.pid,
-                "production": redact(expected), "actual": redact(actual),
-                "added": redact(added), "changed": redact(changed), "missing": missing,
-                "settings_env": json.loads((directory / "settings.json").read_text())["env"],
+                "case": case,
+                "pid": process.pid,
+                "mount_namespace": os.readlink(environ.parent / "ns/mnt"),
+                "network_namespace": os.readlink(environ.parent / "ns/net"),
+                "production": redact(expected),
+                "actual": redact(actual),
+                "added": redact(added),
+                "changed": redact(changed),
+                "missing": missing,
+                "settings_env": redact(json.loads((directory / "settings.json").read_text())["env"]),
             }
             print("SESSION_ENV " + json.dumps(audit), file=sys.stderr, flush=True)
             if actual != env:
@@ -174,14 +194,94 @@ def run_session(runtime, home, state, platform, case, binary, action):
         if service.poll() is None:
             service.terminate()
         service.wait(timeout=5)
+        if owned:
+            public.unlink(missing_ok=True)
+
+
+@contextmanager
+def sandbox(runtime, home, state, platform, binary, command, *, network):
+    owner = Path.home().resolve()
+    confinement = runpy.run_path(str(REMOTE / "confinement.py"))
+    bwrap = os.environ.get("CHEESE_TEST_BWRAP") or shutil.which("bwrap")
+    if bwrap is None:
+        raise RuntimeError("Set CHEESE_TEST_BWRAP to the Cheese bubblewrap binary")
+
+    block, unblock = os.pipe()
+    seccomp, filter_write = os.pipe()
+    info_file = (state / "bubblewrap-info.json").open("wb")
+    os.write(unblock, b"1")
+    os.close(unblock)
+    os.write(filter_write, confinement["seccomp_filter"]())
+    os.close(filter_write)
+    fds = {"info": info_file.fileno(), "block": block, "seccomp": seccomp}
+    try:
+        argv = confinement["sandbox_argv"](
+            command,
+            bwrap=bwrap,
+            owner=owner,
+            home=home,
+            store=home / "store",
+            toolchain=home / "toolchain",
+            tmp=home / "tmp",
+            releases=REMOTE.parents[2],
+            workdir=home,
+            claude=Path(binary),
+            sockets=Path(runtime["socket_directory"](state)),
+            platform=platform,
+            fds=fds,
+            programs=[HERE.parent, BACKEND / "sandbox"],
+            network=network,
+        )
+        yield [argv[0], "--die-with-parent", *argv[1:]], tuple(fds.values())
+    finally:
+        os.close(block)
+        os.close(seccomp)
+        info_file.close()
+
+
+def meter_config(case, project, topic):
+    core = runpy.run_path(str(METER))
+    config = {"placeholder": core["NO_LOGIN_PLACEHOLDER"], "project": project, "topic": topic}
+    if case == "metered-no-credential":
+        config["noLoginAnswers"] = {
+            path: body.decode() for path, body in core["NO_LOGIN_ANSWERS"].items()
+        }
+    print(json.dumps(config))
+
+
+def audit_meter(config):
+    config = json.loads(config)
+    core = runpy.run_path(str(METER))
+    failures = []
+    for line in json.load(sys.stdin):
+        request, _, result = line.partition(" -> ")
+        host, _, path = request.split(" ", 2)
+        status, _, details = result.partition(" (")
+        decision, _, caller = details.removesuffix(")").partition(", ")
+        table = core["control_answer"](host, path, config["project"], config["topic"])
+        if table is not None:
+            expected, code = "table", table.status
+        elif "noLoginAnswers" in config and caller == "placeholder":
+            expected, code = (
+                ("no-login", 200)
+                if core["no_login_answer"](host, path) is not None
+                else ("no-credential", 400)
+            )
+        else:
+            expected, code = "upstream", None
+        if decision != expected or (code is not None and int(status) != code):
+            failures.append(f"{line}; expected {expected}" + (f" {code}" if code is not None else ""))
+    if failures:
+        sys.exit("Meter routing differs from production:\n" + "\n".join(failures))
 
 
 def main():
     mode, *parameters = sys.argv[1:]
-    if mode == "placeholder":
-        sys.path.insert(0, str(BACKEND))
-        from app.domain.agent.harness.claude_code.device_launch import NO_LOGIN_PLACEHOLDER
-        print(NO_LOGIN_PLACEHOLDER)
+    if mode == "meter":
+        meter_config(*parameters)
+        return 0
+    if mode == "audit-meter":
+        audit_meter(*parameters)
         return 0
     room, *args = parameters
     home = Path(room).resolve()
@@ -198,49 +298,20 @@ def main():
         print(json.dumps({"platform": str(platform), "sockets": str(runtime["socket_directory"](state))}))
         return 0
 
-    if mode == "inside":
-        return run_session(runtime, home, state, platform, *args)
+    case, binary, action, *proxy_settings = args
+    if mode == "inside" or case == "owned":
+        return run_session(runtime, home, state, platform, case, binary, action, *proxy_settings)
 
-    case, binary, action = args
-    owner = Path.home().resolve()
-    confinement = runpy.run_path(str(REMOTE / "confinement.py"))
-    bwrap = os.environ.get("CHEESE_TEST_BWRAP") or shutil.which("bwrap")
-    if bwrap is None:
-        raise RuntimeError("Set CHEESE_TEST_BWRAP to the Cheese bubblewrap binary")
-
-    block, unblock = os.pipe()
-    seccomp, filter_write = os.pipe()
-    info_file = (state / "bubblewrap-info.json").open("wb")
-    os.write(unblock, b"1")
-    os.close(unblock)
-    os.write(filter_write, confinement["seccomp_filter"]())
-    os.close(filter_write)
-    fds = {"info": info_file.fileno(), "block": block, "seccomp": seccomp}
-    for fd in fds.values():
-        os.set_inheritable(fd, True)
-    argv = confinement["sandbox_argv"](
-        [sys.executable, str(HERE), "inside", str(home), case, binary, action],
-        bwrap=bwrap,
-        owner=owner,
-        home=home,
-        store=home / "store",
-        toolchain=home / "toolchain",
-        tmp=home / "tmp",
-        releases=REMOTE.parents[2],
-        workdir=home,
-        claude=Path(binary),
-        sockets=Path(runtime["socket_directory"](state)),
-        platform=platform,
-        fds=fds,
-        programs=[HERE.parent, BACKEND / "sandbox"],
-        network=True,
-    )
     env = {
         "HOME": str(home),
         "PATH": os.environ["PATH"],
         "PYTHONDONTWRITEBYTECODE": "1",
     }
-    os.execve(bwrap, [argv[0], "--die-with-parent", *argv[1:]], env)
+    command = [sys.executable, str(HERE), "inside", str(home), case, binary, action]
+    with sandbox(runtime, home, state, platform, binary, command, network=True) as (argv, fds):
+        for fd in fds:
+            os.set_inheritable(fd, True)
+        os.execve(argv[0], argv, env)
 
 
 if __name__ == "__main__":

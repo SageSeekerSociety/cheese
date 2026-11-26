@@ -32,7 +32,7 @@ type anthropicStub struct {
 	ca      string
 }
 
-func startAnthropicStub(t *testing.T, socket, meter string, expiresIn int, toolCommand string) anthropicStub {
+func startAnthropicStub(t *testing.T, socket, meter, python string, expiresIn int, toolCommand string) anthropicStub {
 	t.Helper()
 	tool, err := json.Marshal(map[string]any{
 		"name": "Bash",
@@ -81,22 +81,14 @@ func startAnthropicStub(t *testing.T, socket, meter string, expiresIn int, toolC
 		stub.ca, _ = strings.CutPrefix(lines.Text(), "NODE_EXTRA_CA_CERTS=")
 	}
 	drained := make(chan struct{})
-	var gaps []string
+	var meteredRequests []string
 	go func() {
 		defer close(drained)
 		for lines.Scan() {
 			line := lines.Text()
 			t.Log(line)
-			if meter == "null" {
-				continue
-			}
-			_, outcome, found := strings.Cut(line, " -> ")
-			fields := strings.Fields(outcome)
-			if !found || len(fields) != 2 || fields[1] == "(upstream)" {
-				continue
-			}
-			if fields[1] != "(table)" || !strings.HasPrefix(fields[0], "2") {
-				gaps = append(gaps, line)
+			if strings.HasSuffix(line, ", placeholder)") || strings.HasSuffix(line, ", other)") {
+				meteredRequests = append(meteredRequests, line)
 			}
 		}
 	}()
@@ -104,8 +96,21 @@ func startAnthropicStub(t *testing.T, socket, meter string, expiresIn int, toolC
 		cancel()
 		<-drained
 		_ = cmd.Wait()
-		if len(gaps) > 0 {
-			t.Errorf("Metered control requests without a 2xx table answer:\n%s", strings.Join(gaps, "\n"))
+		if meter != "null" {
+			if len(meteredRequests) == 0 {
+				t.Error("meter did not observe any HTTP requests")
+				return
+			}
+			payload, err := json.Marshal(meteredRequests)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			audit := exec.Command(python, "subscription_sandbox.py", "audit-meter", meter)
+			audit.Stdin = bytes.NewReader(payload)
+			if out, err := audit.CombinedOutput(); err != nil {
+				t.Errorf("%s%v", out, err)
+			}
 		}
 	})
 	if stub.address == "" || stub.ca == "" {
@@ -157,9 +162,8 @@ func cheesehostBinary(t *testing.T) string {
 	return binary
 }
 
-func loginOnHost(t *testing.T, binary, home string, stub anthropicStub) {
+func loginOnHost(t *testing.T, binary, cheesehost, owner string, stub anthropicStub) {
 	t.Helper()
-	owner := filepath.Join(home, "owner")
 	pin := filepath.Join(owner, place.Root, "claude", "versions", pinnedVersion)
 	if err := os.MkdirAll(filepath.Dir(pin), 0o700); err != nil {
 		t.Fatal(err)
@@ -182,7 +186,7 @@ func loginOnHost(t *testing.T, binary, home string, stub anthropicStub) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, cheesehostBinary(t), "claude", "login", "--login", place.FirstClaudeLogin, "--config", cfg)
+	cmd := exec.CommandContext(ctx, cheesehost, "claude", "login", "--login", place.FirstClaudeLogin, "--config", cfg)
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM) }
 	cmd.Dir = owner
 	cmd.Env = []string{
@@ -245,11 +249,14 @@ func loginOnHost(t *testing.T, binary, home string, stub anthropicStub) {
 	}
 }
 
-func runSubscription(t *testing.T, caseName, binary, home, action, prompt string) (string, error) {
+func runSubscription(t *testing.T, caseName, binary, home, action, prompt string, proxySettings ...string) (string, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "python3", "subscription_sandbox.py", "run", home, caseName, binary, action)
+	args := append([]string{"subscription_sandbox.py", "run", home, caseName, binary, action}, proxySettings...)
+	cmd := exec.CommandContext(ctx, "python3", args...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	if prompt != "" {
 		payload, err := json.Marshal(map[string]any{
 			"type": "user", "message": map[string]string{"role": "user", "content": prompt},
@@ -262,6 +269,23 @@ func runSubscription(t *testing.T, caseName, binary, home, action, prompt string
 	out, err := cmd.CombinedOutput()
 	t.Logf("%s\n%s", action, out)
 	return string(out), err
+}
+
+func sessionMountNamespace(t *testing.T, output string) string {
+	t.Helper()
+	for _, line := range strings.Split(output, "\n") {
+		if audit, ok := strings.CutPrefix(line, "SESSION_ENV "); ok {
+			var session struct {
+				MountNamespace string `json:"mount_namespace"`
+			}
+			if err := json.Unmarshal([]byte(audit), &session); err != nil || session.MountNamespace == "" {
+				t.Fatalf("invalid Claude process namespace audit: %v", err)
+			}
+			return session.MountNamespace
+		}
+	}
+	t.Fatal("missing Claude process namespace audit")
+	return ""
 }
 
 func TestClaudeSubscriptionStub(t *testing.T) {
@@ -282,9 +306,14 @@ func TestClaudeSubscriptionStub(t *testing.T) {
 	python := backendPython(t)
 	const refreshMargin = 300
 	const expiresIn = refreshMargin + 12
-	for _, caseName := range []string{"metered", "owned"} {
+	hostMount, err := os.Readlink("/proc/self/ns/mnt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, caseName := range []string{"metered", "metered-no-credential", "owned"} {
 		t.Run(caseName, func(t *testing.T) {
 			home := realTempDir(t)
+			owner := realTempDir(t)
 			prepared, err := exec.Command("python3", "subscription_sandbox.py", "prepare", home).CombinedOutput()
 			if err != nil {
 				t.Fatalf("prepare sandbox: %v\n%s", err, prepared)
@@ -297,9 +326,10 @@ func TestClaudeSubscriptionStub(t *testing.T) {
 			t.Cleanup(func() {
 				_ = os.RemoveAll(platform)
 				_ = os.RemoveAll(paths.Sockets)
+				_ = os.Remove(paths.Sockets + ".sock")
 			})
 
-			// A successful probe on the host establishes what the tool cannot dial.
+			// The host's listener separates the platform network from the enrolled device network.
 			outside, err := net.Listen("tcp4", "127.0.0.2:0")
 			if err != nil {
 				t.Fatal(err)
@@ -318,35 +348,51 @@ func TestClaudeSubscriptionStub(t *testing.T) {
 			if response.StatusCode != http.StatusNoContent {
 				t.Fatalf("probe host listener: %s", response.Status)
 			}
-			tool := fmt.Sprintf(`/usr/bin/curl --noproxy '*' --max-time 2 -fsS http://%s > direct-result.txt 2>&1; test "$?" -eq 7 && printf stub-tool-ran > tool-result.txt`, outside.Addr())
+			owned := caseName == "owned"
+			curlExit := 7
+			if owned {
+				curlExit = 0
+			}
+			tool := fmt.Sprintf(`/usr/bin/readlink /proc/self/ns/mnt > tool-mount.txt
+/usr/bin/curl --noproxy '*' --max-time 2 -fsS http://%s > direct-result.txt 2>&1
+status=$?
+printf 'curl exit %%s\n' "$status" >> direct-result.txt
+test "$status" -eq %d && printf stub-tool-ran > tool-result.txt`, outside.Addr(), curlExit)
+			if owned {
+				tool = `test -n "$CLAUDE_SECURESTORAGE_CONFIG_DIR" || exit 1
+test -e "$CLAUDE_SECURESTORAGE_CONFIG_DIR/.credentials.json"
+printf 'login visible exit %s\n' "$?" > tool-login.txt
+` + tool
+			}
 			meter := "null"
-			if caseName == "metered" {
-				placeholder := stageProduction(t, python, "placeholder")
-				payload, err := json.Marshal(map[string]string{
-					"placeholder": placeholder, "project": tableProject, "topic": tableTopic,
-				})
+			socket := ""
+			var cheesehost string
+			if owned {
+				cheesehost = cheesehostBinary(t)
+			} else {
+				meter = stageProduction(t, python, "meter", caseName, tableProject, tableTopic)
+				socket = filepath.Join(platform, "forge.sock")
+			}
+			stub := startAnthropicStub(t, socket, meter, python, expiresIn, tool)
+			if !owned {
+				pem, err := os.ReadFile(stub.ca)
 				if err != nil {
 					t.Fatal(err)
 				}
-				meter = string(payload)
-			}
-			stub := startAnthropicStub(t, filepath.Join(platform, "forge.sock"), meter, expiresIn, tool)
-			pem, err := os.ReadFile(stub.ca)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, name := range []string{"ca.pem", "ca-bundle.pem"} {
-				if err := os.WriteFile(filepath.Join(platform, name), pem, 0o644); err != nil {
-					t.Fatal(err)
+				for _, name := range []string{"ca.pem", "ca-bundle.pem"} {
+					if err := os.WriteFile(filepath.Join(platform, name), pem, 0o644); err != nil {
+						t.Fatal(err)
+					}
 				}
 			}
-			stageProduction(t, python, "stage", home, caseName, stub.ca, tableProject, tableTopic)
+			stageProduction(t, python, "stage", home, caseName, stub.ca, tableProject, tableTopic, owner)
 			var refreshDue time.Time
-			if caseName == "owned" {
-				hostStub := startAnthropicStub(t, "", "null", expiresIn, tool)
-				loginOnHost(t, binary, home, hostStub)
+			var proxySettings []string
+			if owned {
+				proxySettings = []string{stub.address, stub.ca}
+				loginOnHost(t, binary, cheesehost, owner, stub)
 				refreshDue = time.Now().Add((expiresIn - refreshMargin) * time.Second)
-				status, err := runSubscription(t, caseName, binary, home, "status", "")
+				status, err := runSubscription(t, caseName, binary, home, "status", "", proxySettings...)
 				var account struct {
 					LoggedIn         bool   `json:"loggedIn"`
 					AuthMethod       string `json:"authMethod"`
@@ -354,10 +400,20 @@ func TestClaudeSubscriptionStub(t *testing.T) {
 				}
 				if err != nil || json.Unmarshal([]byte(status), &account) != nil ||
 					!account.LoggedIn || account.AuthMethod != "claude.ai" || account.SubscriptionType != "max" {
-					t.Fatalf("sandbox did not pick up the host's subscription: %v\n%s", err, status)
+					t.Fatalf("owned session did not pick up the host's subscription: %v\n%s", err, status)
 				}
 			}
-			out, err := runSubscription(t, caseName, binary, home, "turn", "Write the marker")
+			out, err := runSubscription(t, caseName, binary, home, "turn", "Write the marker", proxySettings...)
+			modelMount := sessionMountNamespace(t, out)
+			if (modelMount == hostMount) != owned {
+				t.Fatalf("Claude mount namespace %s has the wrong relationship to host %s for %s", modelMount, hostMount, caseName)
+			}
+			if caseName == "metered-no-credential" {
+				if !strings.Contains(out, "the platform has no Claude login") {
+					t.Fatalf("expected the meter's missing-credential refusal: %v\n%s", err, out)
+				}
+				return
+			}
 			if err != nil || !strings.Contains(out, `"result":"Hi there!"`) {
 				t.Fatalf("expected completed tool turn: %v\n%s", err, out)
 			}
@@ -367,13 +423,24 @@ func TestClaudeSubscriptionStub(t *testing.T) {
 				t.Fatalf("expected tool to write its marker, got %q (%v)", marker, err)
 			}
 			direct, err := os.ReadFile(filepath.Join(workspace, "direct-result.txt"))
-			if err != nil || !strings.Contains(string(direct), "Failed to connect to 127.0.0.2") {
-				t.Fatalf("expected the Bash tool's direct connection to fail, got %q (%v)", direct, err)
+			if err != nil {
+				t.Fatal(err)
 			}
+			toolMount, err := os.ReadFile(filepath.Join(workspace, "tool-mount.txt"))
+			toolNamespace := strings.TrimSpace(string(toolMount))
+			if err != nil || !strings.HasPrefix(toolNamespace, "mnt:[") || toolNamespace == hostMount {
+				t.Fatalf("expected the Bash tool to run in a separate mount namespace, got %q (%v)", toolMount, err)
+			}
+			t.Logf("Mount namespaces host=%s model=%s tool=%s", hostMount, modelMount, toolNamespace)
 			t.Logf("Host listener %s -> %s; tool inside sandbox:\n%s", outside.Addr(), response.Status, direct)
-			if caseName == "owned" {
+			if owned {
+				storage, err := os.ReadFile(filepath.Join(workspace, "tool-login.txt"))
+				if err != nil || string(storage) != "login visible exit 1\n" {
+					t.Fatalf("expected the host login to be hidden from the tool, got %q (%v)", storage, err)
+				}
+				t.Logf("Bash login visibility probe: %s", storage)
 				time.Sleep(time.Until(refreshDue))
-				out, _ := runSubscription(t, caseName, binary, home, "turn", "say hi")
+				out, _ := runSubscription(t, caseName, binary, home, "turn", "say hi", proxySettings...)
 				if !strings.Contains(out, "You've hit your 5-hour limit") {
 					t.Fatalf("expected subscription limit after refresh\n%s", out)
 				}

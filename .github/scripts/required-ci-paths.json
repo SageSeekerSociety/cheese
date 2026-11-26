@@ -55,6 +55,7 @@
     "backend/tests/fixtures/wire/**",
     "backend/pyproject.toml",
     "backend/uv.lock",
+    "deploy/metering-proxy/cheese_billing_core.py",
     "deploy/metering-proxy/control_answers.json",
     "e2e/stub-anthropic.mjs",
     ".github/scripts/allow-user-namespaces.sh",
