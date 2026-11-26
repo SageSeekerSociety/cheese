@@ -13,6 +13,7 @@ import (
 	"github.com/SageSeekerSociety/cheese/cli/internal/config"
 	"github.com/SageSeekerSociety/cheese/cli/internal/devenv"
 	"github.com/SageSeekerSociety/cheese/cli/internal/service"
+	"github.com/SageSeekerSociety/cheese/cli/internal/ui"
 )
 
 type registeredModelLogin struct {
@@ -93,6 +94,12 @@ func connectModelLogin(cfgPath string) error {
 	}
 	if err := service.Control(cfgPath, "start"); err != nil {
 		return err
+	}
+	// The subscription is usable only while this service runs, and on a server
+	// the login is made over ssh: without linger it goes offline when that
+	// session closes and never returns after a reboot.
+	if err := service.KeepRunningAfterLogout(); err != nil {
+		ui.Warn("%v", err)
 	}
 	var refreshed struct {
 		Refreshed bool `json:"refreshed"`
