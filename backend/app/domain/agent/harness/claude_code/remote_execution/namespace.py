@@ -14,8 +14,16 @@ import ctypes
 import json
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
+
+if __package__:
+    from app.domain.agent.harness.claude_code.remote_execution.confinement import (
+        seatbelt_keep_only,
+    )
+else:
+    from confinement import seatbelt_keep_only
 
 # The namespace the session runs in (`enter`): mount(2), umount2(2) and
 # pivot_root(2) flags and numbers, which the standard library does not name.
@@ -44,6 +52,10 @@ def enter(target_path, argv):
     A path that cannot be placed so is refused, loudly: one that is not an
     absolute path, one under the kernel's own filesystems, and one that would
     cover something the session itself needs.
+
+    A member's own Claude Code on their own computer (`local`) has no view to
+    place: it sees the project where it is. It is still kept to its own seat
+    and room (`_keep_own`), since the machine may hold other members' seats.
     """
     target = json.loads(Path(target_path).read_text())
     seen = target["session_workspace"]
@@ -66,6 +78,13 @@ def enter(target_path, argv):
         program,
         view,
     ]
+    narrowed = target.get("seat_only") or []
+    problem = _unnarrowable(narrowed, [*needed, seen, start])
+    if problem:
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+        raise SystemExit(f"This session cannot be kept to its own seat: {problem}")
+    if target.get("local"):
+        _keep_own(narrowed, start, program, argv)
     problem = _unplaceable(seen, needed)
     if problem:
         raise SystemExit(
@@ -75,11 +94,6 @@ def enter(target_path, argv):
     if start != seen and _unplaceable(start, needed):
         # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
         raise SystemExit(f"This session cannot start at {start!r}")
-    narrowed = target.get("seat_only") or []
-    problem = _unnarrowable(narrowed, [*needed, seen, start])
-    if problem:
-        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
-        raise SystemExit(f"This session cannot be kept to its own seat: {problem}")
     _place(seen, view, Path(target_path).parent / "namespace-root")
     for cover, keep in narrowed:
         _keep_only(cover, keep)
@@ -94,6 +108,87 @@ def enter(target_path, argv):
     os.chdir(start)
     os.environ["PWD"] = start
     os.execv(program, argv)
+
+
+def _keep_own(narrowed, start, program, argv):
+    """Run a member's own Claude Code at `start`, leaving it nothing of each
+    `cover` but its `keep`, as `_keep_only` leaves a central session; every
+    other path is the machine's own.
+
+    The build replaces this process, as in `enter`, so the runner signals and
+    waits on the build itself. On macOS a Seatbelt profile does the keeping
+    (`confinement.seatbelt_keep_only`); everything else stays allowed, the
+    login Keychain `security` reads and renews among it. On Linux the user
+    and mount namespaces are made by the bubblewrap cheesehost placed
+    (`CHEESE_SESSION_BWRAP`): Ubuntu lets only a program an AppArmor profile
+    names make one, and `cheesehost sandbox allow` names that bwrap. It holds
+    them open with a process that waits, this process joins them and the
+    waiting one ends. Where that bwrap cannot make them the session does not
+    start, as a room is refused its sandbox there
+    (`bootstrap.enrolled_bubblewrap`), rather than run seeing every seat.
+    """
+    narrowed = [
+        (cover, keep)
+        for cover, keep in narrowed
+        if os.path.isdir(cover) and os.path.isdir(keep)
+    ]
+    if narrowed and sys.platform == "darwin":
+        profile = "\n".join(
+            ["(version 1)", "(allow default)", *seatbelt_keep_only(narrowed)]
+        )
+        program, argv = (
+            "/usr/bin/sandbox-exec",
+            ["/usr/bin/sandbox-exec", "-p", profile, program, *argv[1:]],
+        )
+    elif narrowed:
+        _join_kept(narrowed)
+    os.chdir(start)
+    os.environ["PWD"] = start
+    os.execv(program, argv)
+
+
+def _join_kept(narrowed):
+    """Join a user and mount namespace bubblewrap made with each `cover`
+    an empty, read-only directory but for its `keep`, bound back in place."""
+    command = [os.environ.get("CHEESE_SESSION_BWRAP", ""), "--unshare-user"]
+    # Devices as the machine has them: the build runs as it would outside.
+    command += ["--dev-bind", "/", "/"]
+    for cover, keep in narrowed:
+        command += ["--tmpfs", cover, "--bind", keep, keep, "--remount-ro", cover]
+    wait = "import os, sys; print(os.getpid(), flush=True); sys.stdin.read()"
+    try:
+        holder = subprocess.Popen(
+            [*command, "--", sys.executable, "-c", wait],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except OSError as error:
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+        raise SystemExit(
+            f"This session cannot be kept to its own seat: {error}. "
+            "cheesehost places bubblewrap when it starts."
+        ) from None
+    assert holder.stdin is not None and holder.stdout is not None
+    held = holder.stdout.readline().strip()
+    if not held.isdigit():
+        _, said = holder.communicate()
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+        raise SystemExit(
+            "This session cannot be kept to its own seat: bubblewrap could not "
+            f"make its namespaces ({said.strip()}). On Ubuntu, run "
+            "`sudo ~/.local/bin/cheesehost sandbox allow` once."
+        )
+    libc, check, _ = _syscalls()
+    for name, kind in (("user", _CLONE_NEWUSER), ("mnt", _CLONE_NEWNS)):
+        descriptor = os.open(f"/proc/{held}/ns/{name}", os.O_RDONLY)
+        try:
+            check(libc.setns(descriptor, kind), f"setns {name}")
+        finally:
+            os.close(descriptor)
+    holder.stdin.close()
+    holder.wait()
 
 
 def _unplaceable(seen, needed):

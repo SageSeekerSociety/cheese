@@ -8,13 +8,15 @@ environment, its sandbox, the work lease and the platform tools are a central
 session's. Nothing runs on the platform's session host and nothing goes
 through the metering proxy.
 
-The owner's machine has no forwarded project view and no namespace of its own
-(both are Linux's, and the session host here may be a Mac or a Windows PC).
-So when the environment is on that same machine the session sees the project
-where the executor holds it; when it is elsewhere, the session works in a
-directory of its own holding a copy of the project's instructions, skills,
-rules and agents, and its paths are rewritten to the executor's on their way
-there (`client.prepare`).
+The owner's machine has no forwarded project view (that is Linux's, and the
+session host here may be a Mac or a Windows PC). So when the environment is
+on that same machine the session sees the project where the executor holds
+it; when it is elsewhere, the session works in a directory of its own holding
+a copy of the project's instructions, skills, rules and agents, and its paths
+are rewritten to the executor's on their way there (`client.prepare`). On
+Linux and macOS it is kept to its own seat and room there, as a central
+session is on the session host (`namespace._keep_own`): the machine may hold
+other members' seats.
 
 Which machine runs the session: the one holding the model connection the
 agent was added with, and no other — a subscription's login never leaves the
@@ -100,7 +102,7 @@ class OwnerChannel(CentralChannel):
         return precheck.machine
 
     def _deferred_target(self, target: dict, *, apart: bool) -> dict:
-        # No forwarded view and no namespace on the owner's machine: the
+        # No forwarded view on the owner's machine: the
         # session sees the project at the executor's own path when the
         # executor is on this machine, and in a directory of its own when it
         # is on another (`apart`) or not yet leased.

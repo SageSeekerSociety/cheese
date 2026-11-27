@@ -115,6 +115,8 @@ def _launch_on_machine(
     launcher = tmp_path / "launch.sh"
     launcher.write_text(
         machine_launcher.launch_script(
+            # The seat the launch's own configure hole names (`device_launch`).
+            configure='SEAT="$HOME/.cheese/seats/own"\n',
             credentials=launch_holes(state="$HOME/state", own_login=True).credentials,
             prepare=f'AGENT="{agent}"\n',
             command="$AGENT",

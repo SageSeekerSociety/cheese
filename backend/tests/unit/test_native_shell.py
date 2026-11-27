@@ -1356,6 +1356,90 @@ def test_a_session_cannot_open_another_seats_tree_by_any_path(tmp_path):
     assert alices.read_text() == "alice-private\n"
 
 
+@pytest.mark.skipif(
+    sys.platform not in {"linux", "darwin"},
+    reason="Windows has nothing to keep a member's own Claude Code with",
+)
+def test_a_members_own_claude_code_reads_only_its_own_seat_room_and_runner(
+    tmp_path, monkeypatch
+):
+    """A team's one server, logged in to one subscription, runs every member's
+    teammate as their own Claude Code. A seat's memory tree holds the private
+    memory of the person its turn answers, and a runner's journal what its
+    session's tools read of it. The build, and a platform command it runs,
+    read their own seat, room and runner, and nothing of another's."""
+    from app.domain.agent.harness.claude_code.remote_execution import client
+    from tests.support import bubblewrap
+
+    owner = tmp_path.resolve()
+    homes = owner / ".cheese/home"
+    home = homes / "project/mine"
+    seats = home / ".cheese/seats"
+    runners = owner / ".cheese/harness"
+    own_state = runners / "project/mine/claude/seat"
+    private = {
+        seats / "mine/remote-session/memory/private/note.md": "mine",
+        seats / "theirs/remote-session/memory/private/note.md": "their seat",
+        homes / "project/theirs/.claude/projects/transcript.jsonl": "their room",
+        own_state / "journal.db": "my journal",
+        runners / "project/mine/claude/theirs/journal.db": "their journal",
+    }
+    for path, text in private.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text + "\n")
+    if sys.platform == "linux":
+        bubblewrap.place(owner)
+        bwrap = bubblewrap.placed(owner)
+        probe = [str(bwrap), "--unshare-user", "--dev-bind", "/", "/", "true"]
+        if not bwrap.exists() or subprocess.run(probe, check=False).returncode:
+            pytest.skip("needs a bubblewrap that makes a user namespace")
+        monkeypatch.setenv("CHEESE_SESSION_BWRAP", str(bwrap))
+    monkeypatch.setenv("CHEESE_HOMES_ROOT", str(homes))
+    monkeypatch.setenv("CHEESE_SEATS_ROOT", str(seats))
+    monkeypatch.setenv("CHEESE_RUNNERS_ROOT", str(runners))
+    monkeypatch.setenv("CHEESE_RUNNER_STATE", str(own_state))
+    read = "\n".join(
+        f"cat {shlex.quote(str(path))} 2>/dev/null || echo hidden" for path in private
+    )
+    expected = ["mine", "hidden", "hidden", "my journal", "hidden"]
+    if sys.platform == "darwin":
+        # The profile names paths, not files: nothing above them moves away.
+        moved = owner / "moved/home/project/theirs/.claude/projects/transcript.jsonl"
+        read += (
+            f"\nmv {shlex.quote(str(owner / '.cheese'))} {shlex.quote(str(owner / 'moved'))}"
+            f" 2>/dev/null; cat {shlex.quote(str(moved))} 2>/dev/null || echo hidden"
+        )
+        expected.append("hidden")
+    build = owner / "build"
+    build.write_text(
+        f'#!/bin/sh\n{read}\nexec "$CLAUDE_CODE_SHELL_PREFIX" {shlex.quote(read)}\n'
+    )
+    build.chmod(0o700)
+
+    launch = client.prepare(
+        seats / "mine/remote-session",
+        {"kind": "unavailable", "workspace": str(home), "local": True},
+        claude=str(build),
+        version=client.PINNED_VERSION,
+        home_override=str(home),
+        # A platform command hook runs here, on the build's machine.
+        base_settings={
+            "hooks": {"Stop": [{"hooks": [{"type": "command", "command": read}]}]}
+        },
+    )
+    done = subprocess.run(
+        launch["command"],
+        cwd=launch["cwd"],
+        env={**os.environ, **launch["env"]},
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.splitlines() == expected * 2, done.stdout
+
+
 def test_a_new_command_id_is_new(machine):
     ids = {f"shell-{uuid.uuid4().hex}" for _ in range(3)}
     for command_id in ids:

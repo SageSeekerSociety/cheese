@@ -321,9 +321,9 @@ def prepare(
     forwarded = target.get("kind") not in {"private", "unavailable"}
     device_forwarded = target.get("kind") in {"device", "deferred"}
     # A member's own Claude Code on their own computer (`owner_provider`): no
-    # view, no namespace. It sees the project where an executor on this machine
-    # holds it; before its lease, and with the executor elsewhere (`apart`), in
-    # a directory of its own (`context_copy`), its placeholder here.
+    # view. It sees the project where an executor on this machine holds it;
+    # before its lease, and with the executor elsewhere (`apart`), in a
+    # directory of its own (`context_copy`), its placeholder here.
     local = bool(target.get("local"))
     apart = local and bool(target.get("apart"))
     placeholder = str(directory / "workspace") if local else DEFERRED_WORKSPACE
@@ -426,17 +426,21 @@ def prepare(
         # `memoryPath`). Not in the room's home, which the room's seats share:
         # two seats can be working for two people at once.
         central_memory=str(directory / "memory"),
-        # What the session's namespace leaves it of the room's seats and of the
-        # session host's rooms (`namespace._keep_only`): its own seat, which
-        # holds its memory tree, and its own room's home. The launch names
-        # both roots (`device_launch`); a session it did not launch has none.
+        # What the session's namespace leaves it of the session host's rooms,
+        # of the room's seats and of the runners' state there
+        # (`namespace._keep_only`, `namespace._keep_own`): its own room's home,
+        # its own seat, which holds its memory tree, and its own runner's
+        # state, whose journal records what its tools read of that tree. The
+        # launch names the roots (`device_launch`); a session it did not launch
+        # has none. A room before the seats inside its home.
         seat_only=[
             [os.environ[root], str(own)]
             for root, own in (
-                ("CHEESE_SEATS_ROOT", directory.parent),
                 ("CHEESE_HOMES_ROOT", home),
+                ("CHEESE_SEATS_ROOT", directory.parent),
+                ("CHEESE_RUNNERS_ROOT", os.environ.get("CHEESE_RUNNER_STATE")),
             )
-            if os.environ.get(root) and not local
+            if os.environ.get(root) and own
         ],
         helper=[sys.executable, str(Path(__file__).resolve())],
         central_hooks=(base_settings or {}).get("hooks", {}),
@@ -661,7 +665,11 @@ def prepare(
     launch = {
         # The session enters its own namespace first, where the project is at
         # `workspace`; `cwd` is where this host holds it, for starting there.
-        "command": command if local else [*helper, "enter", str(target_path), *command],
+        # A member's own sits where it is, kept to its own seat (`enter`),
+        # except on Windows, which has nothing to keep it with.
+        "command": command
+        if local and sys.platform == "win32"
+        else [*helper, "enter", str(target_path), *command],
         "env": env,
         "cwd": start if local else str(workspace),
         "workspace": start,

@@ -99,7 +99,7 @@ steps:
 
 会话记录房间里的人都读得到（现场、原始记录、它们的逐行投影、单独取一条），而 private 只给本人看。哪一段是谁的，只按平台自己记下的结构认，从不按记录里的文字认：文字谁都写得进去（team 的索引、消息、项目里的文件），一段说自己属于某人的文字什么都证明不了。会话碰到某人的 private 只有一条路：它的文件工具读写 `private/<handle>/` 下的文件；runner 看到这一次调用时就给调用和答它的结果记上主人（`cheese.private`，调用编号 → 主人，`files.private_owner`）。所有读会话记录的路都经过 `session_record.service.read`，它必须被告知谁在读，把记着别人名字的调用和结果换成一句占位（`privacy.for_reader`），搜索也只搜换过之后的。现场还实时显示 agent 正在写的那个工具调用，参数一边流进来一边显示，这一帧发给房间里所有人：runner 用同一个判据认出落在某人 private 上的调用，参数换成存下的记录里那同一个占位（`privacy.hidden_input`），文件工具的路径还没写出来之前参数一个字都不显示（`runner.live_arguments`）；这一帧是广播，所以本人实时看到的也是占位，写完之后在会话记录里看原文。
 
-按路径认主人站得住，是因为在平台的会话主机上路径就是文件本身，一个座位也碰不到别的座位的树，三层：一，agent 跑的东西不在会话主机上执行（命令和项目工具一律在执行机上，租约落在会话主机上时拒掉，`machine/session_work.py`）；二，记忆路径上的文件工具只放行这个座位自己那棵树里、按它写的路径就是那个文件的那一次，经过树里任何一个链接的都拒（`remote_execution/client.own_memory`）；三，系统层面：会话进程跑在自己的 user + mount namespace 里（`remote_execution/namespace.enter`），这个房间的座位目录里它只看得到自己那一个，会话主机的房间目录里只看得到自己那一间（`namespace._keep_only`，根目录由启动脚本给：`CHEESE_SEATS_ROOT`、`CHEESE_HOMES_ROOT`），别的座位的树用什么路径、什么程序都打不开。
+按路径认主人站得住，是因为在平台的会话主机上路径就是文件本身，一个座位也碰不到别的座位的树，三层：一，agent 跑的东西不在会话主机上执行（命令和项目工具一律在执行机上，租约落在会话主机上时拒掉，`machine/session_work.py`）；二，记忆路径上的文件工具只放行这个座位自己那棵树里、按它写的路径就是那个文件的那一次，经过树里任何一个链接的都拒（`remote_execution/client.own_memory`）；三，系统层面：会话进程跑在自己的 user + mount namespace 里（`remote_execution/namespace.enter`），这个房间的座位目录里它只看得到自己那一个，会话主机的房间目录里只看得到自己那一间，各座位 runner 的状态目录（日志里记着工具读到的记忆）里只看得到自己的（`namespace._keep_only`，根目录由启动脚本给：`CHEESE_SEATS_ROOT`、`CHEESE_HOMES_ROOT`、`CHEESE_RUNNERS_ROOT`），别的座位的树用什么路径、什么程序都打不开。成员自己登录的 Claude Code 跑在他的设备上，那台设备上也可能有别的成员的座位，所以在 Linux 和 macOS 上同样这样隔开（`namespace._keep_own`）；同一台设备上房间的沙箱看不到房间家目录里的座位目录（`confinement.SEATS`）。Windows 上没有这一层。
 
 ## 写入、更新、删除 {#write}
 

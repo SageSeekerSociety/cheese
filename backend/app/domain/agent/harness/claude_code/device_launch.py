@@ -584,6 +584,14 @@ case "$CLAUDE_STATE" in
 esac
 mkdir -p "$CLAUDE_STATE"
 chmod 700 "$CLAUDE_STATE"
+# Every runner's state on the machine is under one root, and its journal
+# records what its session's tools read, a seat's memory among it: the session
+# is kept to its own (`remote_execution/namespace`).
+CHEESE_RUNNERS_ROOT="$REAL_HOME/{ROOT_PLACEHOLDER}/harness"
+case "$CLAUDE_STATE" in
+  "$CHEESE_RUNNERS_ROOT/"*)
+    export CHEESE_RUNNERS_ROOT CHEESE_RUNNER_STATE="$CLAUDE_STATE" ;;
+esac
 # The runner is unpacked, not run from its archive: Python keeps no compiled
 # modules for a zip, so every start compiled the runner again, about half of
 # its start. Unpacked into a directory named by the archive's digest, it is
@@ -745,7 +753,12 @@ cheese_launch_phase credentials_selected
 # room's HOME it finds no keychain and the session is not logged in. The
 # `security` the session finds runs with the machine's HOME, so the session's
 # own HOME stays the room's. An agent's own `security` reaches the owner's
-# keychain the same way, which its owner's machine already lets it do.
+# keychain the same way, which its owner's machine already lets it do. It is
+# the seat's: it names this seat's login, and the room's sandbox, which shares
+# the room's HOME, can neither see nor replace what is in a seat.
+#
+# On Linux the session is kept to its own seat with the bubblewrap cheesehost
+# placed (`remote_execution/namespace._keep_own`).
 #
 _OWN_LOGIN_CREDENTIALS = f"""\
 unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
@@ -755,17 +768,20 @@ case "${{{OWN_LOGIN_ID}:?which login this session signs in with}}" in
 esac
 export CLAUDE_SECURESTORAGE_CONFIG_DIR="$OWN_LOGIN"
 [ -n "${{USER:-}}" ] || export USER="$(id -un)"
+if [ "$(uname -s)" = Linux ]; then
+  export CHEESE_SESSION_BWRAP="$REAL_HOME/{ROOT_PLACEHOLDER}/runtime/bubblewrap/bwrap"
+fi
 if [ "$(uname -s)" = Darwin ] && _security="$(command -v security)"; then
   if [ -x "$OWN_LOGIN/{CLAUDE_KEYCHAIN_DIR}/security" ]; then
     _security="$OWN_LOGIN/{CLAUDE_KEYCHAIN_DIR}/security"
   fi
-  mkdir -p "$HOME/.cheese/keychain"
-  cat > "$HOME/.cheese/keychain/security" <<KEYCHAIN
+  mkdir -p "$SEAT/keychain"
+  cat > "$SEAT/keychain/security" <<KEYCHAIN
 #!/bin/sh
 HOME='$REAL_HOME' exec '$_security' "\\$@"
 KEYCHAIN
-  chmod +x "$HOME/.cheese/keychain/security"
-  export PATH="$HOME/.cheese/keychain:$PATH"
+  chmod +x "$SEAT/keychain/security"
+  export PATH="$SEAT/keychain:$PATH"
 fi
 if [ -n "${{{OWN_MODEL}:-}}" ]; then export ANTHROPIC_MODEL="${{{OWN_MODEL}}}"; fi
 unset {OWN_MODEL}

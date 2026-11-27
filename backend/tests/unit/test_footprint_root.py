@@ -107,6 +107,14 @@ def test_every_side_of_a_sandbox_names_the_same_helper_cgroup_and_resolvers():
     assert ran == {f"{bootstrap.SANDBOX_TOOLS}/{name}" for name in bootstrap.HOST_TOOLS}
 
 
+def test_a_rooms_sandbox_hides_the_seats_where_the_launch_puts_them():
+    """The launch puts each build's seat inside the room's home
+    (`device_launch`, `place.SEATS_DIR`), and the room's sandbox hides them
+    by its own copy of the name. Drift is silent: the sandbox would hide a
+    directory nothing is in, and leave every seat's private memory readable."""
+    assert confinement.SEATS == f"{footprint_root()}/{place.SEATS_DIR}"
+
+
 @pytest.mark.parametrize("total_mb", [2048, 4096, 8192, 16384, 65536])
 def test_the_pool_counts_the_sandbox_memory_the_helper_allows(total_mb):
     """The pool places sandboxes by the memory the host's helper lets them hold
