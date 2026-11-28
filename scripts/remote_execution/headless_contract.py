@@ -2089,14 +2089,14 @@ def refusal(text):
 def session_starts(folder):
     """Every run of the claiming scenario's SessionStart hook, each from its
     own file: the directory it ran in, then the hook input the build gave it.
-    A file not yet complete is not counted."""
+    A run whose file is not yet complete is counted, with `given` None."""
     runs = []
     for path in sorted(folder.glob("*")) if folder.is_dir() else []:
+        where, _, given = path.read_text().partition("\n")
         try:
-            where, given = path.read_text().split("\n", 1)
             runs.append((where, json.loads(given)))
-        except (OSError, ValueError):
-            pass
+        except ValueError:
+            runs.append((where, None))
     return runs
 
 
@@ -2138,6 +2138,11 @@ def claiming(binary, root):
     claimed_cwd = root / "claiming-claimed"
     claimed_cwd.mkdir()
     workspace(claimed_cwd)
+    # The refused claim names a cwd of its own, so a hook it starts, however
+    # late it lands, is not read as the valid claim's.
+    refused_cwd = root / "claiming-refused"
+    refused_cwd.mkdir()
+    workspace(refused_cwd)
     settings = {
         "hooks": {
             "SessionStart": [
@@ -2195,7 +2200,7 @@ def claiming(binary, root):
         refused = session.control(
             {
                 "subtype": "claim_session",
-                "cwd": str(claimed_cwd),
+                "cwd": str(refused_cwd),
                 "env": {"CHEESE_TOPIC": "not-claimable"},
             }
         )
@@ -2252,7 +2257,10 @@ def claiming(binary, root):
         # The claim answers before its SessionStart hook has run; the hook is
         # the claim's, so it runs with no message sent.
         answered = time.monotonic()
-        while not session_starts(ran_here) and time.monotonic() < answered + HOOK_S:
+        while time.monotonic() < answered + HOOK_S:
+            hooked = session_starts(ran_here)
+            if hooked and all(given is not None for _, given in hooked):
+                break
             time.sleep(0.1)
         hooked = session_starts(ran_here)
         hook_ms = round((time.monotonic() - answered) * 1000)
@@ -2263,6 +2271,7 @@ def claiming(binary, root):
             and bool(hooked)
             and all(
                 where == str(claimed_cwd.resolve())
+                and given is not None
                 and given.get("hook_event_name") == "SessionStart"
                 and given.get("session_id") == session_id
                 for where, given in hooked
@@ -2275,7 +2284,7 @@ def claiming(binary, root):
                         {
                             "ran_in": where,
                             **{
-                                key: given.get(key)
+                                key: (given or {}).get(key)
                                 for key in ("hook_event_name", "source", "session_id")
                             },
                         }
