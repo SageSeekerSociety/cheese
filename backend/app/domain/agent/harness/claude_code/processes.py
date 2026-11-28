@@ -114,9 +114,14 @@ def _processes() -> list[tuple[int, int]]:
                 continue
             pairs.append((int(entry.name), int(parent)))
         return pairs
+    # By path: in the runner, PATH is the session's, which starts with the
+    # room's `$HOME/.cheese`, and its sandbox can write that directory.
     try:
         listing = subprocess.run(
-            ["ps", "-axo", "pid=,ppid="], capture_output=True, text=True, timeout=10
+            ["/bin/ps", "-axo", "pid=,ppid="],
+            capture_output=True,
+            text=True,
+            timeout=10,
         ).stdout
     except (OSError, subprocess.TimeoutExpired):
         return []

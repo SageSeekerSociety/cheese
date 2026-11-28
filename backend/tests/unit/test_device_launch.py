@@ -919,6 +919,82 @@ def test_a_machine_with_no_python_of_the_platforms_starts_nothing_and_says_so(
     assert "the connector has placed no Python on this machine" in result.stderr
 
 
+def test_a_launch_runs_nothing_the_room_put_in_its_home(tmp_path):
+    """The room's sandbox can write the room's `$HOME/.cheese`, and everything
+    outside that sandbox runs as the machine's owner. So nothing there is
+    looked up in it: not what the launch runs to bring the tunnel and the
+    preview up or to ask tmux for its session, not the `claude` it checks, not
+    the Python it starts the environment runner, the runner and the executor's
+    client on (the connector's, by path),
+    and not what Claude Code itself runs by name on the host, such as `git` or
+    the platform's `cheese`."""
+    from app.domain.project.environment import EnvironmentConfig
+
+    owner, session, work, claude, env = _machine(tmp_path)
+    # Claude Code runs programs of its own by name on the host, outside the
+    # sandbox: git for the checkout's state, and whatever it is told to.
+    script = claude.read_text().replace(
+        "#!/bin/sh\n",
+        "#!/bin/sh\ngit --version >/dev/null 2>&1\n"
+        'command -v cheese > "$(dirname "$0")/ran.cheese" || :\n'
+        "cheese --help >/dev/null 2>&1\n",
+        1,
+    )
+    claude.write_text(script)
+    platform = Path(env["CHEESE_PYTHON"])
+    tmux = tmp_path / "bin/tmux"
+    tmux.write_text("#!/bin/sh\necho room-session\n")
+    tmux.chmod(0o755)
+    env["PATH"] = f"{platform.parent}:{env['PATH']}"
+    env.update(
+        CHEESE_TUNNEL_URL="ws://127.0.0.1:9/llm/tunnel",
+        CHEESE_CONNECT_TOKEN="connect-token",
+        CHEESE_PREVIEW_URL="ws://127.0.0.1:9/preview",
+        TMUX=f"{tmp_path}/tmux.sock,1,0",
+        TMUX_PANE="%1",
+        CHEESE_ENVIRONMENT=json.dumps(
+            EnvironmentConfig(setup_script="echo set up > setup").snapshot()
+        ),
+    )
+    room = session / ".cheese"
+    room.mkdir(parents=True)
+    # A preview an agent of the room declared earlier (`cheese serve`).
+    (room / "cheese-preview.port").write_text("8000\n")
+    planted = tmp_path / "planted-ran"
+    names = (
+        "python3", "claude", "sh", "tmux", "cat", "chmod", "mv", "cp", "rm",
+        "mkdir", "cksum", "cut", "nohup", "tail", "head", "awk", "sort", "sed",
+        "grep", "id", "uname", "git", "ps", "cheese", "bash", "env",
+    )  # fmt: skip
+    for name in names:
+        (room / name).write_text(
+            f'#!/bin/sh\necho {name} >> "{planted}"\n'
+            f'PATH="{env["PATH"]}" exec {name} "$@"\n'
+        )
+        (room / name).chmod(0o755)
+
+    try:
+        result = _launch(tmp_path, env, system_prompt="be kind")
+    finally:
+        pid = room / "cheese-preview.pid"
+        if pid.exists():
+            subprocess.run(["kill", pid.read_text().strip()], check=False)
+
+    assert result.returncode == 0, result.stderr
+    assert (claude.parent / "ran.args").exists()
+    assert (work / "setup").read_text() == "set up\n"
+    # The launch writes the platform's CLI into the room's directory, where the
+    # room can replace it once the launch is done: the session finds none there.
+    found = (claude.parent / "ran.cheese").read_text().strip()
+    assert not found.startswith(str(room)), found
+    assert (room / "environment-session.json").exists()
+    assert pid.exists()
+    ran = (platform.parent.parent / "ran").read_text().splitlines()
+    assert any(line.startswith("-I -S ") and "/runner-" in line for line in ran), ran
+    assert any("/remote-execution/client.py bootstrap " in line for line in ran), ran
+    assert (planted.read_text().split() if planted.exists() else []) == []
+
+
 def test_the_session_starts_with_the_projects_models_as_its_subagent_types(tmp_path):
     """Claude Code reads its subagent definitions once, as it starts, so the
     launch writes the ones this session is offered before starting it, and

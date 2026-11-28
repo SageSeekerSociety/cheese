@@ -70,6 +70,7 @@ def _launch_on_machine(
     chosen_model: str | None = None,
     seat: str = "own",
     planted: tuple[str, ...] = (),
+    machine_dir: str = "machine-bin",
 ) -> dict:
     """Run the launcher the way a machine does, with the platform asking for
     Claude's ``opus`` on the machine's login ``login_id``, and return the
@@ -85,6 +86,9 @@ def _launch_on_machine(
 
     ``seat`` is the room's seat it takes; a second launch into the same
     ``tmp_path`` is another seat's of the same room on the same machine.
+
+    ``machine_dir`` is where, under ``tmp_path``, the machine keeps its
+    programs (``mac``'s `uname` and `security`), first on its PATH.
 
     ``planted`` names programs the room's own commands put in the room's
     ``$HOME/.cheese``, which its sandbox can write: each one, run, says so in
@@ -148,8 +152,8 @@ def _launch_on_machine(
         **({OWN_LOGIN_ID: login_id} if login_id is not None else {}),
     }
     if mac:
-        machine = tmp_path / "machine-bin"
-        machine.mkdir(exist_ok=True)
+        machine = tmp_path / machine_dir
+        machine.mkdir(parents=True, exist_ok=True)
         (machine / "uname").write_text("#!/bin/sh\necho Darwin\n")
         (machine / "security").write_text(
             f'#!/bin/sh\nprintf %s "$HOME" > "{keychain_home}"\n'
@@ -314,6 +318,15 @@ def test_the_keychain_lookup_runs_nothing_the_room_put_in_its_home(tmp_path, mov
     assert seen["_migrated_keychain_used"] is moved
     assert seen["_keychain_home"] == seen["_home"]
     assert seen["_planted_ran"] == []
+
+
+def test_a_mac_whose_paths_hold_a_quote_still_reads_its_owners_keychain(tmp_path):
+    """A directory on the machine's PATH may be named with any character, a
+    quote among them (`Developer's Tools/bin`), and so may the `security` found
+    there: the seat's wrapper, which is read as shell, still runs it."""
+    seen = _launch_on_machine(tmp_path, mac=True, machine_dir="Developer's Tools/bin")
+
+    assert seen["_keychain_home"] == seen["_home"]
 
 
 def test_team_selected_model_reaches_the_process_using_a_subscription(tmp_path):

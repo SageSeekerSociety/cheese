@@ -764,12 +764,11 @@ cheese_launch_phase credentials_selected
 # keychain the same way, which its owner's machine already lets it do. It is
 # the seat's: it names this seat's login, and the room's sandbox, which shares
 # the room's HOME, can neither see nor replace what is in a seat
-# (`confinement.SEATS`), and it goes in front of the room's own directory on
-# the session's PATH (`SESSION_PATH`). It runs on the machine's own search path
-# (`REAL_PATH`), as this block does on the launch's, which never holds the
-# room's: the room's sandbox can write the `$HOME/.cheese` the session's own
-# PATH starts with, and a `security`, or any other program, put there would
-# otherwise run as the machine's owner. The one other `security` it may run is
+# (`confinement.SEATS`), and it goes first on the session's PATH
+# (`SESSION_PATH`). It runs on the machine's own search path (`REAL_PATH`), as
+# this block does, which never holds the room's `$HOME/.cheese`: the room's
+# sandbox can write that, and a `security`, or any other program, put there
+# would run as the machine's owner. The one other `security` it may run is
 # the one the connector put in a moved login (`CLAUDE_KEYCHAIN_DIR`), under
 # the machine's home, where no room's sandbox can write.
 #
@@ -798,12 +797,15 @@ if [ "$(uname -s)" = Darwin ] && _security="$(command -v security)"; then
     _security="$OWN_LOGIN/{CLAUDE_KEYCHAIN_DIR}/security"
   fi
   mkdir -p "$SEAT/keychain"
-  cat > "$SEAT/keychain/security" <<KEYCHAIN
-#!/bin/sh
-HOME='$REAL_HOME' PATH='$REAL_PATH' exec '$_security' "\\$@"
-KEYCHAIN
+  # The wrapper is read as shell, and a machine's paths may hold any
+  # character (`Developer's Tools`): each value is written single-quoted, with
+  # its own quotes as '\\''.
+  _quoted() {{ printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\\\\\''/g")"; }}
+  printf '#!/bin/sh\\nHOME=%s PATH=%s exec %s "$@"\\n' \\
+    "$(_quoted "$REAL_HOME")" "$(_quoted "$REAL_PATH")" "$(_quoted "$_security")" \\
+    > "$SEAT/keychain/security"
   chmod +x "$SEAT/keychain/security"
-  SESSION_PATH="$SEAT/keychain:$SESSION_PATH"
+  SESSION_PATH="$SEAT/keychain${{SESSION_PATH:+:$SESSION_PATH}}"
 fi
 if [ -n "${{{OWN_MODEL}:-}}" ]; then export ANTHROPIC_MODEL="${{{OWN_MODEL}}}"; fi
 unset {OWN_MODEL}
