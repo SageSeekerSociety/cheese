@@ -21,7 +21,9 @@ import sys
 import tarfile
 import urllib.request
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -32,11 +34,17 @@ from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import mint_session_token
+from app.domain.agent.owner_provider import OwnerChannel
 from app.domain.agent.place import seat_key, seat_name
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.device.supply import Supply
+from app.domain.device.wiring import sql_device_service
+from app.domain.session_record import service as session_records
 from app.domain.topic.models import Topic
-from tests.integration.conftest import post_project, session_auth_headers
+from tests.integration.conftest import post_project, registered, session_auth_headers
 from tests.integration.test_kept_room_files import Bucket
+from tests.integration.test_own_agent_machine import _own_session
+from tests.support.devices import enrollment_team
 from tests.support.environments import remember_place
 
 pytestmark = pytest.mark.anyio
@@ -481,3 +489,126 @@ async def test_a_conversation_on_a_computer_that_is_away_starts_anew_at_once(
     assert [b["meta"]["i18n"]["content"]["key"] for b in told] == [
         "conversationNotCarriedOffline"
     ]
+
+
+# --- whose private content it holds -------------------------------------------
+
+
+async def _stamped(factory, conversation, session_id, *owners, private_text=()):
+    """Records of session ``session_id`` in which the runner stamped a private
+    memory call of each of ``owners`` and a private input block of each of
+    ``private_text``."""
+    stream = SimpleNamespace(
+        conversation_id=conversation, agent_handle=AGENT, harness="claude-code"
+    )
+    rows = [
+        {
+            "sequence": n + 1,
+            "at": datetime.now(UTC).isoformat(),
+            "record": {
+                "type": "assistant",
+                "session_id": session_id,
+                "message": {"role": "assistant", "content": []},
+                "cheese": stamp,
+            },
+        }
+        for n, stamp in enumerate(
+            [{"private": {f"call-{owner}": owner}} for owner in owners]
+            + [{"private_text": {"0": owner}} for owner in private_text]
+        )
+    ]
+    await session_records.append(factory, stream, rows)
+
+
+async def _laptop(client, owner) -> str:
+    async with client.test_factory() as db:
+        devices = sql_device_service(db)
+        user_id = await registered(db, owner)
+        code = await devices.start(f"{owner}-laptop")
+        device = await devices.approve(
+            code,
+            owner_user_id=user_id,
+            supply=Supply.self_hosted,
+            team_id=await enrollment_team(devices, user_id),
+        )
+        await db.commit()
+        return device.device_id
+
+
+async def _may_carry(client, topic, target) -> bool:
+    async with client.test_factory() as db:
+        return await session_carry.may_carry(
+            db,
+            SessionRef(uuid.uuid4(), topic, AGENT, harness="claude-code"),
+            TOKEN,
+            target=target,
+        )
+
+
+async def test_a_conversation_holding_another_members_private_content_stays_off_a_members_computer(
+    client, room, monkeypatch
+):
+    monkeypatch.setattr(settings, "agent_session_device_id", CENTER)
+    _, topic = room
+    alices = await _laptop(client, "alice")
+    await _stamped(client.test_factory, topic, TOKEN, "alice", private_text=["bob"])
+
+    assert await _may_carry(client, topic, alices) is False
+    # The platform's session host is trusted with everyone's.
+    assert await _may_carry(client, topic, CENTER) is True
+
+
+async def test_a_conversation_holding_only_its_new_readers_private_content_may_go(
+    client, room, monkeypatch
+):
+    monkeypatch.setattr(settings, "agent_session_device_id", CENTER)
+    _, topic = room
+    alices = await _laptop(client, "alice")
+    await _stamped(client.test_factory, topic, TOKEN, "alice", private_text=["alice"])
+    # Another conversation of the room held someone else's: not this one.
+    await _stamped(client.test_factory, topic, "another-conversation", "bob")
+
+    assert await _may_carry(client, topic, alices) is True
+
+
+async def test_a_conversation_holding_only_its_owners_content_follows_to_their_laptop(
+    client, tmp_path, bucket, monkeypatch
+):
+    """Bob's own Claude Code ran on the platform's computer, where only Bob's
+    notes went into its conversation. It now runs on Bob's laptop, and the
+    conversation goes there with it."""
+    own = await _own_session(client, environment_on="alice")
+    monkeypatch.setattr(settings, "agent_session_device_id", CENTER)
+    computers = Computers(tmp_path, CENTER, own.bobs_laptop)
+    async with client.test_factory() as db:
+        sessions = AgentSessionService(db)
+        await sessions.remember(
+            conversation_id=own.topic_id,
+            agent_handle=own.handle,
+            resume_token=TOKEN,
+            harness="claude-code",
+            generation=0,
+        )
+        row = await sessions.ensure(own.topic_id, own.handle, harness="claude-code")
+        resource = row.runtime_location["resource_id"]
+        row.runtime_location = {
+            "device_id": CENTER,
+            "resource_id": resource,
+            "channel": "device",
+            "runtime": {"agent_handle": own.handle, "state": "/somewhere"},
+        }
+        await db.commit()
+    await _stamped(client.test_factory, own.topic_id, TOKEN, private_text=["bob"])
+    sent = _conversation(computers.projects(CENTER, own.project_id, resource))
+    channel = OwnerChannel(
+        DeviceChannel(hub=computers, session_factory=client.test_request_factory)
+    )
+    session = SessionRef(
+        own.project_id, own.topic_id, own.handle, harness="claude-code"
+    )
+
+    started = _start(client, channel, session)
+
+    assert started.device_id == own.bobs_laptop
+    assert started.retired is None
+    assert _held(computers.projects(own.bobs_laptop, own.project_id, resource)) == sent

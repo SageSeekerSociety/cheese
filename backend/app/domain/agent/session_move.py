@@ -70,10 +70,12 @@ def host_move(row: AgentSession, *, center: str, resource: str) -> HostMove | No
 
 #: What the room is told, by why the conversation did not come along
 #: (`session_carry`): the computer it was on is away, it is over the size a
-#: carry takes, or anything else stopped it.
+#: carry takes, it holds other members' private content, or anything else
+#: stopped it.
 _SAID = {
     session_carry.OFFLINE: "conversationNotCarriedOffline",
     session_carry.TOO_LARGE: "conversationNotCarriedTooLarge",
+    session_carry.NOT_ALLOWED: "conversationNotCarriedPrivate",
 }
 
 

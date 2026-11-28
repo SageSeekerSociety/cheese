@@ -82,6 +82,11 @@ const NOT_CARRIED_REOPENED = notCarried(
   '重新打开后，<@cheese>之前的对话没能接上，这次从新对话开始。之前的消息都还在，它会自己查看'
 )
 
+const NOT_CARRIED_PRIVATE = notCarried(
+  'conversationNotCarriedPrivate',
+  '<@cheese>换到另一台电脑上运行，之前的对话里有其他成员的个人记忆，不能带到这台电脑上，这次从新对话开始。之前的消息都还在，它会自己查看'
+)
+
 const CONVERSATION_NOT_CARRIED: Block = {
   id: 'catalog-conversation-not-carried',
   conversation_id: 'demo',
@@ -442,6 +447,12 @@ export const CONVERSATION_ENTRIES: CatalogEntry[] = [
         note: '对话要从原来那台电脑带过去，那台不在线时不等它，直接从新对话开始，并说出原因。',
         props: upgradeNotice(NOT_CARRIED_OFFLINE),
         expect: '原来那台电脑不在线',
+      },
+      {
+        name: '换到某位成员的电脑：对话里有别人的个人记忆',
+        note: '对话里有其他成员的个人记忆时，不带到某位成员自己的电脑上，从新对话开始并说出原因。',
+        props: upgradeNotice(NOT_CARRIED_PRIVATE),
+        expect: '其他成员的个人记忆',
       },
       {
         name: '重新打开后接不上之前的对话',

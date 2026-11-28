@@ -151,8 +151,8 @@ class CentralChannel(DeviceChannel):
         """Bring the conversation ``move`` leaves behind to where the session
         starts: None once it is there, else why not (`session_carry`)."""
         async with (self._session_factory or async_session_factory)() as db:
-            allowed = await session_carry.exposure_allows(
-                db, move.origin[0], move.target[0]
+            allowed = await session_carry.may_carry(
+                db, session, move.token, target=move.target[0]
             )
         if not allowed:
             return session_carry.NOT_ALLOWED

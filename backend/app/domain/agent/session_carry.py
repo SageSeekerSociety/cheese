@@ -36,6 +36,8 @@ from app.domain.agent import carry_files
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.place import seat_key, seat_name
 from app.domain.device.models import DeviceRow
+from app.domain.session_record import service as session_records
+from app.domain.user.services import handles_by_ids
 
 logger = logging.getLogger(__name__)
 
@@ -66,19 +68,28 @@ class Where:
     resource: str
 
 
-async def exposure_allows(db: AsyncSession, origin: str, target: str) -> bool:
-    """Whether a conversation on ``origin`` may be read on ``target`` without
-    anyone new reading it.
+async def may_carry(
+    db: AsyncSession, session: SessionRef, token: str, *, target: str
+) -> bool:
+    """Whether conversation ``token`` may be carried onto ``target`` without
+    anyone reading what is not theirs.
 
     The deployment's session host is trusted with every member's content, kept
     to its own seat: anything may be carried onto it. A member's own computer
-    is read by its owner: a conversation may move between two computers of the
-    same owner."""
+    is read by its owner, so a conversation goes there only when every piece
+    of private content the runner stamped in it is that owner's (the rule
+    `turn_speakers` holds a turn to). The stamps are the platform's own record
+    of whose content entered the conversation (`session_record.privacy`)."""
     if target == settings.agent_session_device_id:
         return True
-    rows = {device: await db.get(DeviceRow, device) for device in {origin, target}}
-    owners = {row.owner_user_id if row is not None else None for row in rows.values()}
-    return len(owners) == 1 and None not in owners
+    row = await db.get(DeviceRow, target)
+    if row is None or row.owner_user_id is None:
+        return False
+    owner = set(await handles_by_ids(db, [row.owner_user_id]))
+    if not owner:
+        return False
+    stamped = await session_records.private_owners(db, session.conversation_id, token)
+    return stamped <= owner
 
 
 async def carry(

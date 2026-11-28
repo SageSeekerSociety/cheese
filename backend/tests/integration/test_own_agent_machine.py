@@ -36,6 +36,7 @@ from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.machine import session_work as work_lease
 from app.domain.project.models import Project
+from app.domain.session_record import service as session_records
 from app.domain.topic.models import Topic
 from app.domain.user.models import User
 from tests.integration.conftest import post_project, session_auth_headers
@@ -572,3 +573,81 @@ async def test_a_conversation_left_on_another_computer_is_not_resumed_and_the_ro
     assert first.retired == "conversation-1"
     # Started again on the laptop, it is where its conversation is now.
     assert client.portal.call(start).retired is None
+
+
+async def test_a_conversation_holding_alices_notes_does_not_go_to_bobs_laptop(
+    client, monkeypatch
+):
+    """Bob's own Claude Code ran on the platform's computer, and Alice's
+    `communication` notes went into its conversation there. Now it runs on
+    Bob's laptop, which Bob reads: the conversation stays where it is, and the
+    room is told why its teammate starts a new one."""
+    own = await _own_session(client, environment_on="alice")
+    monkeypatch.setattr(settings, "agent_session_device_id", "platform-host")
+    async with client.test_factory() as db:
+        sessions = AgentSessionService(db)
+        await sessions.remember(
+            conversation_id=own.topic_id,
+            agent_handle=own.handle,
+            resume_token="conversation-1",
+            harness="claude-code",
+            generation=0,
+        )
+        row = await sessions.ensure(own.topic_id, own.handle, harness="claude-code")
+        row.runtime_location = {
+            **row.runtime_location,
+            "device_id": "platform-host",
+            "channel": "central",
+        }
+        await db.commit()
+    await session_records.append(
+        client.test_factory,
+        SimpleNamespace(
+            conversation_id=own.topic_id,
+            agent_handle=own.handle,
+            harness="claude-code",
+        ),
+        [
+            {
+                "sequence": 1,
+                "at": datetime.now(UTC).isoformat(),
+                "record": {
+                    "type": "user",
+                    "session_id": "conversation-1",
+                    "message": {"role": "user", "content": []},
+                    "cheese": {"private_text": {"0": "alice"}},
+                },
+            }
+        ],
+    )
+    channel = OwnerChannel(
+        DeviceChannel(hub=_hub(), session_factory=client.test_request_factory)
+    )
+    session = SessionRef(
+        own.project_id, own.topic_id, own.handle, harness="claude-code"
+    )
+
+    async def start():
+        precheck = await channel.precheck(session, needs_place=True)
+        token = mint_session_token(own.project_id, own.topic_id, precheck.agent_handle)
+        async with channel.prepare_session(
+            session=session, token=token, env={}, precheck=precheck
+        ) as prepared:
+            return prepared
+
+    started = client.portal.call(start)
+
+    assert started.retired == "conversation-1"
+    blocks = client.get(
+        f"/topics/{own.topic_id}/blocks", headers=session_auth_headers("alice")
+    ).json()["data"]["data"]
+    said = [
+        b["meta"]["i18n"]["content"]["key"]
+        for b in blocks
+        if (b.get("meta") or {}).get("event_type") == "conversation_not_carried"
+    ]
+    assert said == ["conversationNotCarriedPrivate"]
+    # Nothing of it was asked of the platform's computer.
+    assert not any(
+        call.args[0] == "platform-host" for call in channel._hub.exec.await_args_list
+    )
