@@ -73,7 +73,7 @@
 │                              后端（L0 的唯一所有者）                            │
 │                                                                               │
 │   参与者 · 席位 · 项目 · 房间 · 活 · 事件           ← 记录，不可再生             │
-│   会话（身份 + 续跑凭据）                            ← L1，可搬不可重开          │
+│   会话（身份 + 续跑凭据）                            ← L1                       │
 │   记忆（三个目录，全随 agent 实例关在项目里）         ← L0                       │
 │   平台文案目录（所有用户可见的句子都在这里）                                     │
 │                                                                               │
@@ -147,7 +147,7 @@
 | **I15** | **没有项目记忆池**（结论 7）；**记忆是平台侧的文件**（结论 42） | 三条：①`MemoryScope.project` 在全仓零命中；②人和 agent 共同看的东西全部是 1.12 那几份文档，每一份都有一个指名的所有者；③一条记忆是一个文件，**自带「关于谁」「何时观察到」两项元数据**，落在「一个实例一个目录、目录下按关于谁分三个子目录」那棵树上，项目源仓库里零命中，版本由平台给，**索引由平台维护**，**读它的路径走平台工具、不经过工作区那双手** |
 | **I16** | **agent 关于每个人的知识在任何房间都可读，怎么用是它的判断**（结论 54 修订结论 9）；**写入按「关于谁」归目录**（结论 42） | 六条：①读关于某个人的池不以「他在不在这个房间」为条件——守卫：取记忆的代码里没有一处按在场名册过滤池；②跨项目仍然读不到：池按 (实例, 项目) 关着（I15），放开的是房间这一层，不是项目这一层；③agent 对人记了什么，这个人在这个 agent 的 profile「记忆」页上读得到、翻得了历史、标得了、删得掉；④任何提到某个人的判断只能落进那个人的那个子目录，落在项目或自己那两个目录里就是写错；⑤关于某个人的文件只对当事人可见——另一个项目成员在同一个记忆页上列不出它，**这是隐私那一侧仅剩的一条**（结论 54）；⑥记忆的改动不进房间时间线、不产生通知，搜索默认不覆盖它 |
 | **I17** | Project and teammate model selection | Project main and native subagent defaults are separate. Teammates may override the main default with an available model. The prepared turn keeps its model; configuration changes apply at the next task boundary. Reported usage records the actual model. Harness and effort remain outside teammate configuration. |
-| **I18** | 会话可迁移，而迁移是搬运不是重开；**transcript 在会话机上，平台不另存一份** | 把一个房间的会话搬到另一台会话机，下一轮 agent 能引用上一轮自己说过的话；搬运的源是原来那台会话机上的 transcript |
+| **I18** | Claude Code 从会话机磁盘上的 transcript 续跑（6.4） | 会话机上没有对应的 transcript 时，Claude Code 开始一段新对话 |
 | **I18b** | **活与子 agent 不声明自己的地点**（结论 38，按结论 60 修订） | 活与子 agent 不声明自己的地点——它们用**做这条活的那个 agent 的会话**解析出的租约（原生子 agent 用父进程那一份，结论 43）；活、轮次与子 agent 的数据结构上没有 place / placement 字段 |
 | **I19** | 销毁前先取回（结论 24、39） | 任何回收在删之前必须拿到两张收据：记忆整理已跑、未提交工作已推。**休眠不是归还**：它不要收据，也不得触发这两张里的任何一张，reconnect window 内醒来是同一台机器、同一份工作区 |
 | **I19b** | 任何只在平台上存在的东西——源仓库、资料库、产物清单、文档——都有一条**不经平台界面也能取回**的导出通路（结论 27） | 对每一类各断言一条导出路径存在，且产出可校验（仓库能 clone 出来并对上 HEAD、资料库与产物按原名取回并对上校验和、文档导出后能重新读回） |
@@ -516,8 +516,8 @@ skill 集合、提示词变体、记忆池，都该从上面五句推出来，�
 本节以下每一处「地点」都只作那一义。
 
 - **拥有**：会话身份、续跑凭据（对平台不透明）、它的代际号、
-  **这条会话的进程现在跑在哪台会话机上**，以及**它自己那份工作机器租约**——两样都是一会话一条、
-  各自可迁移（6.4）[已定] 结论 60（修订结论 56）；活不声明它们，轮次也不声明它们。
+  **这条会话的进程现在跑在哪台会话机上**，以及**它自己那份工作机器租约**。两样都是一会话一条
+  [已定] 结论 60（修订结论 56）；活不声明它们，轮次也不声明它们。
 - **不拥有**：**机器**本身——它持有的是一份有期限、可归还的租约（1.7），不是那台机器。
   会话记在平台上，跑在某个地点上；地点换了，会话还是同一个。
 - **生**：第一次有人点名这个 agent 时；**它的建立不需要任何执行机在线**——这是「agent 先启动」的可检查形式。
@@ -528,7 +528,7 @@ skill 集合、提示词变体、记忆池，都该从上面五句推出来，�
 | 这一条 | 挂在谁身上 | 有几条 | 它说的事 |
 |---|---|---|---|
 | **工作机器租约** | **这条会话** | 一会话一条 | 这条会话的活在哪双手上干（1.7）；房间的 `compute_config` 只是新会话的默认值 |
-| **会话运行位置** | **这条会话** | 一会话一条 | 这条会话的进程在哪台会话机上，各自可迁移（6.4） |
+| **会话运行位置** | **这条会话** | 一会话一条 | 这条会话的进程在哪台会话机上（6.4） |
 
 两条各自可变：给一条会话换一双工作的手，不动它的进程跑在哪台会话机上，
 也不动同一个房间里别人的任何一条。
@@ -559,10 +559,6 @@ skill 集合、提示词变体、记忆池，都该从上面五句推出来，�
 
 **这张表和那段 docstring 字面互斥，而目标形状的那张表已经在库里。**
 所以这不是「造一个新架构」，是「把箭头掉过来，让上游读已经对的那张表」。
-
-**transcript 只在会话机上** [已定] 结论 29（已由 #4398 推翻，见文首）：平台不上收它，也不存一份。全仓唯一的搬运是
-`harness/claude_code/remote_execution/launch.py:92 transfer_history`，机器→机器；
-它只有一个调用点（`central_provider.py:236`），被 `if not previous` 圈住，**只在首次 placement 时跑**。
 
 ### 1.7 地点 Place 〔L2〕
 
@@ -1238,19 +1234,15 @@ nobody wrote its prompt, so there is nothing to re-send」。
 |---|---|---|---|---|
 | **轮次中途机器掉线** | L0 全在库里一行不动；会话身份在 `agent_sessions`，transcript 在中心会话机上 | 房间里一条事件 + 这个 agent；自托管还要加机主 | 一条能力事件（下面给文本），不是一个 HTTP 状态码 | 这一轮结束，**不重跑**；再点名才有下一轮 |
 | **轮次开始前机器不在（自托管）** | 同上 | **机主**——下一步在他手上（他去开机）。房间里写「正在等这台机器」 | 同上；不需要手的轮次照常跑完 | 不换机器、不改绑定，但照记健康账、照告知在等 |
-| **Cloud 机器正在开 / 已死** | 同上 | **不通知任何人**——下一步在平台手上；房间里留一条可见的等待事件 | 同上 | 平台：另开一台并把会话搬过去 |
+| **Cloud 机器正在开 / 已死** | 同上 | **不通知任何人**——下一步在平台手上；房间里留一条可见的等待事件 | 同上 | 平台准备工作机器 |
 | **Cloud 机器在休眠中**（结论 39） | L0 全在库里；工作区快照原样躺在那台机器上 | **不通知任何人**——下一步在平台手上 | 一条可见的等待事件，不是一次失败 | 平台：window 内唤醒同一台，工作区原样；window 过了才走归还与收据（6.5） |
 | **换到了另一台工作机器** | 只更换工作机器，会话进程位置不变 | 房间 + 这个 agent | 「工作机器已更换，旧工作区保留，文件未自动迁移」 | 正常继续 |
-| **中心会话机离线** | L0 不动；会话身份在库；**会话的躯壳和它的 transcript 都在那台机器上**，一起够不着 | 房间里一条「正在等一台会话机」的等待事件；不通知任何人 | 同上 | 平台：等它回来，或 rehome 到另一台会话机 |
+| **中心会话机离线** | L0 不动；会话身份在库；会话进程和续跑所需的 transcript 在会话机上 | 房间里一条「正在等一台会话机」的等待事件；不通知任何人 | 同上 | 平台等会话机重新连接 |
 | **后端重启** | L0 在库；**L1 的躯壳在机器上继续活着**；L2 不受影响 | 无 | 无（它没掉线） | 靠重新发现接回；在途的一轮发一次事件然后停下，**不重跑** |
 
 **中心会话机是一个单点，而他已经明确接受了现阶段**：`settings.agent_session_device_id` 是一个部署级常量；
 [已定] 他 2026-09-17T02:15「这意味着 绑死了一个project的所有rooms 的claude进程都得在一台机器上」「**当然现阶段也不是不行了**」。
 本设计不要求池化，只要求 placement 是会话的属性、且可被改写。
-
-**「后端重启不带走任何东西」今天基本是对的，本设计保留它**——
-`central_provider.py:132-133` 明写「Finish consuming turns that began before this deployment.
-Their next opening transfers the transcript; **no new prompt starts on the old host**」。
 
 #### agent 拿到的那条事件
 
@@ -1295,16 +1287,11 @@ Their next opening transfers the transcript; **no new prompt starts on the old h
 
 这整条都不是「平台自己续跑」：agent 自己开口要资源，平台给或不给，然后照常投递。
 
-### 6.4 会话搬家（rehome）
+### 6.4 Claude Code 会话续跑
 
-会话既然不属于机器，换机器就必须是一个**正常操作**而不是一个错误。
-接口形式：`Session.rehome(new_place)`。
-**它的完成判据不是接口存在，是**：`transfer_history` 的调用点不再只有「首次 placement」这一处；
-搬运的源是原来那台会话机上的 transcript（结论 29）。
-
-**一句必须写进定稿的消歧**：**rehome 不是「平台自己续跑」**——
-它只保证下一次有人点名时接得回同一份 transcript，平台不会自己发起那一轮。
-**换机器是资源层的事，续跑是点名层的事。**
+如果有上一段对话的 ID，launcher 会通过 `CHEESE_RESUME_SESSION` 提供该 ID。
+runner 在会话机磁盘上找到对应的非空 transcript 才会继续这段对话。
+房间放到另一台会话机时，如果那台机器没有原 transcript，Claude Code 就开始一段新对话。
 
 ### 6.5 回收与收据
 
@@ -1608,7 +1595,7 @@ so check there and not in the menu, the contract or the doc**」。
 | **├ 项目总览** | `TopicKind.root`（`topic/models.py:58`），已存在 | `domain/scheduler/` 615 行在替它调度 | `scheduler/` 不存在；`scheduler/service.py:445` 那处 `summon` 连同整个包一起没有 |
 | **└ 私聊** | `topic_memberships` 上的两席（`TopicMemberService.private_seats`）+ `topic/models.py` 里读 `is_private` 的四个函数，别处的 Python 代码一律调它们（`agent/project_feed.py` 的 `_PLACE` 还在 SQL 文本里读它；轮次组装只在 `turn/intake/rooms.py` 的 `_is_dm` 问一次，两类答案都从它推出来） | — | ①`chat.py:2476` 的 `publish=` 不存在，私聊和房间共用「只有 `chat_send` 才进房间」；②`is_private` 只剩「名册两席」和「草稿区」两类读点 |
 | **活** | `room_task/`（`presentation.py` 该谁动、`awaiting.py` 收件人判据，是这条线上最正确的两个文件） | 只剩一处：`prompt.py:217` 的 `thread_relay_prompt` 还在让房间起一个替补执行者去调 `cheese_bind`，而那个工具 #1378 已经删了。第二身份随 P11、kickoff 随 P26、第二会话/地点随 #1396 都已退场 | ①房间派生的 agent handle 零命中（`repo-guards.yml` 守着）；②`runtime.py` 里没有 kickoff 路径，`KICKOFF_PROMPT` 零引用；③`cheese_bind` 从 CLI 与提示词里消失；④「开一条活」的代码产出的是分支+卡+负责人，没有第二个 actor 行；⑤平台侧没有任何一条「派活」的路径——只有开卡和 hook 按线程标识归卡两条，起子 agent 的调用在 transcript 里是骨架自己的工具（结论 43） |
-| **会话** | `agent_session/models.py`——**形状完全正确，是整份设计的地基** | 会话只在首次 placement 搬一次（`launch.py:92 transfer_history` 唯一调用点在 `central_provider.py:236`，被 `if not previous` 圈住） | ①`transfer_history` 的调用点不再只有首次 placement；②`central_provider.py:222-232` 那条「执行机器与本房间已经记录的位置不一致」的 raise 不存在；③**两条记录分开，而且都在会话上（结论 56，按结论 60 修订）**：`agent_sessions` 的一行上有「这条会话的工作机器租约」和「这条会话的进程在哪台会话机」两列，`topics` 上一列都不剩（`compute_config` 只作新会话的默认值）；轮次只持有从这两列解析出来的租约句柄 |
+| **会话** | `agent_session/models.py` | Claude Code 从会话机磁盘上的 transcript 续跑（6.4） | **两条记录分开，而且都在会话上（结论 56，按结论 60 修订）**：`agent_sessions` 的一行上有「这条会话的工作机器租约」和「这条会话的进程在哪台会话机」两列，`topics` 上一列都不剩（`compute_config` 只作新会话的默认值）；轮次只持有从这两列解析出来的租约句柄 |
 | **地点** | 一个概念摊在六处：接口 `channel.py`、供给 `DeviceRow.supply`、可见性 `DeviceTopicRow.visibility`、位置 `agent_sessions` 的 `work_lease`/`runtime_location`、健康 `DeviceHealthRow`、目录 `market.py` | 无期限、无归还；无足迹根（根名四个文件五处声明，两种形状，见 4.1）；自托管没有 `provisioning_state`；`platform_failures.py:138-147` 的 `HOST_UNREACHABLE.detail` 还在承诺一次 2026-09-02 随 #664 退役的设备迁移 | ①`compute.py:364` 那个恒真的 `isinstance(c, DeviceChannel)` 换成能力位判断；②`CloudChannel`/`CentralChannel` 不再靠继承 `DeviceChannel` 表达 supply 与「会话地点包工作区地点」；③那四处根名声明收成一个 `Place.footprint_root()`，全仓零处再自己拼根名；④租约有三态，`sleep()`/`wake()` 只在 `supply=cloud` 的实现上给得出，走这条路不取收据（结论 39）；⑤地点解析的入口是会话：同一条会话上的所有轮次拿到同一个租约句柄，同一个房间里的两条会话可以拿到不同的租约（结论 60） |
 | **骨架** | `agent/harness/`——建得最好的一处 | 上游不读它：`carries_subscription` 唯一读者是下拉菜单（`configuration.py:110`）；`central_provider.py:113-116` 用 `"claude-code"` 字面量分岔；`topic/services.py:1049` 拿 `CLAUDE_CODE` 常量做分支 | ①字面量守卫为绿；②`configuration.py` 里没有 `harness` 这个用户可选项；③起子 agent 那四条硬性要求（4.2）在契约测试里对每个骨架各跑一遍，而 `Difference` 里没有一条描述它的码（结论 43） |
 | **托管方** | `review/forge.py Forge` + `github_pr.py` + `agent/github_app.py`。`resolve()` 按能力位查注册表，三档齐全，署名降级进房间 | 写远端的凭据由一次真探测答（`git push --dry-run`），探测本身要连远端，所以读路径上有一份 10 分钟的进程内缓存 | 平台开始持有远端凭据的记录时，探测改成先问记录再连远端 |
@@ -1627,7 +1614,6 @@ so check there and not in the menu, the contract or the doc**」。
 - **「有 git 远端但不是 GitHub」这一档托管方。**
 - **agent 的收件箱读侧**，和给 agent 的**能力清单**。
 - **足迹根作为接口字段。**
-- **可迁移的会话**：有 `agent_sessions` 行，没有把一条已经在跑的会话搬到另一台会话机的路径。
 - **代际号**（只有房间级的 `resource_id`，且只有一处 bump）与**收据**。
 - **「这一轮要不要手」（`needs_place`）。**
 - **「投递」这一层**：有事件、有两张通知表、有看板列，落点已经由 `block/about.py` 的封闭表回答，但没有一处代码回答「这个事件点到了谁」。

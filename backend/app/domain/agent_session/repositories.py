@@ -671,12 +671,32 @@ class AgentSessionRepository:
         )
         return bool(result.scalar())
 
-    async def forget_room(self, topic_id: uuid.UUID) -> None:
-        await self._session.execute(
-            delete(AgentSession).where(of_room(AgentSession.conversation_id, topic_id))
+    async def reopen_room(self, topic_id: uuid.UUID) -> None:
+        """The room was reopened in a new generation. Its sessions keep their
+        conversations, and where they ran stays recorded only as where those
+        conversations are: the next start carries each one into the new
+        generation's home (`agent.session_move`). Nothing of the old
+        generation is a place any more: its processes' state is dropped, so no
+        restart adopts them, and the environments its sessions held go."""
+        rows = await self._session.scalars(
+            select(AgentSession).where(
+                of_room(AgentSession.conversation_id, topic_id),
+                AgentSession.runtime_location.is_not(None),
+            )
         )
-        # The environments its sessions held go with them: nothing of this
-        # generation of the room is worked in again.
+        for row in rows:
+            location = row.runtime_location or {}
+            runtime = {
+                key: value
+                for key, value in (location.get("runtime") or {}).items()
+                if key != "state"
+            }
+            row.runtime_location = {
+                "device_id": location["device_id"],
+                "resource_id": location["resource_id"],
+                "channel": location["channel"],
+                **({"runtime": runtime} if runtime else {}),
+            }
         await self._session.execute(
             delete(Environment).where(of_room(Environment.topic_id, topic_id))
         )

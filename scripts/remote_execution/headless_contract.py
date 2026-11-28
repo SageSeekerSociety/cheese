@@ -69,6 +69,7 @@ def _execution_client():
     spec.loader.exec_module(module)
     return module
 
+
 STREAM = [
     "-p",
     "--input-format",
@@ -194,6 +195,7 @@ def remotemonitor(binary, root):
         )
         if not offered:
             return
+
         # Each line reaches the model as an event of its own, inside a later
         # request; it is not echoed on stdout.
         def reached(marker, timeout=60):
@@ -1389,6 +1391,136 @@ def projectdirs(binary, root):
         )
 
 
+def carried(binary, root):
+    """A conversation carried to another computer goes on there
+    (`agent/session_carry.py`): its pieces, picked as `carry_files` picks them,
+    land under another config dir, `release.carry_conversation` gathers them
+    for a session that resumes at another working directory, and the resumed
+    session sees what was said before the move, its subagent's work included."""
+    spec = importlib.util.spec_from_file_location(
+        "carry_files",
+        HERE.parents[1] / "backend/app/domain/agent/carry_files.py",
+    )
+    carry_files = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(carry_files)
+    spec = importlib.util.spec_from_file_location(
+        "execution_release",
+        HERE.parents[1]
+        / "backend/app/domain/agent/harness/claude_code/remote_execution/release.py",
+    )
+    release = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(release)
+    sid = str(uuid.uuid4())
+    before, after = root / "carried-before", root / "carried-after"
+    cwd_before, cwd_after = root / "carried-cwd-before", root / "carried-cwd-after"
+    for path in (before / ".claude", after / ".claude", cwd_before, cwd_after):
+        path.mkdir(parents=True)
+    workspace(cwd_before)
+    workspace(cwd_after)
+    session = Session(
+        binary,
+        root,
+        "carried-origin",
+        [*DRIVER, "--session-id", sid],
+        home=before,
+        launch={
+            "command": [binary, *isolated_flags()],
+            "env": {},
+            "cwd": str(cwd_before),
+        },
+    )
+    try:
+        session.user(
+            do(
+                "Agent",
+                description="child",
+                subagent_type="general-purpose",
+                prompt=do("Bash", command="echo CARRIED_CHILD", description="echo"),
+            )
+        )
+        _, started = session.wait(
+            is_("system", "task_started", task_type="local_agent"), 60
+        )
+        if started:
+            session.wait(
+                is_("system", "task_notification", task_id=started["task_id"]), 60
+            )
+        mark = session.user("CARRIED_MARKER said before the move")
+        session.wait(is_("result"), 60, mark)
+        session.close_stdin()
+        session.process.wait(30)
+    finally:
+        session.stop()
+    pieces = carry_files._pieces(before / ".claude" / "projects", sid)
+    for path, data in pieces.items():
+        (after / ".claude" / "projects" / path).parent.mkdir(
+            parents=True, exist_ok=True
+        )
+        (after / ".claude" / "projects" / path).write_bytes(data)
+    subagent_files = [p for p in pieces if "/subagents/" in p]
+    yield (
+        "a carry takes the transcript and its subagents' transcripts",
+        any(p.endswith(f"{sid}.jsonl") for p in pieces) and bool(subagent_files),
+        f"pieces: {sorted(pieces)}",
+    )
+    release.carry_conversation(
+        after / ".claude", [*DRIVER, "--resume", sid], str(cwd_after.resolve())
+    )
+    session = Session(
+        binary,
+        root,
+        "carried-target",
+        [*DRIVER, "--resume", sid],
+        home=after,
+        launch={
+            "command": [binary, *isolated_flags()],
+            "env": {},
+            "cwd": str(cwd_after),
+        },
+    )
+    try:
+        mark = session.user("AFTER_THE_MOVE")
+        _, init = session.wait(is_("system", "init"), 30, mark)
+        _, result = session.wait(is_("result"), 60, mark)
+        request = next(
+            (
+                r
+                for r in session.requests()
+                if "AFTER_THE_MOVE" in json.dumps(r.get("messages"))
+            ),
+            None,
+        )
+        history = json.dumps(request.get("messages")) if request else ""
+        yield (
+            "the carried conversation resumes under another config dir and cwd, "
+            "with what was said before the move and its subagent's work",
+            bool(result)
+            and init.get("session_id") == sid
+            and "CARRIED_MARKER" in history
+            and "CARRIED_CHILD" in history,
+            f"init {init and init.get('session_id')}, before-move turn in history: "
+            f"{'CARRIED_MARKER' in history}, subagent's work: {'CARRIED_CHILD' in history}",
+        )
+        destination = release.project_dir(after / ".claude", str(cwd_after.resolve()))
+        kept = (
+            sorted(
+                p.relative_to(destination).as_posix()
+                for p in (destination / sid).rglob("*.jsonl")
+            )
+            if (destination / sid).is_dir()
+            else []
+        )
+        yield (
+            "the subagents' transcripts sit beside the resumed transcript",
+            bool(kept),
+            f"kept: {kept}",
+        )
+        session.close_stdin()
+        session.process.wait(30)
+    finally:
+        session.stop()
+
+
 def probe(session, mark):
     """The kinds of event on stdout since `mark`, for a receipt."""
     return [
@@ -2045,6 +2177,7 @@ SCENARIOS = {
     "refused": refused,
     "resuming": resuming,
     "projectdirs": projectdirs,
+    "carried": carried,
     "reloading": reloading,
     "nesting": nesting,
     "unattended": unattended,

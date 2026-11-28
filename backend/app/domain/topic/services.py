@@ -846,7 +846,7 @@ class TopicService:
                 operation.state = "cancelled"
             elif operation.state in {"claimed", "retained", "complete"}:
                 topic.resource_id = uuid.uuid4()
-                await sessions.forget_room(topic.id)
+                await sessions.reopen_room(topic.id)
         topic.status = TopicStatus.active
         topic.archived_at = None
         topic.cleanup_due_at = None

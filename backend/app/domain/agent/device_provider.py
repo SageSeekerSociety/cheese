@@ -1207,7 +1207,14 @@ class DeviceChannel(Channel):
         place = await AgentSessionService(db).place(
             session.topic_id, session.agent_handle, harness=session.harness
         )
-        host = place.machine if place else settings.agent_session_device_id
+        # A place another channel recorded is not this one's: a member's own
+        # login ran the session on their computer, and the project's model
+        # does not run there (`central_provider._center`).
+        host = (
+            place.machine
+            if place and place.channel == self.name
+            else settings.agent_session_device_id
+        )
         if not host:
             logger.error("session_host_unconfigured topic=%s", session.topic_id)
             raise ScreenSetupError(say("screenSessionMachineNotReady"))

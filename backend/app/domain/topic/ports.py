@@ -179,8 +179,8 @@ class SessionStore(Protocol):
 
     形状就是 `agent_session.services.AgentSessionService` 那三个方法，递进来的
     就是那个对象本身。--resume 的那张令牌住在这张表里，而「这一席上次跑到哪」是
-    会话域的事，不是房间的事。``forget_room`` 在取消归档时用：房间的会话已经交给
-    跑机器了，取消归档等于给它一个新身份，旧身份不能再被认领。
+    会话域的事，不是房间的事。``reopen_room`` 在取消归档时用：取消归档给房间一个新身份，旧
+    身份下的进程和环境不能再被认领；各席的对话留着，下一次开工时带进新的一代。
     """
 
     async def conversation(
@@ -197,7 +197,7 @@ class SessionStore(Protocol):
         generation: int,
     ) -> None: ...
 
-    async def forget_room(self, room_id: uuid.UUID) -> None: ...
+    async def reopen_room(self, room_id: uuid.UUID) -> None: ...
 
 
 class WorkspacePaths(Protocol):

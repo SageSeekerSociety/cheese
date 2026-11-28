@@ -947,3 +947,33 @@ async def open_run(row: SessionRecord, storage: StorageBackend | None) -> list[d
     bucket = storage or private_storage()
     body = await sealed_body(bucket, row.object_key)
     return await asyncio.to_thread(unpack, body)
+
+
+async def private_owners(
+    db: AsyncSession, conversation_id: uuid.UUID, session_id: str
+) -> set[str]:
+    """Whose private content went into session ``session_id`` in this
+    conversation, as the runner stamped its records:
+    the owners of every private-memory call and result (``cheese.private``)
+    and of every private input block (``cheese.private_text``). A record that
+    names no session is counted: it may be this one's. Read from what the
+    platform recorded, never guessed from text (`privacy`)."""
+    owners: set[str] = set()
+    after: Key | None = None
+    while True:
+        page = await read(db, conversation_id, after=after, limit=500, reader=None)
+        for item in page.items:
+            record = item["record"]
+            named = record.get("session_id") or (record.get("entry") or {}).get(
+                "session_id"
+            )
+            if named not in (None, session_id):
+                continue
+            stamps = record.get("cheese") or {}
+            for kind in ("private", "private_text"):
+                stamp = stamps.get(kind)
+                if isinstance(stamp, dict):
+                    owners.update(str(owner) for owner in stamp.values())
+        if page.next is None:
+            return owners
+        after = decode_cursor(page.next)

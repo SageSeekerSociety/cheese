@@ -52,6 +52,59 @@ const UPGRADE_TURN_FAILED: Block = {
   },
 }
 
+/** 队友换到另一台电脑上运行，之前的对话留在原来那台上（`conversation_not_carried`）：频道里居中一行。 */
+function notCarried(key: string, content: string): Block {
+  return {
+    id: `catalog-${key}`,
+    conversation_id: 'demo',
+    kind: 'event',
+    author_type: 'platform',
+    author: 'system',
+    content,
+    created_at: new Date('2026-11-28T10:05:00+08:00').toISOString(),
+    shown_as: 'happening',
+    meta: {
+      event_type: 'conversation_not_carried',
+      severity: 'info',
+      who: 'platform',
+      seat: 'cheese',
+      i18n: { content: { key, params: { agent: '<@cheese>' } } },
+    },
+  }
+}
+
+const NOT_CARRIED_OFFLINE = notCarried(
+  'conversationNotCarriedOffline',
+  '<@cheese>换到另一台电脑上运行，原来那台电脑不在线，之前的对话没能带过去，这次从新对话开始。之前的消息都还在，它会自己查看'
+)
+const NOT_CARRIED_REOPENED = notCarried(
+  'conversationNotCarriedReopened',
+  '重新打开后，<@cheese>之前的对话没能接上，这次从新对话开始。之前的消息都还在，它会自己查看'
+)
+
+const NOT_CARRIED_PRIVATE = notCarried(
+  'conversationNotCarriedPrivate',
+  '<@cheese>换到另一台电脑上运行，之前的对话里有其他成员的个人记忆，不能带到这台电脑上，这次从新对话开始。之前的消息都还在，它会自己查看'
+)
+
+const CONVERSATION_NOT_CARRIED: Block = {
+  id: 'catalog-conversation-not-carried',
+  conversation_id: 'demo',
+  kind: 'event',
+  author_type: 'platform',
+  author: 'system',
+  content: '<@cheese>换到另一台电脑上运行，之前的对话没能带过去，这次从新对话开始。之前的消息都还在，它会自己查看',
+  created_at: new Date('2026-11-28T10:05:00+08:00').toISOString(),
+  shown_as: 'happening',
+  meta: {
+    event_type: 'conversation_not_carried',
+    severity: 'info',
+    who: 'platform',
+    seat: 'cheese',
+    i18n: { content: { key: 'conversationNotCarried', params: { agent: '<@cheese>' } } },
+  },
+}
+
 /** AI 队友的运行程序正在下载到一个人自己的电脑上（`executor_install`）：同一行原地更新。 */
 function installLine(state: string, key: string, content: string, params: Record<string, unknown>): Block {
   return {
@@ -382,6 +435,30 @@ export const CONVERSATION_ENTRIES: CatalogEntry[] = [
         note: '一轮很久没有任何输出、平台把它停下了：这是平台的问题，不说模型出错；带「重试」，同时告警给运维。',
         props: failureNotice(TURN_STOPPED),
         expect: '这次没做完，已停下',
+      },
+      {
+        name: '换到另一台电脑：从新对话开始',
+        note: '队友改在另一台电脑上运行（比如换成某位成员电脑上的 Claude 订阅），之前的对话留在原来那台上：居中一行说清它从新对话开始、之前的消息都在。',
+        props: upgradeNotice(CONVERSATION_NOT_CARRIED),
+        expect: '这次从新对话开始',
+      },
+      {
+        name: '换到另一台电脑：原来那台不在线',
+        note: '对话要从原来那台电脑带过去，那台不在线时不等它，直接从新对话开始，并说出原因。',
+        props: upgradeNotice(NOT_CARRIED_OFFLINE),
+        expect: '原来那台电脑不在线',
+      },
+      {
+        name: '换到某位成员的电脑：对话里有别人的个人记忆',
+        note: '对话里有其他成员的个人记忆时，不带到某位成员自己的电脑上，从新对话开始并说出原因。',
+        props: upgradeNotice(NOT_CARRIED_PRIVATE),
+        expect: '其他成员的个人记忆',
+      },
+      {
+        name: '重新打开后接不上之前的对话',
+        note: '归档又取消归档的频道，各位队友接着归档前的对话；接不上时说一行。',
+        props: upgradeNotice(NOT_CARRIED_REOPENED),
+        expect: '重新打开后',
       },
       {
         name: '运行程序下载中',

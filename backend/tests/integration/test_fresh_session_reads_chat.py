@@ -4,7 +4,9 @@ The docs, memory and last checklist reach a new session; what people said does
 not, and they assume the agent remembers it. So the opening says how many chat
 messages the room already holds and which tools read them. It says nothing
 in a room where nobody has spoken yet, and nothing to a session that resumes
-its own conversation, which already holds what was said in it.
+its own conversation, which already holds what was said in it. A session that
+was to resume and found nothing to take up — its conversation stayed on the
+computer it ran on before — is a new conversation, and is told too.
 """
 
 import importlib.util
@@ -13,7 +15,6 @@ import uuid
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
-from app.domain.agent_session.services import AgentSessionService
 from tests.integration.conftest import (
     in_thread,
     post_message,
@@ -21,6 +22,7 @@ from tests.integration.conftest import (
     room_socket,
     session_auth_headers,
 )
+from tests.support.environments import lose_conversations
 
 _LINE = re.compile(r"这里已经有 (\d+) 条聊天消息")
 _CHEESE = Path(__file__).resolve().parents[2] / "sandbox" / "cheese"
@@ -62,7 +64,7 @@ def _session_lost(client, room: str) -> None:
 
     async def forget() -> None:
         async with client.test_factory() as session:
-            await AgentSessionService(session).forget_room(uuid.UUID(room))
+            await lose_conversations(session, uuid.UUID(room))
             await session.commit()
 
     client.portal.call(forget)
@@ -114,3 +116,22 @@ def test_a_resumed_session_is_not_told_to_read_what_it_already_has(client, stub_
     _turn(client, room, "@芝士 先看一下这个问题")
     _turn(client, room, "@芝士 接着做")
     assert _LINE.search(stub_hooks.told) is None
+
+
+def test_a_session_that_found_nothing_to_resume_is_told_how_to_read_the_history(
+    client, stub_hooks
+):
+    room = _room(client)
+    _turn(client, room, "@芝士 先看一下这个问题")
+    before = _messages(client, room)
+    # Its runner is gone, and the computer that starts it again holds none of
+    # the conversation the platform asks it to resume.
+    stub_hooks.drop_session(uuid.UUID(room))
+    stub_hooks.holds_no_conversations = True
+    stub_hooks.new_session_id = "sess-test-2"
+
+    _turn(client, room, "@芝士 接着做")
+
+    found = _LINE.search(stub_hooks.told)
+    assert found is not None, stub_hooks.told[-2000:]
+    assert int(found.group(1)) == before
