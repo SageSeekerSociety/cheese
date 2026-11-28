@@ -24,7 +24,9 @@ ready line, or a shell without `EPOCHREALTIME` to mark `started`) is counted in
 
 A turn and its launch are joined by the launch's name (`launch=`), which the
 cold turn's line and both of the launch's lines carry; a turn without one (a
-backend from before they did) is `unmatched`. A prewarm is joined to a turn by
+backend from before they did) is `unmatched`. Whether the launch began a
+conversation is read from its greeted line, or from its ready line when no
+greeted line was logged (the greeting's reply was lost and retried). A prewarm is joined to a turn by
 conversation and seat, and placed in time by the journal's own microsecond
 timestamp (`-o short-iso-precise`): the backend's log line stamps only the
 second, too coarse to tell a prewarm from a turn that began just after it.
@@ -90,6 +92,9 @@ def count(lines) -> dict[str, dict]:
                 starts[launch] = fields.get("start")
             elif fields.get("stage") == "ready":
                 readies[launch] = timing
+                # The greeting's own line is missing when its reply was lost
+                # and the ping retried; the ready line says the same.
+                starts.setdefault(launch, fields.get("start"))
         elif event == "session_prewarm" and fields.get("outcome") == "started":
             prewarms[seat].append(at)
 

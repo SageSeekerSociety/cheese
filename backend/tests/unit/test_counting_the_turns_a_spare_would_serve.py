@@ -178,3 +178,15 @@ def test_a_turn_whose_line_names_no_launch_is_unmatched():
     )
 
     assert (day["cold"], day["unmatched"], day["fresh"]) == (1, 1, 0)
+
+
+def test_a_launch_with_no_greeted_line_is_read_from_its_ready_line():
+    # The greeting's reply was lost and the ping retried: only the ready line
+    # says how the launch began.
+    day = _day(
+        send("12:00:25.000000", 400.0, "L1"),
+        ready("12:00:25.200000", "L1", "fresh", {"started": 0.0, "claude_init": 154.3}),
+    )
+
+    assert (day["fresh"], day["unmatched"], day["spare_helps"]) == (1, 0, 1)
+    assert day["saving_ms"] == [154.3]
