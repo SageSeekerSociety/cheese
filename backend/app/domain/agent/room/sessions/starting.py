@@ -113,6 +113,10 @@ async def ensure(
         scratch=keeps_nothing,
     ) as prepared:
         ref = CoreRef(svc.harness, _home(placed["state"]))
+        if prepared.retired is not None:
+            # The conversation stayed on the computer this session left: the
+            # start begins a new one, and never takes that one up.
+            resume_token, retired_token = None, prepared.retired
         launched_env = dict(prepared.env)
         # The teammate's thinking effort, said to the harness as a setting.
         effort = launched_env.pop(EFFORT_ENV, None)

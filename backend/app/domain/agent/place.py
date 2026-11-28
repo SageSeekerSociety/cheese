@@ -93,7 +93,7 @@ def session_platform_dirs() -> tuple[str, ...]:
 # `$HOME/.claude/projects`, plus `$HOME/.cheese/executor`,
 # `.cheese-environment/status.json` and the `room/` checkout. Programs that
 # resolve room paths still find those (`release.stage`'s busy scan,
-# `session_transfer`, `resource_cleanup`). Claude settings, skills and execution
+# `resource_cleanup`). Claude settings, skills and execution
 # helpers belong to a seat: a new launch must not replace a busy peer's files.
 SEATS_DIR = "seats"
 
@@ -169,10 +169,9 @@ STAGED_DIR = "attachments"
 #: checkout through.
 #:
 #: `device_provider._work_dir` builds the path the backend hands a machine.
-#: Three programs run ON the machine with nothing of ours importable — the
-#: executor bootstrap, the cleanup script and the session transfer — so they
-#: carry copies, held to this one by `tests/unit/test_footprint_root.py`, the
-#: same way they already carry the footprint root.
+#: The executor bootstrap and cleanup script run on the machine without
+#: importing this module. `tests/unit/test_footprint_root.py` checks their
+#: copies of the checkout name and footprint root.
 #:
 CHECKOUT_DIR = "room"
 

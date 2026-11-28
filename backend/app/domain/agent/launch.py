@@ -24,7 +24,7 @@ from typing import Protocol, runtime_checkable
 
 
 class ExecutorLaunch(Protocol):
-    """Harness-owned installation and history transfer over a device transport."""
+    """Harness-owned executor installation over a device transport."""
 
     def can_prepare(self, info: dict, sandbox: bool | None = None) -> bool: ...
 
@@ -50,10 +50,6 @@ class ExecutorLaunch(Protocol):
     ) -> str: ...
 
     def private_script(self, target: dict, env: dict) -> str: ...
-
-    async def transfer_history(
-        self, hub, source, center, project, resource, resume: str
-    ) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,21 +180,12 @@ class MachinePlan(Protocol):
 class ExecutorPlan(Protocol):
     """在一台单独的执行机上开工，需要的那一半。
 
-    A room whose work happens on an assigned executor needs its harness to
-    install one and to move a conversation onto it. A harness that runs where
-    the files already are has neither to offer, and saying so by not satisfying
-    this is more honest than a method that raises.
-
-    Deliberately smaller than ``LaunchPlan``: Codex prepares an executor and
-    then starts its own runner over ``hub.exec``, never opening a screen, so
-    what it hands this route is these two values and nothing else.
+    A harness that uses an assigned executor supplies its installation
+    methods.
     """
 
     @property
     def execution(self) -> ExecutorLaunch: ...
-
-    @property
-    def resume_session_id(self) -> str | None: ...
 
 
 @runtime_checkable

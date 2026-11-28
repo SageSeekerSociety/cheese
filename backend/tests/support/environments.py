@@ -10,11 +10,13 @@ generation.
 import uuid
 from datetime import UTC, datetime, timedelta
 
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.conversation.services import of_room
 from app.domain.environment import services as environment_rows
 from app.domain.environment.models import (
     READY,
@@ -242,3 +244,11 @@ async def works_in(
     await CloudHostRepository(db).name_home(environment_id, home)
     await db.flush()
     return environment_id
+
+
+async def lose_conversations(db: AsyncSession, room_id: uuid.UUID) -> None:
+    """The room's conversations are gone (a deploy, a recycled machine): the
+    next turn of each of its sessions opens a new one."""
+    await db.execute(
+        delete(AgentSession).where(of_room(AgentSession.conversation_id, room_id))
+    )

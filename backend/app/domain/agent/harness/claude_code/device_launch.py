@@ -242,9 +242,9 @@ def launch_holes(
     the execution target and the config the client derives from it, and the
     system prompt, which differs per teammate. Two seats of one room writing
     one path is what put a room's second teammate's turn on the first one's
-    credential. Each seat has its own Claude config and skills. Only the
-    transcript directory is shared with the room, so resume, transfer and the
-    release's busy scan can still find each conversation.
+    credential. Each seat has its own Claude config and skills. The room's
+    seats share the transcript directory used by the runner to resume and
+    by ``release.stage`` to check for active sessions.
 
     ``system_prompt`` (the platform's assembled system prompt) is embedded in the
     script itself — written to the seat's ``cheese-system-prompt.md`` on the
@@ -453,8 +453,8 @@ export CLAUDE_CONFIG_DIR="$SEAT/.claude"
 # machine, the platform half of the launch says (`CHEESE_HOMES_ROOT`).
 export CHEESE_SEATS_ROOT="$(dirname "$SEAT")"
 mkdir -p "$ROOM_CONFIG_DIR/projects" "$CLAUDE_CONFIG_DIR"
-# Conversation transcripts belong to the room for resume and transfer, while
-# settings, skills and generated instructions belong to this seat.
+# The room's seats share conversation transcripts.
+# This seat has its own settings, skills and generated instructions.
 if [ ! -e "$CLAUDE_CONFIG_DIR/projects" ]; then
   case "$(uname -s)" in
     # Git Bash's `ln -s` copies where Windows withholds symlinks, and a copy

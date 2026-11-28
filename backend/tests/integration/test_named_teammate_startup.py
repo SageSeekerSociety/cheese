@@ -80,6 +80,7 @@ async def test_invited_teammate_is_the_startup_identity(
                 agent_user_id=1,
                 agent_handle=token_agent_handle(kwargs["token"]),
                 token=kwargs["token"],
+                retired=None,
                 env={
                     "CHEESE_RESOURCE_ID": str(room_id),
                     "CHEESE_EXECUTION_TARGET": json.dumps(

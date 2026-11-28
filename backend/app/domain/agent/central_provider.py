@@ -15,7 +15,7 @@ from app.core.db import async_session_factory
 from app.core.device_failures import DeviceCallError
 from app.core.sandbox_auth import bind_resource_token, token_agent_handle
 from app.core.sentences import say
-from app.domain.agent import execution, private_chat
+from app.domain.agent import execution, private_chat, session_carry
 from app.domain.agent.admission import SESSION_MEMORY_ENV, session_memory_max
 from app.domain.agent.device_provider import (
     DeviceChannel,
@@ -23,6 +23,7 @@ from app.domain.agent.device_provider import (
 from app.domain.agent.executor_transport import DEFERRED_WORKSPACE
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
+from app.domain.agent.session_move import HostMove, end_moved, host_move, moved
 from app.domain.agent_instance.services import agent_stdio_servers, type_of_seat
 from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.services import AgentSessionService
@@ -48,6 +49,9 @@ class PreparedSession:
     topic_id: uuid.UUID
     token: str
     env: dict[str, str]
+    #: The conversation this start must not take up: it stayed on the
+    #: computer the session left (`session_move`).
+    retired: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -133,9 +137,33 @@ class CentralChannel(DeviceChannel):
         return True
 
     def _center(self, place, precheck: Placement) -> str | None:
-        """The machine this session's process runs on: where it already is,
-        else the deployment's session host."""
-        return place.machine if place else settings.agent_session_device_id
+        """The machine this session's process runs on: where this channel
+        already runs it, else the deployment's session host. A place another
+        channel recorded is not this one's: a member's own login ran it on
+        their computer, and the project's model does not run there."""
+        return (
+            place.machine
+            if place and place.channel == self.name
+            else settings.agent_session_device_id
+        )
+
+    async def _carry(self, session: SessionRef, move: HostMove) -> str | None:
+        """Bring the conversation ``move`` leaves behind to where the session
+        starts: None once it is there, else why not (`session_carry`)."""
+        async with (self._session_factory or async_session_factory)() as db:
+            allowed = await session_carry.exposure_allows(
+                db, move.origin[0], move.target[0]
+            )
+        if not allowed:
+            return session_carry.NOT_ALLOWED
+        return await session_carry.carry(
+            self._hub,
+            session,
+            move.token,
+            origin=session_carry.Where(*move.origin),
+            target=session_carry.Where(*move.target),
+            agent=move.agent,
+        )
 
     def _deferred_target(self, target: dict, *, apart: bool) -> dict:
         """The execution target a session starts with, as this channel hands
@@ -290,6 +318,10 @@ class CentralChannel(DeviceChannel):
         center = self._center(place, precheck)
         if not center:
             raise ScreenSetupError(say("screenCentralMachineOffline"))
+        move = host_move(session_row, center=center, resource=str(resource))
+        # Brought along before the new place is recorded, and outside the
+        # room's lock: a carry can take minutes. None once it is here.
+        not_carried = await self._carry(session, move) if move is not None else None
         await self._wait_for_session_host(center, session)
         values = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource)}
         # Every room's session shares this machine's kernel: each runs under a
@@ -413,7 +445,7 @@ class CentralChannel(DeviceChannel):
         # publish instead, it left a published lease for a generation that had
         # just been rotated away; checked with it, either the un-archive lands
         # first and this raises before a harness starts, or this lands first and
-        # the un-archive's own `forget_room` deletes the lease again — after
+        # the un-archive's own `reopen_room` deletes the lease again — after
         # which the executor route admits nothing for it (`execution.py` reads
         # that same row) and the screen is retired like any other orphan.
         #
@@ -427,6 +459,10 @@ class CentralChannel(DeviceChannel):
                 # What it held belongs to another generation of the room, or
                 # it works in a scratch area of its own: it holds nothing.
                 await attachments.unattach(db, session_id)
+            if move is not None and not_carried is None:
+                moved(session, move, "carried")
+            elif move is not None and not_carried is not None:
+                await end_moved(db, session, move, not_carried)
             await AgentSessionService(db).remember_place(
                 conversation_id=session.conversation_id,
                 agent_handle=session.agent_handle,
@@ -445,5 +481,6 @@ class CentralChannel(DeviceChannel):
             topic_id=topic_id,
             token=token,
             env=values,
+            retired=move.token if move is not None and not_carried else None,
         )
         mark("screen_ready")

@@ -75,8 +75,9 @@ async def send(
 
     ``cold`` asks the runner to compact a conversation that goes on but has
     gone cold before it reads the message (`ColdCompaction`). A compacted
-    conversation is told the whole opening again, not what changed, so the
-    runner is handed that message too and says it if it compacts.
+    conversation is told the whole state again (``cold.retold``), not what
+    changed, so the runner is handed that message too and says it if it
+    compacts.
 
     ``session_opening`` is the project state a new conversation is handed in
     front of its first message; ``opening_changes`` the part of it that
@@ -123,7 +124,7 @@ async def send(
         # A new conversation has nothing to compact and is told the whole
         # opening already.
         fresh = live.conversation != resume_token
-        cold_text = f"{session_opening}\n\n{said}" if session_opening else said
+        cold_text = f"{cold.retold}\n\n{said}" if cold and cold.retold else said
         if cold is None or fresh:
             cold, cold_text = None, ""
         # A conversation compacted before it reads this (``cold``) keeps only

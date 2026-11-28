@@ -203,6 +203,10 @@ EVENT_DEVICE_WAITING: Final = "device_waiting"
 #: 报错，是平台自己换了一条接着走的路；对话本身没丢，丢的是没落到文件、任务或结论
 #: 里的那部分上下文。`agent_sessions.abandoned_at` 是同一件事的状态那一半。
 EVENT_CONVERSATION_ABANDONED: Final = "conversation_abandoned"
+#: 一位 AI 队友换了一台电脑跑，原来那场对话留在了原来的电脑上，它从新对话开始
+#: （`agent/session_move.py`）。说在频道里：屋里的人以为它还记得刚才说过的话，
+#: 而它要自己去翻。
+EVENT_CONVERSATION_NOT_CARRIED: Final = "conversation_not_carried"
 #: 平台请房间里刚干过活的队友补第一版实况文档。频道不再有实况文档，平台也不再
 #: 这样提醒；这个值留给已经落在时间线上的那些行。
 EVENT_DOC_MISSING: Final = "doc_missing"
@@ -410,6 +414,7 @@ _SHOWN_AS: Final[dict[str, str]] = {
     EVENT_TASK_ENDED: SHOWN_HAPPENING,
     EVENT_TASK_LANDED: SHOWN_HAPPENING,
     EVENT_TEAMMATE_HANDED_IN: SHOWN_HAPPENING,
+    EVENT_CONVERSATION_NOT_CARRIED: SHOWN_HAPPENING,
     # AI 队友交出来、等人读过再定的东西。
     EVENT_SKILL_PROPOSED: SHOWN_CARD,
     EVENT_ROUTINE_PROPOSED: SHOWN_CARD,
