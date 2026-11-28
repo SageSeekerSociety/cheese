@@ -426,7 +426,7 @@ printf '%s' "$CHEESE_EXECUTION_TARGET" \\
 EXECUTOR_CLIENT="$SEAT/remote-execution/client.py"
 EXECUTOR_TARGET="$SEAT/remote-target.json"
 export CHEESE_EXECUTION_CONFIG="$SEAT/remote-session/execution.json"
-CLAUDE="\\"$CHEESE_PYTHON\\" \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
+CLAUDE="\\"\\$CHEESE_PYTHON\\" \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
 """
         execution_setup += (
             'mkdir -p "$SEAT/remote-session"\n'
@@ -631,7 +631,7 @@ CLAUDERUNNER
 export CHEESE_CLAUDE_COMMAND="$CLAUDE"
 # Its own stderr is kept: a runner that fails on the way up takes the pane with
 # it, and this file is then the only record of why.
-CLAUDE_RUNNER="\\"$CHEESE_PYTHON\\" -I -S \\"$CLAUDE_ARTIFACT\\" --state \\"$CLAUDE_STATE\\" \\
+CLAUDE_RUNNER="\\"\\$CHEESE_PYTHON\\" -I -S \\"$CLAUDE_ARTIFACT\\" --state \\"$CLAUDE_STATE\\" \\
   2>>\\"$CLAUDE_STATE/runner.log\\""
 """
         return configure, prepare

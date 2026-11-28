@@ -196,30 +196,38 @@ def test_the_connectors_own_python_wins_over_the_systems(tmp_path):
     assert seen.read_text().strip() == str(runtime / "python3")
 
 
-def test_each_hole_runs_where_the_platform_says_it_does(tmp_path):
+@pytest.mark.parametrize("machine_cli", [None, "Developer's Tools/bin"])
+def test_each_hole_runs_where_the_platform_says_it_does(tmp_path, machine_cli):
     """The holes are a contract about ORDER — the one thing a harness cannot
-    arrange for itself."""
+    arrange for itself. ``machine_cli``: where the machine keeps a `cheese` of
+    its own, first on its PATH."""
     _home, work, env = _machine(tmp_path)
+    if machine_cli:
+        own = tmp_path / machine_cli / "cheese"
+        own.parent.mkdir(parents=True)
+        own.write_text("#!/bin/sh\n")
+        own.chmod(0o755)
+        env["PATH"] = f"{own.parent}:{env['PATH']}"
     order = tmp_path / "order"
     result = _run(
         tmp_path,
         env,
         # The session's home is exported by now, so a harness writes its files
         # under it without knowing where the machine put it.
-        configure=f'printf "configure:$HOME " >> "{order}"\n',
+        configure=f'printf "configure:%s\\n" "$HOME" >> "{order}"\n',
         # The platform CLI is on disk by now, but the room's directory it is in
         # is on no PATH outside the sandbox: a `cheese` this hole finds is the
         # machine's own, if it has one.
-        credentials=f'printf "credentials:$(command -v cheese || echo none) "'
+        credentials='printf "credentials:%s\\n" "$(command -v cheese || echo none)"'
         f' >> "{order}"\n',
         # And by `prepare` the cwd is the workdir the agent will run in.
-        prepare=f'printf "prepare:$(pwd) " >> "{order}"\n'
+        prepare=f'printf "prepare:%s\\n" "$(pwd)" >> "{order}"\n'
         + _harness(tmp_path, "true\n"),
         command="$AGENT",
     )
 
     assert result.returncode == 0, result.stderr
-    stages = order.read_text().split()
+    stages = order.read_text().splitlines()
     assert [stage.split(":")[0] for stage in stages] == [
         "configure",
         "credentials",
@@ -228,9 +236,12 @@ def test_each_hole_runs_where_the_platform_says_it_does(tmp_path):
     assert stages[0] == f"configure:{os.path.realpath(env['CHEESE_HOME'])}"
     room_cli = os.path.join(os.path.realpath(env["CHEESE_HOME"]), ".cheese/cheese")
     assert stages[1] != f"credentials:{room_cli}"
-    assert stages[1] == "credentials:none" or os.path.realpath(
-        stages[1].removeprefix("credentials:")
-    ) == os.path.realpath(shutil.which("cheese", path=env["PATH"]) or "")
+    if machine_cli:
+        assert stages[1] == f"credentials:{own}"
+    else:
+        assert stages[1] == "credentials:none" or os.path.realpath(
+            stages[1].removeprefix("credentials:")
+        ) == os.path.realpath(shutil.which("cheese", path=env["PATH"]) or "")
     assert stages[2] == f"prepare:{work.resolve()}"
 
 

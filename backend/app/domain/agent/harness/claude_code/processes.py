@@ -114,8 +114,8 @@ def _processes() -> list[tuple[int, int]]:
                 continue
             pairs.append((int(entry.name), int(parent)))
         return pairs
-    # By path: in the runner, PATH is the session's, which starts with the
-    # room's `$HOME/.cheese`, and its sandbox can write that directory.
+    # By path: in the runner, which runs as the machine's owner outside the
+    # room's sandbox, nothing is run that is found by name.
     try:
         listing = subprocess.run(
             ["/bin/ps", "-axo", "pid=,ppid="],

@@ -225,8 +225,8 @@ def sessions_on(config_dir: Path, agent_handle: str | None) -> list[int]:
             ):
                 found.append(int(entry.name))
         return found
-    # By path: the runner's PATH is the session's, which starts with the room's
-    # `$HOME/.cheese`, and its sandbox can write that directory.
+    # By path, as the session's shell is: the runner runs as the machine's owner
+    # outside the room's sandbox, and runs nothing it finds by name.
     try:
         listing = subprocess.run(
             ["/bin/ps", "-axo", "pid=,comm="],
@@ -896,8 +896,8 @@ class Runner(runner.Runner[Journal]):
         self._mark("session_spawned")
         self.process = await asyncio.create_subprocess_exec(
             # CreateProcess looks in System32 before PATH; Git Bash's sh is on PATH.
-            # Elsewhere by path: the session's PATH starts with the room's
-            # `$HOME/.cheese`, which its sandbox can write.
+            # Elsewhere by path: the runner runs as the machine's owner outside
+            # the room's sandbox, and runs nothing it finds by name.
             shutil.which("sh") or "sh" if sys.platform == "win32" else "/bin/sh",
             "-c",
             f"exec {command} {flag}",

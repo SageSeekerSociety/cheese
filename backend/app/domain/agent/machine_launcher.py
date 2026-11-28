@@ -578,6 +578,20 @@ REAL_HOME="$HOME"
 # the tmux it found): this script runs in a login shell, and macOS's login
 # profile (path_helper) puts /usr/bin back in front, where python3 is 3.9.
 [ -z "${{CHEESE_RUNTIME_PATH:-}}" ] || export PATH="$CHEESE_RUNTIME_PATH:$PATH"
+# Only absolute directories, before this script changes directory: an empty or
+# relative entry (`.venv/bin`, a trailing `:`) is looked up from the working
+# directory, and the launch and the session it starts run in the room's
+# checkout, which the room can write.
+PATH="$(
+  IFS=:
+  set -f
+  _kept=""
+  for _dir in $PATH; do
+    case "$_dir" in /*) _kept="${{_kept:+$_kept:}}$_dir" ;; esac
+  done
+  printf '%s' "$_kept"
+)"
+export PATH
 # The machine's own search path, before anything is put in front of it: the
 # Keychain lookup (`device_launch._OWN_LOGIN_CREDENTIALS`) runs on it alone.
 REAL_PATH="$PATH"
@@ -590,6 +604,10 @@ if [ -z "${{CHEESE_PYTHON:-}}" ]; then
     exit 1
   }}
 fi
+# The commands that start on it name the variable, not its value: they are
+# read as shell again (the supervisor's `eval`, the runner's `sh -c`), and a
+# path holding a `$` or a quote would otherwise be read as more than a path.
+export CHEESE_PYTHON
 # Bash exposes this clock without spawning date. Other shells skip diagnostics.
 # Append across relaunches; only phase names and timestamps enter this file.
 # The same marks of THIS launch also travel to the runner in its environment
@@ -829,7 +847,7 @@ if [ -n "${{TMUX:-}}" ]; then
 fi
 ENVIRONMENT_CMD=""
 if [ -n "${{CHEESE_ENVIRONMENT:-}}" ]; then
-  ENVIRONMENT_CMD="\\"$CHEESE_PYTHON\\" \\"$HOME/.cheese/cheese-environment.py\\" "
+  ENVIRONMENT_CMD="\\"\\$CHEESE_PYTHON\\" \\"$HOME/.cheese/cheese-environment.py\\" "
 fi
 AGENT_PID=""
 TUNNEL_PID=""

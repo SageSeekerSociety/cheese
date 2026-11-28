@@ -604,7 +604,7 @@ def prepare(
     dispatch = (
         'case "$1" in\n'
         + "".join(
-            f'  {shlex.quote(command)}) exec sh -c "$1" ;;\n'
+            f'  {shlex.quote(command)}) exec /bin/sh -c "$1" ;;\n'
             for command in sorted(local_commands)
         )
         + "esac\n"
