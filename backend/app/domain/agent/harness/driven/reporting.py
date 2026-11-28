@@ -189,6 +189,13 @@ def launch_phases(value: object) -> dict[str, float] | None:
     return phases or None
 
 
+def launch_start(value: object) -> str:
+    """Whether a runner's launch went on with a conversation (``resume``) or
+    began one (``fresh``), as it said beside its ``launch_timing``;
+    ``unknown`` from a runner that does not say."""
+    return value if value in ("fresh", "resume") else "unknown"
+
+
 def _uuid(value: object) -> uuid.UUID | None:
     try:
         return uuid.UUID(str(value)) if value else None
@@ -289,9 +296,12 @@ class Reading:
                 # Said once by a runner whose session has just come up: the
                 # whole launch, past the greeting that saw only its start.
                 logger.info(
-                    "session_launch_timing topic=%s seat=%s stage=ready phases_ms=%s",
+                    "session_launch_timing topic=%s seat=%s launch=%s stage=ready "
+                    "start=%s phases_ms=%s",
                     self.whose.conversation_id,
                     self.whose.agent_handle,
+                    answer.get("launch"),
+                    launch_start(answer.get("launch_start")),
                     phases,
                 )
             state = answer.get("state")

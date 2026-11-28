@@ -29,7 +29,12 @@ from app.domain.agent.harness.claude_code import (
     ended,
 )
 from app.domain.agent.harness.driven import lifecycle
-from app.domain.agent.harness.driven.reporting import Reading, Whose, launch_phases
+from app.domain.agent.harness.driven.reporting import (
+    Reading,
+    Whose,
+    launch_phases,
+    launch_start,
+)
 from app.domain.agent.session_host.contract import (
     Access,
     Image,
@@ -181,9 +186,12 @@ class ClaudeCodeDriver:
             # of starting a session, which only its runner sees. The rest
             # follows once Claude Code is ready (``Reading.drain``).
             logger.info(
-                "session_launch_timing topic=%s seat=%s stage=greeted phases_ms=%s",
+                "session_launch_timing topic=%s seat=%s launch=%s stage=greeted "
+                "start=%s phases_ms=%s",
                 owner.place_id,
                 owner.name,
+                status.get("launch") or name,
+                launch_start(status.get("launch_start")),
                 phases,
             )
         return Launched(
@@ -195,6 +203,8 @@ class ClaudeCodeDriver:
             # an earlier runner answers with that one's, not the name chosen
             # for a runner this start would have started.
             status.get("launch") or name,
+            # Only a runner this call started carries the name it chose.
+            spawned=status.get("launch") in (None, name),
         )
 
     async def _greet(self, wire: Wire, host: str, ref: SessionRef, name: str) -> dict:

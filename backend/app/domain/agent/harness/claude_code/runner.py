@@ -712,6 +712,11 @@ class Runner(runner.Runner[Journal]):
         self.marks_file = state / "launch.marks"
         self.greeted = False
         self.launch_told = False
+        #: Whether this launch went on with a conversation (``resume``) or
+        #: began one (``fresh``), told beside ``launch_timing``: only a fresh
+        #: one could have been served by a spare Claude Code started ahead of
+        #: it, which only this runner can tell (``start``).
+        self.launch_start: str | None = None
         self.write_lock = asyncio.Lock()
         self.controls: dict[str, asyncio.Future] = {}
         self.commands: dict[str, asyncio.Future] = {}
@@ -864,12 +869,16 @@ class Runner(runner.Runner[Journal]):
             # names a transcript this build cannot continue, and the next start
             # begins afresh instead of dying on it again (`close`).
             self.journal.remember("resuming", resumed)
+            self.launch_start = "resume"
         else:
             fresh = (
                 saved if saved and transcript(self.config_dir, saved) is None else None
             )
             self.session_id = fresh or str(uuid.uuid4())
             flag = f"--session-id {self.session_id}"
+            # Also when the platform offered a conversation this machine holds
+            # no transcript of: that start is fresh whatever was asked for.
+            self.launch_start = "fresh"
         self.journal.remember("session_id", self.session_id)
         self.journal.remember(
             "owner",
@@ -2386,6 +2395,7 @@ class Runner(runner.Runner[Journal]):
                     self._mark("greeted")
                 if timing := self.launch_timing():
                     status["launch_timing"] = timing
+                    status["launch_start"] = self.launch_start
             return status
         if method == "apply_hooks":
             # The session's own helper (`executor_transport.register_project_
@@ -2505,4 +2515,8 @@ class Runner(runner.Runner[Journal]):
             # launch as a whole, which the greeting came too early to see.
             self.launch_told = True
             answer["launch_timing"] = self.launch_timing()
+            answer["launch_start"] = self.launch_start
+            # Which start of the runner this was: the greeting's ping and the
+            # turn that started it name it too, so the three lines join.
+            answer["launch"] = self.launch
         return answer
