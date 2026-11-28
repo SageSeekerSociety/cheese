@@ -1,12 +1,14 @@
 """Run subscription sessions using the device launch and Linux executor builders."""
 
 import hashlib
+import http.server
 import json
 import os
 import runpy
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
@@ -15,17 +17,20 @@ HERE = Path(__file__).resolve()
 BACKEND = HERE.parents[2] / "backend"
 REMOTE = BACKEND / "app/domain/agent/harness/claude_code/remote_execution"
 METER = HERE.parents[2] / "deploy/metering-proxy/cheese_billing_core.py"
+DEVICE = "subscription-e2e"
 
 
 def stage_launch(home, case, ca, project, topic, owner):
     sys.path.insert(0, str(BACKEND))
     os.environ["WORKSPACE_ROOT"] = str(home / "platform-data")
     os.environ["SUBSCRIPTION_CA_BACKEND_PATH"] = ca
+    from app.domain.agent.central_provider import CentralChannel
     from app.domain.agent.device_provider import DeviceChannel
     from app.domain.agent.harness.claude_code.cli import LAUNCH_ARGS
     from app.domain.agent.harness.claude_code.device_launch import launch_holes
     from app.domain.agent.launch import MachinePlace
     from app.domain.agent.machine_launcher import screen_env
+    from app.domain.agent.owner_provider import OwnerChannel
     from app.domain.agent.place import OWN_LOGIN_ID, OWN_MODEL, seat_name
     from app.domain.agent.screen_model_env import screen_model_env
     from app.domain.device.login_kind import FIRST_LOGIN
@@ -56,6 +61,11 @@ def stage_launch(home, case, ca, project, topic, owner):
         state=place.state, ca_pem=ca_pem, own_login=owned,
         seat=seat_name(place.agent_handle),
     )
+    # Where the session runs beside its executor, as the channel that starts
+    # it decides: a metered session in a namespace of its own on the session
+    # host, a member's own Claude Code as a plain process on its owner's machine.
+    channel = OwnerChannel if owned else CentralChannel
+    placement = channel._deferred_target(None, {}, apart=False)
 
     bundle = session_skill_bundle(None)
     cache = owner / ".cheese/skill-bundles"
@@ -79,7 +89,7 @@ def stage_launch(home, case, ca, project, topic, owner):
     }
     raw = subprocess.check_output(["/bin/sh", str(script)], cwd=workspace, env=shell_env)
     (home / "production.json").write_text(
-        json.dumps({"env": parse_environ(raw), "args": LAUNCH_ARGS})
+        json.dumps({"env": parse_environ(raw), "args": LAUNCH_ARGS, "placement": placement})
     )
 
 
@@ -97,110 +107,182 @@ def redact(env):
     }
 
 
-def run_session(runtime, home, state, platform, case, binary, action, *proxy_settings):
-    case_env = json.loads((home / "production.json").read_text())
-    production = case_env["env"]
-    owned = case == "owned"
-    if owned:
-        proxy, ca = proxy_settings
-        additions = {"HTTPS_PROXY": proxy, "NODE_EXTRA_CA_CERTS": ca}
-    else:
-        bridge = runtime["_start_forge_bridge"](platform / "forge.sock")
-        # The meter tunnel publishes its selected loopback port to the launch.
-        production["HTTPS_PROXY"] = f"http://127.0.0.1:{bridge.server_address[1]}"
-        additions = {}
+def stand_ins(launched, owned, proxy, ca):
+    """What the fixture adds to the launch the builders produced, and only that.
 
+    A metered session's HTTPS_PROXY is its seat's tunnel helper, which the
+    platform half of the launch starts and exports when the builders name a
+    tunnel (`machine_launcher`, `CHEESE_TUNNEL_URL`). Neither runs here: the
+    stub's own port stands in for the helper's, so the builders must name the
+    tunnel and no proxy of their own. A member's own session has neither proxy
+    nor CA in production; the fixture adds both to reach the stub."""
+    if owned:
+        named = sorted({"CHEESE_TUNNEL_URL", "HTTPS_PROXY", "NODE_EXTRA_CA_CERTS"} & set(launched))
+        if named:
+            raise RuntimeError(f"Own-login launch names the metering route: {named}")
+        return {"HTTPS_PROXY": proxy, "NODE_EXTRA_CA_CERTS": ca}
+    if "CHEESE_TUNNEL_URL" not in launched or "HTTPS_PROXY" in launched:
+        raise RuntimeError("Metered launch must name its tunnel and no proxy of its own")
+    return {"HTTPS_PROXY": proxy}
+
+
+def run_session(runtime, home, case, binary, action, proxy, ca=None):
+    staged = json.loads((home / "production.json").read_text())
+    launched = staged["env"]
+    owned = case == "owned"
+    fixture = stand_ins(launched, owned, proxy, ca)
     if action == "status":
         return subprocess.run(
-            [binary, "auth", "status"], env={**production, **additions}, check=False
+            [binary, "auth", "status"], env={**launched, **fixture}, check=False
         ).returncode
 
-    service_command = [sys.executable, str(REMOTE / "runtime.py"), "serve", "--state", str(state)]
-    with ExitStack() as stack:
-        fds = ()
-        if owned:
-            service_command, fds = stack.enter_context(
-                sandbox(runtime, home, state, platform, binary, service_command, network=False)
-            )
-        service = subprocess.Popen(
-            service_command, env=production, pass_fds=fds, stdin=subprocess.DEVNULL,
-        )
-    public = Path(runtime["socket_path"](state))
-    try:
-        ready = public
-        if owned:
-            ready = Path(runtime["socket_directory"](state)) / "executor.sock"
-        until = time.monotonic() + 5
-        while not ready.exists():
-            if service.poll() is not None or time.monotonic() >= until:
-                raise RuntimeError("Executor did not open its socket")
-            time.sleep(0.01)
-        if owned:
-            public.symlink_to(ready)
-        os.environ.update(production)
+    state = home / "state"
+    with executor(runtime, home, state, binary, launched, network=not owned) as url:
+        os.environ.update(launched)
         client = runpy.run_path(str(REMOTE / "client.py"))
         directory = Path((home / "session-dir").read_text().strip())
+        # The target a session holds once its lease names the room's machine
+        # (`client._take_leased_machine`), as the channel places it.
+        target = {
+            "kind": "device", "device_id": DEVICE, "url": url, "mcp_servers": [],
+            **staged["placement"],
+        }
         launch = client["prepare"](
             directory,
-            {
-                "kind": "local",
-                "local": True,
-                "workspace": production["CHEESE_WORK"],
-                "context_tree": {"generation": "fixture", "entries": {}},
-                "state": str(state),
-                "command": [sys.executable, str(REMOTE / "runtime.py")],
-            },
+            target,
             claude=binary,
-            extra_args=case_env["args"],
+            extra_args=staged["args"],
             base_settings=json.loads((directory / "base-settings.json").read_text()),
             home_override=home,
-            config_override=production["CLAUDE_CONFIG_DIR"],
+            config_override=launched["CLAUDE_CONFIG_DIR"],
+            workspace_override=launched["CHEESE_WORK"],
         )
-        production.update(launch["env"])
-        expected, _ = client["start_gateway"](Path(production[client["EXECUTION_CONFIG"]]), production)
-        env = {**expected, **additions}
-        with subprocess.Popen(launch["command"], env=env, cwd=launch["cwd"]) as process:
-            environ = Path(f"/proc/{process.pid}/environ")
-            deadline = time.monotonic() + 1
-            while not (raw := environ.read_bytes()):
-                if time.monotonic() >= deadline:
-                    raise RuntimeError("Claude's /proc environment was empty")
-                time.sleep(0.001)
-            actual = parse_environ(raw)
-            missing = sorted(set(expected) - set(actual))
-            added = {key: value for key, value in actual.items() if key not in expected}
-            changed = {
-                key: value for key, value in actual.items()
-                if key in expected and value != expected[key]
-            }
-            audit = {
-                "case": case,
-                "pid": process.pid,
-                "mount_namespace": os.readlink(environ.parent / "ns/mnt"),
-                "network_namespace": os.readlink(environ.parent / "ns/net"),
-                "production": redact(expected),
-                "actual": redact(actual),
-                "added": redact(added),
-                "changed": redact(changed),
-                "missing": missing,
-                "settings_env": redact(json.loads((directory / "settings.json").read_text())["env"]),
-            }
-            print("SESSION_ENV " + json.dumps(audit), file=sys.stderr, flush=True)
-            if actual != env:
-                process.kill()
-                raise RuntimeError("Claude process environment differs from its launch")
-            return process.wait()
-    finally:
-        if service.poll() is None:
-            service.terminate()
-        service.wait(timeout=5)
-        if owned:
-            public.unlink(missing_ok=True)
+        production, _ = client["start_gateway"](
+            Path(launch["execution"]), {**launched, **launch["env"]}
+        )
+        env = {**production, **fixture}
+        # `namespace.enter` is this Python, which hands the build what it set
+        # in its own environment as it started (PEP 538's locale coercion), and
+        # starts the session where it sees its project, saying so in PWD.
+        entered = (
+            {**interpreter_additions(env), "PWD": launch["workspace"]}
+            if launch["command"][2:3] == ["enter"]
+            else {}
+        )
+        try:
+            with subprocess.Popen(launch["command"], env=env, cwd=launch["cwd"]) as process:
+                proc = Path(f"/proc/{process.pid}")
+                interpreter = os.path.realpath(sys.executable)
+                deadline = time.monotonic() + 5
+                while os.readlink(proc / "exe") == interpreter or not (raw := (proc / "environ").read_bytes()):
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError("Claude Code did not start in the launch's process")
+                    time.sleep(0.005)
+                actual = parse_environ(raw)
+                audit = {
+                    "case": case,
+                    "pid": process.pid,
+                    "mount_namespace": os.readlink(proc / "ns/mnt"),
+                    "network_namespace": os.readlink(proc / "ns/net"),
+                    "production": redact(production),
+                    "fixture": redact(fixture),
+                    "entered": entered,
+                    "differs_from_production": redact(
+                        {key: value for key, value in actual.items() if production.get(key) != value}
+                    ),
+                    "missing": sorted(set(production) - set(actual)),
+                    "settings_env": redact(json.loads((directory / "settings.json").read_text())["env"]),
+                }
+                print("SESSION_ENV " + json.dumps(audit), file=sys.stderr, flush=True)
+                if actual != {**production, **entered, **fixture}:
+                    process.kill()
+                    raise RuntimeError("Claude process environment differs from its production launch")
+                return process.wait()
+        finally:
+            # The view outlives the session until its server sees it ended
+            # (`release.release_abandoned`); this run's view goes with it.
+            runpy.run_path(str(REMOTE / "release.py"))["release_mount"](launch["cwd"])
+
+
+def interpreter_additions(env):
+    """What this Python sets in its own environment when started with `env`."""
+    started = json.loads(subprocess.check_output(
+        [sys.executable, "-c", "import json, os; print(json.dumps(dict(os.environ)))"], env=env,
+    ))
+    return {key: value for key, value in started.items() if env.get(key) != value}
 
 
 @contextmanager
-def sandbox(runtime, home, state, platform, binary, command, *, network):
-    owner = Path.home().resolve()
+def executor(runtime, home, state, binary, env, *, network):
+    """The room's executor in its sandbox, and the platform's executor route
+    to it: the URL a device target names."""
+    platform = Path(runtime["platform_socket_directory"](state))
+    public = Path(runtime["socket_path"](state))
+    ready = Path(runtime["socket_directory"](state)) / "executor.sock"
+    command = [sys.executable, str(REMOTE / "runtime.py"), "serve", "--state", str(state)]
+    with ExitStack() as stack:
+        argv, fds = stack.enter_context(
+            sandbox(runtime, home, state, platform, binary, Path(env["REAL_HOME"]), command,
+                    network=network)
+        )
+        service = subprocess.Popen(argv, env=env, pass_fds=fds, stdin=subprocess.DEVNULL)
+    relay = None
+    try:
+        # The connector links the address clients dial to the socket the
+        # sandbox binds (`cli/internal/host/executor_unix.go`).
+        public.symlink_to(ready)
+        # A socket file left by an earlier turn's executor is there before
+        # this one listens: ready is when it answers.
+        until = time.monotonic() + 5
+        while True:
+            try:
+                runtime["request"](state, "ping")
+                break
+            except OSError:
+                if service.poll() is not None or time.monotonic() >= until:
+                    raise RuntimeError("Executor did not answer") from None
+                time.sleep(0.01)
+        relay = executor_route(runtime, state)
+        yield f"http://127.0.0.1:{relay.server_port}/executor"
+    finally:
+        if relay is not None:
+            relay.shutdown()
+            relay.server_close()
+        if service.poll() is None:
+            service.terminate()
+        service.wait(timeout=5)
+        public.unlink(missing_ok=True)
+
+
+def executor_route(runtime, state):
+    """The platform's route to a device's executor, standing in for the
+    platform and the connector: each call goes to the executor at `state`."""
+
+    class Route(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *_args):
+            pass
+
+        def do_POST(self):
+            call = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            try:
+                status, answer = 200, runtime["request"](state, call["method"], call.get("params"))
+            except RuntimeError as error:
+                status, answer = 500, {"detail": str(error)}
+            body = json.dumps(answer).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Route)
+    server.daemon_threads = True
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return server
+
+
+@contextmanager
+def sandbox(runtime, home, state, platform, binary, owner, command, *, network):
     confinement = runpy.run_path(str(REMOTE / "confinement.py"))
     bwrap = os.environ.get("CHEESE_TEST_BWRAP") or shutil.which("bwrap")
     if bwrap is None:
@@ -290,28 +372,16 @@ def main():
         return 0
     state = home / "state"
     runtime = runpy.run_path(str(REMOTE / "runtime.py"))
-    platform = Path(runtime["platform_socket_directory"](state))
     if mode == "prepare":
         state.mkdir()
         (state / "config.json").write_text(json.dumps({"workspace": str(home / "workspace")}))
-        platform.mkdir(mode=0o700)
-        print(json.dumps({"platform": str(platform), "sockets": str(runtime["socket_directory"](state))}))
+        Path(runtime["platform_socket_directory"](state)).mkdir(mode=0o700)
+        print(json.dumps({
+            "platform": runtime["platform_socket_directory"](state),
+            "sockets": runtime["socket_directory"](state),
+        }))
         return 0
-
-    case, binary, action, *proxy_settings = args
-    if mode == "inside" or case == "owned":
-        return run_session(runtime, home, state, platform, case, binary, action, *proxy_settings)
-
-    env = {
-        "HOME": str(home),
-        "PATH": os.environ["PATH"],
-        "PYTHONDONTWRITEBYTECODE": "1",
-    }
-    command = [sys.executable, str(HERE), "inside", str(home), case, binary, action]
-    with sandbox(runtime, home, state, platform, binary, command, network=True) as (argv, fds):
-        for fd in fds:
-            os.set_inheritable(fd, True)
-        os.execve(argv[0], argv, env)
+    return run_session(runtime, home, *args)
 
 
 if __name__ == "__main__":

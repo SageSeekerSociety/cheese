@@ -12,7 +12,6 @@
 // the stub requests it and returns a fixed greeting after a tool_result.
 // STUB_ANTHROPIC_EXPIRES_IN sets the initial token lifetime in seconds.
 // STUB_ANTHROPIC_RATE_LIMIT_AFTER_REFRESH changes the limit for the new token.
-// Set STUB_ANTHROPIC_SOCKET to the Unix socket path for the executor's proxy bridge.
 // STUB_ANTHROPIC_METER takes a placeholder, project, topic, and optional noLoginAnswers.
 // It serves the production control table before forwarding to the simulated Anthropic API.
 // Without it, OAuth and model requests use the simulated Anthropic account.
@@ -24,7 +23,6 @@ import { join } from 'node:path';
 import { createSecureContext, TLSSocket } from 'node:tls';
 
 const port = Number(process.env.STUB_ANTHROPIC_PORT ?? 4011);
-const socketPath = process.env.STUB_ANTHROPIC_SOCKET;
 const plan = process.env.STUB_ANTHROPIC_PLAN ?? 'max';
 const rateLimit = process.env.STUB_ANTHROPIC_RATE_LIMIT ?? 'allowed';
 const rateLimitAfterRefresh = process.env.STUB_ANTHROPIC_RATE_LIMIT_AFTER_REFRESH ?? rateLimit;
@@ -371,12 +369,7 @@ proxy.on('connect', (request, socket, head) => {
   tls.on('error', (err) => console.log(`TLS ${host} -> ${err.code}`));
   api.emit('connection', tls);
 });
-proxy.listen(socketPath ? { path: socketPath } : { port, host: '127.0.0.1' }, function () {
-  if (socketPath) {
-    process.on('exit', () => rmSync(socketPath, { force: true }));
-    console.log(`STUB_ANTHROPIC_SOCKET=${socketPath}`);
-  } else {
-    console.log(`HTTPS_PROXY=http://127.0.0.1:${this.address().port}`);
-  }
+proxy.listen({ port, host: '127.0.0.1' }, function () {
+  console.log(`HTTPS_PROXY=http://127.0.0.1:${this.address().port}`);
   console.log(`NODE_EXTRA_CA_CERTS=${caPath}`);
 });

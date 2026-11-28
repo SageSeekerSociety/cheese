@@ -15,7 +15,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -32,7 +31,7 @@ type anthropicStub struct {
 	ca      string
 }
 
-func startAnthropicStub(t *testing.T, socket, meter, python string, expiresIn int, toolCommand string) anthropicStub {
+func startAnthropicStub(t *testing.T, meter, python, toolCommand string) anthropicStub {
 	t.Helper()
 	tool, err := json.Marshal(map[string]any{
 		"name": "Bash",
@@ -49,13 +48,11 @@ func startAnthropicStub(t *testing.T, socket, meter, python string, expiresIn in
 	cmd.WaitDelay = 2 * time.Second
 	cmd.Env = append(os.Environ(),
 		"TMPDIR="+t.TempDir(),
-		"STUB_ANTHROPIC_SOCKET="+socket,
 		"STUB_ANTHROPIC_PORT=0",
 		"STUB_ANTHROPIC_PLAN=max",
 		"STUB_ANTHROPIC_METER="+meter,
 		"STUB_ANTHROPIC_RATE_LIMIT=allowed",
 		"STUB_ANTHROPIC_RATE_LIMIT_AFTER_REFRESH=rejected",
-		"STUB_ANTHROPIC_EXPIRES_IN="+strconv.Itoa(expiresIn),
 		"STUB_ANTHROPIC_TOOL="+string(tool),
 	)
 	cmd.Stderr = os.Stderr
@@ -71,11 +68,7 @@ func startAnthropicStub(t *testing.T, socket, meter, python string, expiresIn in
 	lines := bufio.NewScanner(stdout)
 	var stub anthropicStub
 	if lines.Scan() {
-		prefix := "STUB_ANTHROPIC_SOCKET="
-		if socket == "" {
-			prefix = "HTTPS_PROXY="
-		}
-		stub.address, _ = strings.CutPrefix(lines.Text(), prefix)
+		stub.address, _ = strings.CutPrefix(lines.Text(), "HTTPS_PROXY=")
 	}
 	if lines.Scan() {
 		stub.ca, _ = strings.CutPrefix(lines.Text(), "NODE_EXTRA_CA_CERTS=")
@@ -249,12 +242,12 @@ func loginOnHost(t *testing.T, binary, cheesehost, owner string, stub anthropicS
 	}
 }
 
-func runSubscription(t *testing.T, caseName, binary, home, action, prompt string, proxySettings ...string) (string, error) {
+func runSubscription(t *testing.T, python, caseName, binary, home, action, prompt string, proxySettings ...string) (string, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	args := append([]string{"subscription_sandbox.py", "run", home, caseName, binary, action}, proxySettings...)
-	cmd := exec.CommandContext(ctx, "python3", args...)
+	cmd := exec.CommandContext(ctx, python, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	if prompt != "" {
@@ -288,6 +281,78 @@ func sessionMountNamespace(t *testing.T, output string) string {
 	return ""
 }
 
+// ownerHome is the home of the machine's owner, where the owner's Claude login
+// lives. It is outside /tmp, which the sandbox replaces with the room's own,
+// so that only hiding the owner's home keeps the login out of the sandbox.
+func ownerHome(t *testing.T) string {
+	t.Helper()
+	parent, err := filepath.Abs(filepath.Join("..", "..", "tmp"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := os.MkdirTemp(parent, "subscription-owner-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resolved
+}
+
+// stagedCredentials is the owner's login the staged launch signs in with.
+func stagedCredentials(t *testing.T, home string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(home, "production.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var staged struct {
+		Env map[string]string `json:"env"`
+	}
+	if err := json.Unmarshal(data, &staged); err != nil {
+		t.Fatal(err)
+	}
+	dir := staged.Env["CLAUDE_SECURESTORAGE_CONFIG_DIR"]
+	if dir == "" {
+		t.Fatal("own-login launch names no credential store")
+	}
+	return filepath.Join(dir, ".credentials.json")
+}
+
+// expireCredential sets the stored access token's expiry to now, so the
+// session's next request refreshes it first.
+func expireCredential(t *testing.T, path string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored map[string]json.RawMessage
+	var oauth map[string]any
+	if err := json.Unmarshal(data, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(stored["claudeAiOauth"], &oauth); err != nil || oauth["expiresAt"] == nil {
+		t.Fatalf("stored login has no OAuth expiry: %v\n%s", err, data)
+	}
+	oauth["expiresAt"] = time.Now().UnixMilli()
+	if stored["claudeAiOauth"], err = json.Marshal(oauth); err != nil {
+		t.Fatal(err)
+	}
+	if data, err = json.Marshal(stored); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestClaudeSubscriptionStub(t *testing.T) {
 	binary, err := filepath.Abs(claudeBinary(t))
 	if err != nil {
@@ -304,8 +369,6 @@ func TestClaudeSubscriptionStub(t *testing.T) {
 	}
 
 	python := backendPython(t)
-	const refreshMargin = 300
-	const expiresIn = refreshMargin + 12
 	hostMount, err := os.Readlink("/proc/self/ns/mnt")
 	if err != nil {
 		t.Fatal(err)
@@ -313,8 +376,8 @@ func TestClaudeSubscriptionStub(t *testing.T) {
 	for _, caseName := range []string{"metered", "metered-no-credential", "owned"} {
 		t.Run(caseName, func(t *testing.T) {
 			home := realTempDir(t)
-			owner := realTempDir(t)
-			prepared, err := exec.Command("python3", "subscription_sandbox.py", "prepare", home).CombinedOutput()
+			owner := ownerHome(t)
+			prepared, err := exec.Command(python, "subscription_sandbox.py", "prepare", home).CombinedOutput()
 			if err != nil {
 				t.Fatalf("prepare sandbox: %v\n%s", err, prepared)
 			}
@@ -322,9 +385,8 @@ func TestClaudeSubscriptionStub(t *testing.T) {
 			if err := json.Unmarshal(prepared, &paths); err != nil {
 				t.Fatalf("read sandbox paths: %v\n%s", err, prepared)
 			}
-			platform := paths.Platform
 			t.Cleanup(func() {
-				_ = os.RemoveAll(platform)
+				_ = os.RemoveAll(paths.Platform)
 				_ = os.RemoveAll(paths.Sockets)
 				_ = os.Remove(paths.Sockets + ".sock")
 			})
@@ -359,40 +421,37 @@ status=$?
 printf 'curl exit %%s\n' "$status" >> direct-result.txt
 test "$status" -eq %d && printf stub-tool-ran > tool-result.txt`, outside.Addr(), curlExit)
 			if owned {
-				tool = `test -n "$CLAUDE_SECURESTORAGE_CONFIG_DIR" || exit 1
+				tool = fmt.Sprintf(`test -n "$CLAUDE_SECURESTORAGE_CONFIG_DIR" || exit 1
 test -e "$CLAUDE_SECURESTORAGE_CONFIG_DIR/.credentials.json"
-printf 'login visible exit %s\n' "$?" > tool-login.txt
-` + tool
+printf 'login visible exit %%s\n' "$?" > tool-login.txt
+test -d '%s'
+printf 'owner parent visible exit %%s\n' "$?" >> tool-login.txt
+`, filepath.Dir(owner)) + tool
 			}
 			meter := "null"
-			socket := ""
 			var cheesehost string
 			if owned {
 				cheesehost = cheesehostBinary(t)
 			} else {
 				meter = stageProduction(t, python, "meter", caseName, tableProject, tableTopic)
-				socket = filepath.Join(platform, "forge.sock")
 			}
-			stub := startAnthropicStub(t, socket, meter, python, expiresIn, tool)
-			if !owned {
-				pem, err := os.ReadFile(stub.ca)
-				if err != nil {
-					t.Fatal(err)
-				}
-				for _, name := range []string{"ca.pem", "ca-bundle.pem"} {
-					if err := os.WriteFile(filepath.Join(platform, name), pem, 0o644); err != nil {
-						t.Fatal(err)
-					}
-				}
-			}
+			stub := startAnthropicStub(t, meter, python, tool)
 			stageProduction(t, python, "stage", home, caseName, stub.ca, tableProject, tableTopic, owner)
-			var refreshDue time.Time
-			var proxySettings []string
+			// The stub stands in for the metering proxy's tunnel on a metered
+			// session, and for Anthropic itself on an owned one.
+			proxySettings := []string{stub.address}
+			var credentials string
 			if owned {
-				proxySettings = []string{stub.address, stub.ca}
+				proxySettings = append(proxySettings, stub.ca)
 				loginOnHost(t, binary, cheesehost, owner, stub)
-				refreshDue = time.Now().Add((expiresIn - refreshMargin) * time.Second)
-				status, err := runSubscription(t, caseName, binary, home, "status", "", proxySettings...)
+				credentials = stagedCredentials(t, home)
+				if !strings.HasPrefix(credentials, owner+string(filepath.Separator)) {
+					t.Fatalf("login %s is not in the owner's home %s", credentials, owner)
+				}
+				if _, err := os.Stat(credentials); err != nil {
+					t.Fatalf("expected the login on the host: %v", err)
+				}
+				status, err := runSubscription(t, python, caseName, binary, home, "status", "", proxySettings...)
 				var account struct {
 					LoggedIn         bool   `json:"loggedIn"`
 					AuthMethod       string `json:"authMethod"`
@@ -403,7 +462,7 @@ printf 'login visible exit %s\n' "$?" > tool-login.txt
 					t.Fatalf("owned session did not pick up the host's subscription: %v\n%s", err, status)
 				}
 			}
-			out, err := runSubscription(t, caseName, binary, home, "turn", "Write the marker", proxySettings...)
+			out, err := runSubscription(t, python, caseName, binary, home, "turn", "Write the marker", proxySettings...)
 			modelMount := sessionMountNamespace(t, out)
 			if (modelMount == hostMount) != owned {
 				t.Fatalf("Claude mount namespace %s has the wrong relationship to host %s for %s", modelMount, hostMount, caseName)
@@ -431,16 +490,19 @@ printf 'login visible exit %s\n' "$?" > tool-login.txt
 			if err != nil || !strings.HasPrefix(toolNamespace, "mnt:[") || toolNamespace == hostMount {
 				t.Fatalf("expected the Bash tool to run in a separate mount namespace, got %q (%v)", toolMount, err)
 			}
+			if !owned && modelMount == toolNamespace {
+				t.Fatalf("expected the metered model outside the room's sandbox, both in %s", modelMount)
+			}
 			t.Logf("Mount namespaces host=%s model=%s tool=%s", hostMount, modelMount, toolNamespace)
 			t.Logf("Host listener %s -> %s; tool inside sandbox:\n%s", outside.Addr(), response.Status, direct)
 			if owned {
 				storage, err := os.ReadFile(filepath.Join(workspace, "tool-login.txt"))
-				if err != nil || string(storage) != "login visible exit 1\n" {
-					t.Fatalf("expected the host login to be hidden from the tool, got %q (%v)", storage, err)
+				if err != nil || string(storage) != "login visible exit 1\nowner parent visible exit 0\n" {
+					t.Fatalf("expected the owner's home hidden from the tool and its parent shown, got %q (%v)", storage, err)
 				}
-				t.Logf("Bash login visibility probe: %s", storage)
-				time.Sleep(time.Until(refreshDue))
-				out, _ := runSubscription(t, caseName, binary, home, "turn", "say hi", proxySettings...)
+				t.Logf("Bash login visibility probe (login %s):\n%s", credentials, storage)
+				expireCredential(t, credentials)
+				out, _ := runSubscription(t, python, caseName, binary, home, "turn", "say hi", proxySettings...)
 				if !strings.Contains(out, "You've hit your 5-hour limit") {
 					t.Fatalf("expected subscription limit after refresh\n%s", out)
 				}
