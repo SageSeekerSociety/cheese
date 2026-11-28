@@ -4,6 +4,7 @@ import json
 import os
 import socket
 import sys
+import time
 from pathlib import Path
 
 for line in sys.stdin:
@@ -12,6 +13,11 @@ for line in sys.stdin:
         continue
     method = request["method"]
     if method == "initialize":
+        # When it was asked to start, for a caller that has to know whether
+        # that happened before or after something it did (`headless_contract`).
+        if os.environ.get("MCP_INITIALIZE_LOG"):
+            with open(os.environ["MCP_INITIALIZE_LOG"], "a") as log:
+                log.write(json.dumps({"pid": os.getpid(), "time": time.time()}) + "\n")
         result = {
             "protocolVersion": request["params"]["protocolVersion"],
             "capabilities": {"tools": {}},

@@ -110,6 +110,16 @@ class Directives:
         return directive
 
 
+class Counting(Handler):
+    """The fixture, keeping every path posted to before it is answered: the
+    fixture answers title and quota requests without listing them in
+    `requests`, and a spare that should ask nothing must not ask those either."""
+
+    def do_POST(self):
+        self.server.state["posts"].append(self.path)
+        super().do_POST()
+
+
 class Refusing(Handler):
     """The Messages API refusing the credential, as a revoked key does."""
 
@@ -257,6 +267,17 @@ def text_of(result):
     return str(content)
 
 
+def echo_of(result):
+    """The message `custom_mcp.py`'s echo says it recorded, read from the
+    JSON it answers with (the build appends its own reminder after it); None
+    for any other answer, an error quoting the argument included."""
+    try:
+        said, _ = json.JSONDecoder().raw_decode(text_of(result))
+    except ValueError:
+        return None
+    return said.get("message") if isinstance(said, dict) else None
+
+
 def workspace(path):
     """A git workspace with one committed file and one uncommitted change."""
     git = [
@@ -273,12 +294,13 @@ def workspace(path):
     (path / "target.txt").write_text("TARGET_CONTENT\nCHANGED\n")
 
 
-def isolated_flags():
+def isolated_flags(mcp_env=None):
     mcp = {
         "mcpServers": {
             "fixture": {
                 "command": sys.executable,
                 "args": [str(HERE / "custom_mcp.py")],
+                **({"env": mcp_env} if mcp_env else {}),
             }
         }
     }
@@ -333,6 +355,7 @@ class Session:
         home=None,
         launch=None,
         port=0,
+        mcp_env=None,
     ):
         self.name = name
         self.root = root / name
@@ -352,11 +375,12 @@ class Session:
             (self.config / "settings.json").write_text(json.dumps(settings, indent=2))
         # A given port lets two sessions run one after the other against the
         # same model address.
-        self.server = Server(("127.0.0.1", port), Refusing if refuse else Handler)
+        self.server = Server(("127.0.0.1", port), Refusing if refuse else Counting)
         self.server.state = {
             "dir": self.fixture,
             "actions": Directives(),
             "requests": [],
+            "posts": [],
         }
         self.serving = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.serving.start()
@@ -366,7 +390,7 @@ class Session:
             # source, plugin, MCP config and disallowed tools.
             self.argv = [*launch["command"], "--model", MODEL, *args]
         else:
-            self.argv = [binary, "--model", MODEL, *isolated_flags(), *args]
+            self.argv = [binary, "--model", MODEL, *isolated_flags(mcp_env), *args]
         environment = {
             **fixture_env(self.home, self.root, self.server.server_port),
             **(launch["env"] if launch else {}),
@@ -496,6 +520,11 @@ class Session:
 
     def requests(self):
         return self.server.state["requests"]
+
+    def model_calls(self):
+        """Every Messages API request that reached the fixture, background
+        ones (title, quota, token counts) included."""
+        return [path for path in self.server.state["posts"] if "/messages" in path]
 
     def close_stdin(self):
         self._record("in", {"_close_stdin": True})
@@ -1855,6 +1884,13 @@ def remote(
     # Where the session stands once `enter` has put it in its namespace: the
     # project at the executor's path. `workspace` is where this host holds it.
     session.start = launch["workspace"]
+    # The servers its `--mcp-config` names: `native` and the target's own.
+    command = launch["command"]
+    session.mcp_servers = sorted(
+        json.loads(Path(command[command.index("--mcp-config") + 1]).read_text())[
+            "mcpServers"
+        ]
+    )
     return session
 
 
@@ -2045,19 +2081,19 @@ def rss_kb(pid):
     return int(found) if found.isdigit() else None
 
 
-def serving_mcp(pid):
-    """The fixture MCP servers the session has started (`custom_mcp.py`)."""
-    listing = subprocess.run(
-        ["ps", "-axo", "pid=,command="], capture_output=True, text=True
-    ).stdout
-    commands = {
-        int(fields[0]): fields[1]
-        for fields in (line.split(None, 1) for line in listing.splitlines())
-        if len(fields) == 2 and fields[0].isdigit()
-    }
-    return [
-        child for child in started_by(pid) if "custom_mcp.py" in commands.get(child, "")
-    ]
+def refusal(text):
+    """The reason token a refusal leads with (`not_claimed: ...`)."""
+    return str(text).split(":", 1)[0].strip()
+
+
+def session_start(path):
+    """What the claiming scenario's SessionStart hook wrote: the directory it
+    ran in, then the hook input the build gave it. None until both are there."""
+    try:
+        where, given = path.read_text().split("\n", 1)
+        return where, json.loads(given)
+    except (OSError, ValueError):
+        return None
 
 
 def spare_args(session_id, prompt):
@@ -2077,6 +2113,10 @@ def spare_args(session_id, prompt):
 #: How long a spare is left parked before it is claimed: long enough for
 #: anything it would do unclaimed to have happened.
 PARKED_S = 5.0
+
+#: How long after the claim answers its SessionStart hook may take to run:
+#: the answer can come before the hook has run.
+HOOK_S = 30.0
 
 
 def claiming(binary, root):
@@ -2101,19 +2141,23 @@ def claiming(binary, root):
                     "hooks": [
                         {
                             "type": "command",
-                            "command": 'pwd -P > "$HOME/session-start-ran-here"',
+                            # Where it ran, then the hook input, which names
+                            # the event and the session.
+                            "command": '{ pwd -P; cat; } > "$HOME/session-start-ran-here"',
                         }
                     ]
                 }
             ]
         }
     }
+    initialized = root / "claiming-mcp-initialize.jsonl"
     session = Session(
         binary,
         root,
         "claiming",
         spare_args(session_id, prompt),
         settings=settings,
+        mcp_env={"MCP_INITIALIZE_LOG": str(initialized)},
     )
     ran_here = session.home / "session-start-ran-here"
     try:
@@ -2130,23 +2174,17 @@ def claiming(binary, root):
         yield (
             "a parked spare stays up and asks the model nothing before its claim",
             session.process.poll() is None
-            and not session.requests()
+            and not session.model_calls()
             and not talked
             and not ran_here.exists(),
             json.dumps(
                 {
                     "returncode": session.process.poll(),
-                    "model_requests": len(session.requests()),
+                    "model_requests": session.model_calls(),
                     "events": [(e.get("type"), e.get("subtype")) for e in talked],
                     "session_start_ran": ran_here.exists(),
                 }
             ),
-        )
-        held_back = serving_mcp(session.process.pid)
-        yield (
-            "the MCP servers of its --mcp-config are not started while it is parked",
-            not held_back,
-            f"fixture MCP processes while parked: {held_back}",
         )
         refused = session.control(
             {
@@ -2158,22 +2196,29 @@ def claiming(binary, root):
         yield (
             "a claim with an env key off the allow-list is refused with env_key_not_claimable",
             refused.get("subtype") == "error"
-            and str(refused.get("error", "")).startswith("env_key_not_claimable"),
+            and refusal(refused.get("error")) == "env_key_not_claimable",
             json.dumps(refused)[:300],
         )
         mark = session.user("SAID_BEFORE_THE_CLAIM")
         _, early = session.wait(is_("result"), 30, mark)
         yield (
-            "a message before the claim runs no turn: an error result, no model request",
-            bool(early) and early.get("is_error") is True and not session.requests(),
+            "a message before the claim runs no turn: a not_claimed error result, "
+            "no model request",
+            bool(early)
+            and early.get("is_error") is True
+            and [refusal(error) for error in early.get("errors") or []]
+            == ["not_claimed"]
+            and not session.model_calls(),
             json.dumps(
                 early
                 and {
                     key: early.get(key)
                     for key in ("subtype", "is_error", "num_turns", "errors")
                 }
-            )[:300],
+                | {"model_requests": session.model_calls()}
+            )[:400],
         )
+        claimed_at = time.time()
         began = time.monotonic()
         answer = session.control(
             {
@@ -2195,6 +2240,32 @@ def claiming(binary, root):
             "the claimed session keeps the spawn's --session-id",
             claim.get("session_id") == session_id,
             f"spawned with {session_id}, claim answered {claim.get('session_id')}",
+        )
+        # The claim answers before its SessionStart hook has run; the hook is
+        # the claim's, so it runs with no message sent.
+        answered = time.monotonic()
+        while session_start(ran_here) is None and time.monotonic() < answered + HOOK_S:
+            time.sleep(0.1)
+        hook = session_start(ran_here)
+        hook_ms = round((time.monotonic() - answered) * 1000)
+        yield (
+            "the SessionStart hook runs after the claim, before any message, "
+            "in the claimed cwd",
+            hook is not None
+            and hook[0] == str(claimed_cwd.resolve())
+            and hook[1].get("hook_event_name") == "SessionStart"
+            and hook[1].get("session_id") == session_id,
+            json.dumps(
+                hook
+                and {
+                    "ms_after_claim_answer": hook_ms,
+                    "ran_in": hook[0],
+                    **{
+                        key: hook[1].get(key)
+                        for key in ("hook_event_name", "source", "session_id")
+                    },
+                }
+            ),
         )
         mark = session.user(do("mcp__fixture__echo", message="CLAIMED_MCP_MARKER"))
         _, init = session.wait(is_("system", "init"), 30, mark)
@@ -2230,16 +2301,37 @@ def claiming(binary, root):
             f"claimed prompt sent: {'CLAIM_PROMPT_MARKER' in system}, "
             f"spawn prompt sent: {'SPAWN_PROMPT_MARKER' in system}",
         )
-        echoed = (
-            [text_of(block) for block in last_tool_results(session.requests()[-1])]
-            if session.requests()
-            else []
+        echoed = last_tool_results(session.requests()[-1]) if session.requests() else []
+        said = [echo_of(block) for block in echoed]
+        starts = [
+            json.loads(line)["time"]
+            for line in (
+                initialized.read_text().splitlines() if initialized.exists() else []
+            )
+        ]
+        yield (
+            "the MCP servers of its --mcp-config are started only at the claim",
+            bool(starts) and min(starts) >= claimed_at,
+            json.dumps(
+                {
+                    "initialized_s_after_claim": [
+                        round(t - claimed_at, 3) for t in starts
+                    ]
+                }
+            ),
         )
         yield (
-            "an MCP server of its --mcp-config is called after the claim",
-            any("CLAIMED_MCP_MARKER" in text for text in echoed)
-            and bool(serving_mcp(session.process.pid)),
-            json.dumps(echoed)[:300],
+            "an MCP server of its --mcp-config is called after the claim and "
+            "answers it",
+            len(echoed) == 1
+            and echoed[0].get("is_error") is not True
+            and said == ["CLAIMED_MCP_MARKER"],
+            json.dumps(
+                [
+                    {"is_error": block.get("is_error"), "text": text_of(block)[:200]}
+                    for block in echoed
+                ]
+            ),
         )
         spec = importlib.util.spec_from_file_location(
             "execution_release",
@@ -2257,16 +2349,12 @@ def claiming(binary, root):
             recorded and written is not None and written.parent == expected,
             f"written at {written}, project_dir says {expected}",
         )
-        yield (
-            "the SessionStart hook ran at the claim, in the claimed cwd",
-            ran_here.exists()
-            and ran_here.read_text().strip() == str(claimed_cwd.resolve()),
-            ran_here.read_text().strip() if ran_here.exists() else "did not run",
-        )
         again = session.control({"subtype": "claim_session", "cwd": str(claimed_cwd)})
         yield (
-            "a session that was claimed and ran a turn refuses a second claim",
-            again.get("subtype") == "error",
+            "a session that was claimed and ran a turn refuses a second claim "
+            "with not_a_spare",
+            again.get("subtype") == "error"
+            and refusal(again.get("error")) == "not_a_spare",
             json.dumps(again)[:300],
         )
         working = rss_kb(session.process.pid)
@@ -2353,13 +2441,14 @@ def remoteclaiming(binary, root):
             session.control({"subtype": "mcp_status"}).get("response") or {}
         ).get("mcpServers") or []
         yield (
-            "it is sent the claimed system prompt, and its MCP servers are connected",
+            "it is sent the claimed system prompt, and each MCP server of its "
+            "--mcp-config is connected",
             "CLAIM_PROMPT_MARKER" in system
-            and bool(statuses)
-            and all(server.get("status") == "connected" for server in statuses),
+            and servers_connected(statuses, session.mcp_servers),
             json.dumps(
                 {
                     "claimed_prompt_sent": "CLAIM_PROMPT_MARKER" in system,
+                    "configured": session.mcp_servers,
                     "mcp": [(s.get("name"), s.get("status")) for s in statuses],
                 }
             ),
@@ -2387,8 +2476,29 @@ def remoteclaiming(binary, root):
     yield (
         "its first turn's Bash runs where an unclaimed session's does: on the "
         "executor, in its workspace",
-        claimed["on_executor"] and claimed["output"] == unclaimed["output"],
+        same_place(claimed, unclaimed),
         json.dumps({"claimed": claimed, "unclaimed": unclaimed})[:900],
+    )
+
+
+def servers_connected(statuses, configured):
+    """Every server the launch configured is reported, and connected."""
+    reported = {server.get("name"): server.get("status") for server in statuses}
+    return bool(configured) and all(
+        reported.get(name) == "connected" for name in configured
+    )
+
+
+def same_place(claimed, unclaimed):
+    """Both turns ended, each Bash left its marker in its own executor
+    workspace and nowhere else, and both said the same thing: the same output
+    alone would hold for a turn run on this host."""
+    return (
+        all(
+            run["ended"] and run["on_executor"] and len(run["landed"]) == 1
+            for run in (claimed, unclaimed)
+        )
+        and claimed["output"] == unclaimed["output"]
     )
 
 
