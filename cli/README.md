@@ -108,6 +108,13 @@ screens it hosts there (a member's own Claude Code, #2991) are background
 processes it keeps by a small file each (`internal/procscreen`), adopted again
 after a restart or an update, with no terminal to watch. It fetches python3 and
 Git for Windows from the server at `link connect` and keeps itself running with
-a per-user login entry. On Linux and macOS it fetches a Python from the
-server only when the system's python3 is older than 3.11, as on every Mac,
-whose /usr/bin/python3 is 3.9; sessions start with that Python first on PATH.
+a per-user login entry. On Linux and macOS it fetches a pinned Python from the
+server whatever the system has (the musl build on a musl Linux), checks that it
+runs, and exports its path as `CHEESE_PYTHON`: every program of the platform's
+on the machine runs on it by that path, never on a python3 found on PATH. When
+it cannot be fetched or does not run, the connector still connects and tries
+again at the service's next start, but until then no session starts on the
+machine and the server's programs are refused, with the reason in the
+connector's log. Only when the system's python3 is missing or older than 3.11,
+as on every Mac, whose /usr/bin/python3 is 3.9, is that Python also put first
+on PATH, so a room's `python3` is it.

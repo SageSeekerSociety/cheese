@@ -190,6 +190,15 @@ def test_a_mac_or_linux_connector_can_get_a_python_new_enough_for_sessions():
         assert toolchain.resolve("python", platform), platform
 
 
+def test_a_musl_linux_connector_gets_a_python_it_can_start():
+    """The glibc build cannot start on a musl machine, its loader being absent;
+    such a machine asks for the musl build (`cli/internal/devenv`)."""
+    for platform in ("linux-x64-musl", "linux-arm64-musl"):
+        resolved = toolchain.resolve("python", platform)
+        assert resolved, platform
+        assert "-unknown-linux-musl-" in resolved[1].url, platform
+
+
 def test_the_windows_runtime_is_never_placed_as_a_document_tool():
     """The launcher places whatever PLACEMENTS names on every machine it runs
     on; the connector's interpreter and shell are the connector's business."""

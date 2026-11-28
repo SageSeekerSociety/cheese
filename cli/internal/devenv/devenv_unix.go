@@ -35,6 +35,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"debug/elf"
 	"errors"
 	"fmt"
 	"io"
@@ -136,11 +137,28 @@ func Ensure(ctx context.Context, base string, log io.Writer) error {
 	for _, f := range needed {
 		place(f.tool, filepath.Join(root, f.tool, "bin"))
 	}
-	place("python", "")
+	// The Python is a dynamically linked build, so it must be the one for the
+	// machine's C library: a glibc build on a musl machine is placed, passes
+	// every check of the file, and then cannot be started because its loader
+	// is not there. bwrap, the host tools, tmux and git are static builds,
+	// which run on either.
+	pythonPlatform := platform
+	if runtime.GOOS == "linux" && muslHost() {
+		pythonPlatform += "-musl"
+	}
+	if err := ensureTool(ctx, base, root, pythonPlatform, tool{"python", ".tar.gz", extractTarGz}, log); err != nil {
+		failed = errors.Join(failed, fmt.Errorf("python: %w", err))
+	}
 	python := filepath.Join(root, "python", "bin", "python3")
 	if _, err := os.Stat(python); err != nil {
 		os.Unsetenv(runtimepath.Python)
 		return failed
+	}
+	// A Python that is there but does not run is named nowhere, so a launch
+	// refuses for want of one rather than failing inside the session.
+	if err := starts(python); err != nil {
+		os.Unsetenv(runtimepath.Python)
+		return errors.Join(failed, fmt.Errorf("python: the placed %s does not start: %w", python, err))
 	}
 	os.Setenv(runtimepath.Python, python)
 	if !pythonRecentEnough() {
@@ -153,10 +171,63 @@ func Ensure(ctx context.Context, base string, log io.Writer) error {
 // StrEnum).
 const minimum = "(3, 11)"
 
+var recentEnough = fmt.Sprintf("import sys; sys.exit(0 if sys.version_info >= %s else 1)", minimum)
+
 // pythonRecentEnough reports whether the python3 on PATH runs and is new enough.
 func pythonRecentEnough() bool {
-	check := fmt.Sprintf("import sys; sys.exit(0 if sys.version_info >= %s else 1)", minimum)
-	return exec.Command("python3", "-c", check).Run() == nil
+	return exec.Command("python3", "-c", recentEnough).Run() == nil
+}
+
+// starts reports why python cannot run the platform's scripts, or nil if it
+// can. A Linux program whose loader is missing fails to start with "no such
+// file or directory" although the file is there, so the error says which
+// loader it is: the one its build was linked for.
+func starts(python string) error {
+	out, err := exec.Command(python, "-I", "-c", recentEnough).CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	if said := strings.TrimSpace(string(out)); said != "" {
+		err = fmt.Errorf("%w: %s", err, said)
+	}
+	if interp := interpreter(python); interp != "" {
+		if _, missing := os.Stat(interp); missing != nil {
+			err = fmt.Errorf("%w (its loader %s is not on this machine)", err, interp)
+		}
+	}
+	return err
+}
+
+// muslHost reports whether this Linux machine's programs are linked against
+// musl rather than glibc: whether its shell's loader is musl's. A shell
+// linked statically names no loader, and then the machine is musl's if musl's
+// loader is installed. A variable so a test can stand in for a musl machine.
+var muslHost = func() bool {
+	if interp := interpreter("/bin/sh"); interp != "" {
+		return strings.Contains(path.Base(interp), "ld-musl")
+	}
+	found, _ := filepath.Glob("/lib/ld-musl-*.so.1")
+	return len(found) > 0
+}
+
+// interpreter is the loader an ELF program names, or "" for one that names
+// none or is not ELF.
+func interpreter(program string) string {
+	file, err := elf.Open(program)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+	for _, prog := range file.Progs {
+		if prog.Type == elf.PT_INTERP {
+			named, err := io.ReadAll(prog.Open())
+			if err != nil {
+				return ""
+			}
+			return strings.TrimRight(string(named), "\x00")
+		}
+	}
+	return ""
 }
 
 var version = regexp.MustCompile(`(\d+)\.(\d+)`)
@@ -178,6 +249,8 @@ func atLeast(program string, args []string, major, minor int) bool {
 }
 
 // toolchainPlatform names this machine as the server's toolchain route does.
+// The Python alone is asked for with a "-musl" suffix on a musl machine (see
+// `Ensure`).
 func toolchainPlatform(goos, goarch string) (string, error) {
 	arch := map[string]string{"amd64": "x64", "arm64": "arm64"}[goarch]
 	if (goos != "linux" && goos != "darwin") || arch == "" {
