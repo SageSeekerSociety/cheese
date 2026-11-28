@@ -235,14 +235,16 @@ async def test_a_claude_code_still_writing_it_keeps_it_where_it_is(tmp_path, buc
     )
     try:
         # Past its exec: until then the process is still this test's python.
+        # Linux names it by its file's name, macOS by its path.
         while (
-            not subprocess.run(
-                ["ps", "-o", "comm=", "-p", str(running.pid)],
-                capture_output=True,
-                text=True,
-            )
-            .stdout.strip()
-            .endswith("/claude")
+            Path(
+                subprocess.run(
+                    ["ps", "-o", "comm=", "-p", str(running.pid)],
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip()
+            ).name
+            != "claude"
         ):
             await asyncio.sleep(0.05)
         answer = await _carry(computers, session, ("old", before), ("new", after))

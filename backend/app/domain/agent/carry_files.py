@@ -112,6 +112,7 @@ def _pieces(root: Path, sid: str) -> dict[str, bytes]:
     for path in sorted(paths):
         real = path.resolve()
         if not real.is_relative_to(inside):
+            # i18n-exempt: runs on the machine; a carry's reason, for the backend's log
             raise RuntimeError(f"{path.relative_to(root)} leads out of the room")
         if real.is_file():
             found[path.relative_to(root).as_posix()] = real.read_bytes()
@@ -134,6 +135,7 @@ def _retained(archive: Path, sid: str) -> dict[str, bytes]:
             if parts[2] != sid and not (len(parts) == 3 and parts[2] == f"{sid}.jsonl"):
                 continue
             if ".." in relative.parts:
+                # i18n-exempt: runs on the machine; a carry's reason, for the backend's log
                 raise RuntimeError(f"{member.name} leads out of the room")
             source = bundle.extractfile(member)
             if source is not None:
@@ -152,6 +154,7 @@ def _put(data: bytes, url: str) -> dict:
     )
     with urllib.request.urlopen(request, timeout=600) as response:
         if response.status // 100 != 2:
+            # i18n-exempt: runs on the machine; a carry's reason, for the backend's log
             raise RuntimeError(f"bucket answered {response.status}")
     return {"size": len(data), "md5": hashlib.md5(data).hexdigest()}
 
@@ -216,15 +219,18 @@ def unpack(payload: dict) -> dict:
                 or ".." in relative.parts
                 or member.name not in expected
             ):
+                # i18n-exempt: runs on the machine; a carry's reason, for the backend's log
                 raise RuntimeError(f"{member.name} is not a file of this conversation")
             source = bundle.extractfile(member)
             received[member.name] = source.read() if source is not None else b""
     for path, item in expected.items():
         data = received.get(path)
         if data is None or hashlib.sha256(data).hexdigest() != item["sha256"]:
+            # i18n-exempt: runs on the machine; a carry's reason, for the backend's log
             raise RuntimeError(f"{path} did not arrive as it was sent")
         target = root / path
         if target.exists() and target.read_bytes() != data:
+            # i18n-exempt: runs on the machine; a carry's reason, for the backend's log
             raise RuntimeError(f"{path} is here already with other bytes")
     root.mkdir(parents=True, exist_ok=True)
     scratch = _profile() / CARRY_TMP
