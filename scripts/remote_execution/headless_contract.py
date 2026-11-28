@@ -2086,14 +2086,18 @@ def refusal(text):
     return str(text).split(":", 1)[0].strip()
 
 
-def session_start(path):
-    """What the claiming scenario's SessionStart hook wrote: the directory it
-    ran in, then the hook input the build gave it. None until both are there."""
-    try:
-        where, given = path.read_text().split("\n", 1)
-        return where, json.loads(given)
-    except (OSError, ValueError):
-        return None
+def session_starts(folder):
+    """Every run of the claiming scenario's SessionStart hook, each from its
+    own file: the directory it ran in, then the hook input the build gave it.
+    A file not yet complete is not counted."""
+    runs = []
+    for path in sorted(folder.glob("*")) if folder.is_dir() else []:
+        try:
+            where, given = path.read_text().split("\n", 1)
+            runs.append((where, json.loads(given)))
+        except (OSError, ValueError):
+            pass
+    return runs
 
 
 def spare_args(session_id, prompt):
@@ -2142,24 +2146,26 @@ def claiming(binary, root):
                         {
                             "type": "command",
                             # Where it ran, then the hook input, which names
-                            # the event and the session.
-                            "command": '{ pwd -P; cat; } > "$HOME/session-start-ran-here"',
+                            # the event and the session: one file per run, so
+                            # a later run cannot hide an earlier one.
+                            "command": 'mkdir -p "$HOME/session-start-ran"; '
+                            '{ pwd -P; cat; } > "$HOME/session-start-ran/$$"',
                         }
                     ]
                 }
             ]
         }
     }
-    initialized = root / "claiming-mcp-initialize.jsonl"
+    startup = root / "claiming-mcp-startup.jsonl"
     session = Session(
         binary,
         root,
         "claiming",
         spare_args(session_id, prompt),
         settings=settings,
-        mcp_env={"MCP_INITIALIZE_LOG": str(initialized)},
+        mcp_env={"MCP_STARTUP_LOG": str(startup)},
     )
-    ran_here = session.home / "session-start-ran-here"
+    ran_here = session.home / "session-start-ran"
     try:
         time.sleep(PARKED_S)
         parked = rss_kb(session.process.pid)
@@ -2176,13 +2182,13 @@ def claiming(binary, root):
             session.process.poll() is None
             and not session.model_calls()
             and not talked
-            and not ran_here.exists(),
+            and not session_starts(ran_here),
             json.dumps(
                 {
                     "returncode": session.process.poll(),
                     "model_requests": session.model_calls(),
                     "events": [(e.get("type"), e.get("subtype")) for e in talked],
-                    "session_start_ran": ran_here.exists(),
+                    "session_start_ran": len(session_starts(ran_here)),
                 }
             ),
         )
@@ -2218,7 +2224,9 @@ def claiming(binary, root):
                 | {"model_requests": session.model_calls()}
             )[:400],
         )
-        claimed_at = time.time()
+        # Whatever ran before the valid claim, the refused one included, is
+        # not the claim's.
+        hooked_before = session_starts(ran_here)
         began = time.monotonic()
         answer = session.control(
             {
@@ -2244,26 +2252,35 @@ def claiming(binary, root):
         # The claim answers before its SessionStart hook has run; the hook is
         # the claim's, so it runs with no message sent.
         answered = time.monotonic()
-        while session_start(ran_here) is None and time.monotonic() < answered + HOOK_S:
+        while not session_starts(ran_here) and time.monotonic() < answered + HOOK_S:
             time.sleep(0.1)
-        hook = session_start(ran_here)
+        hooked = session_starts(ran_here)
         hook_ms = round((time.monotonic() - answered) * 1000)
         yield (
             "the SessionStart hook runs after the claim, before any message, "
             "in the claimed cwd",
-            hook is not None
-            and hook[0] == str(claimed_cwd.resolve())
-            and hook[1].get("hook_event_name") == "SessionStart"
-            and hook[1].get("session_id") == session_id,
+            not hooked_before
+            and bool(hooked)
+            and all(
+                where == str(claimed_cwd.resolve())
+                and given.get("hook_event_name") == "SessionStart"
+                and given.get("session_id") == session_id
+                for where, given in hooked
+            ),
             json.dumps(
-                hook
-                and {
+                {
+                    "runs_before_the_claim": len(hooked_before),
                     "ms_after_claim_answer": hook_ms,
-                    "ran_in": hook[0],
-                    **{
-                        key: hook[1].get(key)
-                        for key in ("hook_event_name", "source", "session_id")
-                    },
+                    "runs": [
+                        {
+                            "ran_in": where,
+                            **{
+                                key: given.get(key)
+                                for key in ("hook_event_name", "source", "session_id")
+                            },
+                        }
+                        for where, given in hooked
+                    ],
                 }
             ),
         )
@@ -2303,21 +2320,26 @@ def claiming(binary, root):
         )
         echoed = last_tool_results(session.requests()[-1]) if session.requests() else []
         said = [echo_of(block) for block in echoed]
-        starts = [
-            json.loads(line)["time"]
-            for line in (
-                initialized.read_text().splitlines() if initialized.exists() else []
-            )
+        # The fixture's own record of its process starting and of initialize,
+        # on the monotonic clock `began` was read from: a server spawned while
+        # parked is caught even if it is initialized only after the claim.
+        lives = [
+            json.loads(line)
+            for line in (startup.read_text().splitlines() if startup.exists() else [])
         ]
         yield (
             "the MCP servers of its --mcp-config are started only at the claim",
-            bool(starts) and min(starts) >= claimed_at,
+            {life["event"] for life in lives} == {"start", "initialize"}
+            and all(life["monotonic"] >= began for life in lives),
             json.dumps(
-                {
-                    "initialized_s_after_claim": [
-                        round(t - claimed_at, 3) for t in starts
-                    ]
-                }
+                [
+                    {
+                        "pid": life["pid"],
+                        "event": life["event"],
+                        "s_after_claim": round(life["monotonic"] - began, 3),
+                    }
+                    for life in lives
+                ]
             ),
         )
         yield (
