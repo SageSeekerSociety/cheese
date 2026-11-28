@@ -139,6 +139,7 @@ async def send_prepared(
     prompt_text: str,
     system_prompt: str,
     opening: SessionOpening,
+    going_on: SessionOpening,
     told: dict[str, str] | None,
 ) -> AsyncIterator[dict]:
     acting_agent = prepared.acting_agent
@@ -302,7 +303,9 @@ async def send_prepared(
             resume_token=resume_session_id,
             retired_token=prepared.retired_session_id,
             session_opening=opening.text,
-            opening_changes=opening_changes(opening, told),
+            # A conversation that goes on has read its chat, compacted or not:
+            # what it is told again is never the count of what it has not read.
+            opening_changes=opening_changes(going_on, told),
             cold=prepared.cold,
             private=prepared.private,
             on_private=lambda: given.append(True),

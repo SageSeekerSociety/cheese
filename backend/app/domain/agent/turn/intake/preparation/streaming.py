@@ -179,6 +179,10 @@ async def converse(
         **sections,
         environment=lines(earlier_messages=prepared.earlier_messages),
     )
+    # The same state as a conversation that goes on holds it: it has read the
+    # chat it was in. What it is told again after a compaction, and what is
+    # compared with what it was last told.
+    going_on = render_opening(prepared.kind, **sections, environment=lines())
     async with prep.sessions() as session:
         sessions = AgentSessionService(session)
         # A conversation started under rules this kind has replaced is given
@@ -247,10 +251,7 @@ async def converse(
     if cold is not None:
         # Compacted before it reads this, a conversation that goes on is told
         # the state again, as one that has read its chat.
-        cold = replace(
-            cold,
-            retold=render_opening(prepared.kind, **sections, environment=lines()).text,
-        )
+        cold = replace(cold, retold=going_on.text)
     logger.info(
         "chat_preparation_timing topic=%s turn=%s phase=model_ready "
         "elapsed_ms=%.3f unix_ms=%.3f",
@@ -307,6 +308,7 @@ async def converse(
         prompt_text=prompt_text,
         system_prompt=system_prompt,
         opening=opening,
+        going_on=going_on,
         told=told,
     ):
         yield frame

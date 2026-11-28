@@ -15,7 +15,10 @@ import uuid
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
-from app.domain.agent_session.services import AgentSessionService
+from sqlalchemy import select
+
+from app.domain.agent.turn.store.session_inputs import forget_opening
+from app.domain.agent_session.models import AgentSession
 from tests.integration.conftest import (
     in_thread,
     post_message,
@@ -23,6 +26,7 @@ from tests.integration.conftest import (
     room_socket,
     session_auth_headers,
 )
+from tests.support.environments import lose_conversations
 
 _LINE = re.compile(r"这里已经有 (\d+) 条聊天消息")
 _CHEESE = Path(__file__).resolve().parents[2] / "sandbox" / "cheese"
@@ -58,13 +62,15 @@ def _room(client) -> str:
     return in_thread(client, room, "user-1")
 
 
-def _session_lost(client, room: str) -> None:
-    """The room's conversation is gone (a deploy, a recycled machine): the next
-    turn opens a new one."""
+def _session_lost(client, stub_hooks, room: str) -> None:
+    """The room's conversation is gone (a deploy, a recycled machine): its
+    runner is gone with it, and the next turn opens a new one."""
+    stub_hooks.drop_session(uuid.UUID(room))
+    stub_hooks.new_session_id = "sess-test-2"
 
     async def forget() -> None:
         async with client.test_factory() as session:
-            await AgentSessionService(session).forget_room(uuid.UUID(room))
+            await lose_conversations(session, uuid.UUID(room))
             await session.commit()
 
     client.portal.call(forget)
@@ -95,7 +101,7 @@ def test_a_fresh_session_in_a_room_with_history_is_told_how_to_read_it(
     _turn(client, room, "@芝士 先看一下这个问题")
     before = _messages(client, room)
     assert before > 0
-    _session_lost(client, room)
+    _session_lost(client, stub_hooks, room)
 
     _turn(client, room, "@芝士 接着做")
 
@@ -135,3 +141,35 @@ def test_a_session_that_found_nothing_to_resume_is_told_how_to_read_the_history(
     found = _LINE.search(stub_hooks.told)
     assert found is not None, stub_hooks.told[-2000:]
     assert int(found.group(1)) == before
+
+
+def test_a_compacted_conversation_is_not_told_it_has_read_none_of_the_chat(
+    client, stub_hooks
+):
+    """A compaction keeps the conversation: it is told the state again, as one
+    that has read its chat, never that it has read none of it."""
+    room = _room(client)
+    _turn(client, room, "@芝士 先看一下这个问题")
+
+    async def compacted() -> None:
+        async with client.test_factory() as session:
+            row = (
+                await session.scalars(
+                    select(AgentSession).where(
+                        AgentSession.conversation_id == uuid.UUID(room)
+                    )
+                )
+            ).one()
+            assert row.resume_token
+            handle, harness = row.agent_handle, row.harness
+        await forget_opening(
+            client.test_request_factory,
+            conversation_id=uuid.UUID(room),
+            agent_handle=handle,
+            harness=harness,
+        )
+
+    client.portal.call(compacted)
+    _turn(client, room, "@芝士 接着做")
+
+    assert _LINE.search(stub_hooks.told) is None, stub_hooks.told[-2000:]
