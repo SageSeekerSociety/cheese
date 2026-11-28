@@ -22,6 +22,7 @@ import uuid
 from types import SimpleNamespace
 
 import pytest
+
 from app.domain.agent.harness import SessionRef as SeatRef
 from app.domain.agent.harness.claude_code.runner import Runner
 from app.domain.agent.harness.driven import lifecycle, reporting
