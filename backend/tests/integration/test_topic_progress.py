@@ -199,11 +199,11 @@ def _new_conversation(client, topic: str) -> None:
     """The room's conversation is gone: the next turn opens a new one."""
     import uuid
 
-    from app.domain.agent_session.services import AgentSessionService
+    from tests.support.environments import lose_conversations
 
     async def forget() -> None:
         async with client.test_factory() as session:
-            await AgentSessionService(session).forget_room(uuid.UUID(topic))
+            await lose_conversations(session, uuid.UUID(topic))
             await session.commit()
 
     client.portal.call(forget)

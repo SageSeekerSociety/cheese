@@ -1203,10 +1203,16 @@ class DeviceChannel(Channel):
         一间房里的两个队友各有一条会话，可能坐在两台机器上。
         """
 
-        await TopicService(db).get_or_404(session.topic_id)
+        room = await TopicService(db).get_or_404(session.topic_id)
         place = await AgentSessionService(db).place(
             session.topic_id, session.agent_handle, harness=session.harness
         )
+        # A place in an older generation of the room is no place: the room was
+        # reopened, and its session starts where a new one would. The old
+        # place is where its conversation is, not where it runs
+        # (`session_move`).
+        if place is not None and place.resource_id != str(room.resource_id or room.id):
+            place = None
         host = place.machine if place else settings.agent_session_device_id
         if not host:
             logger.error("session_host_unconfigured topic=%s", session.topic_id)

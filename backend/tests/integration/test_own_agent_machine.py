@@ -21,6 +21,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
 from app.domain.agent import execution
+from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_provider import DeviceChannel
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import ScreenSetupError, mint_session_token
@@ -29,6 +30,8 @@ from app.domain.agent.place import OWN_LOGIN_ID
 from app.domain.agent.turn_speakers import private_memory_for
 from app.domain.agent_instance.models import AgentInstance, OwnAgent
 from app.domain.agent_session.services import AgentSessionService
+from app.domain.block.adapters import platform_line
+from app.domain.delivery.ledger import settle_card
 from app.domain.device.login_kind import FIRST_LOGIN
 from app.domain.device.models import DeviceClaudeLoginRow
 from app.domain.device.supply import Supply
@@ -36,7 +39,10 @@ from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.machine import session_work as work_lease
 from app.domain.project.models import Project
-from app.domain.topic.models import Topic
+from app.domain.review.archive import close_cards_for_archived_topic
+from app.domain.room_task.archive import close_room_tasks
+from app.domain.topic.models import RoomCleanup, Topic
+from app.domain.topic.services import TopicService
 from app.domain.user.models import User
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.support.devices import enrollment_team, place_in_project_team
@@ -572,3 +578,241 @@ async def test_a_conversation_left_on_another_computer_is_not_resumed_and_the_ro
     assert first.retired == "conversation-1"
     # Started again on the laptop, it is where its conversation is now.
     assert client.portal.call(start).retired is None
+
+
+async def _ran_on(client, own, *, token: str, device: str, channel: str) -> None:
+    """Bob's own Claude Code last ran conversation ``token`` on ``device``."""
+    async with client.test_factory() as db:
+        sessions = AgentSessionService(db)
+        await sessions.remember(
+            conversation_id=own.topic_id,
+            agent_handle=own.handle,
+            resume_token=token,
+            harness="claude-code",
+            generation=0,
+        )
+        row = await sessions.ensure(own.topic_id, own.handle, harness="claude-code")
+        row.runtime_location = {
+            **(row.runtime_location or {}),
+            "device_id": device,
+            "resource_id": str(own.topic_id),
+            "channel": channel,
+        }
+        await db.commit()
+
+
+def _not_carried(client, own) -> list[dict]:
+    blocks = client.get(
+        f"/topics/{own.topic_id}/blocks", headers=session_auth_headers("alice")
+    ).json()["data"]["data"]
+    return [
+        b
+        for b in blocks
+        if (b.get("meta") or {}).get("event_type") == "conversation_not_carried"
+    ]
+
+
+async def _row(client, own):
+    async with client.test_factory() as db:
+        return await AgentSessionService(db).ensure(
+            own.topic_id, own.handle, harness="claude-code"
+        )
+
+
+def _start_owned(client, own, channel):
+    session = SessionRef(
+        own.project_id, own.topic_id, own.handle, harness="claude-code"
+    )
+
+    async def start():
+        precheck = await channel.precheck(session, needs_place=True)
+        token = mint_session_token(own.project_id, own.topic_id, precheck.agent_handle)
+        async with channel.prepare_session(
+            session=session, token=token, env={}, precheck=precheck
+        ) as prepared:
+            return prepared
+
+    return client.portal.call(start)
+
+
+async def test_a_conversation_recorded_while_the_session_waited_for_its_host_is_the_one_left(
+    client,
+):
+    """While a session is being placed on Bob's laptop, a turn still on the
+    computer it left records the conversation it got to. That conversation is
+    the one left behind: the start does not take it up, it is given up, and
+    the room is told once."""
+    own = await _own_session(client, environment_on="alice")
+    await _ran_on(
+        client, own, token="before-report", device="previous-host", channel="owner"
+    )
+
+    class Reported(OwnerChannel):
+        reports = False
+
+        async def _wait_for_session_host(self, host, session):
+            await super()._wait_for_session_host(host, session)
+            if self.reports:
+                async with client.test_request_factory() as db:
+                    await AgentSessionService(db).remember(
+                        conversation_id=own.topic_id,
+                        agent_handle=own.handle,
+                        resume_token="reported-meanwhile",
+                        harness="claude-code",
+                        generation=0,
+                    )
+                    await db.commit()
+
+    channel = Reported(
+        DeviceChannel(hub=_hub(), session_factory=client.test_request_factory)
+    )
+    session = SessionRef(
+        own.project_id, own.topic_id, own.handle, harness="claude-code"
+    )
+
+    async def start():
+        precheck = await channel.precheck(session, needs_place=True)
+        token = mint_session_token(own.project_id, own.topic_id, precheck.agent_handle)
+        channel.reports = True
+        async with channel.prepare_session(
+            session=session, token=token, env={}, precheck=precheck
+        ) as prepared:
+            return prepared
+
+    prepared = client.portal.call(start)
+
+    assert prepared.retired == "reported-meanwhile"
+    row = await _row(client, own)
+    assert row.resume_token == "reported-meanwhile"
+    assert row.abandoned_at is not None
+    assert len(_not_carried(client, own)) == 1
+
+
+async def test_a_start_that_fails_on_the_new_computer_leaves_the_conversation_and_the_room_alone(
+    client,
+):
+    """Bob's login logs out between the turn's check and its start: nothing
+    started on his laptop, so the conversation on the computer it left is not
+    given up and the room is not told it started a new one. The next start
+    that does begin there is the move, and the room hears of it then."""
+    own = await _own_session(client, environment_on="alice")
+    await _ran_on(
+        client, own, token="original", device="previous-host", channel="owner"
+    )
+    channel = OwnerChannel(
+        DeviceChannel(hub=_hub(), session_factory=client.test_request_factory)
+    )
+    session = SessionRef(
+        own.project_id, own.topic_id, own.handle, harness="claude-code"
+    )
+
+    async def logged_out_meanwhile():
+        precheck = await channel.precheck(session, needs_place=True)
+        async with client.test_request_factory() as db:
+            login = await db.get(DeviceClaudeLoginRow, own.bobs_laptop)
+            login.logged_in = False
+            await db.commit()
+        token = mint_session_token(own.project_id, own.topic_id, precheck.agent_handle)
+        async with channel.prepare_session(
+            session=session, token=token, env={}, precheck=precheck
+        ):
+            pytest.fail("a logged-out login starts nothing")
+
+    with pytest.raises(ScreenSetupError):
+        client.portal.call(logged_out_meanwhile)
+
+    row = await _row(client, own)
+    assert row.abandoned_at is None
+    assert _not_carried(client, own) == []
+
+    async with client.test_factory() as db:
+        login = await db.get(DeviceClaudeLoginRow, own.bobs_laptop)
+        login.logged_in = True
+        await db.commit()
+    assert _start_owned(client, own, channel).retired == "original"
+    assert (await _row(client, own)).abandoned_at is not None
+    assert len(_not_carried(client, own)) == 1
+
+
+async def _reopened(client, own, monkeypatch) -> None:
+    """The room was archived, its cleanup took its home away, and it was
+    reopened: a new generation of the room."""
+    monkeypatch.setattr(settings, "topic_archive_cleanup_delay_s", 0)
+    async with client.test_factory() as db:
+        topics = TopicService(db)
+        await topics.archive(
+            own.topic_id,
+            by="alice",
+            settle_card=settle_card,
+            cards=close_cards_for_archived_topic,
+            close_tasks=close_room_tasks,
+            events=platform_line,
+        )
+        room = await db.get(Topic, own.topic_id)
+        (await db.get(RoomCleanup, room.cleanup_id)).state = "claimed"
+        await topics.unarchive(
+            own.topic_id,
+            by="alice",
+            sessions=AgentSessionService(db),
+            events=platform_line,
+        )
+        await db.commit()
+
+
+async def test_a_reopened_room_tells_the_room_its_teammate_starts_a_new_conversation(
+    client, monkeypatch
+):
+    """Reopened after its home was cleaned up, the room is a new generation,
+    and the conversation Bob's own Claude Code had in the old one is not where
+    it starts: it begins a new one, and the room is told it was reopened."""
+    own = await _own_session(client, environment_on="alice")
+    await _ran_on(
+        client, own, token="before-archive", device=own.bobs_laptop, channel="owner"
+    )
+    await _reopened(client, own, monkeypatch)
+    channel = OwnerChannel(
+        DeviceChannel(hub=_hub(), session_factory=client.test_request_factory)
+    )
+
+    assert _start_owned(client, own, channel).retired == "before-archive"
+    told = _not_carried(client, own)
+    assert len(told) == 1, told
+    assert told[0]["meta"]["i18n"]["content"]["key"] == "conversationNotCarriedReopened"
+
+
+async def test_a_reopened_rooms_session_does_not_wait_for_the_computer_it_ran_on(
+    client, monkeypatch
+):
+    """The room's session ran on the deployment's old session host; the room
+    was reopened, and the deployment's session host is another computer now.
+    The old one is away: the session starts on the new one, as any new
+    session would, rather than waiting for the old one and failing."""
+    own = await _own_session(client, environment_on="alice")
+    async with client.test_factory() as db:
+        row = await AgentSessionService(db).ensure(
+            own.topic_id, own.handle, harness="claude-code"
+        )
+        row.runtime_location = {
+            "device_id": "old-session-host",
+            "resource_id": str(own.topic_id),
+            # The project's model's channel (`compute`), which this test starts.
+            "channel": "device",
+            "runtime": {"state": "/old/state", "agent_handle": own.handle},
+        }
+        await db.commit()
+    await _reopened(client, own, monkeypatch)
+    monkeypatch.setattr(settings, "agent_session_device_id", "new-session-host")
+    channel = CentralChannel(
+        DeviceChannel(
+            hub=_hub(online=lambda device: device != "old-session-host"),
+            session_factory=client.test_request_factory,
+            reconnect_grace_s=0,
+        )
+    )
+    session = SessionRef(
+        own.project_id, own.topic_id, own.handle, harness="claude-code"
+    )
+
+    placement = client.portal.call(lambda: channel.precheck(session, needs_place=False))
+
+    assert placement.machine == "new-session-host"
