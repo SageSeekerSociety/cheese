@@ -7,8 +7,9 @@ of its room's home, finds nothing of that conversation where it starts. Left
 alone, the start would still be offered the old conversation, find nothing to
 resume, and quietly begin a new one that the platform believes is the old one.
 
-So the channel asks here before it records the new place (``host_move``), and
-on a move ends the conversation in the same transaction (``end_moved``): the
+So the channel asks here before it records the new place (``host_move``) and
+carries the conversation to where the session starts (`session_carry`). When it
+cannot, it ends the conversation in the same transaction (``end_moved``): the
 start continues nothing (`PreparedSession.retired`), the turn's opening tells
 the new conversation the chat it has not read, and the room is told why its
 teammate no longer remembers what was said.
@@ -24,6 +25,7 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.sentences import say
+from app.domain.agent import session_carry
 from app.domain.agent.announce import announce
 from app.domain.agent.harness import SessionRef
 from app.domain.agent_session.models import AgentSession
@@ -46,6 +48,8 @@ class HostMove:
     token: str
     origin: tuple[str, str]
     target: tuple[str, str]
+    #: The teammate whose seat wrote it there.
+    agent: str
 
 
 def host_move(row: AgentSession, *, center: str, resource: str) -> HostMove | None:
@@ -60,12 +64,25 @@ def host_move(row: AgentSession, *, center: str, resource: str) -> HostMove | No
     target = (center, resource)
     if origin == target:
         return None
-    return HostMove(row.resume_token, origin, target)
+    agent = (location.get("runtime") or {}).get("agent_handle") or row.agent_handle
+    return HostMove(row.resume_token, origin, target, agent)
 
 
-async def end_moved(db: AsyncSession, session: SessionRef, move: HostMove) -> None:
-    """Give up on the conversation ``move`` leaves behind, and tell the room,
-    in the caller's transaction: the line lands with the give-up or not at all.
+#: What the room is told, by why the conversation did not come along
+#: (`session_carry`): the computer it was on is away, it is over the size a
+#: carry takes, or anything else stopped it.
+_SAID = {
+    session_carry.OFFLINE: "conversationNotCarriedOffline",
+    session_carry.TOO_LARGE: "conversationNotCarriedTooLarge",
+}
+
+
+async def end_moved(
+    db: AsyncSession, session: SessionRef, move: HostMove, reason: str
+) -> None:
+    """Give up on the conversation ``move`` leaves behind, and tell the room
+    why (``reason``, `session_carry`), in the caller's transaction: the line
+    lands with the give-up or not at all.
 
     Given up only while the row still names that conversation: another backend
     placing the same session at once ended it already, and the room hears it
@@ -85,17 +102,17 @@ async def end_moved(db: AsyncSession, session: SessionRef, move: HostMove) -> No
     # UPDATE returns a CursorResult, which has rowcount at runtime.
     if not ended.rowcount:  # type: ignore[attr-defined]
         return
-    logger.info(
-        "session_host_moved topic=%s seat=%s from=%s to=%s outcome=new_conversation",
-        session.conversation_id,
-        session.agent_handle,
-        "/".join(move.origin),
-        "/".join(move.target),
+    moved(session, move, reason)
+    # The same computer, another generation of the room: it was reopened.
+    key = (
+        "conversationNotCarriedReopened"
+        if move.origin[0] == move.target[0]
+        else _SAID.get(reason, "conversationNotCarried")
     )
     await announce(
         db,
         place_id=session.topic_id,
-        content=say("conversationNotCarried", agent=f"<@{session.agent_handle}>"),
+        content=say(key, agent=f"<@{session.agent_handle}>"),
         meta={
             **notice(
                 EVENT_CONVERSATION_NOT_CARRIED, severity=SEVERITY_INFO, who=WHO_PLATFORM
@@ -104,4 +121,16 @@ async def end_moved(db: AsyncSession, session: SessionRef, move: HostMove) -> No
             "seat": session.agent_handle,
         },
         task_id=session.inner_id,
+    )
+
+
+def moved(session: SessionRef, move: HostMove, outcome: str) -> None:
+    """The one log line of a move: ``outcome`` is ``carried`` or why not."""
+    logger.info(
+        "session_host_moved topic=%s seat=%s from=%s to=%s outcome=%s",
+        session.conversation_id,
+        session.agent_handle,
+        "/".join(move.origin),
+        "/".join(move.target),
+        outcome,
     )

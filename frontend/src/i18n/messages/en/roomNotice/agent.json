@@ -192,6 +192,9 @@
   "ownAgentRoomNo": "No",
   "conversationAbandoned": "This conversation could not be compacted, so the platform carried on in a new one. Not a message in the channel is missing; details that were only ever said in the conversation, and reached neither a file nor a task, do not carry over",
   "conversationNotCarried": "{agent} now runs on another computer, and its earlier conversation could not come along, so it starts a new one. Every earlier message is still here, and it reads them itself",
+  "conversationNotCarriedOffline": "{agent} now runs on another computer. The computer it ran on is offline, so its earlier conversation could not come along and it starts a new one. Every earlier message is still here, and it reads them itself",
+  "conversationNotCarriedTooLarge": "{agent} now runs on another computer. Its earlier conversation was too long to bring along, so it starts a new one. Every earlier message is still here, and it reads them itself",
+  "conversationNotCarriedReopened": "After reopening, {agent} could not pick up its earlier conversation, so it starts a new one. Every earlier message is still here, and it reads them itself",
   "actedByTeammate": "{agent} on behalf of {person}",
   "turnFailedLoginExpired": "This turn did not finish: the Claude login it runs on has expired. Sign in again and it carries on by itself; there is no need to resend the message."
 }

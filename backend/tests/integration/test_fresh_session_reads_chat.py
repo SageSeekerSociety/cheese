@@ -15,7 +15,6 @@ import uuid
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
 
-from app.domain.agent_session.services import AgentSessionService
 from tests.integration.conftest import (
     in_thread,
     post_message,
@@ -23,6 +22,7 @@ from tests.integration.conftest import (
     room_socket,
     session_auth_headers,
 )
+from tests.support.environments import lose_conversations
 
 _LINE = re.compile(r"这里已经有 (\d+) 条聊天消息")
 _CHEESE = Path(__file__).resolve().parents[2] / "sandbox" / "cheese"
@@ -64,7 +64,7 @@ def _session_lost(client, room: str) -> None:
 
     async def forget() -> None:
         async with client.test_factory() as session:
-            await AgentSessionService(session).forget_room(uuid.UUID(room))
+            await lose_conversations(session, uuid.UUID(room))
             await session.commit()
 
     client.portal.call(forget)
