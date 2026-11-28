@@ -762,9 +762,9 @@ cheese_launch_phase credentials_selected
 #
 # Unless its session holds the machine whole, the session is kept to its own
 # room, seat and runner state, and of the machine's logins and the checkouts
-# kept there, to its own login and nothing else (`client.prepare`,
-# `remote_execution/namespace._keep_own`). On Linux the bubblewrap cheesehost
-# placed makes its namespace.
+# kept there, to its own login and nothing else; of its owner's home, to what
+# it runs on (`client._seat_only`, `remote_execution/namespace._keep_own`). On
+# Linux the bubblewrap cheesehost placed makes its namespace.
 #
 _OWN_LOGIN_CREDENTIALS = f"""\
 unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
@@ -775,6 +775,7 @@ esac
 export CLAUDE_SECURESTORAGE_CONFIG_DIR="$OWN_LOGIN"
 export CHEESE_LOGINS_ROOT="$REAL_HOME/{ROOT_PLACEHOLDER}/{LOGINS_DIR}"
 export CHEESE_WORKS_ROOT="$REAL_HOME/{ROOT_PLACEHOLDER}/{WORK_DIR}"
+export CHEESE_OWNER_HOME="$REAL_HOME"
 [ -n "${{USER:-}}" ] || export USER="$(id -un)"
 if [ "$(uname -s)" = Linux ]; then
   export CHEESE_SESSION_BWRAP="$REAL_HOME/{ROOT_PLACEHOLDER}/runtime/bubblewrap/bwrap"

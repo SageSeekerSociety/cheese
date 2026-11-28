@@ -1361,12 +1361,13 @@ def _own_session_on_a_shared_machine(tmp_path, monkeypatch, *, target=None):
     member's teammate as their own Claude Code: the seats of a room, the
     rooms, their runners' state, their temporary directories, the logins and
     the checkouts rooms kept there, each with something in it that is not
-    this session's. Answers the reads a build and a platform command it runs
+    this session's, and the machine owner's own files in their home beside
+    the platform's root. Answers the reads a build and a platform command it runs
     make of each, the paths' contents in order, how the launch ended, and the
     login it signs in with."""
     from app.domain.agent.harness.claude_code.remote_execution import client
 
-    owner = tmp_path.resolve()
+    owner = tmp_path.resolve() / "owner"
     root = owner / ".cheese"
     homes = root / "home"
     home = homes / "project/mine"
@@ -1375,7 +1376,7 @@ def _own_session_on_a_shared_machine(tmp_path, monkeypatch, *, target=None):
     own_state = runners / "project/mine/claude/seat"
     logins = root / "logins"
     own_login = logins / "claude-login"
-    tmps = owner / "var-tmp/cheese-1000"
+    tmps = tmp_path.resolve() / "var-tmp/cheese-1000"
     private = {
         seats / "mine/remote-session/memory/private/note.md": "mine",
         seats / "theirs/remote-session/memory/private/note.md": "their seat",
@@ -1387,6 +1388,8 @@ def _own_session_on_a_shared_machine(tmp_path, monkeypatch, *, target=None):
         root / "work/project/theirs/README.md": "their checkout",
         tmps / "mine/scratch": "my temporary file",
         tmps / "theirs/scratch": "their temporary file",
+        owner / ".ssh/id_ed25519": "the owner's key",
+        owner / "Documents/taxes.pdf": "the owner's document",
     }
     for path, text in private.items():
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -1401,6 +1404,7 @@ def _own_session_on_a_shared_machine(tmp_path, monkeypatch, *, target=None):
         "CHEESE_LOGINS_ROOT": logins,
         "CLAUDE_SECURESTORAGE_CONFIG_DIR": own_login,
         "CHEESE_WORKS_ROOT": root / "work",
+        "CHEESE_OWNER_HOME": owner,
     }.items():
         monkeypatch.setenv(name, str(value))
     read = "\n".join(
@@ -1415,7 +1419,9 @@ def _own_session_on_a_shared_machine(tmp_path, monkeypatch, *, target=None):
         )
     # Claude Code renews its own login where it read it.
     renew = f"echo renewed >> {shlex.quote(str(own_login / '.credentials.json'))}"
-    build = owner / "build"
+    # Where the launch places the pinned build (`device_launch`).
+    build = owner / ".cheese/claude/versions" / client.PINNED_VERSION
+    build.parent.mkdir(parents=True)
     build.write_text(
         f"#!/bin/sh\n{renew}\n{read}\n"
         f'exec "$CLAUDE_CODE_SHELL_PREFIX" {shlex.quote(read)}\n'
@@ -1482,10 +1488,11 @@ def test_a_members_own_claude_code_reads_only_its_own_seat_room_runner_and_login
 ):
     """A seat's memory tree holds the private memory of the person its turn
     answers, a runner's journal what its session's tools read of it, and a
-    login the subscription another teammate signs in with. The build, and a
-    platform command it runs, read their own seat, room, runner, temporary
-    files and login, and nothing of another's; the build still renews its own
-    login."""
+    login the subscription another teammate signs in with; the machine
+    owner's home holds their own keys and documents. The build, and a platform
+    command it runs, read their own seat, room, runner, temporary files and
+    login, and nothing of another's nor of the owner's own files; the build
+    still renews its own login."""
     if sys.platform == "linux":
         _session_bubblewrap(tmp_path, monkeypatch)
 
@@ -1502,6 +1509,8 @@ def test_a_members_own_claude_code_reads_only_its_own_seat_room_runner_and_login
         "hidden",
         "hidden",
         "my temporary file",
+        "hidden",
+        "hidden",
         "hidden",
     ] + (["hidden"] if sys.platform == "darwin" else [])
     assert done.stdout.splitlines() == expected * 2, done.stderr
@@ -1539,6 +1548,8 @@ def test_a_members_own_claude_code_on_a_machine_its_session_holds_whole_sees_it_
         "their checkout",
         "my temporary file",
         "their temporary file",
+        "the owner's key",
+        "the owner's document",
     ]
     assert done.stdout.splitlines() == expected * 2, done.stdout
 

@@ -26,6 +26,7 @@ import io
 import json
 import os
 import shlex
+import shutil
 import signal
 import subprocess
 import threading
@@ -434,6 +435,7 @@ def prepare(
             home,
             directory.parent,
             [seen, start] if local and not at_placeholder else [],
+            claude,
         ),
         helper=[sys.executable, str(Path(__file__).resolve())],
         central_hooks=(base_settings or {}).get("hooks", {}),
@@ -670,29 +672,55 @@ def prepare(
     return launch
 
 
-def _seat_only(home, seat, beside):
+def _seat_only(home, seat, beside, claude="claude"):
     """What the session's namespace leaves it of each root on this host
     (`namespace._keep_only`, `namespace._keep_own`), as ``[root, [kept...]]``,
-    a room before the seats inside its home. The launch names the roots
+    an outer root before one inside what it keeps. The launch names the roots
     (`device_launch`, `machine_launcher`); a session it did not launch has none.
 
-    Of the rooms, its own room's home, and the project where an executor on
-    this machine holds it (``beside``), when it is among them; of the room's
-    seats, its own, which holds its memory tree; of the runners' state, its own
-    runner's, whose journal records what its tools read of that tree; of the
-    rooms' temporary directories, its own room's. A member's own Claude Code
-    also keeps, of the machine's logins, the one it signs in with, and nothing
-    of the checkouts rooms kept there."""
+    A member's own Claude Code keeps, of its machine owner's home, only what it
+    runs on: the enrollment's root, which holds the platform's release,
+    toolchain, rooms and logins, narrowed below; the build it runs
+    (``claude``) and the interpreter its hooks run; on a Mac the login
+    Keychain, which the seat's `security` opens to read and renew its login;
+    and the project where an executor on this machine holds it (``beside``).
+    The rest of that home, the owner's own keys and documents among it, is
+    nothing it needs, and `SendUserFile` hands a person any file it can read.
+
+    Of the rooms, its own room's home, and that project when it is among them;
+    of the room's seats, its own, which holds its memory tree; of the runners'
+    state, its own runner's, whose journal records what its tools read of that
+    tree; of the rooms' temporary directories, its own room's. A member's own
+    Claude Code also keeps, of the machine's logins, the one it signs in with,
+    and nothing of the checkouts rooms kept there."""
+    owner = os.environ.get("CHEESE_OWNER_HOME")
     homes = os.environ.get("CHEESE_HOMES_ROOT")
+
+    def within(path, root):
+        return bool(root) and (path == root or path.startswith(root + "/"))
+
+    build = shutil.which(claude) or claude
+    runs_on = [
+        os.path.join(owner or "", os.environ.get("CHEESE_PROFILE_ROOT", ".cheese")),
+        os.path.dirname(os.path.abspath(build)),
+        os.path.dirname(os.path.realpath(build)),
+        os.path.realpath(sys.prefix),
+        os.path.realpath(sys.base_prefix),
+        *(
+            [os.path.join(owner or "", "Library/Keychains")]
+            if sys.platform == "darwin"
+            else []
+        ),
+        *beside,
+    ]
     roots = (
         (
+            "CHEESE_OWNER_HOME",
+            sorted({path for path in runs_on if path != owner and within(path, owner)}),
+        ),
+        (
             "CHEESE_HOMES_ROOT",
-            [home]
-            + [
-                path
-                for path in beside
-                if homes and (path == homes or path.startswith(homes + "/"))
-            ],
+            [home] + [path for path in beside if within(path, homes)],
         ),
         ("CHEESE_SEATS_ROOT", [seat]),
         ("CHEESE_RUNNERS_ROOT", [os.environ.get("CHEESE_RUNNER_STATE")]),
