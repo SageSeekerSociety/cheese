@@ -50,6 +50,7 @@ from app.domain.agent.machine_address import device_api_base
 from app.domain.agent.place import (
     CHECKOUT_DIR,
     OWN_KEY,
+    PLATFORM_PYTHON,
     SANDBOXES_DIR,
     WORK_DIR,
     launcher_path,
@@ -199,7 +200,7 @@ async def environment_status(
             f'else set -- {candidates}; fi; for candidate in "$@"; do '
             'if [ -f "$candidate" ]; then '
             f"CHEESE_STATUS_WAIT={int(wait_ready)} CHEESE_SANDBOXED=${{release:+1}} "
-            f'python3 "$candidate" {action} || exit $?; '
+            f'{PLATFORM_PYTHON} "$candidate" {action} || exit $?; '
             "CHEESE_ENVIRONMENT_RAN=1; break; fi; done; "
             'if [ -z "$CHEESE_ENVIRONMENT_RAN" ]; then '
             "printf '%s' '{\"state\":\"pending\"}'; fi; " + reset_marker,

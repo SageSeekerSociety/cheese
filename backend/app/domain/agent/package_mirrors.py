@@ -12,12 +12,12 @@ the Python executor, whose environment an agent's tools inherit
 (`bootstrap.prepared`), and the launcher script a device runs
 (`machine_launcher.launch_script`), which is POSIX shell assembled from
 strings. Both run THIS file on the machine — the executor from its release, the
-launcher by piping this source to `python3` (`shell`) — so there is one table,
-one probe and one kept answer, under the project's store that both of them
-name. A launch that follows a room's tool calls by less than `ANSWER_KEPT_S`
-asks nothing of the network; it used to probe every mirror again, one after
-another, on every launch, and that was most of the second a session spent
-before its files were written.
+launcher by piping this source to the platform's Python (`shell`) — so there is
+one table, one probe and one kept answer, under the project's store that both
+of them name. A launch that follows a room's tool calls by less than
+`ANSWER_KEPT_S` asks nothing of the network; it used to probe every mirror
+again, one after another, on every launch, and that was most of the second a
+session spent before its files were written.
 
 WHY EVERY MIRROR IS PROBED FIRST. PyPI is the only one of these that admits a
 second, lower-priority index — `UV_DEFAULT_INDEX` for uv, `PIP_EXTRA_INDEX_URL`
@@ -222,8 +222,9 @@ def shell(config, store: str) -> str:
     executor or an earlier launch has asked within `ANSWER_KEPT_S`, so a launch
     and the room's tool calls are told the same thing.
 
-    Nothing here fails the launch: a machine without `python3`, or one whose
-    probes all fail, leaves the environment exactly as it was without this.
+    It runs on the platform's Python, which the launch has already checked
+    (`place.PLATFORM_PYTHON`). Nothing here fails the launch: a machine whose
+    probes all fail is left with the environment exactly as it was without this.
     A variable the machine already has is kept, the same rule `bootstrap.prepared`
     follows with the room's configured variables.
     """
@@ -237,7 +238,7 @@ def shell(config, store: str) -> str:
     return (
         "# Where this room's package downloads come from (`package_mirrors`).\n"
         "cheese_package_mirrors() {\n"
-        f"python3 - {_quoted(json.dumps(config, sort_keys=True))} "
+        f'"$CHEESE_PYTHON" - {_quoted(json.dumps(config, sort_keys=True))} '
         f"{store} 2>/dev/null <<'CHEESE_PACKAGE_MIRRORS'\n"
         f"{_source()}CHEESE_PACKAGE_MIRRORS\n"
         "}\n"

@@ -19,6 +19,13 @@ import (
 // Var names the directories, in order, for the launcher.
 const Var = "CHEESE_RUNTIME_PATH"
 
+// Python names, by absolute path, the Python the connector placed (`devenv`),
+// which the platform's own programs on the machine run on whatever PATH says:
+// the session's runner, the executor and its client, and the hooks. Unset
+// where none could be placed, so that what needs it refuses to start rather
+// than take whatever `python3` the owner's environment puts first.
+const Python = "CHEESE_PYTHON"
+
 // Put makes dir the first entry of both PATH and Var.
 func Put(dir string) {
 	for _, name := range []string{"PATH", Var} {

@@ -9,6 +9,7 @@ but bills nothing" if it regresses:
   - an inherited ANTHROPIC_AUTH_TOKEN switches the CLI out of subscription mode.
 """
 
+import sys
 from pathlib import Path
 
 from app.domain.agent import provider_env
@@ -100,7 +101,11 @@ def test_no_credential_file_is_ever_planted_in_the_box(tmp_path):
         # the skills alone are past what one argv string may hold.
         input="set -e\n" + holes.configure,
         text=True,
-        env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"},
+        env={
+            "HOME": str(tmp_path),
+            "PATH": "/usr/bin:/bin",
+            "CHEESE_PYTHON": sys.executable,
+        },
         check=True,
         capture_output=True,
     )

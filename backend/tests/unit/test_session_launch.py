@@ -7,6 +7,7 @@ which tool no user here can answer — and none is about a transport.
 
 import hashlib
 import subprocess
+import sys
 from pathlib import Path
 
 from app.domain.agent.harness.claude_code import ClaudeLaunch, device_launch
@@ -65,6 +66,7 @@ def _configure(home, system_prompt: str) -> None:
             "HOME": str(home),
             "REAL_HOME": str(home),
             "PATH": "/usr/bin:/bin",
+            "CHEESE_PYTHON": sys.executable,
         },
         check=True,
         capture_output=True,

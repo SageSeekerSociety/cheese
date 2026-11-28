@@ -1,15 +1,26 @@
 //go:build !windows
 
 // Package devenv places what the server's commands expect to find on a machine
-// where the system does not already provide it. Two kinds:
+// where the system does not already provide it. Three kinds:
+//
+// The Python the platform's own programs run on (the session's runner, the
+// executor and its client, the hooks), placed whatever the system has, under
+// the footprint root at `runtime/python/bin/python3`, and named by path in
+// CHEESE_PYTHON (`runtimepath.Python`), which every command and session the
+// connector starts inherits. The machine's own `python3` is the owner's:
+// often in their home (nix, uv, pyenv), where a session kept from that home
+// could not run it, and never something the platform chose. It is put first
+// on PATH only where the system's `python3` is missing or older than the
+// platform's scripts a room runs by name take (3.11; a Mac's /usr/bin/python3
+// is 3.9), so that a room's `python3` stays the machine's wherever that one
+// runs them.
 //
 // A program the platform's own work runs on, where any build new enough will
-// do: `python3` everywhere (the session's runner and helpers need 3.11, and a
-// Mac's /usr/bin/python3 is 3.9), and on Linux `tmux` (the connector keeps
-// every screen in it) and `git` (every room's checkout). The system's copy is
-// used when it is new enough; otherwise the server's pinned build is placed
-// under the footprint root and put first on this process's PATH, which every
-// command and session it starts inherits. Once placed, it stays the one used.
+// do: on Linux `tmux` (the connector keeps every screen in it) and `git`
+// (every room's checkout). The system's copy is used when it is new enough;
+// otherwise the server's pinned build is placed under the footprint root and
+// put first on this process's PATH, which every command and session it starts
+// inherits. Once placed, it stays the one used.
 //
 // What a room's isolation is made with, placed on Linux whatever the system
 // has, because the sandbox is the platform's and so is the build it runs on:
@@ -49,18 +60,17 @@ type fallback struct {
 }
 
 func fallbacks() []fallback {
-	list := []fallback{{"python", "python3", pythonRecentEnough}}
-	if runtime.GOOS == "linux" {
-		list = append(list,
-			// pane_dead_time, which the connector reads to close a dead
-			// screen, is in tmux from 3.3.
-			fallback{"tmux", "tmux", func() bool { return atLeast("tmux", []string{"-V"}, 3, 3) }},
-			// `rev-parse --path-format=absolute`, which a room's checkout
-			// asks, is in git from 2.31.
-			fallback{"git", "git", func() bool { return atLeast("git", []string{"--version"}, 2, 31) }},
-		)
+	if runtime.GOOS != "linux" {
+		return nil
 	}
-	return list
+	return []fallback{
+		// pane_dead_time, which the connector reads to close a dead screen,
+		// is in tmux from 3.3.
+		{"tmux", "tmux", func() bool { return atLeast("tmux", []string{"-V"}, 3, 3) }},
+		// `rev-parse --path-format=absolute`, which a room's checkout asks,
+		// is in git from 2.31.
+		{"git", "git", func() bool { return atLeast("git", []string{"--version"}, 2, 31) }},
+	}
 }
 
 // Ensure places what this machine lacks (see the package's text) and puts
@@ -78,9 +88,6 @@ func Ensure(ctx context.Context, base string, log io.Writer) error {
 		if placed == nil || !f.usable() {
 			needed = append(needed, f)
 		}
-	}
-	if len(needed) == 0 && runtime.GOOS != "linux" {
-		return nil
 	}
 	platform, err := toolchainPlatform(runtime.GOOS, runtime.GOARCH)
 	if err != nil {
@@ -129,10 +136,21 @@ func Ensure(ctx context.Context, base string, log io.Writer) error {
 	for _, f := range needed {
 		place(f.tool, filepath.Join(root, f.tool, "bin"))
 	}
+	place("python", "")
+	python := filepath.Join(root, "python", "bin", "python3")
+	if _, err := os.Stat(python); err != nil {
+		os.Unsetenv(runtimepath.Python)
+		return failed
+	}
+	os.Setenv(runtimepath.Python, python)
+	if !pythonRecentEnough() {
+		runtimepath.Put(filepath.Dir(python))
+	}
 	return failed
 }
 
-// minimum is the oldest Python the session's runner runs on (it uses StrEnum).
+// minimum is the oldest Python the platform's scripts run on (they use
+// StrEnum).
 const minimum = "(3, 11)"
 
 // pythonRecentEnough reports whether the python3 on PATH runs and is new enough.

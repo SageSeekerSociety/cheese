@@ -42,7 +42,8 @@ func pythonArchive(t *testing.T, entries map[string]string) []byte {
 const placedBwrap = "#!/bin/sh\necho placed bwrap\n"
 
 // The server's toolchain route, serving body as Python with the digest it
-// claims, a bwrap, the host tools, and a tmux and a git that say they are the
+// claims (with no body, a Python that says it is the placed one, and its
+// digest), a bwrap, the host tools, and a tmux and a git that say they are the
 // placed ones; asked counts the requests for each tool.
 func toolchainServer(t *testing.T, body []byte, claimed string, asked *atomic.Int32) string {
 	base, _ := toolchainServerCounting(t, body, claimed, asked)
@@ -51,6 +52,10 @@ func toolchainServer(t *testing.T, body []byte, claimed string, asked *atomic.In
 
 func toolchainServerCounting(t *testing.T, body []byte, claimed string, asked *atomic.Int32) (string, *sync.Map) {
 	t.Helper()
+	if body == nil {
+		body = pythonArchive(t, map[string]string{"python/bin/python3": placedPython})
+		claimed = digest(body)
+	}
 	served := map[string][]byte{
 		"bubblewrap":   pythonArchive(t, map[string]string{"bubblewrap-0.13.0-cheese.1/bwrap": placedBwrap}),
 		"host-tools":   pythonArchive(t, map[string]string{"host-tools-1/bin/ip": "#!/bin/sh\necho placed ip\n"}),
@@ -125,15 +130,37 @@ func machineWith(t *testing.T, systemPythonOK bool, programs map[string]string) 
 
 const placedPython = "#!/bin/sh\necho placed\n"
 
-func TestAMachineWithARecentPythonIsLeftAlone(t *testing.T) {
-	machine(t, true)
+// The platform's programs run on its own Python, named by path, even where
+// the machine's own is new enough: that one is the owner's, and may live in a
+// home a session is kept from. The machine's own stays the room's `python3`.
+func TestAMachineWithARecentPythonStillRunsThePlatformsOnItsOwn(t *testing.T) {
+	home := machine(t, true)
 	var asked atomic.Int32
-	base := toolchainServer(t, nil, "", &asked)
-	if err := Ensure(context.Background(), base, io.Discard); err != nil {
+	if err := Ensure(context.Background(), toolchainServer(t, nil, "", &asked), io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	if asked.Load() != 0 {
-		t.Fatal("the server was asked for a Python this machine does not need")
+	placed := filepath.Join(home, ".cheese", "runtime", "python", "bin", "python3")
+	if got := os.Getenv("CHEESE_PYTHON"); got != placed {
+		t.Fatalf("CHEESE_PYTHON: %q, want %q", got, placed)
+	}
+	if out, err := exec.Command(placed).Output(); err != nil || strings.TrimSpace(string(out)) != "placed" {
+		t.Fatalf("the Python named is not the placed one: %q, %v", out, err)
+	}
+	if exec.Command("python3").Run() != nil {
+		t.Fatal("python3 on PATH is no longer the machine's own")
+	}
+}
+
+// A machine that has never been able to place the platform's Python names
+// none, and no `python3` of the owner's stands in for it.
+func TestAPythonThatCouldNotBePlacedIsNamedNowhere(t *testing.T) {
+	machine(t, true)
+	t.Setenv("CHEESE_PYTHON", "/somewhere/else/python3")
+	if err := Ensure(context.Background(), "http://127.0.0.1:1/connector", io.Discard); err == nil {
+		t.Fatal("an unreachable server was not reported")
+	}
+	if got, set := os.LookupEnv("CHEESE_PYTHON"); set {
+		t.Fatalf("CHEESE_PYTHON names %q with nothing placed", got)
 	}
 }
 
@@ -149,6 +176,9 @@ func TestAnOldPythonIsReplacedOnPathByTheServersBuild(t *testing.T) {
 		t.Fatalf("python3 on PATH is not the placed one: %q, %v", out, err)
 	}
 	placed := filepath.Join(home, ".cheese", "runtime", "python", "bin")
+	if got := os.Getenv("CHEESE_PYTHON"); got != filepath.Join(placed, "python3") {
+		t.Fatalf("CHEESE_PYTHON: %q", got)
+	}
 	if !strings.HasPrefix(os.Getenv("PATH"), placed+":") {
 		t.Fatalf("PATH: %s", os.Getenv("PATH"))
 	}
@@ -352,6 +382,7 @@ func TestOnLinuxAMissingFuseRuntimeDoesNotFailTheConnect(t *testing.T) {
 func toolchainServerWithout(t *testing.T, absent string) string {
 	t.Helper()
 	served := map[string][]byte{
+		"python":     pythonArchive(t, map[string]string{"python/bin/python3": placedPython}),
 		"bubblewrap": pythonArchive(t, map[string]string{"bubblewrap-0.13.0-cheese.1/bwrap": placedBwrap}),
 		"host-tools": pythonArchive(t, map[string]string{"host-tools-1/bin/ip": "#!/bin/sh\necho placed ip\n"}),
 		"tmux":       pythonArchive(t, map[string]string{"tmux-1/bin/tmux": "#!/bin/sh\necho placed tmux\n"}),

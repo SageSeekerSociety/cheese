@@ -1,11 +1,11 @@
 """The programs the platform puts on a machine for its rooms' work: the
 document toolchain, the forge CLIs, ripgrep for the search under pi's grep and
-find, browser automation, and the runtime the connector itself needs where
-the system lacks it (Python and a POSIX shell on Windows, a recent enough Python
-elsewhere, and on Linux a recent enough tmux and git), and on Linux what a
-room's sandbox is made with, which it places whatever the system has: bwrap,
-and the host tools a platform host gives its sandboxes a network and a disk
-limit with.
+find, browser automation, the Python the platform's own programs on a machine
+run on, the runtime the connector itself needs where the system lacks it (a
+POSIX shell on Windows, and on Linux a recent enough tmux and git), and on
+Linux what a room's sandbox is made with, which it places whatever the system
+has: bwrap, and the host tools a platform host gives its sandboxes a network
+and a disk limit with.
 
 The single source for these — versions, where each artifact comes from, and its
 digest. It lives in the agent layer for the same reason claude's pin lives in
@@ -52,10 +52,11 @@ NODE_VERSION = "24.21.0"
 #: `python3` and `sh` the platform runs everywhere exist there too.
 PYTHON_VERSION = "3.13.13"
 GIT_VERSION = "2.55.0.windows.5"
-#: The Python a Linux or macOS connector places when the system's `python3` is
-#: older than the session's runner takes (3.11), as on every Mac, whose
-#: /usr/bin/python3 is 3.9 (`cli/internal/devenv`). python-build-standalone's
-#: relocatable builds, the ones uv installs.
+#: The Python a Linux or macOS connector places whatever the system has, which
+#: the platform's own programs there run on by path (`cli/internal/devenv`):
+#: the machine's own `python3` is the owner's, and may sit in a home a session
+#: is kept from. python-build-standalone's relocatable builds, the ones uv
+#: installs.
 PBS_RELEASE = "20261003"
 PBS_PYTHON_VERSION = "3.13.16"
 #: The bwrap a Linux connector places for its rooms' sandboxes, whatever the
@@ -466,9 +467,8 @@ ARTIFACTS: dict[tuple[str, str], Artifact] = {
         10950201,
         ".zip",
     ),
-    # The connector's Python on a Linux or macOS machine whose own is too old
-    # (see PBS_RELEASE). Digests and sizes checked against the downloaded
-    # files on 2026-10-07.
+    # The connector's Python on a Linux or macOS machine (see PBS_RELEASE).
+    # Digests and sizes checked against the downloaded files on 2026-10-07.
     ("python", "darwin-arm64"): Artifact(
         f"{_PBS_BASE}-aarch64-apple-darwin-install_only_stripped.tar.gz",
         "9e01f63bbb08576cd9c8bc2d0564d098cb30c8453a0cd4bcf6aef458f6d2a147",

@@ -332,10 +332,10 @@ func linkCmd(cfgPath *string, withConfig func(*cobra.Command) *cobra.Command) *c
 				}
 				ui.OK("Logged in.")
 			}
-			// What the server's commands need and this system lacks (on Windows:
-			// python3 and a POSIX shell; elsewhere a python3 new enough for the
-			// session's runner, and on Linux also tmux, git and what a sandbox is
-			// made with: `devenv`) is placed now, so the first command sent to a
+			// What the server's commands need (the platform's own Python; on
+			// Windows a POSIX shell; on Linux tmux and git where the system's are
+			// missing or too old, and what a sandbox is made with: `devenv`) is
+			// placed now, so the first command sent to a
 			// machine announced as ready finds it. Windows cannot run anything
 			// without it; elsewhere the service tries again when it starts.
 			if err := devenv.Ensure(context.Background(), cfg.Base, os.Stdout); err != nil {

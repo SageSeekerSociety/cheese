@@ -313,16 +313,16 @@ export BUN_OPTIONS="\\"--preload=$WEBFETCH_PRELOAD\\"${{BUN_OPTIONS:+ $BUN_OPTIO
     # the platform skills are the same for every project and room on the
     # machine, so a per-session cache would only refetch them per new room.
     #
-    # Fetched with python3 (already required below) rather than curl, which
-    # not every machine has. A fetch that still fails starts the session
-    # without the skills and says so loudly in the launch log — the same
+    # Fetched with the platform's Python (already required below) rather than
+    # curl, which not every machine has. A fetch that still fails starts the
+    # session without the skills and says so loudly in the launch log — the same
     # policy as the pinned claude download above: a machine that cannot reach
     # the platform for a moment must not become one where nothing starts.
     # A screen with no CHEESE_API (a probe, a fixture) has no platform to ask.
     skill_digest = publish_session_skill_bundle(project_id)
     skill_setup = f"""{prune}
 _cache="$REAL_HOME/.cheese/skill-bundles"
-python3 - "$CLAUDE_CONFIG_DIR" "$_cache" "{skill_digest}" <<'CHEESE_SKILLS'
+"$CHEESE_PYTHON" - "$CLAUDE_CONFIG_DIR" "$_cache" "{skill_digest}" <<'CHEESE_SKILLS'
 import gzip, hashlib, json, os, sys, time, urllib.request
 config, cache, want = sys.argv[1], sys.argv[2], sys.argv[3]
 bundle = os.path.join(cache, want + ".json.gz")
@@ -428,7 +428,7 @@ printf '%s' "$CHEESE_EXECUTION_TARGET" \\
 EXECUTOR_CLIENT="$SEAT/remote-execution/client.py"
 EXECUTOR_TARGET="$SEAT/remote-target.json"
 export CHEESE_EXECUTION_CONFIG="$SEAT/remote-session/execution.json"
-CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
+CLAUDE="\\"$CHEESE_PYTHON\\" \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
 """
         execution_setup += (
             'mkdir -p "$SEAT/remote-session"\n'
@@ -473,7 +473,7 @@ export DISABLE_AUTOUPDATER=1
 # written before claude starts: it reads its agents directory once, at start.
 # The seat's directory is the platform's, so every `model-*.md` is ours to
 # replace, and a session with none (a member's own login) is left with none.
-python3 - "$CLAUDE_CONFIG_DIR/agents" <<'CHEESE_MODEL_AGENTS'
+"$CHEESE_PYTHON" - "$CLAUDE_CONFIG_DIR/agents" <<'CHEESE_MODEL_AGENTS'
 import glob, json, os, sys
 agents = sys.argv[1]
 for stale in glob.glob(os.path.join(agents, "model-*.md")):
@@ -535,7 +535,7 @@ if [ ! -x "$_pin" ] && [ -n "${{CHEESE_API:-}}" ]; then
     # download cut off — here, in a room, or by the desktop app fetching it
     # ahead — is continued rather than restarted, checked against the digest
     # the platform names, and one install at a time on the machine.
-    if python3 - "${{CHEESE_API%/}}/connector/claude/{pinned_version}/$_cplat/claude$_cexe" \\
+    if "$CHEESE_PYTHON" - "${{CHEESE_API%/}}/connector/claude/{pinned_version}/$_cplat/claude$_cexe" \\
         "$_pin" "{pinned_version}" <<'CHEESE_EXECUTOR_DOWNLOAD'
 {installer}
 try:
@@ -598,7 +598,7 @@ esac
 # modules for a zip, so every start compiled the runner again, about half of
 # its start. Unpacked into a directory named by the archive's digest, it is
 # compiled once per release and machine, and Python keeps that beside it.
-CLAUDE_ARTIFACT="$(python3 - "$CLAUDE_STATE" <<'CLAUDERUNNER'
+CLAUDE_ARTIFACT="$("$CHEESE_PYTHON" - "$CLAUDE_STATE" <<'CLAUDERUNNER'
 import base64, hashlib, io, shutil, sys, tempfile, zipfile
 from pathlib import Path
 state = Path(sys.argv[1])
@@ -641,7 +641,7 @@ CLAUDERUNNER
 export CHEESE_CLAUDE_COMMAND="$CLAUDE"
 # Its own stderr is kept: a runner that fails on the way up takes the pane with
 # it, and this file is then the only record of why.
-CLAUDE_RUNNER="python3 -I -S \\"$CLAUDE_ARTIFACT\\" --state \\"$CLAUDE_STATE\\" \\
+CLAUDE_RUNNER="\\"$CHEESE_PYTHON\\" -I -S \\"$CLAUDE_ARTIFACT\\" --state \\"$CLAUDE_STATE\\" \\
   2>>\\"$CLAUDE_STATE/runner.log\\""
 """
         return configure, prepare

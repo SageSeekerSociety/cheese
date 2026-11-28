@@ -483,9 +483,9 @@ def sandbox_argv(
     # mount as well, since connecting to a socket is not a write to the mount.
     if image_root is None and Path("/run/docker.sock").exists():
         command += ["--ro-bind", "/dev/null", "/run/docker.sock"]
-    # The Python the executor runs on, when the person keeps it in their home
-    # (pyenv, uv, conda): shown read-only, as the machine's own would be, at
-    # the path it is run by as well as where a link there leads.
+    # The Python the executor runs on, the connector's under the owner's home
+    # (`cli/internal/devenv`): shown read-only, at the path it is run by as
+    # well as where a link there leads.
     prefixes = {Path(sys.base_prefix), Path(sys.prefix)}
     for prefix in sorted(prefixes | {path.resolve() for path in prefixes}):
         if owner in prefix.parents:

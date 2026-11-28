@@ -680,10 +680,12 @@ def _seat_only(home, seat, beside, claude="claude"):
 
     A member's own Claude Code keeps, of its machine owner's home, only what it
     runs on: the enrollment's root, which holds the platform's release,
-    toolchain, rooms and logins, narrowed below; the build it runs
-    (``claude``) and the interpreter its hooks run; on a Mac the login
-    Keychain, which the seat's `security` opens to read and renew its login;
-    and the project where an executor on this machine holds it (``beside``).
+    toolchain, rooms and logins, narrowed below, and the Python this client
+    and the hooks run on, which the launch takes from there
+    (`place.PLATFORM_PYTHON`); the build it runs (``claude``); on a Mac the
+    login Keychain, which the seat's `security` opens to read and renew its
+    login; and the project where an executor on this machine holds it
+    (``beside``).
     The rest of that home, the owner's own keys and documents among it, is
     nothing it needs, and `SendUserFile` hands a person any file it can read.
 
@@ -704,8 +706,6 @@ def _seat_only(home, seat, beside, claude="claude"):
         os.path.join(owner or "", os.environ.get("CHEESE_PROFILE_ROOT", ".cheese")),
         os.path.dirname(os.path.abspath(build)),
         os.path.dirname(os.path.realpath(build)),
-        os.path.realpath(sys.prefix),
-        os.path.realpath(sys.base_prefix),
         *(
             [os.path.join(owner or "", "Library/Keychains")]
             if sys.platform == "darwin"

@@ -1362,9 +1362,11 @@ def _own_session_on_a_shared_machine(tmp_path, monkeypatch, *, target=None):
     rooms, their runners' state, their temporary directories, the logins and
     the checkouts rooms kept there, each with something in it that is not
     this session's, and the machine owner's own files in their home beside
-    the platform's root. Answers the reads a build and a platform command it runs
-    make of each, the paths' contents in order, how the launch ended, and the
-    login it signs in with."""
+    the platform's root, their own Python among them, first on their PATH,
+    which a launch that took `python3` from PATH started this client on.
+    Answers the reads a build and a platform command it runs make of each, the
+    paths' contents in order, how the launch ended, and the login it signs in
+    with."""
     from app.domain.agent.harness.claude_code.remote_execution import client
 
     owner = tmp_path.resolve() / "owner"
@@ -1390,6 +1392,7 @@ def _own_session_on_a_shared_machine(tmp_path, monkeypatch, *, target=None):
         tmps / "theirs/scratch": "their temporary file",
         owner / ".ssh/id_ed25519": "the owner's key",
         owner / "Documents/taxes.pdf": "the owner's document",
+        owner / ".nix-profile/lib/python3.12/os.py": "the owner's Python",
     }
     for path, text in private.items():
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -1428,22 +1431,25 @@ def _own_session_on_a_shared_machine(tmp_path, monkeypatch, *, target=None):
     )
     build.chmod(0o700)
 
-    launch = client.prepare(
-        seats / "mine/remote-session",
-        {
-            "kind": "unavailable",
-            "workspace": str(home),
-            "local": True,
-            **(target or {}),
-        },
-        claude=str(build),
-        version=client.PINNED_VERSION,
-        home_override=str(home),
-        # A platform command hook runs here, on the build's machine.
-        base_settings={
-            "hooks": {"Stop": [{"hooks": [{"type": "command", "command": read}]}]}
-        },
-    )
+    with monkeypatch.context() as started:
+        started.setattr(sys, "prefix", str(owner / ".nix-profile"))
+        started.setattr(sys, "base_prefix", str(owner / ".nix-profile"))
+        launch = client.prepare(
+            seats / "mine/remote-session",
+            {
+                "kind": "unavailable",
+                "workspace": str(home),
+                "local": True,
+                **(target or {}),
+            },
+            claude=str(build),
+            version=client.PINNED_VERSION,
+            home_override=str(home),
+            # A platform command hook runs here, on the build's machine.
+            base_settings={
+                "hooks": {"Stop": [{"hooks": [{"type": "command", "command": read}]}]}
+            },
+        )
     done = subprocess.run(
         launch["command"],
         cwd=launch["cwd"],
@@ -1489,10 +1495,11 @@ def test_a_members_own_claude_code_reads_only_its_own_seat_room_runner_and_login
     """A seat's memory tree holds the private memory of the person its turn
     answers, a runner's journal what its session's tools read of it, and a
     login the subscription another teammate signs in with; the machine
-    owner's home holds their own keys and documents. The build, and a platform
-    command it runs, read their own seat, room, runner, temporary files and
-    login, and nothing of another's nor of the owner's own files; the build
-    still renews its own login."""
+    owner's home holds their own keys, documents and Python. The build, and a
+    platform command it runs, read their own seat, room, runner, temporary
+    files and login, and nothing of another's nor of the owner's own files,
+    whatever Python the client was started on; the build still renews its own
+    login."""
     if sys.platform == "linux":
         _session_bubblewrap(tmp_path, monkeypatch)
 
@@ -1509,6 +1516,7 @@ def test_a_members_own_claude_code_reads_only_its_own_seat_room_runner_and_login
         "hidden",
         "hidden",
         "my temporary file",
+        "hidden",
         "hidden",
         "hidden",
         "hidden",
@@ -1550,6 +1558,7 @@ def test_a_members_own_claude_code_on_a_machine_its_session_holds_whole_sees_it_
         "their temporary file",
         "the owner's key",
         "the owner's document",
+        "the owner's Python",
     ]
     assert done.stdout.splitlines() == expected * 2, done.stdout
 

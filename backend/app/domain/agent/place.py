@@ -219,6 +219,18 @@ CLAUDE_LOGINS_DIR = f"{LOGINS_DIR}/claude-logins"
 #: items while credential files are read from the enrollment's new directory.
 CLAUDE_KEYCHAIN_DIR = "keychain"
 
+#: The Python the platform's own programs on a machine run on, as a shell word:
+#: the one its connector placed under the enrollment root and names by path
+#: (`cli/internal/devenv`, `runtimepath.Python`), never a `python3` found on
+#: PATH, which on a person's machine is theirs (nix, uv, pyenv) and may sit in
+#: a home a session is kept from. Where the connector placed none, the shell
+#: stops there and says so. A launch checks it once (`machine_launcher`) and
+#: then names `"$CHEESE_PYTHON"` itself.
+PLATFORM_PYTHON = (
+    '"${CHEESE_PYTHON:?the connector has placed no Python on this machine;'
+    ' restart the connector to place it}"'
+)
+
 #: A member's own Claude Code on a connection their account holds (#2991): its
 #: session host is the deployment's, and the connection reaches the launch as
 #: these variables of the session it starts. The launch turns them into Claude

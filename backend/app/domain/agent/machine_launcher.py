@@ -46,7 +46,7 @@ from app.domain.agent import (
     toolchain,
 )
 from app.domain.agent.launch import MachineLaunch, MachinePlace
-from app.domain.agent.place import machine_root, seat_name
+from app.domain.agent.place import PLATFORM_PYTHON, machine_root, seat_name
 from app.domain.agent.resource_cleanup import SESSION_TMP
 
 # The launcher below spells the platform's own directory literally, because the
@@ -92,7 +92,8 @@ from app.domain.agent.resource_cleanup import SESSION_TMP
 # last launch, so this script HAD started a helper; it simply did not outlive
 # the tmux window that ran the script, whose process group is torn down —
 # SIGHUP — the moment the script returns.
-CHEESE_TUNNEL_UP = """#!/bin/sh
+CHEESE_TUNNEL_UP = (
+    """#!/bin/sh
 # $1: this seat's directory, as the launcher builds it. Everything that says
 # WHICH teammate the traffic is (--token-file below) or which process is this
 # seat's is per seat, because a room may seat more than one agent. One shared
@@ -101,23 +102,26 @@ CHEESE_TUNNEL_UP = """#!/bin/sh
 # file last — the other one's model silently replaced by that teammate's.
 # The helper's CODE stays one file in the room's `.cheese`: it holds nothing.
 SEATD="${1:-$HOME/.cheese}"
+: """
+    + PLATFORM_PYTHON
+    + """
 PIDF="$SEATD/cheese-tunnel.pid"
 PORTF="$SEATD/cheese-tunnel.port"
 LOG="$SEATD/cheese-tunnel.log"
 NEWF="$PORTF.new.$$"
 # Start a helper on port $1 and wait for it. Exit 0: it is alive and wrote its
 # port file. 3: it exited, which is how a failed bind looks. 1: timed out.
-# The wait runs in python3, NOT with bash's /dev/tcp: this script is invoked as
-# `sh`, and dash has no /dev/tcp. python3 is not an extra dependency here; the
-# helper itself is written in it.
+# The wait runs in Python, NOT with bash's /dev/tcp: this script is invoked as
+# `sh`, and dash has no /dev/tcp. Python is not an extra dependency here; the
+# helper itself is written in it. Both run on the platform's (above).
 start_helper() {
   rm -f "$NEWF"
-  nohup python3 "$HOME/.cheese/cheese-tunnel.py" \\
+  nohup "$CHEESE_PYTHON" "$HOME/.cheese/cheese-tunnel.py" \\
     --port "$1" --port-file "$NEWF" --url "$CHEESE_TUNNEL_URL" \\
     --token-file "$SEATD/cheese-tunnel.token" \\
     >>"$LOG" 2>&1 &
   NEWPID=$!
-  python3 - "$NEWPID" "$NEWF" <<'WAITPY'
+  "$CHEESE_PYTHON" - "$NEWPID" "$NEWF" <<'WAITPY'
 import os, sys, time
 
 pid, path = int(sys.argv[1]), sys.argv[2]
@@ -167,6 +171,7 @@ mv "$NEWF" "$PORTF"
 echo "$NEWPID" > "$PIDF"
 echo "$PORT $NEWPID"
 """
+)
 
 
 # Brings 运行环境预览's helper up, and does nothing at all until an agent has asked
@@ -576,6 +581,11 @@ REAL_HOME="$HOME"
 # the tmux it found): this script runs in a login shell, and macOS's login
 # profile (path_helper) puts /usr/bin back in front, where python3 is 3.9.
 [ -z "${{CHEESE_RUNTIME_PATH:-}}" ] || export PATH="$CHEESE_RUNTIME_PATH:$PATH"
+# The platform's own programs here (the runner, the executor's client, the
+# hooks, the helpers below) run on the Python the connector placed, by path:
+# the `python3` PATH finds is the owner's, and may sit in a home this session
+# is kept from. A machine with none placed starts nothing.
+: {PLATFORM_PYTHON}
 # Bash exposes this clock without spawning date. Other shells skip diagnostics.
 # Append across relaunches; only phase names and timestamps enter this file.
 # The same marks of THIS launch also travel to the runner in its environment
@@ -805,12 +815,12 @@ cd "$CHEESE_WORK"
 if [ -n "${{TMUX:-}}" ]; then
   CHEESE_TMUX_SOCK="${{TMUX%%,*}}"
   SESSION="$(tmux -S "$CHEESE_TMUX_SOCK" display-message -p -t "$TMUX_PANE" '#S')"
-  python3 -c 'import json,sys; json.dump(sys.argv[1:], open(sys.argv[3], "w"))' \\
+  "$CHEESE_PYTHON" -c 'import json,sys; json.dump(sys.argv[1:], open(sys.argv[3], "w"))' \\
     "$CHEESE_TMUX_SOCK" "$SESSION" "$HOME/.cheese/environment-session.json"
 fi
 ENVIRONMENT_CMD=""
 if [ -n "${{CHEESE_ENVIRONMENT:-}}" ]; then
-  ENVIRONMENT_CMD="python3 \\"$HOME/.cheese/cheese-environment.py\\" "
+  ENVIRONMENT_CMD="\\"$CHEESE_PYTHON\\" \\"$HOME/.cheese/cheese-environment.py\\" "
 fi
 AGENT_PID=""
 TUNNEL_PID=""
