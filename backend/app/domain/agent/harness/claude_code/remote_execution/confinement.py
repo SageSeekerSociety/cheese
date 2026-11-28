@@ -380,7 +380,12 @@ def sandbox_argv(
     command = [
         bwrap,
         *(
-            image_user_namespace(userns)
+            # Root of its own namespace, for what services need (chown,
+            # setuid), but not CAP_SYS_ADMIN, which every mount change takes:
+            # the mounts below are made in that namespace, and a root that
+            # could unmount or remount them would read the seats they hide or
+            # write the release store the machine runs as its owner.
+            [*image_user_namespace(userns), "--cap-drop", "CAP_SYS_ADMIN"]
             if image_root is not None
             else ["--unshare-user"]
         ),

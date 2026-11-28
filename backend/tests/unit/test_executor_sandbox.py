@@ -611,6 +611,66 @@ def test_a_sandboxed_executor_survives_its_own_room_rewriting_its_programs(
     assert stopped.returncode == 0, stopped.stderr
 
 
+@sandboxed
+def test_a_rooms_root_cannot_take_away_what_hides_the_seats(owner, monkeypatch, capsys):
+    """In a cloud image the room's commands run as root of a user namespace of
+    their own, with what that root needs for services (chown, setuid). The
+    mounts that hide the seats in its home and keep the release store
+    read-only are made in that namespace too: a root there that could unmount
+    or remount would read a seat's private memory, or rewrite the programs the
+    machine runs as its owner. So it can do neither."""
+    monkeypatch.setenv("HOME", str(owner))
+    bubblewrap.place(owner)
+    monkeypatch.setattr(bootstrap, "binary", lambda *_: sys.executable)
+    project, resource = uuid.uuid4(), uuid.uuid4()
+    home = owner / ".cheese/home" / str(project) / str(resource)
+    note = home / ".cheese/seats/for-alice/remote-session/memory/note.md"
+    note.parent.mkdir(parents=True)
+    note.write_text("alice-private")
+    payload = payload_for(
+        project,
+        resource,
+        {
+            "CHEESE_API": "http://127.0.0.1:1",
+            "CHEESE_TOKEN": "test",
+            "CHEESE_SANDBOX_IMAGE": sandbox_image.default_image()["reference"],
+        },
+        sandbox=True,
+        platform_machine=True,
+    )
+    state = home / ".cheese/executor"
+    release = bootstrap.release_store(owner)
+
+    def bash(command: str) -> str:
+        # What the tool answers carries the command's errors too.
+        command = f"{{ {command}; }} 2>/dev/null"
+        answer = runtime.request(
+            state,
+            "invoke",
+            {"id": uuid.uuid4().hex, "tool": "Bash", "args": {"command": command}},
+        )
+        assert "error" not in answer, answer
+        return answer["value"]["stdout"].strip()
+
+    _configure(payload, home)
+    started = json.loads(capsys.readouterr().out)
+    try:
+        assert bash("id -u") == "0"
+        seats = home / ".cheese/seats"
+        assert bash(f'umount -l "{seats}"; cat "{note}" || echo hidden') == "hidden"
+        assert (
+            bash(
+                f'mount -o remount,bind,rw "{release}";'
+                f' touch "{release}/planted" && echo written || echo refused'
+            )
+            == "refused"
+        )
+        assert not (release / "planted").exists()
+    finally:
+        stopped = _stop(state, Path(started["release"]) / "remote-execution/runtime.py")
+    assert stopped.returncode == 0, stopped.stderr
+
+
 @pytest.mark.skipif(sys.platform != "linux", reason="pid namespaces are Linux's")
 def test_a_status_read_from_another_pid_namespace_finds_no_process_by_its_number(
     tmp_path,

@@ -16,7 +16,9 @@ WHEN they run, because that is the only thing this side knows about them:
 
 ``configure``   after ``cheese-environment.py`` is on disk: the harness's own
                 config files, written before anything can read them.
-``credentials`` after the platform CLI is on PATH.
+``credentials`` after the platform CLI is on disk. Like everything else the
+                launch runs, it runs on the machine's own search path, never
+                the room's (``SESSION_PATH``).
 ``prepare``     after ``cd`` into the workdir: find the binary, check its
                 version, decide what resuming means, and leave the command in a
                 shell variable.
@@ -576,11 +578,11 @@ REAL_HOME="$HOME"
 # the tmux it found): this script runs in a login shell, and macOS's login
 # profile (path_helper) puts /usr/bin back in front, where python3 is 3.9.
 [ -z "${{CHEESE_RUNTIME_PATH:-}}" ] || export PATH="$CHEESE_RUNTIME_PATH:$PATH"
-# The machine's own search path, before the room's `$HOME/.cheese` is put in
-# front of it below. A sandboxed room can write that directory, so a program
-# the launch runs outside the sandbox on the owner's behalf, such as the
-# Keychain lookup (`device_launch._OWN_LOGIN_CREDENTIALS`), is looked up here
-# instead.
+# The machine's own search path. The process the launch starts gets the room's
+# `$HOME/.cheese` in front of it (`SESSION_PATH`), which a sandboxed room can
+# write, so a program that process runs outside the sandbox on the owner's
+# behalf, such as the Keychain lookup (`device_launch._OWN_LOGIN_CREDENTIALS`),
+# is looked up here instead.
 REAL_PATH="$PATH"
 # Bash exposes this clock without spawning date. Other shells skip diagnostics.
 # Append across relaunches; only phase names and timestamps enter this file.
@@ -759,7 +761,14 @@ cp "$HOME/.cheese/gh" "$HOME/.cheese/fj"
 chmod +x "$HOME/.cheese/gh" "$HOME/.cheese/fj"
 cat > "$HOME/.cheese/cheese-tunnel.py" <<'TUNNELPY'
 {tunnel_helper}TUNNELPY
-export PATH="$HOME/.cheese:$PATH"
+# The session's search path starts with the room's `$HOME/.cheese`, where its
+# `cheese`, `gh` and `fj` are. The room's sandbox can write that directory, so
+# this script, which runs as the machine's owner, never looks a program up in
+# it: a `cat`, `sh` or `tmux` put there would run as the owner on the next
+# launch. It goes in front of PATH only for the process the launch starts
+# (below); a hole that adds a directory for that process alone puts it in
+# front of `SESSION_PATH`.
+SESSION_PATH="$HOME/.cheese"
 {toolchain}cheese_launch_phase files_written
 {credentials}\
 # The tunnel helper, the one way a launch that rides the meter reaches it.
@@ -842,6 +851,8 @@ if [ -n "${{CHEESE_PREVIEW_URL:-}}" ]; then
 fi
 # Preserve input before POSIX sh redirects an asynchronous command's fd 0.
 exec 3<&0
+# What remains here runs only built-ins, so from now on PATH is the session's.
+export PATH="$SESSION_PATH:$PATH"
 eval "exec $ENVIRONMENT_CMD{command}" <&3 3<&- &
 AGENT_PID=$!
 RESULT=0

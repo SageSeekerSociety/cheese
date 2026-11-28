@@ -201,8 +201,10 @@ def test_each_hole_runs_where_the_platform_says_it_does(tmp_path):
         # The session's home is exported by now, so a harness writes its files
         # under it without knowing where the machine put it.
         configure=f'printf "configure:$HOME " >> "{order}"\n',
-        # The platform CLI is on PATH by now, so this hole can report itself.
-        credentials=f'printf "credentials:$(command -v cheese) " >> "{order}"\n',
+        # The platform CLI is on disk by now, but the room's directory it is in
+        # is on the session's PATH only, never on the launch's own.
+        credentials=f'printf "credentials:$(command -v cheese || echo none) "'
+        f' >> "{order}"\n',
         # And by `prepare` the cwd is the workdir the agent will run in.
         prepare=f'printf "prepare:$(pwd) " >> "{order}"\n'
         + _harness(tmp_path, "true\n"),
@@ -217,8 +219,64 @@ def test_each_hole_runs_where_the_platform_says_it_does(tmp_path):
         "prepare",
     ]
     assert stages[0] == f"configure:{os.path.realpath(env['CHEESE_HOME'])}"
-    assert stages[1].endswith("/.cheese/cheese")
+    assert stages[1] == "credentials:none"
     assert stages[2] == f"prepare:{work.resolve()}"
+
+
+def test_a_launch_runs_nothing_the_room_put_in_its_home(tmp_path):
+    """The session's PATH starts with the room's `$HOME/.cheese`, which the
+    room's sandbox can write. The launch itself runs as the machine's owner,
+    so none of the programs it runs — bringing up the tunnel and the preview,
+    asking tmux for its session — is looked up there: a room that put a `cat`
+    or a `tmux` there would have it run as the owner on its next launch."""
+    home, _work, env = _machine(tmp_path)
+    machine = tmp_path / "machine-bin"
+    machine.mkdir()
+    (machine / "tmux").write_text("#!/bin/sh\necho room-session\n")
+    (machine / "tmux").chmod(0o755)
+    env["PATH"] = f"{machine}:{env['PATH']}"
+    env.update(
+        CHEESE_TUNNEL_URL="wss://cheese.test/llm/tunnel",
+        CHEESE_CONNECT_TOKEN="connect-token",
+        CHEESE_PREVIEW_URL="wss://cheese.test/preview",
+        TMUX=f"{tmp_path}/tmux.sock,1,0",
+        TMUX_PANE="%1",
+    )
+    # A preview an agent of the room declared earlier (`cheese serve`).
+    (home / ".cheese/cheese-preview.port").write_text("8000\n")
+    ran = tmp_path / "planted-ran"
+    planted = (
+        "cat", "chmod", "mv", "cp", "rm", "mkdir", "sh", "python3", "tmux",
+        "cksum", "cut", "nohup", "tail", "id", "uname",
+    )  # fmt: skip
+    for name in planted:
+        program = home / ".cheese" / name
+        program.write_text(
+            f'#!/bin/sh\necho {name} >> "{ran}"\n'
+            f'PATH="{env["PATH"]}" exec {name} "$@"\n'
+        )
+        program.chmod(0o755)
+    seen = tmp_path / "session-path"
+
+    try:
+        result = _run(
+            tmp_path,
+            env,
+            prepare=_harness(tmp_path, f'printf %s "$PATH" > "{seen}"\n'),
+            command="$AGENT",
+        )
+    finally:
+        pid = home / ".cheese/cheese-preview.pid"
+        if pid.exists():
+            subprocess.run(["kill", pid.read_text().strip()], check=False)
+
+    assert result.returncode == 0, result.stderr
+    # The launch did bring up what it runs those programs for.
+    assert (home / ".cheese/environment-session.json").exists()
+    assert pid.exists()
+    assert (ran.read_text().split() if ran.exists() else []) == []
+    # And the session it started still finds the room's programs first.
+    assert seen.read_text().split(":")[0] == str(home / ".cheese")
 
 
 def _skeleton() -> str:
