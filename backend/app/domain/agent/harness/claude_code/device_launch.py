@@ -764,13 +764,14 @@ cheese_launch_phase credentials_selected
 # keychain the same way, which its owner's machine already lets it do. It is
 # the seat's: it names this seat's login, and the room's sandbox, which shares
 # the room's HOME, can neither see nor replace what is in a seat
-# (`confinement.SEATS`). It runs, and this block runs everything it runs, from
-# the machine's own search path (`REAL_PATH`): the room's sandbox can write
-# the `$HOME/.cheese` the session's own PATH starts with, and a `security`, or
-# any other program, put there would otherwise run as the machine's owner. The
-# one other `security` it may run is the one the connector put in a moved
-# login (`CLAUDE_KEYCHAIN_DIR`), under the machine's home, where no room's
-# sandbox can write.
+# (`confinement.SEATS`), and it goes in front of the room's own directory on
+# the session's PATH (`SESSION_PATH`). It runs on the machine's own search path
+# (`REAL_PATH`), as this block does on the launch's, which never holds the
+# room's: the room's sandbox can write the `$HOME/.cheese` the session's own
+# PATH starts with, and a `security`, or any other program, put there would
+# otherwise run as the machine's owner. The one other `security` it may run is
+# the one the connector put in a moved login (`CLAUDE_KEYCHAIN_DIR`), under
+# the machine's home, where no room's sandbox can write.
 #
 # Unless its session holds the machine whole, the session is kept to its own
 # room, seat and runner state, and of the machine's logins and the checkouts
@@ -788,8 +789,6 @@ export CLAUDE_SECURESTORAGE_CONFIG_DIR="$OWN_LOGIN"
 export CHEESE_LOGINS_ROOT="$REAL_HOME/{ROOT_PLACEHOLDER}/{LOGINS_DIR}"
 export CHEESE_WORKS_ROOT="$REAL_HOME/{ROOT_PLACEHOLDER}/{WORK_DIR}"
 export CHEESE_OWNER_HOME="$REAL_HOME"
-_room_path="$PATH"
-PATH="$REAL_PATH"
 [ -n "${{USER:-}}" ] || export USER="$(id -un)"
 if [ "$(uname -s)" = Linux ]; then
   export CHEESE_SESSION_BWRAP="$REAL_HOME/{ROOT_PLACEHOLDER}/runtime/bubblewrap/bwrap"
@@ -804,9 +803,8 @@ if [ "$(uname -s)" = Darwin ] && _security="$(command -v security)"; then
 HOME='$REAL_HOME' PATH='$REAL_PATH' exec '$_security' "\\$@"
 KEYCHAIN
   chmod +x "$SEAT/keychain/security"
-  _room_path="$SEAT/keychain:$_room_path"
+  SESSION_PATH="$SEAT/keychain:$SESSION_PATH"
 fi
-export PATH="$_room_path"
 if [ -n "${{{OWN_MODEL}:-}}" ]; then export ANTHROPIC_MODEL="${{{OWN_MODEL}}}"; fi
 unset {OWN_MODEL}
 export CHEESE_OWN_LOGIN=1
