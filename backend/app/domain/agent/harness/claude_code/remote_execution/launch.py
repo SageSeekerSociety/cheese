@@ -1,16 +1,13 @@
 """Build the standalone executor installation sent through DeviceHub.exec."""
 
-import asyncio
 import base64
 import functools
 import hashlib
 import hmac
 import json
-import time
 from pathlib import Path
 
 from app.core.config import settings
-from app.core.sentences import say
 from app.domain.agent import (
     environment_runner,
     forge_cli,
@@ -21,7 +18,6 @@ from app.domain.agent import (
     sandbox_image,
     toolchain,
 )
-from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.claude_code.remote_execution import (
     bootstrap,
     cli_client,
@@ -29,7 +25,6 @@ from app.domain.agent.harness.claude_code.remote_execution import (
     private,
     runtime,
     sandbox_host,
-    session_transfer,
 )
 from app.domain.agent.machine_launcher import CHEESE_PREVIEW_UP, toolchain_fetcher
 from app.domain.project_skill.service import project_skill_names, session_skill_files
@@ -257,63 +252,3 @@ def private_script(target: dict, env: dict) -> str:
         "directory = Path(target['home'].replace('${CHEESE_PROFILE_ROOT:-.cheese}', os.environ.get('CHEESE_PROFILE_ROOT', '.cheese')).replace('$HOME', str(Path.home())))\n"
         "print(json.dumps(scope['ensure'](target, directory, env)))\n"
     )
-
-
-async def transfer_history(hub, source, center, project, resource, resume):
-    if source == center:
-        return
-    program = Path(session_transfer.__file__).read_text()
-
-    async def exchange(device, action, **values):
-        payload = {
-            "project": str(project),
-            "resource": str(resource),
-            "action": action,
-            **values,
-        }
-        result = await hub.exec(
-            device,
-            ["python3", "-"],
-            timeout=60,
-            stdin=program
-            + "\ntransfer(json.loads("
-            + repr(json.dumps(payload))
-            + "))\n",
-        )
-        if result.get("exit") != 0 or result.get("truncated"):
-            raise ScreenSetupError(
-                result.get("stderr") or say("handoffHistoryMigrationFailed")
-            )
-        return json.loads(result["stdout"])
-
-    deadline = time.monotonic() + 60
-    stopped = await exchange(source, "stop", request_exit=True)
-    while not stopped["stopped"]:
-        if time.monotonic() >= deadline:
-            raise ScreenSetupError(say("handoffSessionNotExited"))
-        await asyncio.sleep(0.5)
-        stopped = await exchange(source, "stop", request_exit=False)
-    manifest = (await exchange(source, "list"))["files"]
-    if not any(Path(item["path"]).name == resume + ".jsonl" for item in manifest):
-        raise ScreenSetupError(say("handoffSessionFilesIncomplete"))
-    for item in manifest:
-        offset = 0
-        while offset < item["size"] or item["size"] == 0 and offset == 0:
-            chunk = await exchange(source, "read", path=item["path"], offset=offset)
-            count = len(base64.b64decode(chunk["data"], validate=True))
-            if not count and item["size"]:
-                raise ScreenSetupError(say("handoffSessionFileEndedEarly"))
-            await exchange(
-                center,
-                "write",
-                path=item["path"],
-                offset=offset,
-                data=chunk["data"],
-                final=offset + count == item["size"],
-                sha256=item["sha256"],
-            )
-            offset += count
-            if item["size"] == 0:
-                break
-    if (await exchange(source, "list"))["files"] != manifest:
-        raise ScreenSetupError(say("handoffSessionStillChanging"))

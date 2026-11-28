@@ -33,7 +33,6 @@ from app.domain.agent.harness.claude_code.remote_execution import (
     bootstrap,
     confinement,
     sandbox_host,
-    session_transfer,
 )
 from app.domain.agent.place import (
     CHECKOUT_DIR,
@@ -121,15 +120,11 @@ def test_the_pool_counts_the_sandbox_memory_the_helper_allows(total_mb):
 def test_the_shipped_programs_carry_the_checkout_name_that_place_chose():
     """The checkout's name in `place`, held to the name the machine gives it.
 
-    The backend builds the path it hands a machine, and three programs that run
-    ON the machine build theirs — the bootstrap creates the directory, the
-    teardown looks in it before deleting a home, and the session transfer hashes
-    its path into a session name. Drift is silent: a teardown or a transfer
-    pointed one directory over passes every check vacuously.
+    The backend builds the path it hands the machine. The bootstrap creates
+    that directory, and the teardown checks it before deleting a home.
     """
     assert resource_cleanup.CHECKOUT_DIR == CHECKOUT_DIR
     assert bootstrap.CHECKOUT_DIR == CHECKOUT_DIR
-    assert session_transfer.CHECKOUT_DIR == CHECKOUT_DIR
     project, room = uuid.uuid4(), uuid.uuid4()
     channel = device_provider.DeviceChannel(hub=None)
     assert channel._work_dir(project, room) == (
