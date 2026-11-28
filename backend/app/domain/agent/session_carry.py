@@ -149,6 +149,7 @@ async def _carry(
         return FAILED
     sent = packed["sent"]
     if await bucket.stat(key) != (sent["size"], sent["md5"]):
+        # i18n-exempt: a carry's reason, for the log; the room is told in its own words
         raise RuntimeError(f"the bucket does not hold {key} as it was sent")
     await _run(
         hub,
@@ -182,6 +183,7 @@ async def _run(hub, device: str, payload: dict) -> dict:
         timeout=CARRY_TIMEOUT_S,
     )
     if result.get("exit") != 0 or result.get("truncated"):
+        # i18n-exempt: a carry's reason, for the log; the room is told in its own words
         raise RuntimeError(
             f"carry {payload['action']} on {device} failed: "
             f"{str(result.get('stderr') or '')[-1500:]}"
