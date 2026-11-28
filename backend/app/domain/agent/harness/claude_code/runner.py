@@ -2516,4 +2516,7 @@ class Runner(runner.Runner[Journal]):
             self.launch_told = True
             answer["launch_timing"] = self.launch_timing()
             answer["launch_start"] = self.launch_start
+            # Which start of the runner this was: the greeting's ping and the
+            # turn that started it name it too, so the three lines join.
+            answer["launch"] = self.launch
         return answer

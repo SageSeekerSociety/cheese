@@ -186,10 +186,11 @@ class ClaudeCodeDriver:
             # of starting a session, which only its runner sees. The rest
             # follows once Claude Code is ready (``Reading.drain``).
             logger.info(
-                "session_launch_timing topic=%s seat=%s stage=greeted start=%s "
-                "phases_ms=%s",
+                "session_launch_timing topic=%s seat=%s launch=%s stage=greeted "
+                "start=%s phases_ms=%s",
                 owner.place_id,
                 owner.name,
+                status.get("launch") or name,
                 launch_start(status.get("launch_start")),
                 phases,
             )

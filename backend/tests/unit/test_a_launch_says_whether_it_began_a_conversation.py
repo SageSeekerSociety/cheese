@@ -127,6 +127,9 @@ async def test_the_ready_launch_is_logged_as_resumed_or_fresh(
 
     assert ping["launch_start"] == start
     assert "stage=ready" in line
+    # The launch the greeting named, so the ready line joins its greeting and
+    # the turn that started it (`count-fresh-cold-launches.py`).
+    assert f" launch={ping['launch']} " in line
     assert f"start={start} " in line
     # The timing it is logged with still names the phase a spare would save.
     assert "'claude_init'" in line
@@ -168,7 +171,9 @@ class _Host:
 async def test_the_greeted_launch_is_logged_with_what_its_runner_said(
     caplog, told, start
 ):
-    host = _Host({"launch_timing": {"started": 0.0, "greeted": 812.5}, **told})
+    host = _Host(
+        {"launch": "L1", "launch_timing": {"started": 0.0, "greeted": 812.5}, **told}
+    )
     with caplog.at_level(logging.INFO):
         await ClaudeCodeDriver(screens=host).launch(  # type: ignore[arg-type]
             host,  # type: ignore[arg-type]
@@ -190,3 +195,6 @@ async def test_the_greeted_launch_is_logged_with_what_its_runner_said(
     ]
     assert "stage=greeted" in line
     assert f"start={start} " in line
+    # The runner's name for this launch, which its ready line and the turn
+    # that started it carry too.
+    assert " launch=L1 " in line

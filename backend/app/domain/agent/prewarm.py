@@ -134,7 +134,7 @@ class SeatPrewarm:
     ) -> None:
         started = time.monotonic()
         try:
-            outcome = await self._start(room_id, conversation_id, agent_handle)
+            outcome, seat = await self._start(room_id, conversation_id, agent_handle)
         except Exception:  # the turn starts it the usual way
             logger.exception(
                 "session_prewarm_failed topic=%s seat=%s", conversation_id, agent_handle
@@ -143,31 +143,33 @@ class SeatPrewarm:
         logger.info(
             "session_prewarm topic=%s seat=%s outcome=%s elapsed_ms=%.0f",
             conversation_id,
-            agent_handle,
+            seat,
             outcome,
             (time.monotonic() - started) * 1000,
         )
 
     async def _start(
         self, room_id: uuid.UUID, conversation_id: uuid.UUID, agent_handle: str
-    ) -> str:
+    ) -> tuple[str, str]:
         """Start the session a message to this teammate here would start, when
-        the seat has none; what happened, for the log."""
+        the seat has none; what happened, for the log, and the seat it names:
+        the page may name the teammate by the handle it acts under, and the
+        log names a seat the way a turn's lines do (`room_send_timing`)."""
         chat = self._chat
         read = chat.turn_preparation.launch_inputs
         seen = await read(conversation_id, agent_handle)
         if seen is None or seen.session.topic_id != room_id:
             # Nowhere to run, a teammate that may not act here, or a
             # conversation outside the room this was said in.
-            return "not_here"
+            return "not_here", agent_handle
         seat = seen.session.agent_handle
         if (holder := chat._compute.holder(conversation_id, seat)) is not None:
             # It has a session: restarted only if its runner let it go.
             if (held := holder.holding((conversation_id, seat))) is not None:
                 self.nudge(held)
-            return "held"
+            return "held", seat
         if not seen.runtime.starts_sessions():
-            return "not_owner"
+            return "not_owner", seat
         async with (
             self._slots,
             seat_admission(chat.live.seat_lock_for(conversation_id, seat)),
@@ -175,12 +177,12 @@ class SeatPrewarm:
             # Read again under the seat's lock: a turn that ran while this
             # waited has started it, and moved what it would be started with.
             if chat._compute.holder(conversation_id, seat) is not None:
-                return "held"
+                return "held", seat
             launch = await read(conversation_id, agent_handle)
             if launch is None or launch.session != seen.session:
-                return "not_here"
+                return "not_here", seat
             if not await self._memory.has_room(room_id):
-                return "host_full"
+                return "host_full", seat
             await chat._compute.activate(launch.session, launch.runtime)
             await launch.runtime.ensure(
                 launch.session,
@@ -193,7 +195,7 @@ class SeatPrewarm:
                 needs_place=launch.needs_place,
                 keeps_nothing=launch.keeps_nothing,
             )
-            return "started"
+            return "started", seat
 
     def nudge(self, session: SessionRef) -> None:
         """Bring this seat's session up to date in the background, once."""

@@ -166,6 +166,10 @@ async def ensure(
         mark("ensure_start")
         if notes is not None:
             notes["cold"] = status.started
+            if status.started:
+                # The launch this turn started, as its runner's launch lines
+                # name it (``session_launch_timing ... launch=``).
+                notes["launch"] = status.launch
     attached = await svc._attach(
         Live(
             session,

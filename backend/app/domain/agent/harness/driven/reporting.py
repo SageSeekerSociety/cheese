@@ -296,10 +296,11 @@ class Reading:
                 # Said once by a runner whose session has just come up: the
                 # whole launch, past the greeting that saw only its start.
                 logger.info(
-                    "session_launch_timing topic=%s seat=%s stage=ready start=%s "
-                    "phases_ms=%s",
+                    "session_launch_timing topic=%s seat=%s launch=%s stage=ready "
+                    "start=%s phases_ms=%s",
                     self.whose.conversation_id,
                     self.whose.agent_handle,
+                    answer.get("launch"),
                     launch_start(answer.get("launch_start")),
                     phases,
                 )

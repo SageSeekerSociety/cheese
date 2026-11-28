@@ -137,6 +137,7 @@ async def start(
             model=spec.model,
             conversation=launched.conversation,
             started=started_now,
+            launch=launched.name,
         )
 
 
