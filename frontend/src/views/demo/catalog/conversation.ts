@@ -59,8 +59,7 @@ const CONVERSATION_NOT_CARRIED: Block = {
   kind: 'event',
   author_type: 'platform',
   author: 'system',
-  content:
-    '<@cheese>换到另一台电脑上运行，之前的对话没能带过去，这次从新对话开始。之前的消息都还在，它会自己查看',
+  content: '<@cheese>换到另一台电脑上运行，之前的对话没能带过去，这次从新对话开始。之前的消息都还在，它会自己查看',
   created_at: new Date('2026-11-28T10:05:00+08:00').toISOString(),
   shown_as: 'happening',
   meta: {
