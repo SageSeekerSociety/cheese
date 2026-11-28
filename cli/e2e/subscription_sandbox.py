@@ -6,12 +6,14 @@ import json
 import os
 import runpy
 import shutil
+import socket
 import subprocess
 import sys
 import threading
 import time
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 HERE = Path(__file__).resolve()
 BACKEND = HERE.parents[2] / "backend"
@@ -25,13 +27,12 @@ def stage_launch(home, case, ca, project, topic, owner):
     os.environ["WORKSPACE_ROOT"] = str(home / "platform-data")
     os.environ["SUBSCRIPTION_CA_BACKEND_PATH"] = ca
     from app.domain.agent.central_provider import CentralChannel
-    from app.domain.agent.device_provider import DeviceChannel
+    from app.domain.agent.device_provider import DeviceChannel, screen_launch_env
+    from app.domain.agent.harness.claude_code import ClaudeLaunch
     from app.domain.agent.harness.claude_code.cli import LAUNCH_ARGS
-    from app.domain.agent.harness.claude_code.device_launch import launch_holes
     from app.domain.agent.launch import MachinePlace
-    from app.domain.agent.machine_launcher import screen_env
     from app.domain.agent.owner_provider import OwnerChannel
-    from app.domain.agent.place import OWN_LOGIN_ID, OWN_MODEL, seat_name
+    from app.domain.agent.place import OWN_LOGIN_ID, OWN_MODEL
     from app.domain.agent.screen_model_env import screen_model_env
     from app.domain.device.login_kind import FIRST_LOGIN
     from app.domain.project_skill.service import session_skill_bundle
@@ -41,11 +42,7 @@ def stage_launch(home, case, ca, project, topic, owner):
     workspace.mkdir()
     subprocess.run(["git", "init", "-q", str(workspace)], check=True)
     owned = case == "owned"
-    place = MachinePlace(
-        home=str(home), workdir=str(workspace), store="", state=str(home / "state"),
-        api_base="http://127.0.0.1", project_id=project, topic_id=topic,
-        agent_handle="subscription-e2e", own_login=owned,
-    )
+    api_base, handle = "http://127.0.0.1", "subscription-e2e"
     model_env, ca_pem, _ = screen_model_env(
         {"CHEESE_OWN_LOGIN": "1", OWN_LOGIN_ID: FIRST_LOGIN, OWN_MODEL: "sonnet"}
         if owned else {},
@@ -53,19 +50,33 @@ def stage_launch(home, case, ca, project, topic, owner):
         project_id=project,
         topic_id=topic,
         resource_id=topic,
-        agent_handle=place.agent_handle,
-        api_base=place.api_base,
-        no_proxy=DeviceChannel(public_base=place.api_base)._no_proxy_hosts(),
-    )
-    launch = launch_holes(
-        state=place.state, ca_pem=ca_pem, own_login=owned,
-        seat=seat_name(place.agent_handle),
+        agent_handle=handle,
+        api_base=api_base,
+        no_proxy=DeviceChannel(public_base=api_base)._no_proxy_hosts(),
     )
     # Where the session runs beside its executor, as the channel that starts
     # it decides: a metered session in a namespace of its own on the session
     # host, a member's own Claude Code as a plain process on its owner's machine.
     channel = OwnerChannel if owned else CentralChannel
-    placement = channel._deferred_target(None, {}, apart=False)
+    # The target a session holds once its lease names the room's machine
+    # (`client._take_leased_machine`), as the channel places it. The executor
+    # route it names listens on a port taken now, so the launch is assembled
+    # with the target its session is handed.
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    target = {
+        "kind": "device", "device_id": DEVICE,
+        "url": f"http://127.0.0.1:{port}/executor", "mcp_servers": [],
+        **channel._deferred_target(None, {}, apart=False),
+    }
+    place = MachinePlace(
+        home=str(home), workdir=str(workspace), store="", state=str(home / "state"),
+        api_base=api_base, project_id=project, topic_id=topic, agent_handle=handle,
+        execution_target=target, ca_pem=ca_pem, seat=handle, own_login=owned,
+    )
+    launch = ClaudeLaunch(system_prompt="").on(place)
+    _, env = screen_launch_env(place, launch, model_env, token="", agent_configuration="")
 
     bundle = session_skill_bundle(None)
     cache = owner / ".cheese/skill-bundles"
@@ -79,17 +90,12 @@ def stage_launch(home, case, ca, project, topic, owner):
         + 'printf "%s\\n" "$SEAT/remote-session" > "$HOME/session-dir"\n'
         + "exec env -0\n"
     )
-    shell_env = {
-        "HOME": str(home),
-        "PATH": os.environ["PATH"],
-        "REAL_HOME": str(owner),
-        **screen_env(place, token=""),
-        **model_env,
-        **launch.env,
-    }
+    # What the connector starts the launcher with: the machine's own HOME,
+    # PATH and owner's home under the screen's environment.
+    shell_env = {"HOME": str(home), "PATH": os.environ["PATH"], "REAL_HOME": str(owner), **env}
     raw = subprocess.check_output(["/bin/sh", str(script)], cwd=workspace, env=shell_env)
     (home / "production.json").write_text(
-        json.dumps({"env": parse_environ(raw), "args": LAUNCH_ARGS, "placement": placement})
+        json.dumps({"env": parse_environ(raw), "args": LAUNCH_ARGS, "target": target})
     )
 
 
@@ -107,21 +113,28 @@ def redact(env):
     }
 
 
-def stand_ins(launched, owned, proxy, ca):
-    """What the fixture adds to the launch the builders produced, and only that.
+PROXIES = {"HTTPS_PROXY", "https_proxy"}
+
+
+def stand_ins(built, owned, proxy, ca):
+    """What the fixture adds to the environment the builders produced, and
+    only that. ``built`` is that environment complete, as the session would be
+    started with it: everything checked here holds of it before anything of
+    the fixture's is laid over it.
 
     A metered session's HTTPS_PROXY is its seat's tunnel helper, which the
     platform half of the launch starts and exports when the builders name a
-    tunnel (`machine_launcher`, `CHEESE_TUNNEL_URL`). Neither runs here: the
-    stub's own port stands in for the helper's, so the builders must name the
-    tunnel and no proxy of their own. A member's own session has neither proxy
-    nor CA in production; the fixture adds both to reach the stub."""
+    tunnel (`machine_launcher`: `[ -n "${CHEESE_TUNNEL_URL:-}" ]`). Neither
+    runs here: the stub's own port stands in for the helper's, so the builders
+    must name a tunnel and no proxy of their own. A member's own session has
+    neither proxy nor CA in production; the fixture adds both to reach the
+    stub."""
     if owned:
-        named = sorted({"CHEESE_TUNNEL_URL", "HTTPS_PROXY", "NODE_EXTRA_CA_CERTS"} & set(launched))
+        named = sorted(({"CHEESE_TUNNEL_URL", "NODE_EXTRA_CA_CERTS"} | PROXIES) & set(built))
         if named:
             raise RuntimeError(f"Own-login launch names the metering route: {named}")
         return {"HTTPS_PROXY": proxy, "NODE_EXTRA_CA_CERTS": ca}
-    if "CHEESE_TUNNEL_URL" not in launched or "HTTPS_PROXY" in launched:
+    if not built.get("CHEESE_TUNNEL_URL") or PROXIES & set(built):
         raise RuntimeError("Metered launch must name its tunnel and no proxy of its own")
     return {"HTTPS_PROXY": proxy}
 
@@ -130,26 +143,21 @@ def run_session(runtime, home, case, binary, action, proxy, ca=None):
     staged = json.loads((home / "production.json").read_text())
     launched = staged["env"]
     owned = case == "owned"
-    fixture = stand_ins(launched, owned, proxy, ca)
     if action == "status":
         return subprocess.run(
-            [binary, "auth", "status"], env={**launched, **fixture}, check=False
+            [binary, "auth", "status"], env={**launched, **stand_ins(launched, owned, proxy, ca)},
+            check=False,
         ).returncode
 
     state = home / "state"
-    with executor(runtime, home, state, binary, launched, network=not owned) as url:
+    with executor(runtime, home, state, binary, launched, staged["target"]["url"],
+                  network=not owned):
         os.environ.update(launched)
         client = runpy.run_path(str(REMOTE / "client.py"))
         directory = Path((home / "session-dir").read_text().strip())
-        # The target a session holds once its lease names the room's machine
-        # (`client._take_leased_machine`), as the channel places it.
-        target = {
-            "kind": "device", "device_id": DEVICE, "url": url, "mcp_servers": [],
-            **staged["placement"],
-        }
         launch = client["prepare"](
             directory,
-            target,
+            staged["target"],
             claude=binary,
             extra_args=staged["args"],
             base_settings=json.loads((directory / "base-settings.json").read_text()),
@@ -160,6 +168,7 @@ def run_session(runtime, home, case, binary, action, proxy, ca=None):
         production, _ = client["start_gateway"](
             Path(launch["execution"]), {**launched, **launch["env"]}
         )
+        fixture = stand_ins(production, owned, proxy, ca)
         env = {**production, **fixture}
         # `namespace.enter` is this Python, which hands the build what it set
         # in its own environment as it started (PEP 538's locale coercion), and
@@ -213,9 +222,9 @@ def interpreter_additions(env):
 
 
 @contextmanager
-def executor(runtime, home, state, binary, env, *, network):
+def executor(runtime, home, state, binary, env, url, *, network):
     """The room's executor in its sandbox, and the platform's executor route
-    to it: the URL a device target names."""
+    to it at ``url``, the one the session's target names."""
     platform = Path(runtime["platform_socket_directory"](state))
     public = Path(runtime["socket_path"](state))
     ready = Path(runtime["socket_directory"](state)) / "executor.sock"
@@ -242,8 +251,8 @@ def executor(runtime, home, state, binary, env, *, network):
                 if service.poll() is not None or time.monotonic() >= until:
                     raise RuntimeError("Executor did not answer") from None
                 time.sleep(0.01)
-        relay = executor_route(runtime, state)
-        yield f"http://127.0.0.1:{relay.server_port}/executor"
+        relay = executor_route(runtime, state, urlsplit(url).port)
+        yield
     finally:
         if relay is not None:
             relay.shutdown()
@@ -254,7 +263,7 @@ def executor(runtime, home, state, binary, env, *, network):
         public.unlink(missing_ok=True)
 
 
-def executor_route(runtime, state):
+def executor_route(runtime, state, port):
     """The platform's route to a device's executor, standing in for the
     platform and the connector: each call goes to the executor at `state`."""
 
@@ -275,7 +284,7 @@ def executor_route(runtime, state):
             self.end_headers()
             self.wfile.write(body)
 
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Route)
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Route)
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
