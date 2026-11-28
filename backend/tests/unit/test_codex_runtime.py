@@ -300,6 +300,7 @@ async def test_a_codex_that_did_not_start_says_one_sentence_and_keeps_its_stderr
             agent_user_id=1,
             agent_handle="a",
             token="t",
+            retired=None,
             env={
                 "CHEESE_EXECUTION_TARGET": json.dumps(
                     {"kind": "device", "mcp_servers": []}

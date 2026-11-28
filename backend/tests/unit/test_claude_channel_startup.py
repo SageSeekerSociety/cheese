@@ -95,6 +95,7 @@ class Host:
             agent_user_id=1,
             agent_handle=AGENT,
             token=token,
+            retired=None,
             env={
                 **(env or {}),
                 "CHEESE_RESOURCE_ID": str(TOPIC),

@@ -917,6 +917,39 @@ def test_a_conversation_the_platform_retired_is_not_taken_up_again(machine, cont
     assert "PINEAPPLE" not in asked
 
 
+def test_a_session_back_on_a_computer_it_left_does_not_take_up_its_old_conversation(
+    machine, contract
+):
+    """A session ran here, moved to another computer, and comes back: the
+    platform gave up on the conversation it had here when it left, and now
+    names the one it leaves on the other computer as retired. The start here
+    begins a new conversation, though this computer's own record and
+    transcript still hold the older one."""
+    before = Screen(machine)
+    try:
+        work = str(uuid.uuid4())
+        before.send("The password is PINEAPPLE.", work_id=work)
+        before.wait_event(_status("idle", work))
+        here = before.call("ping")["session_id"]
+    finally:
+        before.stop()
+
+    # The conversation it had on the other computer, which stayed there.
+    elsewhere = str(uuid.uuid4())
+    back = Screen(machine, env={"CHEESE_RETIRED_SESSION": elsewhere})
+    try:
+        work = str(uuid.uuid4())
+        back.send("What was the password?", work_id=work)
+        back.wait_event(_status("idle", work))
+        started = back.call("ping")["session_id"]
+    finally:
+        back.stop()
+    assert started != here
+    asked = json.dumps(machine.server.state["requests"][-1]["messages"])
+    assert "What was the password?" in asked
+    assert "PINEAPPLE" not in asked
+
+
 @pytest.mark.anyio
 async def test_a_question_the_build_would_ask_never_reaches_the_driver(
     machine, monkeypatch, contract

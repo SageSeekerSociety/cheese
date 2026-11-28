@@ -1,6 +1,6 @@
 # 设备自托管：让芝士跑在自己的机器上
 
-Enrolled devices provide execution for ordinary rooms: project files, shell commands, environment scripts, custom stdio MCP processes and preview. Claude Code runs, under its runner, on the central session host configured by `AGENT_SESSION_DEVICE_ID`. Both locations use the existing connector, with separate recorded placement and storage. See `remote-execution.md` for setup and migration.
+Enrolled devices provide execution for ordinary rooms: project files, shell commands, environment scripts, custom stdio MCP processes and preview. Claude Code runs, under its runner, on the central session host configured by `AGENT_SESSION_DEVICE_ID`. Both locations use the existing connector, with separate recorded placement and storage. See [remote execution](remote-execution.md#room-placement) for setup and session placement.
 
 设备是**纯算力**：它不含 agent 身份，agent 由项目/频道在请求开始时独立解析（agent = 屏幕，不是机器）。设备永远向服务器**拨出**（非入站），带退避重连 + 心跳，所以躲在 NAT/防火墙后的笔记本也能托管 agent、**零入站端口**。
 
@@ -27,7 +27,7 @@ Enrolled devices provide execution for ordinary rooms: project files, shell comm
 
 ### agent 会话住在 connector 自己的 tmux server 里
 
-On the central session host, the launcher keeps each session's runner, and the headless Claude Code it holds, in the connector's private tmux server. It reads that server's socket from `$TMUX` before attaching the inner session. The execution device runs its service independently of the session. Sessions awaiting migration retain their original private tmux server until transfer.
+On the central session host, the launcher keeps each session's runner, and the headless Claude Code it holds, in the connector's private tmux server. It reads that server's socket from `$TMUX` before attaching the inner session. The execution device runs its service independently of the session.
 
 The launcher neither queries nor terminates sessions on the default server. A `cheese_*` name alone does not establish ownership.
 

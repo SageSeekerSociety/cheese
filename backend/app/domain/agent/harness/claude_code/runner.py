@@ -834,7 +834,11 @@ class Runner(runner.Runner[Journal]):
     ) -> str:
         """Start Claude Code on ``resume``, else on the conversation this
         runner last ran, else on a new one. ``retired``: a conversation the
-        platform no longer continues, never taken up again from here."""
+        platform no longer continues. Naming one says the platform has no
+        conversation for this seat to go on with, so the start takes up none
+        of this runner's own either: the one it last ran here may be an older
+        conversation the platform gave up on before, as when a session comes
+        back to a computer it left."""
         self.claim()
         self.config_dir = Path(env["CLAUDE_CONFIG_DIR"])
         self.execution = env.get("CHEESE_EXECUTION_CONFIG")
@@ -844,7 +848,7 @@ class Runner(runner.Runner[Journal]):
             end(sessions_on(self.config_dir, agent_handle))
         self._report_left_exit()
         saved = self.journal.recall("session_id")
-        if saved and saved == retired:
+        if retired:
             saved = None
         failed = self.journal.recall("resume_failed")
         resumed = next(

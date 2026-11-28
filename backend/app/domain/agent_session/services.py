@@ -353,5 +353,7 @@ class AgentSessionService:
         """Whether ANY agent has ever run here — what the compute pin freezes on."""
         return await self._repo.has_any(room_id)
 
-    async def forget_room(self, room_id: uuid.UUID) -> None:
-        await self._repo.forget_room(room_id)
+    async def reopen_room(self, room_id: uuid.UUID) -> None:
+        """The room was reopened in a new generation: its sessions keep their
+        conversations, and hold nothing of the old generation."""
+        await self._repo.reopen_room(room_id)

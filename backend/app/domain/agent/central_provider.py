@@ -23,6 +23,7 @@ from app.domain.agent.device_provider import (
 from app.domain.agent.executor_transport import DEFERRED_WORKSPACE
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
+from app.domain.agent.session_move import CONVERSATION_ON, end_moved, host_move
 from app.domain.agent_instance.services import agent_stdio_servers, type_of_seat
 from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.services import AgentSessionService
@@ -48,6 +49,9 @@ class PreparedSession:
     topic_id: uuid.UUID
     token: str
     env: dict[str, str]
+    #: The conversation this start must not take up: it stayed on the
+    #: computer the session left (`session_move`).
+    retired: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -413,7 +417,7 @@ class CentralChannel(DeviceChannel):
         # publish instead, it left a published lease for a generation that had
         # just been rotated away; checked with it, either the un-archive lands
         # first and this raises before a harness starts, or this lands first and
-        # the un-archive's own `forget_room` deletes the lease again — after
+        # the un-archive's own `reopen_room` deletes the lease again — after
         # which the executor route admits nothing for it (`execution.py` reads
         # that same row) and the screen is retired like any other orphan.
         #
@@ -427,6 +431,19 @@ class CentralChannel(DeviceChannel):
                 # What it held belongs to another generation of the room, or
                 # it works in a scratch area of its own: it holds nothing.
                 await attachments.unattach(db, session_id)
+            # Decided on the row as it stands now, held until the place is
+            # recorded: a turn still on the old computer may have recorded
+            # another conversation while this one waited for its host.
+            row = await AgentSessionService(db).by_id(session_id, lock=True)
+            move = (
+                host_move(row, center=center, resource=str(resource))
+                if row is not None
+                else None
+            )
+            if move is not None:
+                # Where the conversation stays until the session has started
+                # here (`session_move`).
+                location[CONVERSATION_ON] = list(move.origin)
             await AgentSessionService(db).remember_place(
                 conversation_id=session.conversation_id,
                 agent_handle=session.agent_handle,
@@ -445,5 +462,12 @@ class CentralChannel(DeviceChannel):
             topic_id=topic_id,
             token=token,
             env=values,
+            retired=move.token if move is not None else None,
         )
         mark("screen_ready")
+        if move is not None:
+            # Started here: the conversation it left is given up, and the room
+            # is told. A start that failed raised out of the yield above.
+            async with factory() as db:
+                await end_moved(db, session, move)
+                await db.commit()

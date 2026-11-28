@@ -52,6 +52,36 @@ const UPGRADE_TURN_FAILED: Block = {
   },
 }
 
+/** 队友换到另一台电脑上运行，之前的对话留在原来那台上（`conversation_not_carried`）：频道里居中一行。 */
+const CONVERSATION_NOT_CARRIED: Block = {
+  id: 'catalog-conversation-not-carried',
+  conversation_id: 'demo',
+  kind: 'event',
+  author_type: 'platform',
+  author: 'system',
+  content: '<@cheese>换到另一台电脑上运行，之前的对话没能带过去，这次从新对话开始。之前的消息都还在，它会自己查看',
+  created_at: new Date('2026-11-28T10:05:00+08:00').toISOString(),
+  shown_as: 'happening',
+  meta: {
+    event_type: 'conversation_not_carried',
+    severity: 'info',
+    who: 'platform',
+    seat: 'cheese',
+    i18n: { content: { key: 'conversationNotCarried', params: { agent: '<@cheese>' } } },
+  },
+}
+
+/** 归档的频道在清理开始后又取消归档：各位队友之前的对话没接上，从新对话开始（`conversation_not_carried`）。 */
+const NOT_CARRIED_REOPENED: Block = {
+  ...CONVERSATION_NOT_CARRIED,
+  id: 'catalog-conversation-not-carried-reopened',
+  content: '重新打开后，<@cheese>之前的对话没能接上，这次从新对话开始。之前的消息都还在，它会自己查看',
+  meta: {
+    ...CONVERSATION_NOT_CARRIED.meta,
+    i18n: { content: { key: 'conversationNotCarriedReopened', params: { agent: '<@cheese>' } } },
+  },
+}
+
 /** AI 队友的运行程序正在下载到一个人自己的电脑上（`executor_install`）：同一行原地更新。 */
 function installLine(state: string, key: string, content: string, params: Record<string, unknown>): Block {
   return {
@@ -382,6 +412,18 @@ export const CONVERSATION_ENTRIES: CatalogEntry[] = [
         note: '一轮很久没有任何输出、平台把它停下了：这是平台的问题，不说模型出错；带「重试」，同时告警给运维。',
         props: failureNotice(TURN_STOPPED),
         expect: '这次没做完，已停下',
+      },
+      {
+        name: '换到另一台电脑：从新对话开始',
+        note: '队友改在另一台电脑上运行（比如换成某位成员电脑上的 Claude 订阅），之前的对话留在原来那台上：居中一行说清它从新对话开始、之前的消息都在。',
+        props: upgradeNotice(CONVERSATION_NOT_CARRIED),
+        expect: '这次从新对话开始',
+      },
+      {
+        name: '重新打开后接不上之前的对话',
+        note: '频道归档后清理已经开始，又取消归档：各位队友从新对话开始，居中一行说清。',
+        props: upgradeNotice(NOT_CARRIED_REOPENED),
+        expect: '重新打开后',
       },
       {
         name: '运行程序下载中',
