@@ -32,7 +32,13 @@ Every room's session shares the session host's kernel, so each one is bounded th
 
 An ordinary room keeps its selected Cloud or enrolled execution device. The backend prepares its room directory, environment scripts, Cheese CLI, preview helper and executor through the existing connector. `cheese worktree` creates a separate checkout for each task on that device. Tool calls travel from the central session through a scoped backend endpoint to that connector. The endpoint resolves the destination from stored placement. The central host and a room's execution device are distinct devices; private execution containers share the central host, and a member's own Claude Code may work on its owner's machine when that is where its environment is (below).
 
-When a room launches Claude Code, the launcher offers the previous conversation ID through `CHEESE_RESUME_SESSION` if one is available. The runner can resume that conversation only if it finds a nonempty transcript for that ID on the session host's disk. A room placed on a different session host starts a new Claude Code conversation when the previous transcript is absent there.
+When a room launches Claude Code, the launcher offers the previous conversation ID through `CHEESE_RESUME_SESSION` if one is available. The runner on the session host then picks the conversation in this order (`harness/claude_code/runner.py`, `start`):
+
+1. The offered conversation, if a nonempty transcript for it is on that host's disk.
+2. Otherwise the conversation this runner last recorded in its own journal on that host, if a nonempty transcript for it is there. This can be a different conversation from the one offered.
+3. Otherwise a new conversation.
+
+A conversation the platform marked retired, or one whose last resume failed, is never picked. A room placed on a different session host resumes the offered conversation only if its transcript is already there.
 
 Before deployment, connect the configured session host and install the private executor image described in `where-a-turn-runs.md`. Ordinary executors obtain the pinned binary from the backend's Claude Code download endpoint. Pool scheduling remains a design plan in RFC #927.
 
