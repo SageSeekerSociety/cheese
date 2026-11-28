@@ -29,7 +29,12 @@ from app.domain.agent.harness.claude_code import (
     ended,
 )
 from app.domain.agent.harness.driven import lifecycle
-from app.domain.agent.harness.driven.reporting import Reading, Whose, launch_phases
+from app.domain.agent.harness.driven.reporting import (
+    Reading,
+    Whose,
+    launch_phases,
+    launch_start,
+)
 from app.domain.agent.session_host.contract import (
     Access,
     Image,
@@ -181,9 +186,11 @@ class ClaudeCodeDriver:
             # of starting a session, which only its runner sees. The rest
             # follows once Claude Code is ready (``Reading.drain``).
             logger.info(
-                "session_launch_timing topic=%s seat=%s stage=greeted phases_ms=%s",
+                "session_launch_timing topic=%s seat=%s stage=greeted start=%s "
+                "phases_ms=%s",
                 owner.place_id,
                 owner.name,
+                launch_start(status.get("launch_start")),
                 phases,
             )
         return Launched(
