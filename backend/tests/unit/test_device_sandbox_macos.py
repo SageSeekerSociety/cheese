@@ -61,6 +61,38 @@ def test_a_session_on_a_mac_sees_its_own_home_and_none_of_the_persons(owner, roo
     assert _within(made, room.home), made
 
 
+def test_a_rooms_commands_on_a_mac_neither_read_nor_change_the_seats_in_its_home(
+    rooms,  # noqa: F811
+):
+    """A room's home holds the seats of the builds on its machine: each the
+    private memory of the person its turn answers, and the helpers and the
+    Keychain wrapper the build runs outside the sandbox. The room's commands
+    read none of it and change none of it, also by moving the directory that
+    holds them: the profile names paths, not files."""
+    room = rooms()
+    seats = room.home / ".cheese/seats"
+    note = seats / "for-alice/remote-session/memory/private/alice/note.md"
+    helper = seats / "for-bob/keychain/security"
+    for path, text in ((note, "alice-private\n"), (helper, "#!/bin/sh\n")):
+        path.parent.mkdir(parents=True)
+        path.write_text(text)
+
+    assert room.bash(f'cat "{note}" 2>/dev/null || echo hidden') == "hidden"
+    assert (
+        room.bash(f'{{ echo x >> "{helper}"; }} 2>/dev/null || echo refused')
+        == "refused"
+    )
+    moved = str(note).replace("/.cheese/", "/moved/", 1)
+    assert (
+        room.bash(
+            f'mv "$HOME/.cheese" "$HOME/moved" 2>/dev/null; '
+            f'cat "{moved}" "{note}" 2>/dev/null || echo hidden'
+        )
+        == "hidden"
+    )
+    assert helper.read_text() == "#!/bin/sh\n"
+
+
 def test_a_session_on_a_mac_signals_and_dials_nothing_of_the_persons(rooms):  # noqa: F811
     """macOS has no pid namespace: the sandbox itself keeps the session from
     signalling the person's processes and from dialling their Unix sockets,

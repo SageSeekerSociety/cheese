@@ -265,6 +265,28 @@ def test_a_session_on_a_persons_machine_sees_the_system_and_none_of_their_home(
 
 
 @sandboxed
+def test_a_rooms_commands_neither_read_nor_change_the_seats_in_its_home(rooms):
+    """A room's home holds the seats of the builds on its machine: each the
+    private memory of the person its turn answers, and the helpers the build
+    runs outside the sandbox. The room's commands read none of it and change
+    none of it."""
+    room = rooms()
+    seats = room.home / ".cheese/seats"
+    note = seats / "for-alice/remote-session/memory/private/alice/note.md"
+    helper = seats / "for-bob/remote-execution/client.py"
+    for path, text in ((note, "alice-private\n"), (helper, "# bob's build\n")):
+        path.parent.mkdir(parents=True)
+        path.write_text(text)
+
+    assert room.bash(f'cat "{note}" 2>/dev/null || echo hidden') == "hidden"
+    assert (
+        room.bash(f'{{ echo x >> "{helper}"; }} 2>/dev/null || echo refused')
+        == "refused"
+    )
+    assert helper.read_text() == "# bob's build\n"
+
+
+@sandboxed
 def test_a_room_runs_the_git_cheesehost_placed_and_nothing_else_it_placed(owner, rooms):
     """On a machine whose own git was missing or too old, cheesehost placed one
     under the owner's home (`cli/internal/devenv`): a room's turn needs it. The

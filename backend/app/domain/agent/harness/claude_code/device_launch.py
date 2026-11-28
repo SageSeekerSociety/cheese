@@ -745,7 +745,10 @@ cheese_launch_phase credentials_selected
 # room's HOME it finds no keychain and the session is not logged in. The
 # `security` the session finds runs with the machine's HOME, so the session's
 # own HOME stays the room's. An agent's own `security` reaches the owner's
-# keychain the same way, which its owner's machine already lets it do.
+# keychain the same way, which its owner's machine already lets it do. It is
+# the seat's: it names this seat's login, and the room's sandbox, which shares
+# the room's HOME, can neither see nor replace what is in a seat
+# (`confinement.SEATS`).
 #
 _OWN_LOGIN_CREDENTIALS = f"""\
 unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
@@ -759,13 +762,13 @@ if [ "$(uname -s)" = Darwin ] && _security="$(command -v security)"; then
   if [ -x "$OWN_LOGIN/{CLAUDE_KEYCHAIN_DIR}/security" ]; then
     _security="$OWN_LOGIN/{CLAUDE_KEYCHAIN_DIR}/security"
   fi
-  mkdir -p "$HOME/.cheese/keychain"
-  cat > "$HOME/.cheese/keychain/security" <<KEYCHAIN
+  mkdir -p "$SEAT/keychain"
+  cat > "$SEAT/keychain/security" <<KEYCHAIN
 #!/bin/sh
 HOME='$REAL_HOME' exec '$_security' "\\$@"
 KEYCHAIN
-  chmod +x "$HOME/.cheese/keychain/security"
-  export PATH="$HOME/.cheese/keychain:$PATH"
+  chmod +x "$SEAT/keychain/security"
+  export PATH="$SEAT/keychain:$PATH"
 fi
 if [ -n "${{{OWN_MODEL}:-}}" ]; then export ANTHROPIC_MODEL="${{{OWN_MODEL}}}"; fi
 unset {OWN_MODEL}

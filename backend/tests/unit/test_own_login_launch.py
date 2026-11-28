@@ -68,6 +68,7 @@ def _launch_on_machine(
     profile: str = ".cheese",
     migrated_keychain: bool = False,
     chosen_model: str | None = None,
+    seat: str = "own",
 ) -> dict:
     """Run the launcher the way a machine does, with the platform asking for
     Claude's ``opus`` on the machine's login ``login_id``, and return the
@@ -79,18 +80,21 @@ def _launch_on_machine(
 
     The started process looks its login up with `security`, as Claude Code does
     on macOS. ``mac`` makes the machine one: ``uname`` says Darwin, and its
-    `security` records the HOME it ran with under ``keychain_home``."""
+    `security` records the HOME it ran with under ``keychain_home``.
+
+    ``seat`` is the room's seat it takes; a second launch into the same
+    ``tmp_path`` is another seat's of the same room on the same machine."""
     home = tmp_path / "home"
     first = home / profile / CLAUDE_LOGIN_DIR
     second = home / profile / CLAUDE_LOGINS_DIR / "B7QX"
     for login in (first, second):
-        login.mkdir(parents=True)
+        login.mkdir(parents=True, exist_ok=True)
     used, unused = (second, first) if login_id == "B7QX" else (first, second)
     keychain_home = tmp_path / "keychain-home"
     keychain_used = tmp_path / "migrated-keychain-used"
     if migrated_keychain:
         command = used / "keychain/security"
-        command.parent.mkdir()
+        command.parent.mkdir(exist_ok=True)
         command.write_text(
             f'#!/bin/sh\nprintf %s "$HOME" > "{keychain_home}"\n'
             f'touch "{keychain_used}"\n'
@@ -102,7 +106,7 @@ def _launch_on_machine(
         (unused / "model-service.json").write_text(json.dumps(other_service))
     room = home / "room"
     work = room / "work"
-    work.mkdir(parents=True)
+    work.mkdir(parents=True, exist_ok=True)
     seen = tmp_path / "seen.json"
     agent = tmp_path / "agent.sh"
     agent.write_text(
@@ -115,6 +119,8 @@ def _launch_on_machine(
     launcher = tmp_path / "launch.sh"
     launcher.write_text(
         machine_launcher.launch_script(
+            # The seat the launch's own configure hole names (`device_launch`).
+            configure=f'SEAT="$HOME/.cheese/seats/{seat}"\n',
             credentials=launch_holes(state="$HOME/state", own_login=True).credentials,
             prepare=f'AGENT="{agent}"\n',
             command="$AGENT",
@@ -136,7 +142,7 @@ def _launch_on_machine(
     }
     if mac:
         machine = tmp_path / "machine-bin"
-        machine.mkdir()
+        machine.mkdir(exist_ok=True)
         (machine / "uname").write_text("#!/bin/sh\necho Darwin\n")
         (machine / "security").write_text(
             f'#!/bin/sh\nprintf %s "$HOME" > "{keychain_home}"\n'
@@ -250,6 +256,28 @@ def test_an_own_session_on_a_mac_finds_its_owners_login_keychain(tmp_path):
     seen = _launch_on_machine(tmp_path, mac=True)
     assert seen["_keychain_home"] == seen["_home"]
     assert seen["HOME"] != seen["_home"]
+
+
+def test_a_seats_keychain_stays_its_logins_when_another_seat_of_the_room_starts(
+    tmp_path,
+):
+    """Two seats of one room on one Mac, added with two logins: the first is a
+    moved login whose Keychain items its own `security` maps. The second
+    starting does not change the `security` the first session runs."""
+    first = _launch_on_machine(
+        tmp_path, mac=True, login_id="B7QX", migrated_keychain=True, seat="a"
+    )
+    _launch_on_machine(tmp_path, mac=True, seat="b")
+    (tmp_path / "migrated-keychain-used").unlink(missing_ok=True)
+
+    subprocess.run(
+        ["security", "find-generic-password", "-s", "Claude Code-credentials"],
+        env={"PATH": first["PATH"]},
+        check=True,
+        timeout=10,
+    )
+
+    assert (tmp_path / "migrated-keychain-used").exists()
 
 
 def test_team_selected_model_reaches_the_process_using_a_subscription(tmp_path):
