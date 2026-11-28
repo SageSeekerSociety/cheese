@@ -2262,37 +2262,12 @@ def claiming(binary, root):
             if hooked and all(given is not None for _, given in hooked):
                 break
             time.sleep(0.1)
+        # Sampled before the first message: the claim's own run is there by
+        # then. Every run is checked again once the spare has stopped, so a
+        # run that lands later in its life (one the refused claim started,
+        # say) is counted too.
         hooked = session_starts(ran_here)
         hook_ms = round((time.monotonic() - answered) * 1000)
-        yield (
-            "the SessionStart hook runs after the claim, before any message, "
-            "in the claimed cwd",
-            not hooked_before
-            and bool(hooked)
-            and all(
-                where == str(claimed_cwd.resolve())
-                and given is not None
-                and given.get("hook_event_name") == "SessionStart"
-                and given.get("session_id") == session_id
-                for where, given in hooked
-            ),
-            json.dumps(
-                {
-                    "runs_before_the_claim": len(hooked_before),
-                    "ms_after_claim_answer": hook_ms,
-                    "runs": [
-                        {
-                            "ran_in": where,
-                            **{
-                                key: (given or {}).get(key)
-                                for key in ("hook_event_name", "source", "session_id")
-                            },
-                        }
-                        for where, given in hooked
-                    ],
-                }
-            ),
-        )
         mark = session.user(do("mcp__fixture__echo", message="CLAIMED_MCP_MARKER"))
         _, init = session.wait(is_("system", "init"), 30, mark)
         _, result = session.wait(is_("result"), 60, mark)
@@ -2396,6 +2371,42 @@ def claiming(binary, root):
         )
     finally:
         session.stop()
+    lifetime = session_starts(ran_here)
+
+    def claims(runs):
+        return all(
+            where == str(claimed_cwd.resolve())
+            and given is not None
+            and given.get("hook_event_name") == "SessionStart"
+            and given.get("session_id") == session_id
+            for where, given in runs
+        )
+
+    def described(runs):
+        return [
+            {
+                "ran_in": where,
+                **{
+                    key: (given or {}).get(key)
+                    for key in ("hook_event_name", "source", "session_id")
+                },
+            }
+            for where, given in runs
+        ]
+
+    yield (
+        "the SessionStart hook runs after the claim, before any message, "
+        "in the claimed cwd, and every run in the spare's life is the claim's",
+        not hooked_before and bool(hooked) and claims(hooked) and claims(lifetime),
+        json.dumps(
+            {
+                "runs_before_the_claim": len(hooked_before),
+                "ms_after_claim_answer": hook_ms,
+                "runs_before_the_first_message": described(hooked),
+                "runs_by_the_spare_s_stop": described(lifetime),
+            }
+        ),
+    )
     resumed = Session(
         binary,
         root,
