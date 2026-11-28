@@ -18,6 +18,7 @@ import uuid
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from app.core.sentences import say
 from app.domain.agent import device_link
 from app.domain.agent.device_contract import (
     EXEC_REPLY_SLACK_S,
@@ -68,10 +69,7 @@ async def exec(
     if not await hub._linked(device):
         raise DeviceOffline(device_id)
     if not device.python and _runs_platform_python(argv):
-        raise DeviceNotReady(
-            f"device {device_id} is still updating its connector; "
-            "the platform's programs run there once it reports ready"
-        )
+        raise DeviceNotReady(str(say("connectorStillUpdating")))
     device.exec_seq += 1
     eid = f"e{device.exec_seq}"
     fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()

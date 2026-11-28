@@ -52,5 +52,6 @@
   "deviceTokenNotReplaced": "Only a machine the platform opened can be given a new token. A member enrolled this one",
   "modelPathNotProxied": "The model proxy forwards only model calls ({path} is not one)",
   "taskMachinePreparing": "The task's environment is being prepared. Try again once it is ready",
-  "taskMachinePrepareFailed": "The task's environment could not be prepared. Try again later"
+  "taskMachinePrepareFailed": "The task's environment could not be prepared. Try again later",
+  "connectorStillUpdating": "This computer's connector is still updating, and the platform's programs run there once it has; try again shortly"
 }

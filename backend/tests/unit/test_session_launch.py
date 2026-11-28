@@ -97,7 +97,8 @@ def test_the_launch_writes_the_files_claude_reads_before_it_starts(tmp_path):
         "skills/.cheese-platform-skills",
     }
     assert (_seat(tmp_path) / "remote-session/base-settings.json").is_file()
-    assert (config / "projects").resolve() == (tmp_path / ".claude/projects").resolve()
+    # The seat's transcripts are its own, not the room's.
+    assert (config / "projects").is_dir() and not (config / "projects").is_symlink()
     assert (_seat(tmp_path) / "cheese-system-prompt.md").read_text() == "你是芝士。\n"
     for name, content in native_skill_files().items():
         assert (config / name).read_text() == content, name

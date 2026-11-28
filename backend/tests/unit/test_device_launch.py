@@ -1026,9 +1026,9 @@ def test_new_seat_leaves_busy_older_seats_shared_files_intact(tmp_path):
     assert old_skill.read_text() == "old running skill"
     seat = seat_of(session)
     assert (seat / "remote-execution/client.py").is_file()
-    assert (seat / ".claude/projects").resolve() == (
-        session / ".claude/projects"
-    ).resolve()
+    # Its transcripts are its own, beside nobody else's.
+    assert (seat / ".claude/projects").is_dir()
+    assert not (seat / ".claude/projects").is_symlink()
 
 
 def _served_build(version: str = PIN) -> bytes:

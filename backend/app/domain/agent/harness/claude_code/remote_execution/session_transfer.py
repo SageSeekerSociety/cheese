@@ -32,12 +32,14 @@ def transcript_at(home, relative):
     it is a transcript in one of `transcript_roots`, by its own path."""
     relative = Path(relative)
     if relative.is_absolute() or ".." in relative.parts or relative.suffix != ".jsonl":
+        # i18n-exempt: piped to the machine, stdlib only, no catalog; for the logs
         raise ValueError("Invalid transcript path")
     path = home / relative
     if path.is_symlink() or not any(
         path.resolve().is_relative_to(root.resolve()) and path.is_relative_to(root)
         for root in transcript_roots(home)
     ):
+        # i18n-exempt: piped to the machine, stdlib only, no catalog; for the logs
         raise RuntimeError("Transcript path escapes its recorded home")
     return path
 
@@ -146,14 +148,18 @@ def transfer(payload):
         # takes it from there into its own seat (`runner.adopt_room_transcripts`).
         relative = Path(payload["path"])
         if relative.is_absolute() or ".." in relative.parts:
+            # i18n-exempt: piped to the machine, stdlib only, no catalog; for the logs
             raise ValueError("Invalid transcript path")
         parts = relative.parts
         if "projects" not in parts or parts[-1] == "projects":
+            # i18n-exempt: piped to the machine, stdlib only, no catalog; for the logs
             raise ValueError("Invalid transcript path")
         path = root / Path(*parts[len(parts) - parts[::-1].index("projects") :])
         if path.suffix != ".jsonl":
+            # i18n-exempt: piped to the machine, stdlib only, no catalog; for the logs
             raise ValueError("Invalid transcript path")
         if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):
+            # i18n-exempt: piped to the machine, stdlib only, no catalog; for the logs
             raise RuntimeError("Transcript path escapes its recorded home")
     if action == "read":
         with path.open("rb") as source:
