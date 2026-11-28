@@ -2331,21 +2331,13 @@ def remoteclaiming(binary, root):
         )
         if answer.get("subtype") != "success":
             return
-        mark = session.user(
-            do(
-                "Bash",
-                command="pwd -P > claimed-ran-here; echo CLAIMED_REMOTE",
-                description="where the claimed session runs",
-            )
-        )
-        _, result = session.wait(is_("result"), 60, mark)
-        out = [text_of(block) for block in results_since(session, mark)]
+        claimed = where_bash_runs(session, "claimed")
         system = json.dumps(
             next(
                 (
                     request.get("system")
                     for request in session.requests()
-                    if "CLAIMED_REMOTE" in json.dumps(request.get("messages"))
+                    if "BASH_RAN_claimed" in json.dumps(request.get("messages"))
                 ),
                 None,
             )
@@ -2353,14 +2345,6 @@ def remoteclaiming(binary, root):
         statuses = (
             session.control({"subtype": "mcp_status"}).get("response") or {}
         ).get("mcpServers") or []
-        yield (
-            "its first turn's Bash runs on the executor through the shell prefix",
-            bool(result)
-            and result.get("is_error") is False
-            and any("CLAIMED_REMOTE" in text for text in out)
-            and (session.remote_workspace / "claimed-ran-here").exists(),
-            json.dumps(out)[:200],
-        )
         yield (
             "it is sent the claimed system prompt, and its MCP servers are connected",
             "CLAIM_PROMPT_MARKER" in system
@@ -2375,6 +2359,52 @@ def remoteclaiming(binary, root):
         )
     finally:
         stop_remote(session)
+    # The same launch without `--await-claim`, as a room starts it today: the
+    # spare's first Bash should go where this one goes.
+    cold = remote(
+        binary,
+        root,
+        "remoteclaiming-cold",
+        [
+            *DRIVER,
+            "--append-system-prompt-file",
+            str(prompt),
+            "--session-id",
+            str(uuid.uuid4()),
+        ],
+    )
+    try:
+        unclaimed = where_bash_runs(cold, "cold")
+    finally:
+        stop_remote(cold)
+    yield (
+        "its first turn's Bash runs where an unclaimed session's does: on the "
+        "executor, in its workspace",
+        claimed["on_executor"] and claimed["output"] == unclaimed["output"],
+        json.dumps({"claimed": claimed, "unclaimed": unclaimed})[:900],
+    )
+
+
+def where_bash_runs(session, name):
+    """Run one Bash in the session's next turn, and say where it ran: what it
+    answered, and which directory under the scenario its marker file is in."""
+    marker = f"bash-ran-{name}"
+    mark = session.user(
+        do(
+            "Bash",
+            command=f"pwd -P > {marker}; echo BASH_RAN_{name}",
+            description="where this session runs",
+        )
+    )
+    _, result = session.wait(is_("result"), 60, mark)
+    out = [text_of(block) for block in results_since(session, mark)]
+    landed = [str(path.parent) for path in session.root.parent.rglob(marker)]
+    return {
+        "ended": bool(result) and result.get("is_error") is False,
+        "output": [text.replace(f"BASH_RAN_{name}", "BASH_RAN") for text in out],
+        "on_executor": (session.remote_workspace / marker).exists(),
+        "landed": landed,
+    }
 
 
 SCENARIOS = {
