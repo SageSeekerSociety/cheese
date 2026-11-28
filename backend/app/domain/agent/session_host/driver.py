@@ -59,6 +59,9 @@ class Launched:
     name: str | None = None
     #: The worker epoch it was registered under (`lifecycle`); 0 before it is.
     epoch: int = 0
+    #: Whether the launch that returned this started the process, or found it
+    #: already running; None from a driver that cannot tell.
+    spawned: bool | None = None
 
 
 @dataclass(frozen=True)

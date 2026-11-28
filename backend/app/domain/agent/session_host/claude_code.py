@@ -203,6 +203,8 @@ class ClaudeCodeDriver:
             # an earlier runner answers with that one's, not the name chosen
             # for a runner this start would have started.
             status.get("launch") or name,
+            # Only a runner this call started carries the name it chose.
+            spawned=status.get("launch") in (None, name),
         )
 
     async def _greet(self, wire: Wire, host: str, ref: SessionRef, name: str) -> dict:

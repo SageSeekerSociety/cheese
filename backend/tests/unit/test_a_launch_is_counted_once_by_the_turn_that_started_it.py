@@ -5,9 +5,10 @@ count of turns a spare Claude Code would serve
 Two ways the platform's lines used to miscount one launch, both driven through
 `RoomSessions.send` with the real runner and a stand-in `claude`:
 
-- a backend that adopted a living runner (`SessionHost.attach`) and sent to it
-  again logged that send as starting the process, under the same launch, so the
-  one launch was counted twice;
+- a send to a living runner this backend did not take as answering — adopted
+  by `SessionHost.attach`, after one read of it failed, or after an `attach`
+  whose ping timed out left no record of it — logged that send as starting the
+  process, under the same launch, so the one launch was counted twice;
 - a greeting whose reply was lost on the way and retried logged no greeted
   line, so the launch it started was not counted at all.
 """
@@ -21,13 +22,14 @@ import uuid
 from datetime import UTC, datetime
 from itertools import count
 
+import httpx
 import pytest
 
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
 from app.domain.agent.room.sessions import RoomSessions
 from app.domain.agent.session_host.host import SessionHost
 from tests.unit.test_a_launch_says_whether_it_began_a_conversation import STAND_IN
-from tests.unit.test_claude_channel_startup import AGENT, PROJECT, TOPIC, Host
+from tests.unit.test_claude_channel_startup import AGENT, DEVICE, PROJECT, TOPIC, Host
 from tests.unit.test_counting_the_turns_a_spare_would_serve import counter
 
 pytestmark = pytest.mark.anyio
@@ -53,11 +55,20 @@ class _Journal(logging.Handler):
 
 
 class _Screen(Host):
-    """One screen whose runner keeps running across backends; optionally
-    loses the reply to the greeting that carried the launch's timing."""
+    """One screen whose runner keeps running across backends. Optionally the
+    transport loses, once: the reply to the greeting that carried the launch's
+    timing (``lose_greeting``), the first read after the runner said it was
+    ready (``lose_read``), or the next ping (``lose_ping``)."""
 
     lose_greeting = False
     lost = False
+    lose_read = False
+    lose_ping = False
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.ready_read = asyncio.Event()
+        self.read_lost = asyncio.Event()
 
     async def _ensure_screen(self, **arguments):
         if self.runners:
@@ -66,7 +77,16 @@ class _Screen(Host):
         return await super()._ensure_screen(**arguments)
 
     async def call_executor(self, device_id, state, method, params, **kw):
+        if method == "ping" and self.lose_ping:
+            self.lose_ping = False
+            raise TimeoutError("the ping timed out")
+        if method == "read" and self.lose_read and self.ready_read.is_set():
+            self.lose_read = False
+            self.read_lost.set()
+            raise httpx.ReadError("a read's answer was lost on the way")
         answer = await super().call_executor(device_id, state, method, params, **kw)
+        if method == "read" and answer.get("launch_timing"):
+            self.ready_read.set()
         if (
             self.lose_greeting
             and not self.lost
@@ -200,3 +220,69 @@ async def test_a_launch_whose_greeting_reply_was_lost_is_still_counted(
         1,
     )
     assert len(day["saving_ms"]) == 1
+
+
+def _counted_once(journal: _Journal, screen: _Screen) -> None:
+    """Two sends reached one runner: one cold turn, one timing sample."""
+    assert len(screen.runners) == 1
+    sends = [line for line in journal.lines if " room_send_timing " in line]
+    assert len(sends) == 2 and all(" outcome=ok " in line for line in sends)
+    assert " cold=False " in sends[1] and " launch=" not in sends[1]
+    [day] = counter.count(journal.lines).values()
+    assert (day["cold"], day["fresh"], day["spare_helps"]) == (1, 1, 1)
+    assert len(day["saving_ms"]) == 1
+
+
+async def _ping(screen: _Screen) -> tuple[int, str]:
+    answer = await screen.call_executor(DEVICE, screen.placed, "ping", {})
+    return answer["pid"], answer["launch"]
+
+
+async def test_a_runner_whose_read_failed_once_is_not_counted_again(tmp_path, journal):
+    screen = _screen(tmp_path)
+    screen.lose_read = True
+    host, room = _backend(screen, tmp_path)
+    try:
+        await _send(room)
+        async with asyncio.timeout(10):
+            await screen.read_lost.wait()
+        running = host._running[room.live[room._seat_of(SEAT)].ref]
+        async with asyncio.timeout(5):
+            while running.answering:
+                await asyncio.sleep(0)
+        before = await _ping(screen)
+        # Sent before a read of it succeeds again.
+        await _send(room)
+        assert await _ping(screen) == before
+    finally:
+        screen.stop()
+        await room.stop_listening()
+
+    _counted_once(journal, screen)
+
+
+async def test_a_runner_another_backend_failed_to_adopt_is_not_counted_again(
+    tmp_path, journal
+):
+    screen = _screen(tmp_path)
+    host, room = _backend(screen, tmp_path)
+    try:
+        await _send(room)
+        await _until_ready(journal)
+        live = room.live[room._seat_of(SEAT)]
+        access = host._running[live.ref].access
+        assert access is not None
+        before = await _ping(screen)
+        await room.stop_listening()
+        # Another backend's adopting ping times out: it keeps no record of
+        # the runner, which is still running.
+        host, room = _backend(screen, tmp_path)
+        screen.lose_ping = True
+        assert await host.attach(live.ref, access) is None
+        await _send(room)
+        assert await _ping(screen) == before
+    finally:
+        screen.stop()
+        await room.stop_listening()
+
+    _counted_once(journal, screen)

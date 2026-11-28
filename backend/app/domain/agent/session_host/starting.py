@@ -93,15 +93,12 @@ async def start(
             replacing.relaunching = True
         try:
             launched = await driver.launch(svc._wire(), host, ref, spec, access, known)
-            # Started by this call only when the runner answering is not the
-            # one already known. A runner adopted by ``attach`` has no screen
-            # on record, so the driver greets it again and hands back a new
-            # ``Launched`` for the same process; its name says it is the same.
-            started_now = launched is not known and not (
-                known is not None
-                and launched.name is not None
-                and launched.name == known.name
-            )
+            # Started by this call only when the driver started the process. A
+            # runner already running is greeted again and handed back as a new
+            # ``Launched`` whenever this host does not take it as answering:
+            # adopted by ``attach`` with no screen on record, or after a read
+            # of it failed. A driver that cannot tell is taken at its word.
+            started_now = launched is not known and launched.spawned is not False
             if started_now:
                 logger.info(
                     "session started on the host harness=%s home=%s in %.2fs",
