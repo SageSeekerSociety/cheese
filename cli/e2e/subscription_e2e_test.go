@@ -242,12 +242,14 @@ func loginOnHost(t *testing.T, binary, cheesehost, owner string, stub anthropicS
 	}
 }
 
-func runSubscription(t *testing.T, python, caseName, binary, home, action, prompt string, proxySettings ...string) (string, error) {
+func runSubscription(t *testing.T, python, caseName, binary, home string, relay *os.File, action, prompt string, proxySettings ...string) (string, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 	args := append([]string{"subscription_sandbox.py", "run", home, caseName, binary, action}, proxySettings...)
 	cmd := exec.CommandContext(ctx, python, args...)
+	// The executor route's listening socket, as descriptor 3 (`RELAY_FD`).
+	cmd.ExtraFiles = []*os.File{relay}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	if prompt != "" {
@@ -262,6 +264,27 @@ func runSubscription(t *testing.T, python, caseName, binary, home, action, promp
 	out, err := cmd.CombinedOutput()
 	t.Logf("%s\n%s", action, out)
 	return string(out), err
+}
+
+// executorRouteListener is the listening socket of the platform's executor
+// route that the staged target names, held from staging through the last turn
+// so no other listener can take its port in between; each turn serves the
+// route on it.
+func executorRouteListener(t *testing.T) (*os.File, string) {
+	t.Helper()
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := listener.(*net.TCPListener).File()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = file.Close()
+		_ = listener.Close()
+	})
+	return file, fmt.Sprint(listener.Addr().(*net.TCPAddr).Port)
 }
 
 func sessionMountNamespace(t *testing.T, output string) string {
@@ -436,7 +459,8 @@ printf 'owner parent visible exit %%s\n' "$?" >> tool-login.txt
 				meter = stageProduction(t, python, "meter", caseName, tableProject, tableTopic)
 			}
 			stub := startAnthropicStub(t, meter, python, tool)
-			stageProduction(t, python, "stage", home, caseName, stub.ca, tableProject, tableTopic, owner)
+			relay, relayPort := executorRouteListener(t)
+			stageProduction(t, python, "stage", home, caseName, stub.ca, tableProject, tableTopic, owner, relayPort)
 			// The stub stands in for the metering proxy's tunnel on a metered
 			// session, and for Anthropic itself on an owned one.
 			proxySettings := []string{stub.address}
@@ -451,7 +475,7 @@ printf 'owner parent visible exit %%s\n' "$?" >> tool-login.txt
 				if _, err := os.Stat(credentials); err != nil {
 					t.Fatalf("expected the login on the host: %v", err)
 				}
-				status, err := runSubscription(t, python, caseName, binary, home, "status", "", proxySettings...)
+				status, err := runSubscription(t, python, caseName, binary, home, relay, "status", "", proxySettings...)
 				var account struct {
 					LoggedIn         bool   `json:"loggedIn"`
 					AuthMethod       string `json:"authMethod"`
@@ -462,7 +486,7 @@ printf 'owner parent visible exit %%s\n' "$?" >> tool-login.txt
 					t.Fatalf("owned session did not pick up the host's subscription: %v\n%s", err, status)
 				}
 			}
-			out, err := runSubscription(t, python, caseName, binary, home, "turn", "Write the marker", proxySettings...)
+			out, err := runSubscription(t, python, caseName, binary, home, relay, "turn", "Write the marker", proxySettings...)
 			modelMount := sessionMountNamespace(t, out)
 			if (modelMount == hostMount) != owned {
 				t.Fatalf("Claude mount namespace %s has the wrong relationship to host %s for %s", modelMount, hostMount, caseName)
@@ -502,7 +526,7 @@ printf 'owner parent visible exit %%s\n' "$?" >> tool-login.txt
 				}
 				t.Logf("Bash login visibility probe (login %s):\n%s", credentials, storage)
 				expireCredential(t, credentials)
-				out, _ := runSubscription(t, python, caseName, binary, home, "turn", "say hi", proxySettings...)
+				out, _ := runSubscription(t, python, caseName, binary, home, relay, "turn", "say hi", proxySettings...)
 				if !strings.Contains(out, "You've hit your 5-hour limit") {
 					t.Fatalf("expected subscription limit after refresh\n%s", out)
 				}

@@ -13,16 +13,18 @@ import threading
 import time
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
-from urllib.parse import urlsplit
 
 HERE = Path(__file__).resolve()
 BACKEND = HERE.parents[2] / "backend"
 REMOTE = BACKEND / "app/domain/agent/harness/claude_code/remote_execution"
 METER = HERE.parents[2] / "deploy/metering-proxy/cheese_billing_core.py"
 DEVICE = "subscription-e2e"
+# The listening socket of the executor route, held by the test across turns
+# and handed to each turn as this descriptor.
+RELAY_FD = 3
 
 
-def stage_launch(home, case, ca, project, topic, owner):
+def stage_launch(home, case, ca, project, topic, owner, port):
     sys.path.insert(0, str(BACKEND))
     os.environ["WORKSPACE_ROOT"] = str(home / "platform-data")
     os.environ["SUBSCRIPTION_CA_BACKEND_PATH"] = ca
@@ -60,11 +62,9 @@ def stage_launch(home, case, ca, project, topic, owner):
     channel = OwnerChannel if owned else CentralChannel
     # The target a session holds once its lease names the room's machine
     # (`client._take_leased_machine`), as the channel places it. The executor
-    # route it names listens on a port taken now, so the launch is assembled
-    # with the target its session is handed.
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", 0))
-        port = probe.getsockname()[1]
+    # route it names is on `port`, which the test holds listening from now
+    # until its last turn (`RELAY_FD`), so the launch is assembled with the
+    # target its session is handed.
     target = {
         "kind": "device", "device_id": DEVICE,
         "url": f"http://127.0.0.1:{port}/executor", "mcp_servers": [],
@@ -150,8 +150,7 @@ def run_session(runtime, home, case, binary, action, proxy, ca=None):
         ).returncode
 
     state = home / "state"
-    with executor(runtime, home, state, binary, launched, staged["target"]["url"],
-                  network=not owned):
+    with executor(runtime, home, state, binary, launched, network=not owned):
         os.environ.update(launched)
         client = runpy.run_path(str(REMOTE / "client.py"))
         directory = Path((home / "session-dir").read_text().strip())
@@ -165,20 +164,22 @@ def run_session(runtime, home, case, binary, action, proxy, ca=None):
             config_override=launched["CLAUDE_CONFIG_DIR"],
             workspace_override=launched["CHEESE_WORK"],
         )
-        production, _ = client["start_gateway"](
-            Path(launch["execution"]), {**launched, **launch["env"]}
-        )
-        fixture = stand_ins(production, owned, proxy, ca)
-        env = {**production, **fixture}
-        # `namespace.enter` is this Python, which hands the build what it set
-        # in its own environment as it started (PEP 538's locale coercion), and
-        # starts the session where it sees its project, saying so in PWD.
-        entered = (
-            {**interpreter_additions(env), "PWD": launch["workspace"]}
-            if launch["command"][2:3] == ["enter"]
-            else {}
-        )
+        # From here the launch may hold the project's forwarded view
+        # (`client.take_view`), which goes with this run however it ends.
         try:
+            production, _ = client["start_gateway"](
+                Path(launch["execution"]), {**launched, **launch["env"]}
+            )
+            fixture = stand_ins(production, owned, proxy, ca)
+            env = {**production, **fixture}
+            # `namespace.enter` is this Python, which hands the build what it set
+            # in its own environment as it started (PEP 538's locale coercion), and
+            # starts the session where it sees its project, saying so in PWD.
+            entered = (
+                {**interpreter_additions(env), "PWD": launch["workspace"]}
+                if launch["command"][2:3] == ["enter"]
+                else {}
+            )
             with subprocess.Popen(launch["command"], env=env, cwd=launch["cwd"]) as process:
                 proc = Path(f"/proc/{process.pid}")
                 interpreter = os.path.realpath(sys.executable)
@@ -222,9 +223,10 @@ def interpreter_additions(env):
 
 
 @contextmanager
-def executor(runtime, home, state, binary, env, url, *, network):
+def executor(runtime, home, state, binary, env, *, network):
     """The room's executor in its sandbox, and the platform's executor route
-    to it at ``url``, the one the session's target names."""
+    to it, served on the socket the test holds at the URL the session's
+    target names (`RELAY_FD`)."""
     platform = Path(runtime["platform_socket_directory"](state))
     public = Path(runtime["socket_path"](state))
     ready = Path(runtime["socket_directory"](state)) / "executor.sock"
@@ -251,7 +253,7 @@ def executor(runtime, home, state, binary, env, url, *, network):
                 if service.poll() is not None or time.monotonic() >= until:
                     raise RuntimeError("Executor did not answer") from None
                 time.sleep(0.01)
-        relay = executor_route(runtime, state, urlsplit(url).port)
+        relay = executor_route(runtime, state, socket.socket(fileno=RELAY_FD))
         yield
     finally:
         if relay is not None:
@@ -263,7 +265,7 @@ def executor(runtime, home, state, binary, env, url, *, network):
         public.unlink(missing_ok=True)
 
 
-def executor_route(runtime, state, port):
+def executor_route(runtime, state, listener):
     """The platform's route to a device's executor, standing in for the
     platform and the connector: each call goes to the executor at `state`."""
 
@@ -284,7 +286,11 @@ def executor_route(runtime, state, port):
             self.end_headers()
             self.wfile.write(body)
 
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Route)
+    server = http.server.ThreadingHTTPServer(
+        listener.getsockname(), Route, bind_and_activate=False
+    )
+    server.socket.close()
+    server.socket = listener
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
