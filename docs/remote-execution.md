@@ -38,7 +38,7 @@ When a room launches Claude Code, the launcher offers the previous conversation 
 2. Otherwise the conversation this runner last recorded in its own journal on that host, if a nonempty transcript for it is there. This can be a different conversation from the one offered.
 3. Otherwise a new conversation.
 
-A conversation the platform marked retired, or one whose last resume failed, is never picked. A room placed on a different session host resumes the offered conversation only if its transcript is already there.
+The runner skips the conversation the platform marked retired for this launch and the one whose resume last failed, as recorded in its journal; a conversation that failed to resume earlier can be picked again once another one has failed after it. A room placed on a different session host resumes the offered conversation only if its transcript is already there.
 
 Before deployment, connect the configured session host and install the private executor image described in `where-a-turn-runs.md`. Ordinary executors obtain the pinned binary from the backend's Claude Code download endpoint. Pool scheduling remains a design plan in RFC #927.
 
