@@ -112,6 +112,30 @@ jobs:
         with:
           node-version: 22
 
+      - name: Prepare the Linux sandbox
+        working-directory: .
+        run: |
+          openssl version
+          bash .github/scripts/allow-user-namespaces.sh
+          bash .github/scripts/sandbox-disk.sh --bwrap-only
+          # A metered session sees its project through the forwarded view,
+          # which fusepy mounts through `fusermount`; Ubuntu 24.04 ships only
+          # `fusermount3`, which takes the same arguments.
+          bash .github/scripts/ensure-apt.sh fuse3 libfuse2t64
+          command -v fusermount || sudo ln -s "$(command -v fusermount3)" /usr/local/bin/fusermount
+
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: '0.12.1'
+          python-version: '3.13'
+          enable-cache: true
+          cache-python: true
+          cache-dependency-glob: backend/uv.lock
+          prune-cache: false
+          save-cache: false
+      - run: uv sync --project backend --locked --no-dev
+        working-directory: .
+
       # MUST match device_launch.CLAUDE_PINNED_VERSION: the boot this checks is
       # the one production launches. Raising either one means raising both, in
       # the same PR.

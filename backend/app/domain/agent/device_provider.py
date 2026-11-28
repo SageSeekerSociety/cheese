@@ -45,7 +45,12 @@ from app.domain.agent.harness.claude_code import (
     DEVICE_TUNNEL_PROBE,
     resident_release,
 )
-from app.domain.agent.launch import ExecutorPlan, MachinePlace, MachinePlan
+from app.domain.agent.launch import (
+    ExecutorPlan,
+    MachineLaunch,
+    MachinePlace,
+    MachinePlan,
+)
 from app.domain.agent.machine_address import device_api_base
 from app.domain.agent.place import (
     CHECKOUT_DIR,
@@ -222,6 +227,47 @@ def _another_session(running: dict | None, wanted: dict | None) -> bool:
 def _launcher_command(topic_id: uuid.UUID, seat: str = "") -> list[str]:
     """What a screen runs: the launcher file `_ship_launcher` wrote for this seat."""
     return ["bash", "-lc", f'exec bash "{launcher_path(topic_id, seat)}"']
+
+
+def screen_launch_env(
+    place: MachinePlace,
+    holes: MachineLaunch,
+    model_env: dict[str, str],
+    *,
+    token: str,
+    agent_configuration: str,
+) -> tuple[list[str], dict[str, str]]:
+    """The command and environment a screen is opened with, from where it runs
+    (``place``), what the harness launches there (``holes``) and the model's
+    environment (``screen_model_env``). ``CHEESE_AGENT_CONFIG`` in it is what
+    the running process is compared against (``screen_identity``).
+
+    Apart from ``_ensure_screen`` so that a test launching a real session takes
+    this environment as a device gets it, rather than merging the parts itself.
+    """
+    command, env = machine_launcher.screen_launch(place, holes, token=token)
+    env.update(model_env)
+    if place.execution_target is not None:
+        # The assigned executor already owns the checkout and its environment.
+        for name in (
+            "CHEESE_GIT_BRANCH",
+            "CHEESE_BRANCH_URL",
+            "CHEESE_ENVIRONMENT",
+            "CHEESE_PREVIEW_URL",
+            "CHEESE_PREVIEW_UP",
+        ):
+            env.pop(name, None)
+    # The machine reports its environment back, so this is the one value
+    # both sides of the seam can be asked for. Exported for every harness,
+    # not only the ones with an executor: a screen adopted after a backend
+    # restart is re-read from here, and one that came back without it read
+    # as a configuration change on its next turn, every turn.
+    env["CHEESE_AGENT_CONFIG"] = screen_identity.launch_identity(
+        agent_configuration=agent_configuration,
+        harness_contract=holes.contract,
+        execution_target=place.execution_target,
+    )
+    return command, env
 
 
 class DeviceChannel(Channel):
@@ -980,30 +1026,14 @@ class DeviceChannel(Channel):
         ):
             mark("screen_settled")
             return existing
-        holes = launch.on(place)
-        command, screen_env = machine_launcher.screen_launch(place, holes, token=token)
-        screen_env.update(model_env)
-        if execution_target is not None:
-            # The assigned executor already owns the checkout and its environment.
-            for name in (
-                "CHEESE_GIT_BRANCH",
-                "CHEESE_BRANCH_URL",
-                "CHEESE_ENVIRONMENT",
-                "CHEESE_PREVIEW_URL",
-                "CHEESE_PREVIEW_UP",
-            ):
-                screen_env.pop(name, None)
-        configuration = screen_identity.launch_identity(
+        command, screen_env = screen_launch_env(
+            place,
+            launch.on(place),
+            model_env,
+            token=token,
             agent_configuration=agent_configuration,
-            harness_contract=holes.contract,
-            execution_target=execution_target,
         )
-        # The machine reports its environment back, so this is the one value
-        # both sides of the seam can be asked for. Exported for every harness,
-        # not only the ones with an executor: a screen adopted after a backend
-        # restart is re-read from here, and one that came back without it read
-        # as a configuration change on its next turn, every turn.
-        screen_env["CHEESE_AGENT_CONFIG"] = configuration
+        configuration = screen_env["CHEESE_AGENT_CONFIG"]
         # Whether this turn leaves the screen running what it would be started
         # with today, so the next send to it may skip all of this
         # (``screen_ledger``). A relaunch or a release put off for running work
