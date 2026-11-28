@@ -1852,6 +1852,9 @@ def remote(
         json.loads((home / "session" / "execution.json").read_text())["workspace"]
     )
     session.execution = home / "session" / "execution.json"
+    # Where the session stands once `enter` has put it in its namespace: the
+    # project at the executor's path. `workspace` is where this host holds it.
+    session.start = launch["workspace"]
     return session
 
 
@@ -2298,9 +2301,10 @@ def claiming(binary, root):
 def remoteclaiming(binary, root):
     """The same spare under a room's whole launch (`client.prepare`):
     `--setting-sources user`, the plugin and settings it writes, and the MCP
-    config with the session's gateway, started at the launch's cwd and claimed
-    there with the turn's system prompt. Its first turn's Bash goes through the
-    shell prefix to the executor, as an unclaimed session's does."""
+    config with the session's gateway, started through `enter` and claimed
+    with the turn's system prompt at the directory it stands in there. Its
+    first turn's Bash goes through the shell prefix to the executor, as an
+    unclaimed session's does."""
     session_id = str(uuid.uuid4())
     prompt = root / "remoteclaiming-spawn-prompt.md"
     prompt.write_text("SPAWN_PROMPT_MARKER")
@@ -2309,10 +2313,13 @@ def remoteclaiming(binary, root):
         time.sleep(PARKED_S)
         parked = session.process.poll() is None and not session.requests()
         began = time.monotonic()
+        # Claimed where it was spawned to stand, inside its namespace: a claim
+        # moves the process to `cwd`, and this host's view of the project is
+        # not where the session sees it.
         answer = session.control(
             {
                 "subtype": "claim_session",
-                "cwd": str(session.workspace),
+                "cwd": session.start,
                 "append_system_prompt": "CLAIM_PROMPT_MARKER",
             },
             timeout=60,
