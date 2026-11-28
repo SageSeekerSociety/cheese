@@ -873,13 +873,27 @@ def test_the_launch_starts_the_runner_and_the_runner_starts_claude(tmp_path):
 
 
 def test_a_launch_runs_nothing_the_room_put_in_its_home(tmp_path):
-    """The session's PATH starts with the room's `$HOME/.cheese`, which the
-    room's sandbox can write, and the launch runs as the machine's owner. So
-    nothing it runs is looked up there: not what brings the tunnel and the
-    preview up or asks tmux for its session, not the `claude` it checks, and
-    not the Python it starts the runner and the executor's client on, which it
-    finds on the machine's own path when the connector names none."""
-    owner, session, _work, claude, env = _machine(tmp_path)
+    """The room's sandbox can write the room's `$HOME/.cheese`, and everything
+    outside that sandbox runs as the machine's owner. So nothing there is
+    looked up in it: not what the launch runs to bring the tunnel and the
+    preview up or to ask tmux for its session, not the `claude` it checks, not
+    the Python it starts the environment runner, the runner and the executor's
+    client on (found on the machine's own path when the connector names none),
+    and not what Claude Code itself runs by name on the host, such as `git` or
+    the platform's `cheese`."""
+    from app.domain.project.environment import EnvironmentConfig
+
+    owner, session, work, claude, env = _machine(tmp_path)
+    # Claude Code runs programs of its own by name on the host, outside the
+    # sandbox: git for the checkout's state, and whatever it is told to.
+    script = claude.read_text().replace(
+        "#!/bin/sh\n",
+        "#!/bin/sh\ngit --version >/dev/null 2>&1\n"
+        'command -v cheese > "$(dirname "$0")/ran.cheese" || :\n'
+        "cheese --help >/dev/null 2>&1\n",
+        1,
+    )
+    claude.write_text(script)
     platform = Path(env.pop("CHEESE_PYTHON"))
     tmux = tmp_path / "bin/tmux"
     tmux.write_text("#!/bin/sh\necho room-session\n")
@@ -891,6 +905,9 @@ def test_a_launch_runs_nothing_the_room_put_in_its_home(tmp_path):
         CHEESE_PREVIEW_URL="ws://127.0.0.1:9/preview",
         TMUX=f"{tmp_path}/tmux.sock,1,0",
         TMUX_PANE="%1",
+        CHEESE_ENVIRONMENT=json.dumps(
+            EnvironmentConfig(setup_script="echo set up > setup").snapshot()
+        ),
     )
     room = session / ".cheese"
     room.mkdir(parents=True)
@@ -900,7 +917,7 @@ def test_a_launch_runs_nothing_the_room_put_in_its_home(tmp_path):
     names = (
         "python3", "claude", "sh", "tmux", "cat", "chmod", "mv", "cp", "rm",
         "mkdir", "cksum", "cut", "nohup", "tail", "head", "awk", "sort", "sed",
-        "grep", "id", "uname", "git", "ps",
+        "grep", "id", "uname", "git", "ps", "cheese", "bash", "env",
     )  # fmt: skip
     for name in names:
         (room / name).write_text(
@@ -918,6 +935,11 @@ def test_a_launch_runs_nothing_the_room_put_in_its_home(tmp_path):
 
     assert result.returncode == 0, result.stderr
     assert (claude.parent / "ran.args").exists()
+    assert (work / "setup").read_text() == "set up\n"
+    # The launch writes the platform's CLI into the room's directory, where the
+    # room can replace it once the launch is done: the session finds none there.
+    found = (claude.parent / "ran.cheese").read_text().strip()
+    assert not found.startswith(str(room)), found
     assert (room / "environment-session.json").exists()
     assert pid.exists()
     ran = (platform.parent.parent / "ran").read_text().splitlines()

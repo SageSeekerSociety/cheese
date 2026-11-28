@@ -2,7 +2,7 @@
 
 A device launcher is one shell script, and two different things are written in
 it. One is this platform on somebody else's machine — where the session's home
-and workdir are, the ``cheese`` CLI on PATH, the tunnel and the preview helper,
+and workdir are, the ``cheese`` CLI in it, the tunnel and the preview helper,
 and the supervisor that owns them and the agent process. The other is one harness: which
 binary, which version, which config files, how a conversation resumes.
 
@@ -17,8 +17,8 @@ WHEN they run, because that is the only thing this side knows about them:
 ``configure``   after ``cheese-environment.py`` is on disk: the harness's own
                 config files, written before anything can read them.
 ``credentials`` after the platform CLI is on disk. Like everything else the
-                launch runs, it runs on the machine's own search path, never
-                the room's (``SESSION_PATH``).
+                launch runs, and the session it starts, it runs on the
+                machine's own search path, never on the room's ``.cheese``.
 ``prepare``     after ``cd`` into the workdir: find the binary, check its
                 version, decide what resuming means, and leave the command in a
                 shell variable.
@@ -578,17 +578,12 @@ REAL_HOME="$HOME"
 # the tmux it found): this script runs in a login shell, and macOS's login
 # profile (path_helper) puts /usr/bin back in front, where python3 is 3.9.
 [ -z "${{CHEESE_RUNTIME_PATH:-}}" ] || export PATH="$CHEESE_RUNTIME_PATH:$PATH"
-# The machine's own search path. The process the launch starts gets the room's
-# `$HOME/.cheese` in front of it (`SESSION_PATH`), which a sandboxed room can
-# write, so a program that process runs outside the sandbox on the owner's
-# behalf, such as the Keychain lookup (`device_launch._OWN_LOGIN_CREDENTIALS`),
-# is looked up here instead.
+# The machine's own search path, before anything is put in front of it: the
+# Keychain lookup (`device_launch._OWN_LOGIN_CREDENTIALS`) runs on it alone.
 REAL_PATH="$PATH"
 # The Python the launch starts the session's own programs on (its runner, the
-# executor's client, the environment runner), named by path: the process the
-# launch starts has the room's `$HOME/.cheese` first on its PATH, so a bare
-# `python3` there would be one the room put in. The connector's own, when it
-# names one, or else the one on the machine's own search path.
+# executor's client, the environment runner), named by path: the connector's
+# own, when it names one, or else the one on the machine's own search path.
 if [ -z "${{CHEESE_PYTHON:-}}" ]; then
   CHEESE_PYTHON="$(command -v python3)" || {{
     echo "cheese-launch: no python3 on this machine's PATH" >&2
@@ -772,14 +767,15 @@ cp "$HOME/.cheese/gh" "$HOME/.cheese/fj"
 chmod +x "$HOME/.cheese/gh" "$HOME/.cheese/fj"
 cat > "$HOME/.cheese/cheese-tunnel.py" <<'TUNNELPY'
 {tunnel_helper}TUNNELPY
-# The session's search path starts with the room's `$HOME/.cheese`, where its
-# `cheese`, `gh` and `fj` are. The room's sandbox can write that directory, so
-# this script, which runs as the machine's owner, never looks a program up in
-# it: a `cat`, `sh` or `tmux` put there would run as the owner on the next
-# launch. It goes in front of PATH only for the process the launch starts
-# (below); a hole that adds a directory for that process alone puts it in
-# front of `SESSION_PATH`.
-SESSION_PATH="$HOME/.cheese"
+# Nothing that runs outside the room's sandbox — this script, which runs as the
+# machine's owner, and the session it starts, Claude Code and whatever it runs
+# on the host — looks a program up in the room's `$HOME/.cheese`: the sandbox
+# can write it, and a `cat`, `git` or `python3` put there would run as the
+# owner. The room's commands find the platform's CLIs in the executor's release
+# (`bootstrap.prepared`), inside the sandbox. A hole that puts a directory in
+# front of the session's PATH alone, one no room can write, adds it to
+# `SESSION_PATH`.
+SESSION_PATH=""
 {toolchain}cheese_launch_phase files_written
 {credentials}\
 # The tunnel helper, the one way a launch that rides the meter reaches it.
@@ -863,7 +859,7 @@ fi
 # Preserve input before POSIX sh redirects an asynchronous command's fd 0.
 exec 3<&0
 # What remains here runs only built-ins, so from now on PATH is the session's.
-export PATH="$SESSION_PATH:$PATH"
+export PATH="${{SESSION_PATH:+$SESSION_PATH:}}$PATH"
 eval "exec $ENVIRONMENT_CMD{command}" <&3 3<&- &
 AGENT_PID=$!
 RESULT=0

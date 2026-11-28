@@ -106,7 +106,11 @@ def test_a_harness_that_is_only_a_command_still_gets_the_whole_platform(tmp_path
         assert (home / ".cheese" / name).is_file(), name
 
 
-def test_the_platform_cli_is_on_path_for_whatever_runs(tmp_path):
+def test_the_session_looks_nothing_up_in_the_rooms_home(tmp_path):
+    """The platform's CLIs are written into the room's `$HOME/.cheese`, which
+    the room's sandbox can write, and the session runs outside that sandbox as
+    the machine's owner: that directory is on no PATH it has. The room's
+    commands find the CLIs in the executor's release, inside the sandbox."""
     home, _work, env = _machine(tmp_path)
     seen = tmp_path / "which.out"
     result = _run(
@@ -114,16 +118,18 @@ def test_the_platform_cli_is_on_path_for_whatever_runs(tmp_path):
         env,
         prepare=_harness(
             tmp_path,
-            f'command -v cheese > "{seen}"\ncommand -v gh >> "{seen}"\n',
+            f'printf "%s\\n" "$PATH" > "{seen}"\n'
+            f'command -v cheese >> "{seen}" || echo none >> "{seen}"\n',
         ),
         command="$AGENT",
     )
 
     assert result.returncode == 0, result.stderr
-    assert seen.read_text().split() == [
-        str(home / ".cheese/cheese"),
-        str(home / ".cheese/gh"),
-    ]
+    path, found = seen.read_text().splitlines()
+    room = os.path.realpath(home / ".cheese")
+    assert room not in [os.path.realpath(entry) for entry in path.split(":") if entry]
+    assert os.path.realpath(found) != os.path.join(room, "cheese")
+    assert (home / ".cheese/cheese").is_file()
 
 
 def test_the_agents_exit_status_is_the_launchers(tmp_path):
@@ -202,8 +208,8 @@ def test_each_hole_runs_where_the_platform_says_it_does(tmp_path):
         # under it without knowing where the machine put it.
         configure=f'printf "configure:$HOME " >> "{order}"\n',
         # The platform CLI is on disk by now, but the room's directory it is in
-        # is on the session's PATH only, never on the launch's own: a `cheese`
-        # this hole finds is the machine's own, if it has one.
+        # is on no PATH outside the sandbox: a `cheese` this hole finds is the
+        # machine's own, if it has one.
         credentials=f'printf "credentials:$(command -v cheese || echo none) "'
         f' >> "{order}"\n',
         # And by `prepare` the cwd is the workdir the agent will run in.
