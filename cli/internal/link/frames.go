@@ -53,6 +53,13 @@ func Heartbeat() Msg {
 	return Msg{T: "heartbeat"}
 }
 
+// Hello is the first frame on a link: which build is speaking and what it can
+// do, which the server reads before it sends anything that needs one
+// (backend `device_hub.inbound`).
+func Hello(build, target string) Msg {
+	return Msg{T: "hello", V: Version, Build: build, Target: target, Executor: true, Profiles: true, Machine: true, Streams: true, Python: true}
+}
+
 // MachineOpen starts one stream a session's sandbox opened on its platform
 // socket. Path is the state directory as the backend named it in the
 // execution.call that made the connector listen there: which socket a stream

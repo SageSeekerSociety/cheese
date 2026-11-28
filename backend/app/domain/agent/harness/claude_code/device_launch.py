@@ -37,6 +37,7 @@ from app.domain.agent.place import (
     CLAUDE_KEYCHAIN_DIR,
     CLAUDE_LOGIN_DIR,
     CLAUDE_LOGINS_DIR,
+    LOGINS_DIR,
     OWN_LOGIN_ID,
     OWN_MODEL,
     OWN_MODEL_AUTH,
@@ -44,6 +45,7 @@ from app.domain.agent.place import (
     OWN_MODEL_KEY,
     ROOT_PLACEHOLDER,
     SEATS_DIR,
+    WORK_DIR,
     seat_name,
 )
 from app.domain.device.login_kind import FIRST_LOGIN
@@ -311,16 +313,16 @@ export BUN_OPTIONS="\\"--preload=$WEBFETCH_PRELOAD\\"${{BUN_OPTIONS:+ $BUN_OPTIO
     # the platform skills are the same for every project and room on the
     # machine, so a per-session cache would only refetch them per new room.
     #
-    # Fetched with python3 (already required below) rather than curl, which
-    # not every machine has. A fetch that still fails starts the session
-    # without the skills and says so loudly in the launch log — the same
+    # Fetched with the platform's Python (already required below) rather than
+    # curl, which not every machine has. A fetch that still fails starts the
+    # session without the skills and says so loudly in the launch log — the same
     # policy as the pinned claude download above: a machine that cannot reach
     # the platform for a moment must not become one where nothing starts.
     # A screen with no CHEESE_API (a probe, a fixture) has no platform to ask.
     skill_digest = publish_session_skill_bundle(project_id)
     skill_setup = f"""{prune}
 _cache="$REAL_HOME/.cheese/skill-bundles"
-python3 - "$CLAUDE_CONFIG_DIR" "$_cache" "{skill_digest}" <<'CHEESE_SKILLS'
+"$CHEESE_PYTHON" - "$CLAUDE_CONFIG_DIR" "$_cache" "{skill_digest}" <<'CHEESE_SKILLS'
 import gzip, hashlib, json, os, sys, time, urllib.request
 config, cache, want = sys.argv[1], sys.argv[2], sys.argv[3]
 bundle = os.path.join(cache, want + ".json.gz")
@@ -453,25 +455,31 @@ export CLAUDE_CONFIG_DIR="$SEAT/.claude"
 # machine, the platform half of the launch says (`CHEESE_HOMES_ROOT`).
 export CHEESE_SEATS_ROOT="$(dirname "$SEAT")"
 mkdir -p "$ROOM_CONFIG_DIR/projects" "$CLAUDE_CONFIG_DIR"
-# Conversation transcripts belong to the room for resume and transfer, while
-# settings, skills and generated instructions belong to this seat.
-if [ ! -e "$CLAUDE_CONFIG_DIR/projects" ]; then
+# Each seat keeps its own conversation transcripts, in its own config
+# directory, where its namespace keeps it (`client._seat_only`): a raw
+# transcript holds what the session was given as it was sent, a person's
+# private input among it, and the seats of a room work for different people.
+# The room's directory holds what was written before seats kept their own,
+# and what a handover brings (`session_transfer`); the runner moves a
+# conversation it takes up again from there into the seat's
+# (`runner.adopt_room_transcripts`). A seat set up when the room's directory
+# was shared has a link to it in place of its own, which goes.
+export CHEESE_ROOM_TRANSCRIPTS="$ROOM_CONFIG_DIR/projects"
+if [ -L "$CLAUDE_CONFIG_DIR/projects" ]; then
   case "$(uname -s)" in
-    # Git Bash's `ln -s` copies where Windows withholds symlinks, and a copy
-    # would keep this seat's transcripts from the room: a junction is the link
-    # every account may make.
-    MINGW*|MSYS*|CYGWIN*) cmd //c mklink /J \\
-      "$(cygpath -w "$CLAUDE_CONFIG_DIR/projects")" \\
-      "$(cygpath -w "$ROOM_CONFIG_DIR/projects")" >/dev/null ;;
-    *) ln -s "$ROOM_CONFIG_DIR/projects" "$CLAUDE_CONFIG_DIR/projects" ;;
+    # A junction: `rmdir` removes the link and leaves what it names.
+    MINGW*|MSYS*|CYGWIN*) cmd //c rmdir \\
+      "$(cygpath -w "$CLAUDE_CONFIG_DIR/projects")" >/dev/null ;;
+    *) rm -f "$CLAUDE_CONFIG_DIR/projects" ;;
   esac
 fi
+mkdir -p "$CLAUDE_CONFIG_DIR/projects"
 export DISABLE_AUTOUPDATER=1
 # The project's models as subagent definitions (`gateway_usage.model_agents`),
 # written before claude starts: it reads its agents directory once, at start.
 # The seat's directory is the platform's, so every `model-*.md` is ours to
 # replace, and a session with none (a member's own login) is left with none.
-python3 - "$CLAUDE_CONFIG_DIR/agents" <<'CHEESE_MODEL_AGENTS'
+"$CHEESE_PYTHON" - "$CLAUDE_CONFIG_DIR/agents" <<'CHEESE_MODEL_AGENTS'
 import glob, json, os, sys
 agents = sys.argv[1]
 for stale in glob.glob(os.path.join(agents, "model-*.md")):
@@ -533,7 +541,7 @@ if [ ! -x "$_pin" ] && [ -n "${{CHEESE_API:-}}" ]; then
     # download cut off — here, in a room, or by the desktop app fetching it
     # ahead — is continued rather than restarted, checked against the digest
     # the platform names, and one install at a time on the machine.
-    if python3 - "${{CHEESE_API%/}}/connector/claude/{pinned_version}/$_cplat/claude$_cexe" \\
+    if "$CHEESE_PYTHON" - "${{CHEESE_API%/}}/connector/claude/{pinned_version}/$_cplat/claude$_cexe" \\
         "$_pin" "{pinned_version}" <<'CHEESE_EXECUTOR_DOWNLOAD'
 {installer}
 try:
@@ -584,11 +592,19 @@ case "$CLAUDE_STATE" in
 esac
 mkdir -p "$CLAUDE_STATE"
 chmod 700 "$CLAUDE_STATE"
+# Every runner's state on the machine is under one root, and its journal
+# records what its session's tools read, a seat's memory among it: the session
+# is kept to its own (`remote_execution/namespace`).
+CHEESE_RUNNERS_ROOT="$REAL_HOME/{ROOT_PLACEHOLDER}/harness"
+case "$CLAUDE_STATE" in
+  "$CHEESE_RUNNERS_ROOT/"*)
+    export CHEESE_RUNNERS_ROOT CHEESE_RUNNER_STATE="$CLAUDE_STATE" ;;
+esac
 # The runner is unpacked, not run from its archive: Python keeps no compiled
 # modules for a zip, so every start compiled the runner again, about half of
 # its start. Unpacked into a directory named by the archive's digest, it is
 # compiled once per release and machine, and Python keeps that beside it.
-CLAUDE_ARTIFACT="$(python3 - "$CLAUDE_STATE" <<'CLAUDERUNNER'
+CLAUDE_ARTIFACT="$("$CHEESE_PYTHON" - "$CLAUDE_STATE" <<'CLAUDERUNNER'
 import base64, hashlib, io, shutil, sys, tempfile, zipfile
 from pathlib import Path
 state = Path(sys.argv[1])
@@ -756,6 +772,12 @@ cheese_launch_phase credentials_selected
 # the one the connector put in a moved login (`CLAUDE_KEYCHAIN_DIR`), under
 # the machine's home, where no room's sandbox can write.
 #
+# Unless its session holds the machine whole, the session is kept to its own
+# room, seat and runner state, and of the machine's logins and the checkouts
+# kept there, to its own login and nothing else; of its owner's home, to what
+# it runs on (`client._seat_only`, `remote_execution/namespace._keep_own`). On
+# Linux the bubblewrap cheesehost placed makes its namespace.
+#
 _OWN_LOGIN_CREDENTIALS = f"""\
 unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
 case "${{{OWN_LOGIN_ID}:?which login this session signs in with}}" in
@@ -763,7 +785,13 @@ case "${{{OWN_LOGIN_ID}:?which login this session signs in with}}" in
   *) OWN_LOGIN="$REAL_HOME/{ROOT_PLACEHOLDER}/{CLAUDE_LOGINS_DIR}/${OWN_LOGIN_ID}" ;;
 esac
 export CLAUDE_SECURESTORAGE_CONFIG_DIR="$OWN_LOGIN"
+export CHEESE_LOGINS_ROOT="$REAL_HOME/{ROOT_PLACEHOLDER}/{LOGINS_DIR}"
+export CHEESE_WORKS_ROOT="$REAL_HOME/{ROOT_PLACEHOLDER}/{WORK_DIR}"
+export CHEESE_OWNER_HOME="$REAL_HOME"
 [ -n "${{USER:-}}" ] || export USER="$(id -un)"
+if [ "$(uname -s)" = Linux ]; then
+  export CHEESE_SESSION_BWRAP="$REAL_HOME/{ROOT_PLACEHOLDER}/runtime/bubblewrap/bwrap"
+fi
 if [ "$(uname -s)" = Darwin ] && _security="$(command -v security)"; then
   if [ -x "$OWN_LOGIN/{CLAUDE_KEYCHAIN_DIR}/security" ]; then
     _security="$OWN_LOGIN/{CLAUDE_KEYCHAIN_DIR}/security"

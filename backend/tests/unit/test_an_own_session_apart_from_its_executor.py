@@ -182,9 +182,8 @@ def test_its_commands_and_files_are_the_environments_not_the_owners_computer(
     launch, directory, _config = session
     workspace, _ = executor
     seen = Path(launch["cwd"])
-    # The session runs on the owner's computer, in no namespace, in a directory
-    # of its own there: the executor's path is not one this computer has.
-    assert "enter" not in launch["command"]
+    # The session runs on the owner's computer, in a directory of its own
+    # there: the executor's path is not one this computer has.
     assert seen.is_dir() and seen != workspace
 
     done, ended_in = _run(

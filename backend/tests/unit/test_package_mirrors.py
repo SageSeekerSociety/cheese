@@ -150,7 +150,11 @@ def _run_launcher_block(tmp_path, block, *, env=None, path=None, store=""):
             "-c",
             f"set -e\nCS={shlex.quote(store)}\n{block}\n{probe}",
         ],
-        env={"PATH": path or os.environ["PATH"], **(env or {})},
+        env={
+            "PATH": path or os.environ["PATH"],
+            "CHEESE_PYTHON": sys.executable,
+            **(env or {}),
+        },
         capture_output=True,
         text=True,
         timeout=30,
@@ -414,13 +418,16 @@ def test_a_launch_is_told_what_the_rooms_tool_calls_were_told(tmp_path, monkeypa
 
 
 def test_a_launch_without_python_launches_anyway(tmp_path):
-    """A machine without python3 gets no mirrors and no failure. `set -e` is in
-    force in the launcher, so a probe that cannot run has to be survivable by
-    construction rather than by luck."""
+    """A machine whose Python does not run gets no mirrors and no failure.
+    `set -e` is in force in the launcher, so a probe that cannot run has to be
+    survivable by construction rather than by luck."""
     bin_dir = tmp_path / "emptybin"
     bin_dir.mkdir()
     seen = _run_launcher_block(
-        tmp_path, mirrors.shell(_CONFIG, '"$CS"'), path=str(bin_dir)
+        tmp_path,
+        mirrors.shell(_CONFIG, '"$CS"'),
+        path=str(bin_dir),
+        env={"CHEESE_PYTHON": str(bin_dir / "python3")},
     )
 
     assert seen == {}

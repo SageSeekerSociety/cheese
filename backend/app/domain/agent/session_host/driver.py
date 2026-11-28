@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from app.domain.agent import device_link
 from app.domain.agent.device_hub import DeviceHub
 from app.domain.agent.harness import EventConsumer
 from app.domain.agent.harness import SessionRef as Seat
@@ -101,7 +102,7 @@ class Wire:
         last line printed; {} when it printed nothing. A program that failed
         is the session refusing to start, in the words it gave."""
         result = await self.hub.exec(
-            host, ["python3", "-"], stdin=program, timeout=timeout
+            host, [device_link.PYTHON, "-"], stdin=program, timeout=timeout
         )
         if result.get("exit") != 0 or result.get("truncated"):
             raise startup_refused(

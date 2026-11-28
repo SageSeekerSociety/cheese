@@ -135,6 +135,8 @@ func TestConnectorWritesTheAnswerFramesInTheFixtures(t *testing.T) {
 				built = ExecutionResult(id, failure)
 			case "heartbeat":
 				built = Heartbeat()
+			case "hello":
+				built = Hello(f.Meaning["build"].(string), f.Meaning["target"].(string))
 			case "exec.output":
 				built = ExecOutput(f.Meaning["exec_id"].(string), f.Meaning["line"].(string))
 			case "machine.open":

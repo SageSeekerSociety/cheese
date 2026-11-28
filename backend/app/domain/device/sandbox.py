@@ -12,6 +12,7 @@ adds what its sandbox needs, so it is never asked.
 import json
 import logging
 
+from app.core.device_programs import PLATFORM_PYTHON
 from app.domain.device.repository import Device
 from app.domain.device.service import DeviceService
 from app.domain.device.supply import Supply
@@ -24,7 +25,9 @@ async def ask(hub, device_id: str, program: str) -> tuple[bool, dict | None] | N
     for its owner about why (``{"key", "params"}``, the `apiError` catalog's).
     None when the machine gave no answer to read, which records nothing.
     Raises what ``hub.exec`` raises when the machine is not there."""
-    result = await hub.exec(device_id, ["python3", "-"], stdin=program, timeout=90)
+    result = await hub.exec(
+        device_id, [PLATFORM_PYTHON, "-"], stdin=program, timeout=90
+    )
     try:
         answer = json.loads(str(result.get("stdout") or "").strip().splitlines()[-1])
     except (ValueError, IndexError):

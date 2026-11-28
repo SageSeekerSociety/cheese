@@ -27,13 +27,19 @@ from app.core.sandbox_auth import (
 )
 from app.core.sentences import say
 from app.domain.addressing import REASON_MACHINE_OWNER, Addressed, Recipient
-from app.domain.agent import execution
+from app.domain.agent import device_link, execution
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline, device_hub
 from app.domain.agent.device_provider import (
     device_home_dir,
     environment_status,
 )
-from app.domain.agent.environment import VM, Sandbox, SelfHosted, spec_of
+from app.domain.agent.environment import (
+    VM,
+    Sandbox,
+    SelfHosted,
+    environment_of,
+    spec_of,
+)
 from app.domain.agent.environment import parse as parse_environment
 from app.domain.agent.environment_failures import tell_failed
 from app.domain.agent.harness.channel import ScreenSetupError, mint_session_token
@@ -58,7 +64,7 @@ from app.domain.environment.models import Environment, EnvironmentAttachment
 from app.domain.identity.actor import Actor
 from app.domain.machine import holder as holders
 from app.domain.machine import lease_claim, occupants, root_snapshots
-from app.domain.machine.environments import device_for_spec, environment_of
+from app.domain.machine.environments import device_for_spec
 from app.domain.machine.infra_records import keep_prepared, keep_refusal
 from app.domain.machine.install_progress import InstallProgress, downloaded
 from app.domain.machine.lease_claim import still_preparing
@@ -548,7 +554,7 @@ async def _start_executor(
             )
     installed = await hub.exec(
         device_id,
-        ["python3", "-"],
+        [device_link.PYTHON, "-"],
         stdin=await asyncio.to_thread(
             launch.script,
             namespace,

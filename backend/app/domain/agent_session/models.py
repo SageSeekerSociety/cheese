@@ -34,7 +34,7 @@ A row also carries WHERE this conversation's process runs
 environment it is attached to (``app.domain.environment``), of the choice
 that is the agent's own, kept per (conversation, agent) in
 ``agent_environments``; a room, a task or a project holds only the default a
-new agent takes (``machine/environments.environment_of``).
+new agent takes (``agent/environment.environment_of``).
 """
 
 import uuid

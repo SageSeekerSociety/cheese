@@ -8,13 +8,25 @@ environment, its sandbox, the work lease and the platform tools are a central
 session's. Nothing runs on the platform's session host and nothing goes
 through the metering proxy.
 
-The owner's machine has no forwarded project view and no namespace of its own
-(both are Linux's, and the session host here may be a Mac or a Windows PC).
-So when the environment is on that same machine the session sees the project
-where the executor holds it; when it is elsewhere, the session works in a
-directory of its own holding a copy of the project's instructions, skills,
-rules and agents, and its paths are rewritten to the executor's on their way
-there (`client.prepare`).
+The owner's machine has no forwarded project view (that is Linux's, and the
+session host here may be a Mac or a Windows PC). So when the environment is
+on that same machine the session sees the project where the executor holds
+it; when it is elsewhere, the session works in a directory of its own holding
+a copy of the project's instructions, skills, rules and agents, and its paths
+are rewritten to the executor's on their way there (`client.prepare`).
+
+That machine — an enrolled team device or a bare credential host — may hold
+other members' seats and other logins, as a team's one server logged in to
+one subscription holds every member's teammate. So on Linux and macOS the
+session is kept to its own room, seat, runner state and login there, as a
+central session is on the session host (`namespace._keep_own`), unless the
+session itself holds that machine whole: its execution environment is that
+machine, self-hosted, which only an administrator of the device's team can
+choose and which gives the session everything on the machine
+(`agent.environment`). Then nothing on the machine is kept from it, and it
+runs as the machine's own. Which teammate owns the connection does not enter
+into it; where its credential is does. A connection sealed on the platform
+runs on the session host instead, isolated as every central session is.
 
 Which machine runs the session: the one holding the model connection the
 agent was added with, and no other — a subscription's login never leaves the
@@ -32,12 +44,14 @@ session runs on the deployment's session host like the project's own agents
 import asyncio
 import hashlib
 import logging
+import uuid
 from contextlib import asynccontextmanager
 
 from app.core.db import async_session_factory
 from app.core.errors import BaseError
 from app.core.sentences import say
 from app.domain.agent.central_provider import CentralChannel
+from app.domain.agent.environment import SelfHosted, environment_of, self_hosts
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.place import (
@@ -55,9 +69,11 @@ from app.domain.agent_instance.own import (
     owned_instance,
     unusable,
 )
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.login_kind import ConnectionKind
 from app.domain.device.models import DeviceClaudeLoginRow
 from app.domain.project.reads import load_project
+from app.domain.room_task.models import Task
 from app.domain.topic.services import TopicService
 
 logger = logging.getLogger(__name__)
@@ -99,12 +115,55 @@ class OwnerChannel(CentralChannel):
         # The machine holding its connection, as this turn resolved it.
         return precheck.machine
 
-    def _deferred_target(self, target: dict, *, apart: bool) -> dict:
-        # No forwarded view and no namespace on the owner's machine: the
+    async def _deferred_target(
+        self, target: dict, *, session: SessionRef, center: str, apart: bool
+    ) -> dict:
+        # No forwarded view on the owner's machine: the
         # session sees the project at the executor's own path when the
         # executor is on this machine, and in a directory of its own when it
-        # is on another (`apart`) or not yet leased.
-        return {**target, "local": True, **({"apart": True} if apart else {})}
+        # is on another (`apart`) or not yet leased. Part of the target, so a
+        # session idle when its environment moves onto or off its machine
+        # starts again kept or not (`screen_identity.launch_identity`).
+        whole = await self._holds_machine(session, target["session_id"], center)
+        return {
+            **target,
+            "local": True,
+            **({"apart": True} if apart else {}),
+            **({"whole_machine": True} if whole else {}),
+        }
+
+    async def _holds_machine(
+        self, session: SessionRef, session_id: str, machine: str
+    ) -> bool:
+        """Whether the session holds ``machine`` whole: its execution
+        environment is that machine, self-hosted, and the machine is still one
+        the project's tools may run on unconfined, as the executor asks before
+        running them there (`session_work`). Then it is given everything
+        there, and nothing there is kept from its own Claude Code either. A
+        machine unbound since keeps its logins under the same id (a credential
+        host), so the id alone grants nothing."""
+        async with (self._session_factory or async_session_factory)() as db:
+            row = await AgentSessionService(db).by_id(uuid.UUID(session_id))
+            topic = await TopicService(db).get_or_404(session.topic_id)
+            project = await load_project(db, topic.project_id)
+            task = (
+                await db.get(Task, session.conversation_id)
+                if session.conversation_id != topic.id
+                else None
+            )
+            # Asked first here, its default is written as the session's own,
+            # as its first tool call would.
+            environment = (
+                await environment_of(db, row, topic, task, project) if row else None
+            )
+            whole = (
+                isinstance(environment, SelfHosted)
+                and environment.device_id == machine
+                and project is not None
+                and await self_hosts(db, machine, project.id)
+            )
+            await db.commit()
+        return whole
 
     @asynccontextmanager
     async def prepare_session(self, **kwargs):

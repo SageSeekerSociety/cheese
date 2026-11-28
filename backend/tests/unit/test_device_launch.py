@@ -863,13 +863,60 @@ def test_the_launch_starts_the_runner_and_the_runner_starts_claude(tmp_path):
     # The offered transcript is not on this disk, so the session starts afresh.
     assert args[-2] == "--session-id"
     uuid.UUID(args[-1])
-    # Each seat keeps its settings and skills; transcripts stay in the room.
+    # Each seat keeps its settings, skills and transcripts.
     assert (claude.parent / "ran.config").read_text() == f"{seat}/.claude"
-    assert (seat / ".claude/projects").resolve() == (
-        session / ".claude/projects"
-    ).resolve()
+    assert (seat / ".claude/projects").is_dir()
+    assert not (seat / ".claude/projects").is_symlink()
     assert (seat / "cheese-system-prompt.md").read_text() == "be kind\n"
     assert (state / "records.sqlite").is_file()
+
+
+def test_the_launch_runs_the_platforms_programs_on_its_own_python_not_the_owners(
+    tmp_path,
+):
+    """A machine owner keeps a `python3` of their own in their home (nix, uv,
+    pyenv), first on PATH. Every program the launch runs of the platform's —
+    the skills fetch, the model agents, the runner, the executor client — runs
+    on the Python the connector placed, and none on the owner's: a session
+    kept from that home could not run it, and it is not the platform's to
+    choose."""
+    owner, _session, _work, claude, env = _machine(tmp_path)
+    owners = owner / ".nix-profile/bin/python3"
+    owners.parent.mkdir(parents=True)
+    owners.write_text(
+        "#!/bin/sh\n"
+        f'printf "%s\\n" "$*" >> {shlex.quote(str(owner / ".nix-profile/ran"))}\n'
+        f'exec {shlex.quote(env["CHEESE_PYTHON"])} "$@"\n'
+    )
+    owners.chmod(0o755)
+    env["PATH"] = f"{owners.parent}:{env['PATH']}"
+
+    result = _launch(tmp_path, env, system_prompt="be kind")
+
+    assert result.returncode == 0, result.stderr
+    assert (claude.parent / "ran.args").exists()
+    assert not (owner / ".nix-profile/ran").exists(), (
+        owner / ".nix-profile/ran"
+    ).read_text()
+    ran = (owner / ".cheese/runtime/python/ran").read_text().splitlines()
+    assert any(line.startswith("-I -S ") and "/runner-" in line for line in ran), ran
+    assert any("/remote-execution/client.py bootstrap " in line for line in ran), ran
+
+
+def test_a_machine_with_no_python_of_the_platforms_starts_nothing_and_says_so(
+    tmp_path,
+):
+    """Where the connector could not place its Python, the launch does not
+    fall back to whatever `python3` PATH finds: it starts nothing, and its log
+    says what is missing."""
+    _owner, _session, _work, claude, env = _machine(tmp_path)
+    del env["CHEESE_PYTHON"]
+
+    result = _launch(tmp_path, env)
+
+    assert result.returncode != 0
+    assert not (claude.parent / "ran.args").exists()
+    assert "the connector has placed no Python on this machine" in result.stderr
 
 
 def test_a_launch_runs_nothing_the_room_put_in_its_home(tmp_path):
@@ -878,7 +925,7 @@ def test_a_launch_runs_nothing_the_room_put_in_its_home(tmp_path):
     looked up in it: not what the launch runs to bring the tunnel and the
     preview up or to ask tmux for its session, not the `claude` it checks, not
     the Python it starts the environment runner, the runner and the executor's
-    client on (found on the machine's own path when the connector names none),
+    client on (the connector's, by path),
     and not what Claude Code itself runs by name on the host, such as `git` or
     the platform's `cheese`."""
     from app.domain.project.environment import EnvironmentConfig
@@ -894,7 +941,7 @@ def test_a_launch_runs_nothing_the_room_put_in_its_home(tmp_path):
         1,
     )
     claude.write_text(script)
-    platform = Path(env.pop("CHEESE_PYTHON"))
+    platform = Path(env["CHEESE_PYTHON"])
     tmux = tmp_path / "bin/tmux"
     tmux.write_text("#!/bin/sh\necho room-session\n")
     tmux.chmod(0o755)
@@ -1055,9 +1102,9 @@ def test_new_seat_leaves_busy_older_seats_shared_files_intact(tmp_path):
     assert old_skill.read_text() == "old running skill"
     seat = seat_of(session)
     assert (seat / "remote-execution/client.py").is_file()
-    assert (seat / ".claude/projects").resolve() == (
-        session / ".claude/projects"
-    ).resolve()
+    # Its transcripts are its own, beside nobody else's.
+    assert (seat / ".claude/projects").is_dir()
+    assert not (seat / ".claude/projects").is_symlink()
 
 
 def _served_build(version: str = PIN) -> bytes:
@@ -2228,14 +2275,45 @@ def test_environment_prepares_tools_without_task_code_on_attach_and_reset(tmp_pa
         subprocess.run(["tmux", "-S", socket_path, "kill-server"], capture_output=True)
 
 
-def test_the_executor_client_is_told_the_config_dir_before_it_needs_it():
+def test_the_executor_client_starts_claude_on_the_seats_config_dir(tmp_path):
     """The client hands `claude` its config directory, and reads that directory
     from the environment rather than deriving it from where it was installed —
-    only the launcher knows both. A launcher that invoked the client before
-    exporting it would fail every executor-backed screen at startup, and nothing
-    else in the script would say why."""
-    script = _script(system_prompt="x")
+    only the launcher knows both. The build it starts is given this seat's,
+    where its settings, skills and transcripts are."""
+    owner, session, _work, claude, env = _machine(tmp_path)
 
-    assert script.index('export CLAUDE_CONFIG_DIR="$SEAT/.claude"') < script.index(
-        '\\"$EXECUTOR_CLIENT\\" bootstrap'
-    )
+    result = _launch(tmp_path, env, system_prompt="x")
+
+    assert result.returncode == 0, result.stderr
+    ran = (owner / ".cheese/runtime/python/ran").read_text()
+    assert f"{seat_of(session)}/remote-execution/client.py bootstrap" in ran
+    assert (claude.parent / "ran.config").read_text() == f"{seat_of(session)}/.claude"
+
+
+def test_a_seat_keeps_its_own_transcripts_and_takes_up_its_conversation(tmp_path):
+    """A transcript holds what its session was given as sent, a person's
+    private input among it, and the seats of a room work for different people.
+    A seat set up when the room kept every seat's transcripts in one directory
+    gets one of its own, and the conversation it goes on with is taken from the
+    room's into it and resumed; another seat's stays where it was."""
+    owner, session, _work, claude, env = _machine(tmp_path)
+    seat = seat_of(session)
+    room = session / ".claude/projects"
+    mine, theirs = str(uuid.uuid4()), str(uuid.uuid4())
+    for session_id, words in ((mine, "mine"), (theirs, "theirs")):
+        transcript = room / "-work" / f"{session_id}.jsonl"
+        transcript.parent.mkdir(parents=True, exist_ok=True)
+        transcript.write_text(json.dumps({"sessionId": session_id, "said": words}))
+    (seat / ".claude").mkdir(parents=True)
+    (seat / ".claude/projects").symlink_to(room)
+    env["CHEESE_RESUME_SESSION"] = mine
+
+    result = _launch(tmp_path, env, system_prompt="x")
+
+    assert result.returncode == 0, result.stderr
+    args = (claude.parent / "ran.args").read_text().splitlines()
+    assert args[-2:] == ["--resume", mine]
+    own = seat / ".claude/projects"
+    assert own.is_dir() and not own.is_symlink()
+    assert [path.name for path in own.rglob("*.jsonl")] == [f"{mine}.jsonl"]
+    assert [path.name for path in room.rglob("*.jsonl")] == [f"{theirs}.jsonl"]

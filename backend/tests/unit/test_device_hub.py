@@ -8,6 +8,7 @@ import uuid
 
 import pytest
 
+from app.core.device_failures import DeviceNotReady
 from app.domain.agent import connector_build
 from app.domain.agent.device_hub import DeviceHub, DeviceOffline
 from tests.support import wire
@@ -989,3 +990,38 @@ def test_a_connector_that_never_heartbeats_is_not_judged_by_silence(monkeypatch)
         assert ws.receive_json()["t"] == "welcome"
         ws.send_json({"t": "hello", "v": 1})
         assert _online_after(hub, 1)
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["cheese-python", "-"],
+        ["sh", "-c", 'exec "${CHEESE_PYTHON:?}" "$0" control', "client.py"],
+    ],
+)
+async def test_the_platforms_python_goes_only_to_a_connector_that_placed_one(argv):
+    """A connector built before it placed a Python of the platform's runs an
+    exec of it on whatever `python3` PATH finds (on a person's machine, theirs)
+    or not at all, and is being told to update. So nothing that runs on the
+    platform's Python is sent to it: the call is not ready, as for a machine
+    still updating, until the connector says in `hello` that it has one."""
+    hub = DeviceHub()
+    transport = FakeDeviceTransport()
+    await hub.attach_device("dev", transport)
+    await hub.on_device_message("dev", {"t": "hello", "v": 1, "executor": True})
+
+    with pytest.raises(DeviceNotReady):
+        await hub.exec("dev", argv, timeout=5)
+    assert not [frame for frame in transport.sent if frame["t"] == "exec"]
+
+    await hub.on_device_message(
+        "dev", {"t": "hello", "v": 1, "executor": True, "python": True}
+    )
+    answered = asyncio.create_task(hub.exec("dev", argv, timeout=5))
+    await asyncio.sleep(0)
+    (sent,) = [frame for frame in transport.sent if frame["t"] == "exec"]
+    assert sent["command"] == argv
+    await hub.on_device_message(
+        "dev", {"t": "exec.result", "id": sent["id"], "stdout": "ok", "exit": 0}
+    )
+    assert (await answered)["stdout"] == "ok"

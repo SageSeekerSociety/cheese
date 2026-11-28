@@ -14,13 +14,22 @@ import ctypes
 import json
 import os
 import shutil
+import subprocess
 import sys
 from pathlib import Path
+
+if __package__:
+    from app.domain.agent.harness.claude_code.remote_execution.confinement import (
+        seatbelt_keep_only,
+    )
+else:
+    from confinement import seatbelt_keep_only
 
 # The namespace the session runs in (`enter`): mount(2), umount2(2) and
 # pivot_root(2) flags and numbers, which the standard library does not name.
 _MS_NOSUID, _MS_NODEV = 2, 4
 _MS_BIND, _MS_REC, _MS_PRIVATE = 4096, 16384, 1 << 18
+_MS_RDONLY, _MS_REMOUNT = 1, 32
 _CLONE_NEWNS, _CLONE_NEWUSER = 0x00020000, 0x10000000
 _MNT_DETACH = 2
 _SYS_PIVOT_ROOT = {"x86_64": 155, "aarch64": 41}
@@ -44,6 +53,12 @@ def enter(target_path, argv):
     A path that cannot be placed so is refused, loudly: one that is not an
     absolute path, one under the kernel's own filesystems, and one that would
     cover something the session itself needs.
+
+    A member's own Claude Code on the machine holding its subscription
+    (`local`) has no view to place: it sees the project where it is. It is
+    still kept to its own seat and room (`_keep_own`), since the machine may
+    hold other members' seats and logins. The launch does not enter it at all
+    when its session holds that machine whole (`client.prepare`).
     """
     target = json.loads(Path(target_path).read_text())
     seen = target["session_workspace"]
@@ -66,6 +81,13 @@ def enter(target_path, argv):
         program,
         view,
     ]
+    narrowed = _entries(target.get("seat_only") or [])
+    problem = _unnarrowable(narrowed, [*needed, seen, start])
+    if problem:
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+        raise SystemExit(f"This session cannot be kept to its own seat: {problem}")
+    if target.get("local"):
+        _keep_own(narrowed, start, program, argv)
     problem = _unplaceable(seen, needed)
     if problem:
         raise SystemExit(
@@ -75,14 +97,9 @@ def enter(target_path, argv):
     if start != seen and _unplaceable(start, needed):
         # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
         raise SystemExit(f"This session cannot start at {start!r}")
-    narrowed = target.get("seat_only") or []
-    problem = _unnarrowable(narrowed, [*needed, seen, start])
-    if problem:
-        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
-        raise SystemExit(f"This session cannot be kept to its own seat: {problem}")
     _place(seen, view, Path(target_path).parent / "namespace-root")
-    for cover, keep in narrowed:
-        _keep_only(cover, keep)
+    for cover, keeps, read_only in narrowed:
+        _keep_only(cover, keeps, read_only)
     if start != seen:
         try:
             os.makedirs(start, exist_ok=True)
@@ -94,6 +111,97 @@ def enter(target_path, argv):
     os.chdir(start)
     os.environ["PWD"] = start
     os.execv(program, argv)
+
+
+def _keep_own(narrowed, start, program, argv):
+    """Run a member's own Claude Code at `start`, leaving it nothing of each
+    `cover` but its `keeps`, as `_keep_only` leaves a central session; every
+    other path is the machine's own.
+
+    The build replaces this process, as in `enter`, so the runner signals and
+    waits on the build itself. On macOS a Seatbelt profile does the keeping
+    (`confinement.seatbelt_keep_only`); everything else stays allowed, the
+    login Keychain `security` reads and renews among it. On Linux the user
+    and mount namespaces are made by the bubblewrap cheesehost placed
+    (`CHEESE_SESSION_BWRAP`): Ubuntu lets only a program an AppArmor profile
+    names make one, and `cheesehost sandbox allow` names that bwrap. It holds
+    them open with a process that waits, this process joins them and the
+    waiting one ends. Where that bwrap cannot make them the session does not
+    start, as a room is refused its sandbox there
+    (`bootstrap.enrolled_bubblewrap`), rather than run seeing every seat.
+    """
+    narrowed = [
+        (
+            cover,
+            [keep for keep in keeps if os.path.exists(keep)],
+            [keep for keep in read_only if os.path.exists(keep)],
+        )
+        for cover, keeps, read_only in narrowed
+        if os.path.isdir(cover)
+    ]
+    if narrowed and sys.platform == "darwin":
+        profile = "\n".join(
+            ["(version 1)", "(allow default)", *seatbelt_keep_only(narrowed)]
+        )
+        program, argv = (
+            "/usr/bin/sandbox-exec",
+            ["/usr/bin/sandbox-exec", "-p", profile, program, *argv[1:]],
+        )
+    elif narrowed:
+        _join_kept(narrowed)
+    os.chdir(start)
+    os.environ["PWD"] = start
+    os.execv(program, argv)
+
+
+def _join_kept(narrowed):
+    """Join a user and mount namespace bubblewrap made with each `cover`
+    an empty, read-only directory but for its `keeps`, bound back in place,
+    and its `read_only` keeps, bound back unwritable."""
+    command = [os.environ.get("CHEESE_SESSION_BWRAP", ""), "--unshare-user"]
+    # Devices as the machine has them: the build runs as it would outside.
+    command += ["--dev-bind", "/", "/"]
+    for cover, keeps, read_only in narrowed:
+        command += ["--tmpfs", cover]
+        for keep in keeps:
+            command += ["--bind", keep, keep]
+        for keep in read_only:
+            command += ["--ro-bind", keep, keep]
+        command += ["--remount-ro", cover]
+    wait = "import os, sys; print(os.getpid(), flush=True); sys.stdin.read()"
+    try:
+        holder = subprocess.Popen(
+            [*command, "--", sys.executable, "-c", wait],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+    except OSError as error:
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+        raise SystemExit(
+            f"This session cannot be kept to its own seat: {error}. "
+            "cheesehost places bubblewrap when it starts."
+        ) from None
+    assert holder.stdin is not None and holder.stdout is not None
+    held = holder.stdout.readline().strip()
+    if not held.isdigit():
+        _, said = holder.communicate()
+        # i18n-exempt: runner bundle: execution machine, stdlib only, no catalog
+        raise SystemExit(
+            "This session cannot be kept to its own seat: bubblewrap could not "
+            f"make its namespaces ({said.strip()}). On Ubuntu, run "
+            "`sudo ~/.local/bin/cheesehost sandbox allow` once."
+        )
+    libc, check, _ = _syscalls()
+    for name, kind in (("user", _CLONE_NEWUSER), ("mnt", _CLONE_NEWNS)):
+        descriptor = os.open(f"/proc/{held}/ns/{name}", os.O_RDONLY)
+        try:
+            check(libc.setns(descriptor, kind), f"setns {name}")
+        finally:
+            os.close(descriptor)
+    holder.stdin.close()
+    holder.wait()
 
 
 def _unplaceable(seen, needed):
@@ -139,47 +247,75 @@ def _syscalls():
     return libc, check, mount
 
 
+def _entries(raw):
+    """``[cover, keeps]`` or ``[cover, keeps, read_only]`` entries
+    (`client._seat_only`), each as ``(cover, keeps, read_only)``."""
+    return [(cover, keeps, rest[0] if rest else []) for cover, keeps, *rest in raw]
+
+
 def _unnarrowable(narrowed, needed):
-    """Why the session cannot be left only `keep` of each `cover`, or None:
-    a path it needs would be hidden with the rest."""
-    for cover, keep in narrowed:
-        if not (keep + "/").startswith(cover.rstrip("/") + "/") or keep == cover:
-            return f"{keep!r} is not below {cover!r}"
+    """Why the session cannot be left only the `keeps` of each `cover`, or
+    None: a path it needs would be hidden with the rest."""
+
+    def within(path, directory):
+        return path == directory or path.startswith(directory.rstrip("/") + "/")
+
+    for cover, writable, read_only in narrowed:
+        keeps = [*writable, *read_only]
+        for keep in keeps:
+            if keep == cover or not within(keep, cover):
+                return f"{keep!r} is not below {cover!r}"
         for path in needed:
             for spelled in {path, os.path.realpath(path)} if path else ():
-                inside = spelled == cover or spelled.startswith(cover + "/")
-                kept = spelled == keep or spelled.startswith(keep + "/")
-                if inside and not kept:
-                    return f"it needs {spelled}, which is beside {keep!r}"
+                if within(spelled, cover) and not any(
+                    within(spelled, keep) for keep in keeps
+                ):
+                    return f"it needs {spelled}, which {cover!r} does not keep"
     return None
 
 
-def _keep_only(cover, keep):
-    """Leave the session nothing of `cover` but `keep` below it.
+def _keep_only(cover, keeps, read_only=()):
+    """Leave the session nothing of `cover` but the `keeps` below it, and the
+    `read_only` ones unwritable.
 
     The seats of a room share the room's home, and the rooms on a session host
     share the host: each seat's memory tree holds the private memory of the
     person its turn answers (`runner.memory_root`), and the session's own file
     tools are not the only thing that runs in it. So beside its own seat and
     its own room it sees an empty directory, and no process it starts can open
-    another seat's tree by any path. `keep` is bound aside first, `cover` is
-    then covered with an empty tmpfs, and `keep` is bound back at its place.
+    another seat's tree by any path. Each `keep` is bound aside first, `cover`
+    is then covered with an empty tmpfs, and each `keep` is bound back at its
+    place. A `keep` that is not there is not kept; one may be a file.
     """
-    if not os.path.isdir(cover) or not os.path.isdir(keep):
+    if not os.path.isdir(cover):
         return
+    kept = [(keep, False) for keep in keeps if os.path.exists(keep)]
+    kept += [(keep, True) for keep in read_only if os.path.exists(keep)]
     libc, check, mount = _syscalls()
 
-    aside = "/.cheese-kept"
-    os.mkdir(aside)
-    mount(keep, aside, None, _MS_BIND | _MS_REC)
+    def stand_in(path, like):
+        if os.path.isdir(like):
+            os.makedirs(path, exist_ok=True)
+        else:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            open(path, "a").close()
+
+    for number, (keep, _) in enumerate(kept):
+        stand_in(f"/.cheese-kept-{number}", keep)
+        mount(keep, f"/.cheese-kept-{number}", None, _MS_BIND | _MS_REC)
     mount("tmpfs", cover, "tmpfs", _MS_NOSUID | _MS_NODEV, "mode=755,size=1m")
-    place = cover
-    for name in os.path.relpath(keep, cover).split("/"):
-        place = os.path.join(place, name)
-        os.mkdir(place)
-    mount(aside, place, None, _MS_BIND | _MS_REC)
-    check(libc.umount2(aside.encode(), _MNT_DETACH), f"umount {aside}")
-    os.rmdir(aside)
+    for number, (keep, unwritable) in enumerate(kept):
+        aside = f"/.cheese-kept-{number}"
+        place = os.path.join(cover, os.path.relpath(keep, cover))
+        stand_in(place, aside)
+        mount(aside, place, None, _MS_BIND | _MS_REC)
+        if unwritable:
+            mount(None, place, None, _MS_BIND | _MS_REMOUNT | _MS_RDONLY)
+        check(libc.umount2(aside.encode(), _MNT_DETACH), f"umount {aside}")
+        if os.path.isdir(aside):
+            os.rmdir(aside)
+        else:
+            os.remove(aside)
 
 
 def _place(seen, view, root):

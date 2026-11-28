@@ -1,15 +1,26 @@
 //go:build !windows
 
 // Package devenv places what the server's commands expect to find on a machine
-// where the system does not already provide it. Two kinds:
+// where the system does not already provide it. Three kinds:
+//
+// The Python the platform's own programs run on (the session's runner, the
+// executor and its client, the hooks), placed whatever the system has, under
+// the footprint root at `runtime/python/bin/python3`, and named by path in
+// CHEESE_PYTHON (`runtimepath.Python`), which every command and session the
+// connector starts inherits. The machine's own `python3` is the owner's:
+// often in their home (nix, uv, pyenv), where a session kept from that home
+// could not run it, and never something the platform chose. It is put first
+// on PATH only where the system's `python3` is missing or older than the
+// platform's scripts a room runs by name take (3.11; a Mac's /usr/bin/python3
+// is 3.9), so that a room's `python3` stays the machine's wherever that one
+// runs them.
 //
 // A program the platform's own work runs on, where any build new enough will
-// do: `python3` everywhere (the session's runner and helpers need 3.11, and a
-// Mac's /usr/bin/python3 is 3.9), and on Linux `tmux` (the connector keeps
-// every screen in it) and `git` (every room's checkout). The system's copy is
-// used when it is new enough; otherwise the server's pinned build is placed
-// under the footprint root and put first on this process's PATH, which every
-// command and session it starts inherits. Once placed, it stays the one used.
+// do: on Linux `tmux` (the connector keeps every screen in it) and `git`
+// (every room's checkout). The system's copy is used when it is new enough;
+// otherwise the server's pinned build is placed under the footprint root and
+// put first on this process's PATH, which every command and session it starts
+// inherits. Once placed, it stays the one used.
 //
 // What a room's isolation is made with, placed on Linux whatever the system
 // has, because the sandbox is the platform's and so is the build it runs on:
@@ -24,6 +35,7 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"debug/elf"
 	"errors"
 	"fmt"
 	"io"
@@ -49,18 +61,17 @@ type fallback struct {
 }
 
 func fallbacks() []fallback {
-	list := []fallback{{"python", "python3", pythonRecentEnough}}
-	if runtime.GOOS == "linux" {
-		list = append(list,
-			// pane_dead_time, which the connector reads to close a dead
-			// screen, is in tmux from 3.3.
-			fallback{"tmux", "tmux", func() bool { return atLeast("tmux", []string{"-V"}, 3, 3) }},
-			// `rev-parse --path-format=absolute`, which a room's checkout
-			// asks, is in git from 2.31.
-			fallback{"git", "git", func() bool { return atLeast("git", []string{"--version"}, 2, 31) }},
-		)
+	if runtime.GOOS != "linux" {
+		return nil
 	}
-	return list
+	return []fallback{
+		// pane_dead_time, which the connector reads to close a dead screen,
+		// is in tmux from 3.3.
+		{"tmux", "tmux", func() bool { return atLeast("tmux", []string{"-V"}, 3, 3) }},
+		// `rev-parse --path-format=absolute`, which a room's checkout asks,
+		// is in git from 2.31.
+		{"git", "git", func() bool { return atLeast("git", []string{"--version"}, 2, 31) }},
+	}
 }
 
 // Ensure places what this machine lacks (see the package's text) and puts
@@ -78,9 +89,6 @@ func Ensure(ctx context.Context, base string, log io.Writer) error {
 		if placed == nil || !f.usable() {
 			needed = append(needed, f)
 		}
-	}
-	if len(needed) == 0 && runtime.GOOS != "linux" {
-		return nil
 	}
 	platform, err := toolchainPlatform(runtime.GOOS, runtime.GOARCH)
 	if err != nil {
@@ -129,16 +137,97 @@ func Ensure(ctx context.Context, base string, log io.Writer) error {
 	for _, f := range needed {
 		place(f.tool, filepath.Join(root, f.tool, "bin"))
 	}
+	// The Python is a dynamically linked build, so it must be the one for the
+	// machine's C library: a glibc build on a musl machine is placed, passes
+	// every check of the file, and then cannot be started because its loader
+	// is not there. bwrap, the host tools, tmux and git are static builds,
+	// which run on either.
+	pythonPlatform := platform
+	if runtime.GOOS == "linux" && muslHost() {
+		pythonPlatform += "-musl"
+	}
+	if err := ensureTool(ctx, base, root, pythonPlatform, tool{"python", ".tar.gz", extractTarGz}, log); err != nil {
+		failed = errors.Join(failed, fmt.Errorf("python: %w", err))
+	}
+	python := filepath.Join(root, "python", "bin", "python3")
+	if _, err := os.Stat(python); err != nil {
+		os.Unsetenv(runtimepath.Python)
+		return failed
+	}
+	// A Python that is there but does not run is named nowhere, so a launch
+	// refuses for want of one rather than failing inside the session.
+	if err := starts(python); err != nil {
+		os.Unsetenv(runtimepath.Python)
+		return errors.Join(failed, fmt.Errorf("python: the placed %s does not start: %w", python, err))
+	}
+	os.Setenv(runtimepath.Python, python)
+	if !pythonRecentEnough() {
+		runtimepath.Put(filepath.Dir(python))
+	}
 	return failed
 }
 
-// minimum is the oldest Python the session's runner runs on (it uses StrEnum).
+// minimum is the oldest Python the platform's scripts run on (they use
+// StrEnum).
 const minimum = "(3, 11)"
+
+var recentEnough = fmt.Sprintf("import sys; sys.exit(0 if sys.version_info >= %s else 1)", minimum)
 
 // pythonRecentEnough reports whether the python3 on PATH runs and is new enough.
 func pythonRecentEnough() bool {
-	check := fmt.Sprintf("import sys; sys.exit(0 if sys.version_info >= %s else 1)", minimum)
-	return exec.Command("python3", "-c", check).Run() == nil
+	return exec.Command("python3", "-c", recentEnough).Run() == nil
+}
+
+// starts reports why python cannot run the platform's scripts, or nil if it
+// can. A Linux program whose loader is missing fails to start with "no such
+// file or directory" although the file is there, so the error says which
+// loader it is: the one its build was linked for.
+func starts(python string) error {
+	out, err := exec.Command(python, "-I", "-c", recentEnough).CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	if said := strings.TrimSpace(string(out)); said != "" {
+		err = fmt.Errorf("%w: %s", err, said)
+	}
+	if interp := interpreter(python); interp != "" {
+		if _, missing := os.Stat(interp); missing != nil {
+			err = fmt.Errorf("%w (its loader %s is not on this machine)", err, interp)
+		}
+	}
+	return err
+}
+
+// muslHost reports whether this Linux machine's programs are linked against
+// musl rather than glibc: whether its shell's loader is musl's. A shell
+// linked statically names no loader, and then the machine is musl's if musl's
+// loader is installed. A variable so a test can stand in for a musl machine.
+var muslHost = func() bool {
+	if interp := interpreter("/bin/sh"); interp != "" {
+		return strings.Contains(path.Base(interp), "ld-musl")
+	}
+	found, _ := filepath.Glob("/lib/ld-musl-*.so.1")
+	return len(found) > 0
+}
+
+// interpreter is the loader an ELF program names, or "" for one that names
+// none or is not ELF.
+func interpreter(program string) string {
+	file, err := elf.Open(program)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+	for _, prog := range file.Progs {
+		if prog.Type == elf.PT_INTERP {
+			named, err := io.ReadAll(prog.Open())
+			if err != nil {
+				return ""
+			}
+			return strings.TrimRight(string(named), "\x00")
+		}
+	}
+	return ""
 }
 
 var version = regexp.MustCompile(`(\d+)\.(\d+)`)
@@ -160,6 +249,8 @@ func atLeast(program string, args []string, major, minor int) bool {
 }
 
 // toolchainPlatform names this machine as the server's toolchain route does.
+// The Python alone is asked for with a "-musl" suffix on a musl machine (see
+// `Ensure`).
 func toolchainPlatform(goos, goarch string) (string, error) {
 	arch := map[string]string{"amd64": "x64", "arm64": "arm64"}[goarch]
 	if (goos != "linux" && goos != "darwin") || arch == "" {

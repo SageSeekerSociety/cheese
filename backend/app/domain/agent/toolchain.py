@@ -1,11 +1,11 @@
 """The programs the platform puts on a machine for its rooms' work: the
 document toolchain, the forge CLIs, ripgrep for the search under pi's grep and
-find, browser automation, and the runtime the connector itself needs where
-the system lacks it (Python and a POSIX shell on Windows, a recent enough Python
-elsewhere, and on Linux a recent enough tmux and git), and on Linux what a
-room's sandbox is made with, which it places whatever the system has: bwrap,
-and the host tools a platform host gives its sandboxes a network and a disk
-limit with.
+find, browser automation, the Python the platform's own programs on a machine
+run on, the runtime the connector itself needs where the system lacks it (a
+POSIX shell on Windows, and on Linux a recent enough tmux and git), and on
+Linux what a room's sandbox is made with, which it places whatever the system
+has: bwrap, and the host tools a platform host gives its sandboxes a network
+and a disk limit with.
 
 The single source for these — versions, where each artifact comes from, and its
 digest. It lives in the agent layer for the same reason claude's pin lives in
@@ -52,10 +52,11 @@ NODE_VERSION = "24.21.0"
 #: `python3` and `sh` the platform runs everywhere exist there too.
 PYTHON_VERSION = "3.13.13"
 GIT_VERSION = "2.55.0.windows.5"
-#: The Python a Linux or macOS connector places when the system's `python3` is
-#: older than the session's runner takes (3.11), as on every Mac, whose
-#: /usr/bin/python3 is 3.9 (`cli/internal/devenv`). python-build-standalone's
-#: relocatable builds, the ones uv installs.
+#: The Python a Linux or macOS connector places whatever the system has, which
+#: the platform's own programs there run on by path (`cli/internal/devenv`):
+#: the machine's own `python3` is the owner's, and may sit in a home a session
+#: is kept from. python-build-standalone's relocatable builds, the ones uv
+#: installs.
 PBS_RELEASE = "20261003"
 PBS_PYTHON_VERSION = "3.13.16"
 #: The bwrap a Linux connector places for its rooms' sandboxes, whatever the
@@ -114,9 +115,13 @@ _NOTO_RAW = "https://raw.githubusercontent.com/notofonts/noto-cjk"
 #: Platform strings are OURS, matching what the launcher computes on the machine
 #: (`<os>-<arch>`). typst and uv ship musl-static linux builds, so one artifact
 #: serves glibc and musl alike; pandoc's linux tarball wants glibc, which is why
-#: a musl machine is a documented gap rather than a silent one. Windows is x64
-#: only.
-PLATFORM_RE = re.compile(r"^((linux|darwin)-(x64|arm64)|windows-x64)$")
+#: a musl machine is a documented gap rather than a silent one. The connector's
+#: Python is dynamically linked, so it alone is served per C library: a musl
+#: machine asks for it as `linux-<arch>-musl` (`cli/internal/devenv`). Windows
+#: is x64 only.
+PLATFORM_RE = re.compile(
+    r"^(linux-(x64|arm64)(-musl)?|darwin-(x64|arm64)|windows-x64)$"
+)
 TOOL_RE = re.compile(r"^[a-z0-9-]{1,32}$")
 
 _ANY = "any"
@@ -466,9 +471,8 @@ ARTIFACTS: dict[tuple[str, str], Artifact] = {
         10950201,
         ".zip",
     ),
-    # The connector's Python on a Linux or macOS machine whose own is too old
-    # (see PBS_RELEASE). Digests and sizes checked against the downloaded
-    # files on 2026-10-07.
+    # The connector's Python on a Linux or macOS machine (see PBS_RELEASE).
+    # Digests and sizes checked against the downloaded files on 2026-10-07.
     ("python", "darwin-arm64"): Artifact(
         f"{_PBS_BASE}-aarch64-apple-darwin-install_only_stripped.tar.gz",
         "9e01f63bbb08576cd9c8bc2d0564d098cb30c8453a0cd4bcf6aef458f6d2a147",
@@ -491,6 +495,21 @@ ARTIFACTS: dict[tuple[str, str], Artifact] = {
         f"{_PBS_BASE}-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz",
         "6e9641400f8debd9b7924b27b5ff0662c372852382e291a76c450c7b67414cf6",
         29316850,
+        ".tar.gz",
+    ),
+    # The same Python for a musl machine, which cannot start the glibc build:
+    # its loader is not there. Digests and sizes checked against the
+    # downloaded files, and against the release's SHA256SUMS, on 2026-11-28.
+    ("python", "linux-x64-musl"): Artifact(
+        f"{_PBS_BASE}-x86_64-unknown-linux-musl-install_only_stripped.tar.gz",
+        "dbc1d63c450eb6028d52e3a5d0304bf0fd0e3e9ac16ca8326ff0c19d6005a4c2",
+        27747054,
+        ".tar.gz",
+    ),
+    ("python", "linux-arm64-musl"): Artifact(
+        f"{_PBS_BASE}-aarch64-unknown-linux-musl-install_only_stripped.tar.gz",
+        "a96a3f88130cb0f26e9febb4a4b7bff974cc57c5517c6532eb885c84f9d47070",
+        27941527,
         ".tar.gz",
     ),
     ("git", "windows-x64"): Artifact(

@@ -370,7 +370,7 @@ async def test_a_team_sandbox_never_lands_on_another_teams_computer(
 
 async def test_a_change_of_harness_keeps_the_agents_environment(client):
     room = await _room(client)
-    from app.domain.machine.environments import environment_of
+    from app.domain.agent.environment import environment_of
 
     async with client.test_factory() as db:
         sessions = AgentSessionService(db)

@@ -146,7 +146,7 @@ Ordinary execution devices run a persistent Python service, which runs a room's 
 | **sha256sum**（coreutils）/ **shasum** / **openssl**（任一） | `install.sh` 算下载文件的 sha256，与响应头 `X-Checksum-SHA256` 比对 | 必须，Linux 上有前两个、macOS 上有后两个，三个都没有则拒绝安装 |
 | **tmux** | 把 runner 和它握着的 `claude` 养在持久会话里，链路掉线不丢进程 | 必须。连接器没有 tmux 就直接退出，所以 `link connect` 在批准之前先找一遍 tmux，找不到就停下并说明怎么装；桌面端在 Mac 上自带一份 |
 | **git** | agent 把项目 clone 进工作目录、把频道分支推回来 | 必须。缺它则轮次在**空目录**里跑完并报成功，工作没人看得见 |
-| **python3**（3.11 以上） | 会话的运行程序（runner）、执行器，以及平台发到机器上跑的小工具（计量隧道、`cheese serve` 的预览隧道）。只用标准库，机器上不需要 venv、不需要 `pip install` | 必须。机器上的 `python3` 低于 3.11 或者没有时（每台 Mac 自带的 `/usr/bin/python3` 都是 3.9），连接器从服务器的 toolchain 路由取一份固定版本（python-build-standalone）放到 `~/.cheese/runtime/python`，排到自己 PATH 的最前面；会话窗口也带着这个 PATH 启动。取不到时连接照常，后台服务下次启动再取 |
+| **python3**（3.11 以上） | 会话的运行程序（runner）、执行器，以及平台发到机器上跑的小工具（计量隧道、`cheese serve` 的预览隧道）。只用标准库，机器上不需要 venv、不需要 `pip install` | 必须，由连接器提供。不论机器上有没有 `python3`，连接器都从服务器的 toolchain 路由取一份固定版本（python-build-standalone，musl 的 Linux 上取 musl 版）放到 `~/.cheese/runtime/python`，试着运行一次，能运行才把路径导出为 `CHEESE_PYTHON`；平台自己的程序一律按这个路径运行，不用 PATH 上的 `python3`。取不到或者运行不了时连接照常、后台服务下次启动再取，但在那之前这台机器上的会话不会启动，平台发来的程序也不运行，原因写在连接器的日志里。机器自己的 `python3` 缺失或低于 3.11 时（每台 Mac 自带的 `/usr/bin/python3` 都是 3.9），这份 Python 还排到连接器 PATH 的最前面，房间里按名字运行的 `python3` 也就是它 |
 | **claude** (Claude Code CLI) | Central model session, or native file tools on an executor | Required; supplied by the platform |
 | **cheesehost** 连接器 | `install.sh` 装到 `~/.local/bin/`；必须装在**该服务自己能写的目录**里，否则自更新永远失败且无声（#501） |
 | **能用的用户级 service manager** | 后台常驻靠它，而我们只用当前账户的那一个 | 必须。Linux 上是 `systemd --user`（要 logind：ssh 进来得有 `XDG_RUNTIME_DIR`，还要能 `loginctl enable-linger`），macOS 上是 launchd。装不上不是无声的：`link connect` 直接报错，入册脚本判失败 |

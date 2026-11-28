@@ -89,12 +89,14 @@ def session_platform_dirs() -> tuple[str, ...]:
 # exit 137) and the session came back pointed at the other seat's target.
 #
 # So the files that are per-seat live under this directory, one child per seat,
-# inside the room's home. The room keeps shared transcripts in
-# `$HOME/.claude/projects`, plus `$HOME/.cheese/executor`,
-# `.cheese-environment/status.json` and the `room/` checkout. Programs that
-# resolve room paths still find those (`release.stage`'s busy scan,
-# `session_transfer`, `resource_cleanup`). Claude settings, skills and execution
-# helpers belong to a seat: a new launch must not replace a busy peer's files.
+# inside the room's home. The room keeps `$HOME/.cheese/executor`,
+# `.cheese-environment/status.json` and the `room/` checkout, which programs
+# that resolve room paths find there, and in `$HOME/.claude/projects` the
+# transcripts written before each seat kept its own and those a handover
+# brings (`device_launch`, `session_transfer`, `resource_cleanup`). Claude
+# settings, skills, execution helpers and transcripts belong to a seat: a new
+# launch must not replace a busy peer's files, and a transcript holds what its
+# session was given, a person's private input among it.
 SEATS_DIR = "seats"
 
 
@@ -185,6 +187,17 @@ CHECKOUT_DIR = "room"
 #: cleanup script, held to this one by `tests/unit/test_footprint_root.py`.
 SANDBOXES_DIR = "sandboxes"
 
+#: Under the enrollment root: the checkouts rooms on the machine kept there
+#: (`device_provider.DEVICE_WORK_ROOT`), none of which a member's own Claude
+#: Code there is given.
+WORK_DIR = "work"
+
+#: Under the enrollment root: every login its team gave the platform on the
+#: machine, the first (`CLAUDE_LOGIN_DIR`) and the rest (`CLAUDE_LOGINS_DIR`).
+#: A member's own Claude Code there keeps its own and sees none of the others
+#: (`device_launch._OWN_LOGIN_CREDENTIALS`).
+LOGINS_DIR = "logins"
+
 #: Under the enrollment root: the first Claude Code login its team gives the
 #: platform on a machine (`cheesehost claude login`), kept apart from the
 #: owner's own `~/.claude`, which the machine calls `login_kind.FIRST_LOGIN`.
@@ -197,16 +210,28 @@ SANDBOXES_DIR = "sandboxes"
 #: The connector writes it
 #: (`cli/internal/claudecode`) and the backend's probe reads it; both copies
 #: are held to this one by `tests/unit/test_footprint_root.py`.
-CLAUDE_LOGIN_DIR = "logins/claude-login"
+CLAUDE_LOGIN_DIR = f"{LOGINS_DIR}/claude-login"
 
 #: Under the enrollment root: every further login, one directory each, named by
 #: what the machine calls it. Held to the connector's copy by the same test.
-CLAUDE_LOGINS_DIR = "logins/claude-logins"
+CLAUDE_LOGINS_DIR = f"{LOGINS_DIR}/claude-logins"
 
 
 #: In a migrated login: a security command retaining its original Keychain
 #: items while credential files are read from the enrollment's new directory.
 CLAUDE_KEYCHAIN_DIR = "keychain"
+
+#: The Python the platform's own programs on a machine run on, as a shell word:
+#: the one its connector placed under the enrollment root and names by path
+#: (`cli/internal/devenv`, `runtimepath.Python`), never a `python3` found on
+#: PATH, which on a person's machine is theirs (nix, uv, pyenv) and may sit in
+#: a home a session is kept from. Where the connector placed none, the shell
+#: stops there and says so. A launch checks it once (`machine_launcher`) and
+#: then names `"$CHEESE_PYTHON"` itself.
+PLATFORM_PYTHON = (
+    '"${CHEESE_PYTHON:?the connector has placed no Python on this machine;'
+    ' restart the connector to place it}"'
+)
 
 #: A member's own Claude Code on a connection their account holds (#2991): its
 #: session host is the deployment's, and the connection reaches the launch as

@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import subprocess
+import sys
 import time
 import uuid
 from pathlib import Path
@@ -12,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from app.domain.agent import device_link
 from app.domain.agent.harness.channel import ScreenSetupError
 from app.domain.agent.harness.claude_code.remote_execution.launch import (
     transfer_history,
@@ -157,7 +159,58 @@ async def test_history_transfer_preserves_large_transcripts_and_subagents(tmp_pa
     child.parent.mkdir(parents=True)
     child.write_bytes(b'{"message":"child"}\n')
 
+    hub: Any = SimpleNamespace(exec=_machines(owners))
+    await transfer_history(hub, "source", "center", project, resource, resume)
+    for path in roots["source"].rglob("*.jsonl"):
+        assert (
+            roots["center"] / path.relative_to(roots["source"])
+        ).read_bytes() == path.read_bytes()
+    assert (source / f"{resume}.jsonl").read_bytes() == original
+    # A repeated handoff is safe, but an existing divergent history is preserved.
+    await transfer_history(hub, "source", "center", project, resource, resume)
+    destination = roots["center"] / "-old-work" / f"{resume}.jsonl"
+    destination.write_bytes(original + b"central continuation\n")
+    with pytest.raises(ScreenSetupError, match="different bytes"):
+        await transfer_history(hub, "source", "center", project, resource, resume)
+    assert destination.read_bytes() == original + b"central continuation\n"
+
+
+@pytest.mark.anyio
+async def test_a_handover_brings_the_transcript_a_seat_kept_as_its_own(tmp_path):
+    """A seat keeps its transcripts in its own directory. Handed over, the
+    conversation arrives in the room's directory on the other machine, where
+    the session that goes on with it takes it up into its seat there
+    (`runner.adopt_room_transcripts`)."""
+    project, resource, resume = uuid.uuid4(), uuid.uuid4(), str(uuid.uuid4())
+    owners = {name: tmp_path / name for name in ("source", "center")}
+    homes = {
+        name: owner / ".cheese/home" / str(project) / str(resource)
+        for name, owner in owners.items()
+    }
+    kept = homes["source"] / ".cheese/seats/0a1b2c3d4e5f/.claude/projects/-work"
+    kept.mkdir(parents=True)
+    (kept / f"{resume}.jsonl").write_text(json.dumps({"sessionId": resume}) + "\n")
+
+    await transfer_history(
+        SimpleNamespace(exec=_machines(owners)),
+        "source",
+        "center",
+        project,
+        resource,
+        resume,
+    )
+
+    arrived = homes["center"] / ".claude/projects/-work" / f"{resume}.jsonl"
+    assert arrived.read_bytes() == (kept / f"{resume}.jsonl").read_bytes()
+
+
+def _machines(owners):
+    """Two machines' `hub.exec`, each running the program it is sent in a
+    home of its own, on this interpreter for the platform's Python."""
+
     async def execute(device, command, *, stdin, timeout):
+        if command[0] == device_link.PYTHON:
+            command = [sys.executable, *command[1:]]
         process = await asyncio.create_subprocess_exec(
             *command,
             env={**os.environ, "HOME": str(owners[device])},
@@ -175,17 +228,4 @@ async def test_history_transfer_preserves_large_transcripts_and_subagents(tmp_pa
             "stderr": stderr.decode(),
         }
 
-    hub: Any = SimpleNamespace(exec=execute)
-    await transfer_history(hub, "source", "center", project, resource, resume)
-    for path in roots["source"].rglob("*.jsonl"):
-        assert (
-            roots["center"] / path.relative_to(roots["source"])
-        ).read_bytes() == path.read_bytes()
-    assert (source / f"{resume}.jsonl").read_bytes() == original
-    # A repeated handoff is safe, but an existing divergent history is preserved.
-    await transfer_history(hub, "source", "center", project, resource, resume)
-    destination = roots["center"] / "-old-work" / f"{resume}.jsonl"
-    destination.write_bytes(original + b"central continuation\n")
-    with pytest.raises(ScreenSetupError, match="different bytes"):
-        await transfer_history(hub, "source", "center", project, resource, resume)
-    assert destination.read_bytes() == original + b"central continuation\n"
+    return execute

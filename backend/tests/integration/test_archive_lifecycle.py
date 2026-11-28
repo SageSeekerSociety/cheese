@@ -5,6 +5,7 @@ import hashlib
 import http.server
 import os
 import subprocess
+import sys
 import tarfile
 import threading
 import uuid
@@ -19,7 +20,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.device_failures import DeviceOffline
 from app.core.errors import ConflictError
-from app.domain.agent import device_storage
+from app.domain.agent import device_link, device_storage
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.services import AgentSessionService
@@ -655,6 +656,9 @@ class LocalDevice:
     async def exec(
         self, device_id, argv, *, cwd=None, env=None, timeout=60, stdin=None
     ):
+        if argv[0] == device_link.PYTHON:
+            # As the connector runs it: on the Python it placed.
+            argv = [sys.executable, *argv[1:]]
         result = await asyncio.to_thread(
             subprocess.run,
             argv,
@@ -730,7 +734,7 @@ def private_bucket(monkeypatch):
 @pytest.fixture
 async def session_host_room(client, monkeypatch, tmp_path, private_bucket):
     """An archived room whose home, on the session host, holds a main session
-    transcript and a subagent's."""
+    transcript and a subagent's in the room's directory, and a seat's own."""
     room_id, cleanup_id = await archived_room(client, monkeypatch)
     async with client.test_factory() as session:
         operation = await session.get(RoomCleanup, cleanup_id)
@@ -741,6 +745,9 @@ async def session_host_room(client, monkeypatch, tmp_path, private_bucket):
     (sessions / "s1/subagents").mkdir(parents=True)
     (sessions / "s1.jsonl").write_bytes(b'{"said":"main"}\n')
     (sessions / "s1/subagents/agent-a.jsonl").write_bytes(b'{"said":"sub"}\n')
+    seat = home / ".cheese/seats/0a1b2c3d4e5f/.claude/projects/-room"
+    seat.mkdir(parents=True)
+    (seat / "s4.jsonl").write_bytes(b'{"said":"seat"}\n')
     monkeypatch.setattr(settings, "agent_session_device_id", "center")
     monkeypatch.setattr(retire.device_hub, "exec", LocalDevice(machine).exec)
     entry = {
@@ -781,6 +788,7 @@ def _with_codex_and_pi(room) -> dict[str, bytes]:
     return {
         "projects/-room/s1.jsonl": b'{"said":"main"}\n',
         "projects/-room/s1/subagents/agent-a.jsonl": b'{"said":"sub"}\n',
+        "seats/0a1b2c3d4e5f/projects/-room/s4.jsonl": b'{"said":"seat"}\n',
         "codex/seat-a/codex/sessions/2026/10/19/rollout-1.jsonl": b'{"said":"codex"}\n',
         "pi/seat-b/sessions/s2.jsonl": b'{"said":"pi"}\n',
         "pi/seat-b/subagents/agent-c/sessions/s3.jsonl": b'{"said":"pi child"}\n',
@@ -835,6 +843,7 @@ async def test_cleanup_keeps_transcripts_on_the_session_host_for_thirty_days(
     assert _archived_files(room.archive) == {
         "projects/-room/s1.jsonl": b'{"said":"main"}\n',
         "projects/-room/s1/subagents/agent-a.jsonl": b'{"said":"sub"}\n',
+        "seats/0a1b2c3d4e5f/projects/-room/s4.jsonl": b'{"said":"seat"}\n',
     }
     async with client.test_factory() as session:
         operation = await session.get(RoomCleanup, room.cleanup_id)

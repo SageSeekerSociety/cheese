@@ -410,19 +410,21 @@ fi
 echo CHEESE_STARTUP:connect
 "$HOME/.local/bin/cheesehost" link connect < /dev/null
 # What the connector and its rooms run on, which `link connect` just placed
-# where the system's own is missing or too old (`cli/internal/devenv`): tmux,
+# (`cli/internal/devenv`): tmux, where the system's own is missing or too old,
 # which the connector keeps every screen in and exits without, while systemd
-# still reports it started; git, without which a room's turn runs in an empty
-# directory and reports success; python3, which the platform's own programs on
-# a machine are. Nothing comes from the machine's packages, so a machine where
-# one could not be placed is refused here, while somebody reads the output.
+# still reports it started; git, likewise, without which a room's turn runs in
+# an empty directory and reports success; and always its own Python, which the
+# platform's own programs on a machine run on. Nothing comes from the
+# machine's packages, so a machine where one could not be placed is refused
+# here, while somebody reads the output.
 echo CHEESE_STARTUP:tools
 runtime="$HOME/.cheese/runtime"
-for tool in tmux git python3; do
-  case "$tool" in python3) dir=python ;; *) dir=$tool ;; esac
-  PATH="$runtime/$dir/bin:$PATH" command -v "$tool" >/dev/null 2>&1 \\
+for tool in tmux git; do
+  PATH="$runtime/$tool/bin:$PATH" command -v "$tool" >/dev/null 2>&1 \\
     || {{ echo "$tool is missing and cheesehost could not place it" >&2; exit 1; }}
 done
+[ -x "$runtime/python/bin/python3" ] \\
+  || {{ echo "python3 is missing and cheesehost could not place it" >&2; exit 1; }}
 {data_disk}
 {prewarm}
 # A retried enrollment writes a new device identity. Starting an active service

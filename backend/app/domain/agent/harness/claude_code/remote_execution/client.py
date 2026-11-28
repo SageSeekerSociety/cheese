@@ -26,6 +26,7 @@ import io
 import json
 import os
 import shlex
+import shutil
 import signal
 import subprocess
 import threading
@@ -320,12 +321,16 @@ def prepare(
     unavailable = target.get("kind") in {"unavailable", "deferred"}
     forwarded = target.get("kind") not in {"private", "unavailable"}
     device_forwarded = target.get("kind") in {"device", "deferred"}
-    # A member's own Claude Code on their own computer (`owner_provider`): no
-    # view, no namespace. It sees the project where an executor on this machine
-    # holds it; before its lease, and with the executor elsewhere (`apart`), in
-    # a directory of its own (`context_copy`), its placeholder here.
+    # A member's own Claude Code on the machine holding its subscription
+    # (`owner_provider`): no view. It sees the project where an executor on
+    # this machine holds it; before its lease, and with the executor elsewhere
+    # (`apart`), in a directory of its own (`context_copy`), its placeholder
+    # here. It is kept to its own seat there (`enter`) unless its session holds
+    # that machine whole (`whole_machine`), or the machine is Windows, which
+    # has nothing to keep it with.
     local = bool(target.get("local"))
     apart = local and bool(target.get("apart"))
+    kept = not local or not (target.get("whole_machine") or sys.platform == "win32")
     placeholder = str(directory / "workspace") if local else DEFERRED_WORKSPACE
     workspace = (
         directory / "workspace"
@@ -426,18 +431,12 @@ def prepare(
         # `memoryPath`). Not in the room's home, which the room's seats share:
         # two seats can be working for two people at once.
         central_memory=str(directory / "memory"),
-        # What the session's namespace leaves it of the room's seats and of the
-        # session host's rooms (`namespace._keep_only`): its own seat, which
-        # holds its memory tree, and its own room's home. The launch names
-        # both roots (`device_launch`); a session it did not launch has none.
-        seat_only=[
-            [os.environ[root], str(own)]
-            for root, own in (
-                ("CHEESE_SEATS_ROOT", directory.parent),
-                ("CHEESE_HOMES_ROOT", home),
-            )
-            if os.environ.get(root) and not local
-        ],
+        seat_only=_seat_only(
+            home,
+            directory.parent,
+            [seen, start] if local and not at_placeholder else [],
+            claude,
+        ),
         helper=[sys.executable, str(Path(__file__).resolve())],
         central_hooks=(base_settings or {}).get("hooks", {}),
         target_file=str(directory / "execution.json"),
@@ -661,7 +660,9 @@ def prepare(
     launch = {
         # The session enters its own namespace first, where the project is at
         # `workspace`; `cwd` is where this host holds it, for starting there.
-        "command": command if local else [*helper, "enter", str(target_path), *command],
+        # A member's own sits where it is, kept to its own seat (`enter`)
+        # unless it is not kept at all.
+        "command": [*helper, "enter", str(target_path), *command] if kept else command,
         "env": env,
         "cwd": start if local else str(workspace),
         "workspace": start,
@@ -669,6 +670,119 @@ def prepare(
     }
     (directory / "launch.json").write_text(json.dumps(launch))
     return launch
+
+
+def _seat_only(home, seat, beside, claude="claude"):
+    """What the session's namespace leaves it of each root on this host
+    (`namespace._keep_only`, `namespace._keep_own`), as ``[root, [kept...],
+    [kept read-only...]]``, an outer root before one inside what it keeps. A
+    kept path may be a file. The launch names the roots (`device_launch`,
+    `machine_launcher`); a session it did not launch has none.
+
+    A member's own Claude Code keeps, of its machine owner's home, only what it
+    runs on: the enrollment's root, narrowed below; the build it runs
+    (``claude``), the file alone and the file a link to it names, read-only;
+    on a Mac the login Keychain, which the seat's `security` opens to read and
+    renew its login; and the project where an executor on this machine holds
+    it (``beside``). Of the enrollment's root it keeps the rooms, the runners'
+    state and the logins, each narrowed below, and the programs the platform
+    placed there (`runtime`, among them the Python this client and the hooks
+    run on, `place.PLATFORM_PYTHON`, and `toolchain`), read-only. The rest of
+    the root is nothing it needs and some of it is not its to read: the forge
+    proxy's signing key, the machine's other enrollments, every seat's
+    launcher. The rest of the owner's home, their own keys and documents among
+    it, is nothing it needs either, and `SendUserFile` hands a person any file
+    it can read.
+
+    Of the rooms, its own room's home, and that project when it is among them,
+    but none of that room's own transcript directory, which holds the seats'
+    transcripts from before each kept its own; of the room's seats, its own,
+    which holds its memory tree and its transcripts, each of them what its
+    session was given as sent, a person's private input among it; of the runners'
+    state, its own runner's, whose journal records what its tools read of that
+    tree; of the rooms' temporary directories, its own room's. A member's own
+    Claude Code also keeps, of the machine's logins, the one it signs in with,
+    and nothing of the checkouts rooms kept there."""
+    owner = os.environ.get("CHEESE_OWNER_HOME")
+    homes = os.environ.get("CHEESE_HOMES_ROOT")
+
+    def within(path, root):
+        return bool(root) and (path == root or path.startswith(root + "/"))
+
+    build = os.path.abspath(shutil.which(claude) or claude)
+    builds = sorted({build, os.path.realpath(build)})
+    enrollment = (
+        os.path.join(owner, os.environ.get("CHEESE_PROFILE_ROOT", ".cheese"))
+        if owner
+        else None
+    )
+    runs_on = [
+        enrollment,
+        *(
+            [os.path.join(owner or "", "Library/Keychains")]
+            if sys.platform == "darwin"
+            else []
+        ),
+        *beside,
+    ]
+
+    def under(root, paths):
+        return sorted(
+            {path for path in paths if path and path != root and within(path, root)}
+        )
+
+    # The room's transcripts are every seat's from before each kept its own
+    # (`device_launch`); a seat still linked to them is not kept from them.
+    room_transcripts = os.path.join(str(home), ".claude", "projects")
+    own_transcripts = os.path.realpath(os.path.join(str(seat), ".claude", "projects"))
+    if within(own_transcripts, os.path.realpath(room_transcripts)):
+        room_transcripts = None
+    env = os.environ.get
+    roots = (
+        (
+            owner,
+            under(owner, runs_on),
+            under(owner, [path for path in builds if not within(path, enrollment)]),
+        ),
+        (
+            enrollment,
+            under(
+                enrollment,
+                [homes, env("CHEESE_RUNNERS_ROOT"), env("CHEESE_LOGINS_ROOT"), *beside],
+            ),
+            under(
+                enrollment,
+                [
+                    os.path.join(enrollment or "", "runtime"),
+                    os.path.join(enrollment or "", "toolchain"),
+                    *builds,
+                ],
+            ),
+        ),
+        (homes, [home] + [path for path in beside if within(path, homes)], []),
+        (room_transcripts, [], []),
+        (env("CHEESE_SEATS_ROOT"), [seat], []),
+        (env("CHEESE_RUNNERS_ROOT"), [env("CHEESE_RUNNER_STATE")], []),
+        (env("CHEESE_TMPS_ROOT"), [env("TMPDIR")], []),
+        (env("CHEESE_LOGINS_ROOT"), [env("CLAUDE_SECURESTORAGE_CONFIG_DIR")], []),
+        (env("CHEESE_WORKS_ROOT"), [], []),
+    )
+    narrowed = []
+    for cover, kept, read_only in roots:
+        kept = [str(path) for path in kept if path]
+        read_only = [str(path) for path in read_only]
+        # A root an outer one hides, beside everything that one keeps (`work`
+        # under the enrollment's root), is hidden with it: nothing to narrow.
+        if cover and not any(
+            within(cover, outer)
+            and not any(within(cover, keep) for keep in [*keeps, *unwritable])
+            for outer, keeps, unwritable in narrowed
+        ):
+            narrowed.append((cover, kept, read_only))
+    return [
+        [cover, kept, *([read_only] if read_only else [])]
+        for cover, kept, read_only in narrowed
+    ]
 
 
 #: The build's own tools a narrowed session is refused unless it holds them.

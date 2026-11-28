@@ -16,6 +16,8 @@ An environment is one of two things:
 - a self-hosted machine, ``{"kind": "self_hosted", "device_id": ...}``: the one
   case where a session must use one particular enrolled computer. It runs
   there without isolation, so only the device's team administrators may choose it.
+  A member's own Claude Code whose subscription is on that same computer is
+  then kept from nothing there either (`owner_provider`).
 """
 
 import uuid
@@ -31,7 +33,10 @@ from app.core.config import settings
 from app.core.errors import UnprocessableEntityError
 from app.core.sentences import say
 from app.domain.agent.models import AgentTurn
+from app.domain.agent_instance.models import AgentInstance
+from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room
+from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 
 #: The platform's machines, the default for a new agent.
@@ -160,3 +165,77 @@ async def works_tasks_of(
     if device is None:
         return False
     return device.team_id == project.team_id
+
+
+async def self_hosts(
+    session: AsyncSession, device_id: str, project_id: uuid.UUID
+) -> bool:
+    """Whether ``device_id`` is, right now, a machine the project's tools may
+    run on as a self-hosted environment: enrolled, hosted by a person, and
+    serving the project's team. Unbound or given to another team, it is not,
+    whatever environment still names it."""
+    devices = sql_device_service(session)
+    device = await devices.get_device(device_id)
+    return (
+        device is not None
+        and device.supply == Supply.self_hosted
+        and await devices.serves_project(device_id, project_id)
+        and await devices.get_hosted_device(device_id) is not None
+    )
+
+
+@dataclass(frozen=True)
+class Default:
+    """What a new agent in a conversation gets, and where that came from."""
+
+    environment: Sandbox | SelfHosted
+    #: "task" | "room" | "project" | "deployment"
+    source: str
+
+
+def default_for(topic, task, project_settings: dict | None) -> Default:
+    """The task's default, else its room's, else the project's, else a
+    standard sandbox."""
+    if task is not None and (own := stored(task.default_environment)) is not None:
+        return Default(own, "task")
+    if (room := stored(topic.default_environment)) is not None:
+        return Default(room, "room")
+    if (project := project_default(project_settings)) is not None:
+        return Default(project, "project")
+    return Default(default_environment(), "deployment")
+
+
+async def environment_of(
+    db: AsyncSession, row, topic, task, project
+) -> Sandbox | SelfHosted:
+    """The environment of the agent whose session is ``row``, in its
+    conversation. The first time it is asked, the default there is written as
+    the agent's own, so a later change of default moves nobody."""
+    sessions = AgentSessionService(db)
+    own = await sessions.environment(row.conversation_id, row.agent_handle)
+    if own is not None:
+        return stored(own.environment) or default_environment()
+    instance = await db.scalar(
+        select(AgentInstance).where(
+            AgentInstance.project_id == topic.project_id,
+            AgentInstance.handle == row.agent_handle,
+        )
+    )
+    device = (
+        (instance.configuration or {}).get("execution_device_id") if instance else None
+    )
+    spec = (instance.configuration or {}).get("execution_spec") if instance else None
+    if device:
+        chosen = Default(Sandbox(spec=TEAM_DEVICES), "agent")
+    elif spec:
+        chosen = Default(Sandbox(spec=spec), "agent")
+    else:
+        chosen = default_for(topic, task, project.settings if project else None)
+    written = await sessions.set_environment(
+        row.conversation_id,
+        row.agent_handle,
+        chosen.environment.model_dump(),
+        chosen_by=None,
+        only_if_unset=True,
+    )
+    return stored(written.environment) or default_environment()

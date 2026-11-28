@@ -387,6 +387,11 @@ func (h *Host) createSession(m link.Msg) {
 	if dirs := os.Getenv(runtimepath.Var); dirs != "" {
 		env = append(env, runtimepath.Var+"="+dirs)
 	}
+	// The Python the launcher runs the platform's programs on, by path, for
+	// the same reason (`runtimepath.Python`).
+	if python := os.Getenv(runtimepath.Python); python != "" {
+		env = append(env, runtimepath.Python+"="+python)
+	}
 	for k, v := range m.Env {
 		env = append(env, k+"="+place.ExpandRoot(v))
 	}
@@ -621,7 +626,11 @@ func (h *Host) runExec(ctx context.Context, cancel context.CancelFunc, m link.Ms
 		}()
 	}
 
-	name, args := h.execArgv(m.Command)
+	name, args, err := h.execArgv(m.Command)
+	if err != nil {
+		_ = h.conn.Send(link.Msg{T: "exec.result", ID: m.ID, Stderr: err.Error(), Exit: -1})
+		return
+	}
 	cmd := exec.CommandContext(ctx, name, args...)
 	if m.Cwd != "" {
 		cmd.Dir = m.Cwd
@@ -668,19 +677,38 @@ func (h *Host) runExec(ctx context.Context, cancel context.CancelFunc, m link.Ms
 // need not be on PATH — under the config it runs with.
 const selfCommand = "cheesehost"
 
-func (h *Host) execArgv(command []string) (string, []string) {
-	if command[0] != selfCommand {
-		return command[0], command[1:]
+// platformPython is how the server names, in an exec, the Python its programs
+// run on (`cheese-python -` with a program on stdin): the one this connector
+// placed, run by path (`runtimepath.Python`), never a `python3` PATH finds,
+// which on a person's machine is theirs. Where none could be placed the exec
+// fails here and says so. It is a name of its own, announced in `hello`
+// (`link.Msg.Python`), so that an exec of `python3` means what it always has —
+// whatever PATH finds — and a server never sends this one to a connector that
+// would look it up on PATH.
+const platformPython = "cheese-python"
+
+var errNoPython = errors.New("cheese: this machine has no Python of the platform's placed; restart the connector to place it")
+
+func (h *Host) execArgv(command []string) (string, []string, error) {
+	switch command[0] {
+	case platformPython:
+		python := os.Getenv(runtimepath.Python)
+		if python == "" {
+			return "", nil, errNoPython
+		}
+		return python, command[1:], nil
+	case selfCommand:
+		self, err := os.Executable()
+		if err != nil {
+			return command[0], command[1:], nil
+		}
+		args := append([]string{}, command[1:]...)
+		if h.cfgPath != "" {
+			args = append(args, "--config", h.cfgPath)
+		}
+		return self, args, nil
 	}
-	self, err := os.Executable()
-	if err != nil {
-		return command[0], command[1:]
-	}
-	args := append([]string{}, command[1:]...)
-	if h.cfgPath != "" {
-		args = append(args, "--config", h.cfgPath)
-	}
-	return self, args
+	return command[0], command[1:], nil
 }
 
 func (h *Host) cancelExec(id string) {

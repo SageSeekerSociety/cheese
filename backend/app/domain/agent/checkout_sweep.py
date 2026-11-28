@@ -12,7 +12,7 @@
 import json
 from pathlib import Path
 
-from app.domain.agent import device_hub, resource_cleanup
+from app.domain.agent import device_hub, device_link, resource_cleanup
 
 # Removing checkouts of a few GB each, after one `lsof` over all of them.
 EXEC_TIMEOUT_S = 300.0
@@ -53,7 +53,7 @@ async def sweep(device_id: str, project: str, resource: str, tasks: list[str]) -
     for batch in _batches(tasks):
         result = await hub.exec(
             device_id,
-            ["python3", "-", "tasks", project, resource, "-", "-", *batch],
+            [device_link.PYTHON, "-", "tasks", project, resource, "-", "-", *batch],
             stdin=script,
             timeout=EXEC_TIMEOUT_S,
         )

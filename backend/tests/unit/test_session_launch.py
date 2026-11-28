@@ -7,6 +7,7 @@ which tool no user here can answer — and none is about a transport.
 
 import hashlib
 import subprocess
+import sys
 from pathlib import Path
 
 from app.domain.agent.harness.claude_code import ClaudeLaunch, device_launch
@@ -65,6 +66,7 @@ def _configure(home, system_prompt: str) -> None:
             "HOME": str(home),
             "REAL_HOME": str(home),
             "PATH": "/usr/bin:/bin",
+            "CHEESE_PYTHON": sys.executable,
         },
         check=True,
         capture_output=True,
@@ -95,7 +97,8 @@ def test_the_launch_writes_the_files_claude_reads_before_it_starts(tmp_path):
         "skills/.cheese-platform-skills",
     }
     assert (_seat(tmp_path) / "remote-session/base-settings.json").is_file()
-    assert (config / "projects").resolve() == (tmp_path / ".claude/projects").resolve()
+    # The seat's transcripts are its own, not the room's.
+    assert (config / "projects").is_dir() and not (config / "projects").is_symlink()
     assert (_seat(tmp_path) / "cheese-system-prompt.md").read_text() == "你是芝士。\n"
     for name, content in native_skill_files().items():
         assert (config / name).read_text() == content, name

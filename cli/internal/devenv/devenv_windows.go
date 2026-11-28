@@ -5,7 +5,10 @@
 // and checksummed there, and live under the footprint root, so uninstall takes
 // them with everything else. The connector puts them first on its own PATH,
 // which every command it runs inherits — so the argv the server already sends
-// (`python3 -`, `sh -c …`, `git …`) resolves here unchanged.
+// (`sh -c …`, `git …`) resolves here unchanged. The Python is also named by
+// path in CHEESE_PYTHON (`runtimepath.Python`), which the platform's own
+// programs run on, as on every other system; spelled with forward slashes,
+// which both Windows and Git Bash's shell read as the same file.
 package devenv
 
 import (
@@ -19,6 +22,7 @@ import (
 	"syscall"
 
 	"github.com/SageSeekerSociety/cheese/cli/internal/place"
+	"github.com/SageSeekerSociety/cheese/cli/internal/runtimepath"
 )
 
 const platform = "windows-x64"
@@ -56,6 +60,7 @@ func Ensure(ctx context.Context, base string, log io.Writer) error {
 		os.Setenv("PATH", strings.Join(append(path, current), ";"))
 	}
 	os.Setenv("CLAUDE_CODE_GIT_BASH_PATH", filepath.Join(git, "bin", "bash.exe"))
+	os.Setenv(runtimepath.Python, filepath.ToSlash(filepath.Join(root, "python", "python3.exe")))
 	return pinPythonPath(filepath.Join(root, "python"))
 }
 

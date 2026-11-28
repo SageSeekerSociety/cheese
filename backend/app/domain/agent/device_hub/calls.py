@@ -18,6 +18,7 @@ import uuid
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from app.core.sentences import say
 from app.domain.agent import device_link
 from app.domain.agent.device_contract import (
     EXEC_REPLY_SLACK_S,
@@ -57,10 +58,18 @@ async def exec(
 
     Raises ``DeviceOffline`` when the device has no link and is not on its
     way back (``_linked``), rather than sending into the void and timing out
-    ``timeout``+5s later."""
+    ``timeout``+5s later.
+
+    A command that runs the platform's own Python (``device_link.PYTHON``,
+    directly or through the ``CHEESE_PYTHON`` a shell command names) goes only
+    to a connector that said it has placed one. One built before is being told
+    to update (``_update_if_stale``) and would run the owner's ``python3`` or
+    nothing, so the call is ``DeviceNotReady`` until it has."""
     device = hub._device(device_id)
     if not await hub._linked(device):
         raise DeviceOffline(device_id)
+    if not device.python and _runs_platform_python(argv):
+        raise DeviceNotReady(str(say("connectorStillUpdating")))
     device.exec_seq += 1
     eid = f"e{device.exec_seq}"
     fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
@@ -87,6 +96,12 @@ async def exec(
         device.exec_pending.pop(eid, None)
         device.exec_listeners.pop(eid, None)
         _read_a_failure_nobody_awaited(fut)
+
+
+def _runs_platform_python(argv: list[str]) -> bool:
+    return bool(argv) and (
+        argv[0] == device_link.PYTHON or any("CHEESE_PYTHON" in part for part in argv)
+    )
 
 
 async def call_executor(

@@ -92,6 +92,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.domain.agent import (
+    device_link,
     execution,
     resource_cleanup,
     rootfs_snapshot,
@@ -181,7 +182,7 @@ def program(action: str, **request) -> str:
 async def run_on_host(hub, device_id: str, action: str, timeout: float, **request):
     result = await hub.exec(
         device_id,
-        ["python3", "-"],
+        [device_link.PYTHON, "-"],
         stdin=program(action, **request),
         timeout=timeout,
     )

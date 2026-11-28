@@ -17,7 +17,7 @@ from app.core.background import spawn
 from app.core.config import settings
 from app.core.db import SessionFactory
 from app.core.device_failures import DeviceOffline
-from app.domain.agent import resource_cleanup
+from app.domain.agent import device_link, resource_cleanup
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_storage import (
     KEEP_ROOM_TIMEOUT_S,
@@ -184,7 +184,7 @@ async def _device_action(
     result = await device_hub.exec(
         device,
         [
-            "python3",
+            device_link.PYTHON,
             "-",
             action,
             str(project),

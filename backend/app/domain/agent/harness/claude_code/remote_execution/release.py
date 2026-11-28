@@ -317,9 +317,11 @@ def _sources():
             "shell_stop.py",
             # The parts of `client.py` it imports from beside itself: the
             # command it runs for the build's shell prefix, the namespace it
-            # enters a session into, and the files a turn hands a person.
+            # enters a session into and the Seatbelt rules that stand in for
+            # one on a Mac, and the files a turn hands a person.
             "shell_prefix.py",
             "namespace.py",
+            "confinement.py",
             "send_user_file.py",
             # Windows' locks, process trees and detached starts, which
             # `shell_stop.py` and `runtime.py` load from beside them there.

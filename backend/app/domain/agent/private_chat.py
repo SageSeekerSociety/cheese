@@ -12,7 +12,7 @@ from app.domain.agent.executor_transport import RemoteClient
 from app.domain.agent.harness.claude_code import (
     private_execution_target as target,
 )
-from app.domain.agent.place import session_platform_dirs
+from app.domain.agent.place import PLATFORM_PYTHON, session_platform_dirs
 
 
 def scratch_target(
@@ -64,7 +64,7 @@ async def control(
         '"$root/seats"/*/remote-session/execution.json; do '
         'if test -f "$config"; then '
         'seat="$(dirname "$(dirname "$config")")"; '
-        'exec python3 "$seat/remote-execution/client.py" control "$config"; fi; '
+        f'exec {PLATFORM_PYTHON} "$seat/remote-execution/client.py" control "$config"; fi; '
         "done; done; "
         'echo "no private executor is installed for this room" >&2; exit 1'
     )
@@ -96,7 +96,7 @@ async def release(project_id, topic_id, device_id, hub):
             '"$root/seats"/*/remote-target.json; do '
             'if test -f "$config"; then '
             'seat="$(dirname "$config")"; '
-            'exec python3 "$seat/remote-execution/client.py" release "$config"; '
+            f'exec {PLATFORM_PYTHON} "$seat/remote-execution/client.py" release "$config"; '
             "fi; done; done",
         ],
         timeout=45,

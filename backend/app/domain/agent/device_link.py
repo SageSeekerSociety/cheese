@@ -28,6 +28,9 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+# Re-exported beside the rest of the wire (`app.core.device_programs`).
+from app.core.device_programs import PLATFORM_PYTHON as PYTHON  # noqa: F401
+
 # Must match cli/internal/link/link.go `Version`. Bump only for a breaking change.
 PROTOCOL_VERSION = 1
 
@@ -52,6 +55,9 @@ class LinkMsg:
     # `hello` only: the connector opens the byte streams `stream_open` asks
     # for and relays them on credit (`cli/internal/host/stream.go`).
     streams: bool = False
+    # `hello` only: the connector runs an exec of ``PYTHON`` on the Python it
+    # placed.
+    python: bool = False
     name: str = ""
     value: Any = None
     id: str = ""
@@ -75,6 +81,7 @@ class LinkMsg:
             executor=m.get("executor") is True,
             profiles=m.get("profiles") is True,
             streams=m.get("streams") is True,
+            python=m.get("python") is True,
             name=str(m.get("name", "")),
             value=m.get("value"),
             id=str(m.get("id", "")),

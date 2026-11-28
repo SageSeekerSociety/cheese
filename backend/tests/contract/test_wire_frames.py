@@ -230,3 +230,15 @@ def test_a_stream_frame_up_is_read_as_the_connector_wrote_it(fixture) -> None:
         assert parsed.decoded_data() == meaning["payload"].encode()
     if "error" in meaning:
         assert parsed.error == meaning["error"]
+
+
+def test_the_hello_the_connector_writes_says_it_runs_the_platforms_python() -> None:
+    """The server sends an exec of the platform's own Python only to a
+    connector whose `hello` says so (`device_hub.calls.exec`)."""
+    fixture = _only("hello")
+    hello = device_link.LinkMsg.parse(fixture["frame"])
+    assert hello.python is fixture["meaning"]["python"] is True
+    assert (hello.build, hello.target) == (
+        fixture["meaning"]["build"],
+        fixture["meaning"]["target"],
+    )

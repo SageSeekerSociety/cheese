@@ -48,7 +48,7 @@ from app.domain.agent import (
     toolchain,
 )
 from app.domain.agent.launch import MachineLaunch, MachinePlace
-from app.domain.agent.place import machine_root, seat_name
+from app.domain.agent.place import PLATFORM_PYTHON, machine_root, seat_name
 from app.domain.agent.resource_cleanup import SESSION_TMP
 
 # The launcher below spells the platform's own directory literally, because the
@@ -94,7 +94,8 @@ from app.domain.agent.resource_cleanup import SESSION_TMP
 # last launch, so this script HAD started a helper; it simply did not outlive
 # the tmux window that ran the script, whose process group is torn down —
 # SIGHUP — the moment the script returns.
-CHEESE_TUNNEL_UP = """#!/bin/sh
+CHEESE_TUNNEL_UP = (
+    """#!/bin/sh
 # $1: this seat's directory, as the launcher builds it. Everything that says
 # WHICH teammate the traffic is (--token-file below) or which process is this
 # seat's is per seat, because a room may seat more than one agent. One shared
@@ -103,23 +104,26 @@ CHEESE_TUNNEL_UP = """#!/bin/sh
 # file last — the other one's model silently replaced by that teammate's.
 # The helper's CODE stays one file in the room's `.cheese`: it holds nothing.
 SEATD="${1:-$HOME/.cheese}"
+: """
+    + PLATFORM_PYTHON
+    + """
 PIDF="$SEATD/cheese-tunnel.pid"
 PORTF="$SEATD/cheese-tunnel.port"
 LOG="$SEATD/cheese-tunnel.log"
 NEWF="$PORTF.new.$$"
 # Start a helper on port $1 and wait for it. Exit 0: it is alive and wrote its
 # port file. 3: it exited, which is how a failed bind looks. 1: timed out.
-# The wait runs in python3, NOT with bash's /dev/tcp: this script is invoked as
-# `sh`, and dash has no /dev/tcp. python3 is not an extra dependency here; the
-# helper itself is written in it.
+# The wait runs in Python, NOT with bash's /dev/tcp: this script is invoked as
+# `sh`, and dash has no /dev/tcp. Python is not an extra dependency here; the
+# helper itself is written in it. Both run on the platform's (above).
 start_helper() {
   rm -f "$NEWF"
-  nohup python3 "$HOME/.cheese/cheese-tunnel.py" \\
+  nohup "$CHEESE_PYTHON" "$HOME/.cheese/cheese-tunnel.py" \\
     --port "$1" --port-file "$NEWF" --url "$CHEESE_TUNNEL_URL" \\
     --token-file "$SEATD/cheese-tunnel.token" \\
     >>"$LOG" 2>&1 &
   NEWPID=$!
-  python3 - "$NEWPID" "$NEWF" <<'WAITPY'
+  "$CHEESE_PYTHON" - "$NEWPID" "$NEWF" <<'WAITPY'
 import os, sys, time
 
 pid, path = int(sys.argv[1]), sys.argv[2]
@@ -169,6 +173,7 @@ mv "$NEWF" "$PORTF"
 echo "$NEWPID" > "$PIDF"
 echo "$PORT $NEWPID"
 """
+)
 
 
 # Brings 运行环境预览's helper up, and does nothing at all until an agent has asked
@@ -578,18 +583,14 @@ REAL_HOME="$HOME"
 # the tmux it found): this script runs in a login shell, and macOS's login
 # profile (path_helper) puts /usr/bin back in front, where python3 is 3.9.
 [ -z "${{CHEESE_RUNTIME_PATH:-}}" ] || export PATH="$CHEESE_RUNTIME_PATH:$PATH"
+# The platform's own programs here (the runner, the executor's client, the
+# hooks, the helpers below) run on the Python the connector placed, by path:
+# the `python3` PATH finds is the owner's, may sit in a home this session is
+# kept from, or in the room's home. A machine with none placed starts nothing.
+: {PLATFORM_PYTHON}
 # The machine's own search path, before anything is put in front of it: the
 # Keychain lookup (`device_launch._OWN_LOGIN_CREDENTIALS`) runs on it alone.
 REAL_PATH="$PATH"
-# The Python the launch starts the session's own programs on (its runner, the
-# executor's client, the environment runner), named by path: the connector's
-# own, when it names one, or else the one on the machine's own search path.
-if [ -z "${{CHEESE_PYTHON:-}}" ]; then
-  CHEESE_PYTHON="$(command -v python3)" || {{
-    echo "cheese-launch: no python3 on this machine's PATH" >&2
-    exit 1
-  }}
-fi
 # Bash exposes this clock without spawning date. Other shells skip diagnostics.
 # Append across relaunches; only phase names and timestamps enter this file.
 # The same marks of THIS launch also travel to the runner in its environment
@@ -675,6 +676,9 @@ fi
 # every account's, so the rooms sit under a directory only this one owns;
 # one somebody else made, or a link, leaves the session on the system default.
 # Short, because programs make sockets in TMPDIR and a path stops at 108 bytes.
+# The session is kept to its own room's among them, as to its own room
+# (`remote_execution/namespace._keep_only`, `CHEESE_TMPS_ROOT`).
+unset CHEESE_TMPS_ROOT
 TB="{SESSION_TMP}/cheese-$(id -u)"
 TD="$TB/${{CH##*/}}"
 # Not on Windows, where Git Bash's `/var/tmp` sits inside its own install and
@@ -682,7 +686,7 @@ TD="$TB/${{CH##*/}}"
 if [ "${{OS:-}}" != Windows_NT ] \
     && mkdir -p -m 700 "$TB" 2>/dev/null && [ ! -L "$TB" ] && [ -O "$TB" ] \
     && mkdir -p "$TD" 2>/dev/null; then
-  export TMPDIR="$TD"
+  export TMPDIR="$TD" CHEESE_TMPS_ROOT="$TB"
 fi
 # With the stores redirected above, the copies these tools left in the room's
 # own HOME are read by nothing. Reclaim them — a room created before the store
@@ -824,7 +828,7 @@ cd "$CHEESE_WORK"
 if [ -n "${{TMUX:-}}" ]; then
   CHEESE_TMUX_SOCK="${{TMUX%%,*}}"
   SESSION="$(tmux -S "$CHEESE_TMUX_SOCK" display-message -p -t "$TMUX_PANE" '#S')"
-  python3 -c 'import json,sys; json.dump(sys.argv[1:], open(sys.argv[3], "w"))' \\
+  "$CHEESE_PYTHON" -c 'import json,sys; json.dump(sys.argv[1:], open(sys.argv[3], "w"))' \\
     "$CHEESE_TMUX_SOCK" "$SESSION" "$HOME/.cheese/environment-session.json"
 fi
 ENVIRONMENT_CMD=""

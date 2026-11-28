@@ -282,6 +282,42 @@ def end_left_agent(state: Path) -> None:
     portable.terminate(pids)
 
 
+def adopt_room_transcripts(
+    config_dir: Path, room: str | None, session_ids: list[str | None]
+) -> None:
+    """Move these conversations' transcripts from the room's directory into
+    this seat's own, before anything asks whether they are there.
+
+    A seat keeps its own transcripts (`device_launch`), and its session sees
+    nothing of the room's directory (`client._seat_only`), where the seats'
+    transcripts were all kept before, and where a handover puts the ones it
+    brings (`session_transfer`). Only the conversations this seat goes on
+    with are taken; each piece keeps the directory its cwd named, or one
+    beside it when the seat has a piece there of its own, and the launch joins
+    the pieces (`release.carry_conversation`)."""
+    projects = config_dir / "projects"
+    if not room or not Path(room).is_dir() or not projects.is_dir():
+        return
+    room_dir = Path(room)
+    if room_dir.resolve() == projects.resolve():
+        # A seat still linked to the room's directory (`device_launch`).
+        return
+    for session_id in dict.fromkeys(filter(None, session_ids)):
+        for piece in [
+            *room_dir.glob(f"*/{session_id}.jsonl"),
+            *room_dir.glob(f"*/{session_id}"),
+        ]:
+            if piece.is_symlink():
+                continue
+            destination = projects / piece.parent.name / piece.name
+            if destination.exists():
+                destination = projects / f"{piece.parent.name}-room" / piece.name
+            if destination.exists():
+                continue
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(piece, destination)
+
+
 def transcript(config_dir: Path, session_id: str) -> Path | None:
     """Where this session's transcript is, whatever cwd wrote it."""
     for path in config_dir.glob(f"projects/*/{session_id}.jsonl"):
@@ -851,6 +887,9 @@ class Runner(runner.Runner[Journal]):
         saved = self.journal.recall("session_id")
         if saved and saved == retired:
             saved = None
+        adopt_room_transcripts(
+            self.config_dir, env.get("CHEESE_ROOM_TRANSCRIPTS"), [resume, saved]
+        )
         failed = self.journal.recall("resume_failed")
         resumed = next(
             (

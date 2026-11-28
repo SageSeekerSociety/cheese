@@ -43,6 +43,9 @@ def _machine(tmp_path):
             "CHEESE_PROJECT": "22222222-2222-2222-2222-222222222222",
             "CHEESE_TOKEN": "scoped-token",
             "CHEESE_TOKEN_EXPIRES": str(int(time.time()) + 3600),
+            # The Python its connector placed (`place.PLATFORM_PYTHON`), named
+            # here too: a test run inside a room calls this without fixtures.
+            "CHEESE_PYTHON": sys.executable,
         },
     )
 

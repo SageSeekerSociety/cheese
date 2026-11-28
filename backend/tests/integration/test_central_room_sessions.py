@@ -30,7 +30,7 @@ from app.core.sandbox_auth import (
     mint_scoped_token,
     scoped_token_claims,
 )
-from app.domain.agent import execution, machine_launcher
+from app.domain.agent import device_link, execution, machine_launcher
 from app.domain.agent.central_provider import CentralChannel
 from app.domain.agent.device_hub import device_hub
 from app.domain.agent.device_provider import DeviceChannel
@@ -401,7 +401,7 @@ async def test_pi_starts_on_the_session_host_and_recovers_only_as_pi(
         ((device, argv), _), *_ = [
             (call.args, call.kwargs) for call in central._hub.exec.await_args_list
         ]
-        assert (device, argv) == ("center", ["python3", "-"])
+        assert (device, argv) == ("center", [device_link.PYTHON, "-"])
         place = await session_place(client.test_request_factory, topic, AGENT, PI)
         assert place is not None
         assert place.machine == "center"

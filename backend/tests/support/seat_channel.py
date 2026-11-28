@@ -23,7 +23,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from app.core.sandbox_auth import token_agent_handle
-from app.domain.agent import session_state
+from app.domain.agent import device_link, session_state
 from app.domain.agent.central_provider import Placed, PreparedSession
 from app.domain.agent.device_hub import DeviceCallError
 from app.domain.agent.harness import CLAUDE_CODE, SessionRef
@@ -138,7 +138,11 @@ class _Hub:
             said = getattr(self.channel, "ending", None)
             said = said or "the session's process is gone"
             return {"exit": 0, "stdout": f"{ending[1]}\n{said}"}
-        if argv != ["python3", "-"] or not stdin or "payload=json.loads(" not in stdin:
+        if (
+            argv != [device_link.PYTHON, "-"]
+            or not stdin
+            or "payload=json.loads(" not in stdin
+        ):
             return {"exit": 0, "stdout": ""}
         # A launch program (pi's, Codex's): the seat it starts is named by its
         # state directory, and it answers as the runner it leaves running.

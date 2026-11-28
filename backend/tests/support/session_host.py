@@ -14,6 +14,7 @@ import socket
 import sys
 from pathlib import Path
 
+from app.domain.agent import device_link
 from app.domain.agent.harness.driven.runner import socket_path
 from app.domain.agent.harness.pi.launch import VERSION
 from tests.pinned_claude import pi_binary
@@ -45,7 +46,7 @@ class Host:
     ):
         self.execs.append(list(argv))
         process = await asyncio.create_subprocess_exec(
-            *([sys.executable, "-"] if argv == ["python3", "-"] else argv),
+            *([sys.executable, "-"] if argv == [device_link.PYTHON, "-"] else argv),
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
 from app.core.sentences import NoticeText, say
-from app.domain.agent import machine_launcher, screen_identity
+from app.domain.agent import device_link, machine_launcher, screen_identity
 from app.domain.agent.device_hub import (
     RECONNECT_GRACE_S,
     DeviceCallError,
@@ -50,7 +50,9 @@ from app.domain.agent.machine_address import device_api_base
 from app.domain.agent.place import (
     CHECKOUT_DIR,
     OWN_KEY,
+    PLATFORM_PYTHON,
     SANDBOXES_DIR,
+    WORK_DIR,
     launcher_path,
     machine_root,
     seat_dir,
@@ -103,7 +105,7 @@ async def _false() -> bool:
 # connector's `uninstall` are all naming one directory.
 DEVICE_ROOT = machine_root()
 DEVICE_HOME_ROOT = f"{DEVICE_ROOT}/home"
-DEVICE_WORK_ROOT = f"{DEVICE_ROOT}/work"
+DEVICE_WORK_ROOT = f"{DEVICE_ROOT}/{WORK_DIR}"
 # Where a PROJECT's rooms share the packages they install, on the machine they
 # share. Per project rather than per room because every room of a project
 # installs the same lockfile, while a room's home is its own — and uv and pnpm
@@ -198,7 +200,7 @@ async def environment_status(
             f'else set -- {candidates}; fi; for candidate in "$@"; do '
             'if [ -f "$candidate" ]; then '
             f"CHEESE_STATUS_WAIT={int(wait_ready)} CHEESE_SANDBOXED=${{release:+1}} "
-            f'python3 "$candidate" {action} || exit $?; '
+            f'{PLATFORM_PYTHON} "$candidate" {action} || exit $?; '
             "CHEESE_ENVIRONMENT_RAN=1; break; fi; done; "
             'if [ -z "$CHEESE_ENVIRONMENT_RAN" ]; then '
             "printf '%s' '{\"state\":\"pending\"}'; fi; " + reset_marker,
@@ -670,7 +672,7 @@ class DeviceChannel(Channel):
         async def execute(function, *args):
             result = await self._hub.exec(
                 screen.device_id,
-                ["python3", "-"],
+                [device_link.PYTHON, "-"],
                 stdin=resident_release.script(function, *args),
                 timeout=40,
             )
@@ -1019,7 +1021,18 @@ class DeviceChannel(Channel):
             # so refusing turns until it ends is not waiting. A runner that
             # cannot be asked has nothing left running to lose.
             status = await self._runner(device_id, place.state, "ping")
-            if status is not None and (status.get("working") or status.get("tasks")):
+            # Except a process started holding the machine whole that holds it
+            # no longer (`owner_provider._holds_machine`): nothing on the
+            # machine is kept from it, so the revocation cannot wait for its
+            # work, and the next input goes to a process that is kept.
+            revoked = bool(
+                (existing.execution_target or {}).get("whole_machine")
+            ) and not (execution_target or {}).get("whole_machine")
+            if (
+                not revoked
+                and status is not None
+                and (status.get("working") or status.get("tasks"))
+            ):
                 logger.info(
                     "device_screen_relaunch_deferred topic=%s sid=%s working=%s "
                     "tasks=%s",

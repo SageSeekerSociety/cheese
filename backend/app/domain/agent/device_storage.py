@@ -36,7 +36,7 @@ from sqlalchemy.dialects.postgresql import insert
 
 from app.core.sentences import say
 from app.core.storage import private_storage
-from app.domain.agent import resource_cleanup
+from app.domain.agent import device_link, resource_cleanup
 from app.domain.agent.device_hub import DeviceHub, device_hub
 from app.domain.agent.device_provider import DEVICE_HOME_ROOT, DEVICE_WORK_ROOT
 from app.domain.device.models import DeviceRow
@@ -315,7 +315,7 @@ async def keep_room_files(
     await session.commit()
     result = await (hub or device_hub).exec(
         device_id,
-        ["python3", "-", "keep-room", str(project_id), resource_id, "-", "-"],
+        [device_link.PYTHON, "-", "keep-room", str(project_id), resource_id, "-", "-"],
         stdin=Path(resource_cleanup.__file__).read_text(),
         env={"CHEESE_KEEP_URL": url},
         timeout=KEEP_ROOM_TIMEOUT_S,

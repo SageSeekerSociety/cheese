@@ -137,6 +137,59 @@ def sbpl(path):
     return json.dumps(os.path.realpath(str(path)))
 
 
+def seatbelt_keep_only(narrowed):
+    """The Seatbelt rules that leave a member's own Claude Code on a Mac
+    nothing of each `cover` but its `keeps`, and its `read_only` keeps
+    unwritable (`namespace._keep_own`), as a mount namespace leaves a central
+    session (`namespace._keep_only`). An outer cover comes before one inside
+    one of its `keeps`: the last rule that matches a path decides.
+
+    The rules match paths, not files, so no directory above a `cover` may be
+    moved away from under them: what a moved one holds would be outside it."""
+
+    def spellings(keep):
+        # A kept link is read where it is, and what it names where that is.
+        here = Path(os.path.realpath(os.path.dirname(keep))) / os.path.basename(keep)
+        return sorted({here, Path(os.path.realpath(keep))})
+
+    narrowed = [
+        (
+            Path(os.path.realpath(cover)),
+            [
+                (spelled, "file-read* file-write*")
+                for keep in keeps
+                for spelled in spellings(keep)
+            ],
+            [
+                (spelled, "file-read*")
+                for keep in read_only
+                for spelled in spellings(keep)
+            ],
+        )
+        for cover, keeps, read_only in narrowed
+    ]
+    rules = []
+    for cover, keeps, read_only in narrowed:
+        rules.append(f"(deny file-read* file-write* (subpath {sbpl(cover)}))")
+        for keep, allowed in [*keeps, *read_only]:
+            rules += [
+                # Spelled resolved already (`spellings`): resolving a link
+                # again would name what it points to and never the link.
+                f"(allow {allowed} (subpath {json.dumps(str(keep))}))",
+                # Reaching `keep` takes a look at each directory above it.
+                *(
+                    f"(allow file-read-metadata (literal {sbpl(parent)}))"
+                    for parent in keep.parents
+                    if parent == cover or cover in parent.parents
+                ),
+            ]
+    above = {parent for cover, _, _ in narrowed for parent in cover.parents}
+    rules += [
+        f"(deny file-write-unlink (literal {sbpl(path)}))" for path in sorted(above)
+    ]
+    return rules
+
+
 def own_directory(path):
     """``path`` made for this user only, or refused. It is a fixed name in a
     shared /tmp: one somebody else made, or a link to somewhere else, would
@@ -452,9 +505,9 @@ def sandbox_argv(
     # mount as well, since connecting to a socket is not a write to the mount.
     if image_root is None and Path("/run/docker.sock").exists():
         command += ["--ro-bind", "/dev/null", "/run/docker.sock"]
-    # The Python the executor runs on, when the person keeps it in their home
-    # (pyenv, uv, conda): shown read-only, as the machine's own would be, at
-    # the path it is run by as well as where a link there leads.
+    # The Python the executor runs on, the connector's under the owner's home
+    # (`cli/internal/devenv`): shown read-only, at the path it is run by as
+    # well as where a link there leads.
     prefixes = {Path(sys.base_prefix), Path(sys.prefix)}
     for prefix in sorted(prefixes | {path.resolve() for path in prefixes}):
         if owner in prefix.parents:

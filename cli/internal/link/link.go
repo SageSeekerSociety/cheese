@@ -39,6 +39,10 @@ type Msg struct {
 	// Streams: this connector opens the byte streams the server asks for
 	// with stream.open and relays them with credit (host/stream.go).
 	Streams bool `json:"streams,omitempty"`
+	// Python: this connector runs an exec named `cheese-python` on the Python
+	// it placed, by path (host.platformPython), and refuses it where it placed
+	// none.
+	Python bool `json:"python,omitempty"`
 	// Which binary is speaking, sent up in `hello`: Build is the sha256 of this
 	// connector's own executable, Target its `<os>-<arch>`. V cannot carry this
 	// — it moves only for a breaking change, so a build missing a compatibly
@@ -175,7 +179,7 @@ func (c *Conn) runOnce(ctx context.Context, onMsg func(Msg)) (connected bool) {
 		c.mu.Unlock()
 	}()
 
-	_ = c.Send(Msg{T: "hello", V: Version, Build: c.build, Target: c.target, Executor: true, Profiles: true, Machine: true, Streams: true})
+	_ = c.Send(Hello(c.build, c.target))
 	// Say it heartbeats immediately, not at the first tick. The backend starts
 	// its silence clock only after a heartbeat has been heard
 	// (`DeviceHub.silence_allowed`), so until the first one a machine that went

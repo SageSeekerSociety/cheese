@@ -12,6 +12,7 @@ from pathlib import Path
 from app.core.config import settings
 from app.core.sentences import say
 from app.domain.agent import (
+    device_link,
     environment_runner,
     forge_cli,
     machine_tunnel,
@@ -273,7 +274,7 @@ async def transfer_history(hub, source, center, project, resource, resume):
         }
         result = await hub.exec(
             device,
-            ["python3", "-"],
+            [device_link.PYTHON, "-"],
             timeout=60,
             stdin=program
             + "\ntransfer(json.loads("

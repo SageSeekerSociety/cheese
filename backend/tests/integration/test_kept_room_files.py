@@ -32,7 +32,7 @@ from sqlalchemy import select
 import scripts.retained_files as retained_files
 from app.core.config import settings
 from app.core.storage import S3StorageBackend
-from app.domain.agent import device_storage
+from app.domain.agent import device_link, device_storage
 from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.models import AgentSession
 from app.domain.agent_session.services import AgentSessionService
@@ -141,8 +141,8 @@ class Machine:
         return []
 
     async def exec(self, device_id, argv, *, stdin=None, timeout=60, env=None, **_):
-        self.ran.append(argv[2] if argv[:2] == ["python3", "-"] else argv[0])
-        if argv[:2] == ["python3", "-"]:
+        self.ran.append(argv[2] if argv[:2] == [device_link.PYTHON, "-"] else argv[0])
+        if argv[:2] == [device_link.PYTHON, "-"]:
             argv = [sys.executable, "-", *argv[2:]]
         done = await asyncio.to_thread(
             subprocess.run,
