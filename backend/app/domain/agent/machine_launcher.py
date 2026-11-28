@@ -584,6 +584,17 @@ REAL_HOME="$HOME"
 # behalf, such as the Keychain lookup (`device_launch._OWN_LOGIN_CREDENTIALS`),
 # is looked up here instead.
 REAL_PATH="$PATH"
+# The Python the launch starts the session's own programs on (its runner, the
+# executor's client, the environment runner), named by path: the process the
+# launch starts has the room's `$HOME/.cheese` first on its PATH, so a bare
+# `python3` there would be one the room put in. The connector's own, when it
+# names one, or else the one on the machine's own search path.
+if [ -z "${{CHEESE_PYTHON:-}}" ]; then
+  CHEESE_PYTHON="$(command -v python3)" || {{
+    echo "cheese-launch: no python3 on this machine's PATH" >&2
+    exit 1
+  }}
+fi
 # Bash exposes this clock without spawning date. Other shells skip diagnostics.
 # Append across relaunches; only phase names and timestamps enter this file.
 # The same marks of THIS launch also travel to the runner in its environment
@@ -822,7 +833,7 @@ if [ -n "${{TMUX:-}}" ]; then
 fi
 ENVIRONMENT_CMD=""
 if [ -n "${{CHEESE_ENVIRONMENT:-}}" ]; then
-  ENVIRONMENT_CMD="python3 \\"$HOME/.cheese/cheese-environment.py\\" "
+  ENVIRONMENT_CMD="\\"$CHEESE_PYTHON\\" \\"$HOME/.cheese/cheese-environment.py\\" "
 fi
 AGENT_PID=""
 TUNNEL_PID=""

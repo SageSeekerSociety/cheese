@@ -426,7 +426,7 @@ printf '%s' "$CHEESE_EXECUTION_TARGET" \\
 EXECUTOR_CLIENT="$SEAT/remote-execution/client.py"
 EXECUTOR_TARGET="$SEAT/remote-target.json"
 export CHEESE_EXECUTION_CONFIG="$SEAT/remote-session/execution.json"
-CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
+CLAUDE="\\"$CHEESE_PYTHON\\" \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
 """
         execution_setup += (
             'mkdir -p "$SEAT/remote-session"\n'
@@ -631,7 +631,7 @@ CLAUDERUNNER
 export CHEESE_CLAUDE_COMMAND="$CLAUDE"
 # Its own stderr is kept: a runner that fails on the way up takes the pane with
 # it, and this file is then the only record of why.
-CLAUDE_RUNNER="python3 -I -S \\"$CLAUDE_ARTIFACT\\" --state \\"$CLAUDE_STATE\\" \\
+CLAUDE_RUNNER="\\"$CHEESE_PYTHON\\" -I -S \\"$CLAUDE_ARTIFACT\\" --state \\"$CLAUDE_STATE\\" \\
   2>>\\"$CLAUDE_STATE/runner.log\\""
 """
         return configure, prepare
@@ -770,10 +770,13 @@ if [ "$(uname -s)" = Darwin ] && _security="$(command -v security)"; then
     _security="$OWN_LOGIN/{CLAUDE_KEYCHAIN_DIR}/security"
   fi
   mkdir -p "$SEAT/keychain"
-  cat > "$SEAT/keychain/security" <<KEYCHAIN
-#!/bin/sh
-HOME='$REAL_HOME' PATH='$REAL_PATH' exec '$_security' "\\$@"
-KEYCHAIN
+  # The wrapper is read as shell, and a machine's paths may hold any
+  # character (`Developer's Tools`): each value is written single-quoted, with
+  # its own quotes as '\\''.
+  _quoted() {{ printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\\\\\''/g")"; }}
+  printf '#!/bin/sh\\nHOME=%s PATH=%s exec %s "$@"\\n' \\
+    "$(_quoted "$REAL_HOME")" "$(_quoted "$REAL_PATH")" "$(_quoted "$_security")" \\
+    > "$SEAT/keychain/security"
   chmod +x "$SEAT/keychain/security"
   SESSION_PATH="$SEAT/keychain:$SESSION_PATH"
 fi

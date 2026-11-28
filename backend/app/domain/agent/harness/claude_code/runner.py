@@ -225,9 +225,14 @@ def sessions_on(config_dir: Path, agent_handle: str | None) -> list[int]:
             ):
                 found.append(int(entry.name))
         return found
+    # By path: the runner's PATH is the session's, which starts with the room's
+    # `$HOME/.cheese`, and its sandbox can write that directory.
     try:
         listing = subprocess.run(
-            ["ps", "-axo", "pid=,comm="], capture_output=True, text=True, timeout=10
+            ["/bin/ps", "-axo", "pid=,comm="],
+            capture_output=True,
+            text=True,
+            timeout=10,
         ).stdout
     except (OSError, subprocess.TimeoutExpired):
         return found
@@ -237,7 +242,7 @@ def sessions_on(config_dir: Path, agent_handle: str | None) -> list[int]:
             continue
         try:
             detail = subprocess.run(
-                ["ps", "eww", "-p", pid, "-o", "command="],
+                ["/bin/ps", "eww", "-p", pid, "-o", "command="],
                 capture_output=True,
                 text=True,
                 timeout=10,
@@ -891,7 +896,9 @@ class Runner(runner.Runner[Journal]):
         self._mark("session_spawned")
         self.process = await asyncio.create_subprocess_exec(
             # CreateProcess looks in System32 before PATH; Git Bash's sh is on PATH.
-            shutil.which("sh") or "sh" if sys.platform == "win32" else "sh",
+            # Elsewhere by path: the session's PATH starts with the room's
+            # `$HOME/.cheese`, which its sandbox can write.
+            shutil.which("sh") or "sh" if sys.platform == "win32" else "/bin/sh",
             "-c",
             f"exec {command} {flag}",
             # The session's own helpers reach this runner here, to change the
