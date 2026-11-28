@@ -586,6 +586,12 @@ REAL_HOME="$HOME"
 # the `python3` PATH finds is the owner's, and may sit in a home this session
 # is kept from. A machine with none placed starts nothing.
 : {PLATFORM_PYTHON}
+# The machine's own search path, before the room's `$HOME/.cheese` is put in
+# front of it below. A sandboxed room can write that directory, so a program
+# the launch runs outside the sandbox on the owner's behalf, such as the
+# Keychain lookup (`device_launch._OWN_LOGIN_CREDENTIALS`), is looked up here
+# instead.
+REAL_PATH="$PATH"
 # Bash exposes this clock without spawning date. Other shells skip diagnostics.
 # Append across relaunches; only phase names and timestamps enter this file.
 # The same marks of THIS launch also travel to the runner in its environment

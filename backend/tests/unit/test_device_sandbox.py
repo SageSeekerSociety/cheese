@@ -284,6 +284,38 @@ def test_a_rooms_commands_neither_read_nor_change_the_seats_in_its_home(rooms):
         == "refused"
     )
     assert helper.read_text() == "# bob's build\n"
+    assert (
+        room.bash(f'mkdir "{seats}/for-carol" 2>/dev/null && echo made || echo refused')
+        == "refused"
+    )
+    assert not (seats / "for-carol").exists()
+
+
+@sandboxed
+def test_a_room_that_moves_its_seats_away_sees_none_of_the_next_one(rooms):
+    """The seats are hidden where the launch puts them, by path. A room that
+    moved the directory holding them while its sandbox runs would find the
+    seat the next build to start makes at that path outside what its sandbox
+    hides."""
+    room = rooms()
+    note = room.home / ".cheese/seats/for-carol/memory/note.md"
+    attempt = (
+        # After the command that starts it has answered: the executor keeps its
+        # own state in the directory moved.
+        'sleep 1; mv "$HOME/.cheese" "$HOME/moved" 2>/dev/null; touch "$HOME/tried"; '
+        "i=0; while [ $i -lt 50 ]; do "
+        f'cat "{note}" > "$HOME/stolen" 2>/dev/null && break; '
+        'rm -f "$HOME/stolen"; sleep 0.1; i=$((i + 1)); done; touch "$HOME/ended"'
+    )
+    room.bash(f"setsid sh -c '{attempt}' </dev/null >/dev/null 2>&1 &")
+    _wait((room.home / "tried").exists, "the room's attempt to start")
+
+    note.parent.mkdir(parents=True, exist_ok=True)
+    note.write_text("carol-private\n")
+    _wait((room.home / "ended").exists, "the room's attempt to end")
+
+    stolen = room.home / "stolen"
+    assert not stolen.exists(), stolen.read_text()
 
 
 @sandboxed
