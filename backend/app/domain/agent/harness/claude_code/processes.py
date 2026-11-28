@@ -114,9 +114,14 @@ def _processes() -> list[tuple[int, int]]:
                 continue
             pairs.append((int(entry.name), int(parent)))
         return pairs
+    # By path: in the runner, which runs as the machine's owner outside the
+    # room's sandbox, nothing is run that is found by name.
     try:
         listing = subprocess.run(
-            ["ps", "-axo", "pid=,ppid="], capture_output=True, text=True, timeout=10
+            ["/bin/ps", "-axo", "pid=,ppid="],
+            capture_output=True,
+            text=True,
+            timeout=10,
         ).stdout
     except (OSError, subprocess.TimeoutExpired):
         return []

@@ -402,25 +402,28 @@ def _stand_in_claude(path: Path, *, version: str = PIN) -> Path:
     return path
 
 
-def _bootstrap_passthrough(bindir: Path) -> None:
-    """A `python3` whose executor-client `bootstrap` runs the command it wraps.
+def _platform_python(owner: Path) -> Path:
+    """The Python the connector places for the platform's programs, where it
+    places it (`cli/internal/devenv`), whose executor-client `bootstrap` runs
+    the command it wraps; each run's arguments are kept beside it in `ran`.
 
     Every launch hands `claude` to the executor client, which needs an executor
     to prepare against; this one passes the command straight through, so what the
     launcher decided is what the stand-in receives. Everything else reaches the
     real interpreter.
     """
-    bindir.mkdir(parents=True, exist_ok=True)
-    python = shutil.which("python3")
-    client = bindir / "python3"
+    client = owner / ".cheese/runtime/python/bin/python3"
+    client.parent.mkdir(parents=True, exist_ok=True)
     client.write_text(
         "#!/bin/sh\n"
+        f'printf "%s\\n" "$*" >> {shlex.quote(str(client.parent.parent / "ran"))}\n'
         'case "$1" in */remote-execution/client.py)\n'
         '  [ "$2" = bootstrap ] && shift 3 && exec "$@" ;;\n'
         "esac\n"
-        f'exec {shlex.quote(python)} "$@"\n'
+        f'exec {shlex.quote(sys.executable)} "$@"\n'
     )
     client.chmod(0o755)
+    return client
 
 
 def _prepare_script(
@@ -467,12 +470,11 @@ def _run_prepare(
     owner = tmp_path / "owner"
     session = owner / ".cheese/home/room"
     session.mkdir(parents=True, exist_ok=True)
-    bindir = tmp_path / "bin"
-    _bootstrap_passthrough(bindir)
     script, _seat = _prepare_script(session, system_prompt=system_prompt, handle=handle)
     env = {
         **_clean_environ(),
-        "PATH": f"{bindir}:/usr/bin:/bin",
+        "PATH": "/usr/bin:/bin",
+        "CHEESE_PYTHON": str(_platform_python(owner)),
         "HOME": str(session),
         "REAL_HOME": str(owner),
         "CHEESE_EXECUTION_TARGET": json.dumps(target or {"kind": "deferred"}),
@@ -489,12 +491,14 @@ def _run_prepare(
     return owner, session, result
 
 
-def _argv(command: str, *, cwd: Path) -> list[str]:
-    """What the runner's `sh -c "exec <command>"` would hand exec."""
+def _argv(command: str, *, cwd: Path, python: Path | None = None) -> list[str]:
+    """What the runner's `sh -c "exec <command>"` would hand exec. The command
+    names the launch's Python by its variable, which ``python`` sets."""
     return subprocess.check_output(
         ["sh", "-c", 'eval "set -- $1"; printf "%s\\n" "$@"', "sh", command],
         text=True,
         cwd=cwd,
+        env={**os.environ, **({"CHEESE_PYTHON": str(python)} if python else {})},
     ).splitlines()
 
 
@@ -505,9 +509,14 @@ def test_the_runner_is_handed_the_pinned_build_behind_the_executor_client(tmp_pa
 
     assert result.returncode == 0, result.stderr
     seat = seat_of(session)
-    argv = _argv((session / "command").read_text().strip(), cwd=tmp_path)
+    argv = _argv(
+        (session / "command").read_text().strip(),
+        cwd=tmp_path,
+        python=owner / ".cheese/runtime/python/bin/python3",
+    )
     assert argv[:4] == [
-        "python3",
+        # The Python the connector placed, by path (`place.PLATFORM_PYTHON`).
+        str(owner / ".cheese/runtime/python/bin/python3"),
         # The client belongs to this seat and cannot replace a running peer's.
         f"{seat}/remote-execution/client.py",
         "bootstrap",
@@ -594,8 +603,10 @@ def test_the_runner_keeps_its_state_in_the_owners_home(tmp_path):
     (artifact,) = state.glob("runner-*")
     assert _modules(artifact) == _shipped_modules()
     line = (session / "runner").read_text().strip()
-    assert _argv(line, cwd=tmp_path) == [
-        "python3",
+    assert _argv(
+        line, cwd=tmp_path, python=owner / ".cheese/runtime/python/bin/python3"
+    ) == [
+        str(owner / ".cheese/runtime/python/bin/python3"),
         "-I",
         "-S",
         str(artifact),
@@ -788,11 +799,12 @@ def _machine(tmp_path, *, api: str = ""):
     work.mkdir()
     session = owner / ".cheese/home/room"
     bindir = tmp_path / "bin"
-    _bootstrap_passthrough(bindir)
+    bindir.mkdir()
     claude = _stand_in_claude(owner / ".local/bin/claude")
     env = {
         **_clean_environ(),
         "PATH": f"{bindir}:{os.environ['PATH']}",
+        "CHEESE_PYTHON": str(_platform_python(owner)),
         "HOME": str(owner),
         "CHEESE_HOME": str(session),
         "CHEESE_WORK": str(work),
@@ -866,6 +878,122 @@ def test_the_launch_starts_the_runner_and_the_runner_starts_claude(tmp_path):
     ).resolve()
     assert (seat / "cheese-system-prompt.md").read_text() == "be kind\n"
     assert (state / "records.sqlite").is_file()
+
+
+def test_a_launch_runs_nothing_the_room_put_in_its_home(tmp_path):
+    """The room's sandbox can write the room's `$HOME/.cheese`, and everything
+    outside that sandbox runs as the machine's owner. So nothing there is
+    looked up in it: not what the launch runs to bring the tunnel and the
+    preview up or to ask tmux for its session, not the `claude` it checks, not
+    the Python it starts the environment runner, the runner and the executor's
+    client on (found on the machine's own path when the connector names none),
+    and not what Claude Code itself runs by name on the host, such as `git` or
+    the platform's `cheese`. Nor is anything looked up in the room's checkout,
+    which is where they run, through a relative or empty entry of the PATH
+    they inherit."""
+    from app.domain.project.environment import EnvironmentConfig
+
+    owner, session, work, claude, env = _machine(tmp_path)
+    # Claude Code runs programs of its own by name on the host, outside the
+    # sandbox: git for the checkout's state, and whatever it is told to.
+    script = claude.read_text().replace(
+        "#!/bin/sh\n",
+        "#!/bin/sh\ngit --version >/dev/null 2>&1\n"
+        'command -v cheese > "$(dirname "$0")/ran.cheese" || :\n'
+        "cheese --help >/dev/null 2>&1\n",
+        1,
+    )
+    claude.write_text(script)
+    platform = Path(env.pop("CHEESE_PYTHON"))
+    tmux = tmp_path / "bin/tmux"
+    tmux.write_text("#!/bin/sh\necho room-session\n")
+    tmux.chmod(0o755)
+    machine_path = f"{platform.parent}:{env['PATH']}"
+    env["PATH"] = f".venv/bin::{machine_path}:"
+    env.update(
+        CHEESE_TUNNEL_URL="ws://127.0.0.1:9/llm/tunnel",
+        CHEESE_CONNECT_TOKEN="connect-token",
+        CHEESE_PREVIEW_URL="ws://127.0.0.1:9/preview",
+        TMUX=f"{tmp_path}/tmux.sock,1,0",
+        TMUX_PANE="%1",
+        CHEESE_ENVIRONMENT=json.dumps(
+            EnvironmentConfig(setup_script="echo set up > setup").snapshot()
+        ),
+    )
+    room = session / ".cheese"
+    room.mkdir(parents=True)
+    # A preview an agent of the room declared earlier (`cheese serve`).
+    (room / "cheese-preview.port").write_text("8000\n")
+    planted = tmp_path / "planted-ran"
+    names = (
+        "python3", "claude", "sh", "tmux", "cat", "chmod", "mv", "cp", "rm",
+        "mkdir", "cksum", "cut", "nohup", "tail", "head", "awk", "sort", "sed",
+        "grep", "id", "uname", "git", "ps", "cheese", "bash", "env",
+    )  # fmt: skip
+    checkout = work / ".venv/bin"
+    checkout.mkdir(parents=True)
+    for directory, name in [(checkout, n) for n in names] + [(work, n) for n in names]:
+        (directory / name).write_text(
+            f'#!/bin/sh\necho {directory.name}/{name} >> "{planted}"\n'
+            f'PATH="{machine_path}" exec {name} "$@"\n'
+        )
+        (directory / name).chmod(0o755)
+    for name in names:
+        (room / name).write_text(
+            f'#!/bin/sh\necho {name} >> "{planted}"\n'
+            f'PATH="{machine_path}" exec {name} "$@"\n'
+        )
+        (room / name).chmod(0o755)
+
+    try:
+        result = _launch(tmp_path, env, system_prompt="be kind")
+    finally:
+        pid = room / "cheese-preview.pid"
+        if pid.exists():
+            subprocess.run(["kill", pid.read_text().strip()], check=False)
+
+    assert result.returncode == 0, result.stderr
+    assert (claude.parent / "ran.args").exists()
+    assert (work / "setup").read_text() == "set up\n"
+    # The launch writes the platform's CLI into the room's directory, where the
+    # room can replace it once the launch is done: the session finds none there.
+    found = (claude.parent / "ran.cheese").read_text().strip()
+    assert not found.startswith(str(room)), found
+    assert (room / "environment-session.json").exists()
+    assert pid.exists()
+    ran = (platform.parent.parent / "ran").read_text().splitlines()
+    assert any(line.startswith("-I -S ") and "/runner-" in line for line in ran), ran
+    assert any("/remote-execution/client.py bootstrap " in line for line in ran), ran
+    assert (planted.read_text().split() if planted.exists() else []) == []
+
+
+@pytest.mark.parametrize("directory", ["PythonTools", "Python$SDK"])
+def test_a_python_kept_under_any_name_starts_the_session(tmp_path, directory):
+    """The Python the session's programs start on is a path, and any directory
+    may hold it, one named with a `$` among them: the environment runner, the
+    runner and the executor's client still start on it, and the session with
+    them."""
+    from app.domain.project.environment import EnvironmentConfig
+
+    owner, _session, work, claude, env = _machine(tmp_path)
+    placed = Path(env.pop("CHEESE_PYTHON"))
+    alias = tmp_path / directory / "bin/python3"
+    alias.parent.mkdir(parents=True)
+    alias.symlink_to(placed)
+    env["PATH"] = f"{alias.parent}:{env['PATH']}"
+    env.pop("SDK", None)
+    env["CHEESE_ENVIRONMENT"] = json.dumps(
+        EnvironmentConfig(setup_script="echo set up > setup").snapshot()
+    )
+
+    result = _launch(tmp_path, env, system_prompt="be kind")
+
+    assert result.returncode == 0, result.stderr
+    assert (work / "setup").read_text() == "set up\n"
+    assert (claude.parent / "ran.args").exists()
+    ran = (placed.parent.parent / "ran").read_text().splitlines()
+    assert any(line.startswith("-I -S ") and "/runner-" in line for line in ran), ran
+    assert any("/remote-execution/client.py bootstrap " in line for line in ran), ran
 
 
 def test_the_session_starts_with_the_projects_models_as_its_subagent_types(tmp_path):
@@ -1412,6 +1540,7 @@ def test_a_tasks_helper_keeps_its_tasks_credential_when_its_room_launches(tmp_pa
                 ],
                 env={
                     "PATH": os.environ["PATH"],
+                    "CHEESE_PYTHON": sys.executable,
                     "HOME": str(tmp_path),
                     "CHEESE_TUNNEL_URL": "ws://127.0.0.1:9/llm/tunnel",
                     "CHEESE_SEAT": launches[name][1]["CHEESE_SEAT"],
@@ -2156,5 +2285,5 @@ def test_the_executor_client_is_told_the_config_dir_before_it_needs_it():
     script = _script(system_prompt="x")
 
     assert script.index('export CLAUDE_CONFIG_DIR="$SEAT/.claude"') < script.index(
-        'CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap'
+        '\\"$EXECUTOR_CLIENT\\" bootstrap'
     )

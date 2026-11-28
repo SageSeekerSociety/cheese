@@ -15,6 +15,13 @@ import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
+# The seats of the room's builds on this machine, inside its home
+# (`place.SEATS_DIR`), hidden from its sandbox: each holds the private memory
+# of the person its turn answers, and the helpers, settings and Keychain
+# wrapper that build runs outside any sandbox of the room's. A copy of the
+# name, held to it by test_footprint_root.py.
+SEATS = ".cheese/seats"
+
 # Where a sandbox dials the deployment's site when its machine forwards it
 # (`site_hosts`). A copy of `sandbox_host.SITE_ADDRESS`, held to it by
 # test_footprint_root.py.
@@ -144,7 +151,7 @@ def own_directory(path):
     return path
 
 
-def seatbelt_profile(*, owner, writable, readable, link, dialled=()):
+def seatbelt_profile(*, owner, writable, readable, link, dialled=(), hidden=()):
     """The macOS sandbox for a room, as `sandbox_argv` builds the
     Linux one: the machine readable and nothing of it writable, and of the
     owner's home only what is named.
@@ -166,7 +173,10 @@ def seatbelt_profile(*, owner, writable, readable, link, dialled=()):
     `dialled` (the directory of the platform socket the connector serves) is
     readable and its sockets may be dialled, and nothing in it is writable:
     the room can reach the platform there but not put a socket of its own in
-    the connector's place."""
+    the connector's place.
+
+    `hidden`, inside what is writable, is neither readable nor writable, and
+    no directory above it can be moved away from under that rule."""
     readable = [*writable, *dialled, *readable]
     prefixes = {Path(sys.base_prefix), Path(sys.prefix)}
     for prefix in sorted(prefixes | {path.resolve() for path in prefixes}):
@@ -201,6 +211,14 @@ def seatbelt_profile(*, owner, writable, readable, link, dialled=()):
             f'(deny file-read* (subpath {sbpl(owner)}) (subpath "/Volumes"))',
             "(allow file-read* " + paths("subpath", readable) + ")",
             "(allow file-read-metadata " + paths("literal", above) + ")",
+            *(
+                f"(deny file-read* file-write* (subpath {sbpl(path)}))"
+                for path in hidden
+            ),
+            *(
+                f"(deny file-write-unlink (literal {sbpl(parent)}))"
+                for parent in sorted({p for path in hidden for p in Path(path).parents})
+            ),
             "(deny network-outbound (remote unix-socket))",
             # One rule per path: several paths in one `remote unix-socket` do
             # not each allow theirs. Measured on macOS 26 (arm64): with the
@@ -249,6 +267,7 @@ def start_seatbelt(
         readable=readable,
         link=Path(str(sockets) + ".sock"),
         dialled=[] if platform is None else [platform],
+        hidden=[home / SEATS],
     )
     process = subprocess.Popen(
         [sandbox_exec, "-p", profile, *argv],
@@ -361,7 +380,12 @@ def sandbox_argv(
     command = [
         bwrap,
         *(
-            image_user_namespace(userns)
+            # Root of its own namespace, for what services need (chown,
+            # setuid), but not CAP_SYS_ADMIN, which every mount change takes:
+            # the mounts below are made in that namespace, and a root that
+            # could unmount or remount them would read the seats they hide or
+            # write the release store the machine runs as its owner.
+            [*image_user_namespace(userns), "--cap-drop", "CAP_SYS_ADMIN"]
             if image_root is not None
             else ["--unshare-user"]
         ),
@@ -444,9 +468,15 @@ def sandbox_argv(
         *(("--ro-bind", path) for path in programs if path.is_dir()),
     ):
         command += [option, str(path), str(path)]
+    # The directory the seats are in, anchored where it is: a mount point
+    # cannot be moved or removed. The seats are hidden by path, and the launch
+    # makes every later seat at that path (`machine_launcher`), so a room that
+    # moved this directory away would see each seat made after it.
+    command += ["--bind", str((home / SEATS).parent), str((home / SEATS).parent)]
     if image_root is not None:
         # The upper is charged to the home, but only overlayfs may modify it.
         command += ["--tmpfs", str(home / ".cheese/rootfs")]
+    command += ["--tmpfs", str(home / SEATS), "--remount-ro", str(home / SEATS)]
     command += [
         "--bind",
         str(sockets),

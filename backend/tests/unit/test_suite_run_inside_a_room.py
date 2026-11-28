@@ -50,7 +50,7 @@ home = pathlib.Path(sys.argv[1])
 # ``/var/tmp`` on every machine that ran the suite.
 machine_launcher.SESSION_TMP = str(home.parent / "var-tmp")
 
-test_machine_launcher.test_the_platform_cli_is_on_path_for_whatever_runs(home)
+test_machine_launcher.test_the_session_looks_nothing_up_in_the_rooms_home(home)
 """
 
 

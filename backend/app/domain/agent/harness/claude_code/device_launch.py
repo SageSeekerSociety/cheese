@@ -426,7 +426,7 @@ printf '%s' "$CHEESE_EXECUTION_TARGET" \\
 EXECUTOR_CLIENT="$SEAT/remote-execution/client.py"
 EXECUTOR_TARGET="$SEAT/remote-target.json"
 export CHEESE_EXECUTION_CONFIG="$SEAT/remote-session/execution.json"
-CLAUDE="python3 \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
+CLAUDE="\\"\\$CHEESE_PYTHON\\" \\"$EXECUTOR_CLIENT\\" bootstrap \\"$EXECUTOR_TARGET\\" $CLAUDE"
 """
         execution_setup += (
             'mkdir -p "$SEAT/remote-session"\n'
@@ -631,7 +631,7 @@ CLAUDERUNNER
 export CHEESE_CLAUDE_COMMAND="$CLAUDE"
 # Its own stderr is kept: a runner that fails on the way up takes the pane with
 # it, and this file is then the only record of why.
-CLAUDE_RUNNER="python3 -I -S \\"$CLAUDE_ARTIFACT\\" --state \\"$CLAUDE_STATE\\" \\
+CLAUDE_RUNNER="\\"\\$CHEESE_PYTHON\\" -I -S \\"$CLAUDE_ARTIFACT\\" --state \\"$CLAUDE_STATE\\" \\
   2>>\\"$CLAUDE_STATE/runner.log\\""
 """
         return configure, prepare
@@ -745,7 +745,16 @@ cheese_launch_phase credentials_selected
 # room's HOME it finds no keychain and the session is not logged in. The
 # `security` the session finds runs with the machine's HOME, so the session's
 # own HOME stays the room's. An agent's own `security` reaches the owner's
-# keychain the same way, which its owner's machine already lets it do.
+# keychain the same way, which its owner's machine already lets it do. It is
+# the seat's: it names this seat's login, and the room's sandbox, which shares
+# the room's HOME, can neither see nor replace what is in a seat
+# (`confinement.SEATS`), and it goes first on the session's PATH
+# (`SESSION_PATH`). It runs on the machine's own search path (`REAL_PATH`), as
+# this block does, which never holds the room's `$HOME/.cheese`: the room's
+# sandbox can write that, and a `security`, or any other program, put there
+# would run as the machine's owner. The one other `security` it may run is
+# the one the connector put in a moved login (`CLAUDE_KEYCHAIN_DIR`), under
+# the machine's home, where no room's sandbox can write.
 #
 _OWN_LOGIN_CREDENTIALS = f"""\
 unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
@@ -759,13 +768,16 @@ if [ "$(uname -s)" = Darwin ] && _security="$(command -v security)"; then
   if [ -x "$OWN_LOGIN/{CLAUDE_KEYCHAIN_DIR}/security" ]; then
     _security="$OWN_LOGIN/{CLAUDE_KEYCHAIN_DIR}/security"
   fi
-  mkdir -p "$HOME/.cheese/keychain"
-  cat > "$HOME/.cheese/keychain/security" <<KEYCHAIN
-#!/bin/sh
-HOME='$REAL_HOME' exec '$_security' "\\$@"
-KEYCHAIN
-  chmod +x "$HOME/.cheese/keychain/security"
-  export PATH="$HOME/.cheese/keychain:$PATH"
+  mkdir -p "$SEAT/keychain"
+  # The wrapper is read as shell, and a machine's paths may hold any
+  # character (`Developer's Tools`): each value is written single-quoted, with
+  # its own quotes as '\\''.
+  _quoted() {{ printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\\\\\''/g")"; }}
+  printf '#!/bin/sh\\nHOME=%s PATH=%s exec %s "$@"\\n' \\
+    "$(_quoted "$REAL_HOME")" "$(_quoted "$REAL_PATH")" "$(_quoted "$_security")" \\
+    > "$SEAT/keychain/security"
+  chmod +x "$SEAT/keychain/security"
+  SESSION_PATH="$SEAT/keychain${{SESSION_PATH:+:$SESSION_PATH}}"
 fi
 if [ -n "${{{OWN_MODEL}:-}}" ]; then export ANTHROPIC_MODEL="${{{OWN_MODEL}}}"; fi
 unset {OWN_MODEL}

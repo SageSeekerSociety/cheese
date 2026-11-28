@@ -1157,6 +1157,15 @@ def _session_tmp_per_test(monkeypatch, tmp_path_factory) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _platform_python(monkeypatch) -> None:
+    """A machine a test launches on, or runs a platform program on, is one its
+    connector prepared: it names the Python the platform's programs run on
+    (`place.PLATFORM_PYTHON`), here the one running the tests. A test of a
+    machine without one removes it."""
+    monkeypatch.setenv("CHEESE_PYTHON", sys.executable)
+
+
+@pytest.fixture(autouse=True)
 def _channels_per_test() -> None:
     """``wait_work_idle`` asks every stub channel still alive whether a session
     of its has something unlanded. A channel an earlier test built lives on

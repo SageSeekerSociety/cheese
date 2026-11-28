@@ -265,6 +265,60 @@ def test_a_session_on_a_persons_machine_sees_the_system_and_none_of_their_home(
 
 
 @sandboxed
+def test_a_rooms_commands_neither_read_nor_change_the_seats_in_its_home(rooms):
+    """A room's home holds the seats of the builds on its machine: each the
+    private memory of the person its turn answers, and the helpers the build
+    runs outside the sandbox. The room's commands read none of it and change
+    none of it."""
+    room = rooms()
+    seats = room.home / ".cheese/seats"
+    note = seats / "for-alice/remote-session/memory/private/alice/note.md"
+    helper = seats / "for-bob/remote-execution/client.py"
+    for path, text in ((note, "alice-private\n"), (helper, "# bob's build\n")):
+        path.parent.mkdir(parents=True)
+        path.write_text(text)
+
+    assert room.bash(f'cat "{note}" 2>/dev/null || echo hidden') == "hidden"
+    assert (
+        room.bash(f'{{ echo x >> "{helper}"; }} 2>/dev/null || echo refused')
+        == "refused"
+    )
+    assert helper.read_text() == "# bob's build\n"
+    assert (
+        room.bash(f'mkdir "{seats}/for-carol" 2>/dev/null && echo made || echo refused')
+        == "refused"
+    )
+    assert not (seats / "for-carol").exists()
+
+
+@sandboxed
+def test_a_room_that_moves_its_seats_away_sees_none_of_the_next_one(rooms):
+    """The seats are hidden where the launch puts them, by path. A room that
+    moved the directory holding them while its sandbox runs would find the
+    seat the next build to start makes at that path outside what its sandbox
+    hides."""
+    room = rooms()
+    note = room.home / ".cheese/seats/for-carol/memory/note.md"
+    attempt = (
+        # After the command that starts it has answered: the executor keeps its
+        # own state in the directory moved.
+        'sleep 1; mv "$HOME/.cheese" "$HOME/moved" 2>/dev/null; touch "$HOME/tried"; '
+        "i=0; while [ $i -lt 50 ]; do "
+        f'cat "{note}" > "$HOME/stolen" 2>/dev/null && break; '
+        'rm -f "$HOME/stolen"; sleep 0.1; i=$((i + 1)); done; touch "$HOME/ended"'
+    )
+    room.bash(f"setsid sh -c '{attempt}' </dev/null >/dev/null 2>&1 &")
+    _wait((room.home / "tried").exists, "the room's attempt to start")
+
+    note.parent.mkdir(parents=True, exist_ok=True)
+    note.write_text("carol-private\n")
+    _wait((room.home / "ended").exists, "the room's attempt to end")
+
+    stolen = room.home / "stolen"
+    assert not stolen.exists(), stolen.read_text()
+
+
+@sandboxed
 def test_a_room_runs_the_git_cheesehost_placed_and_nothing_else_it_placed(owner, rooms):
     """On a machine whose own git was missing or too old, cheesehost placed one
     under the owner's home (`cli/internal/devenv`): a room's turn needs it. The
