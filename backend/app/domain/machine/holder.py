@@ -44,7 +44,13 @@ from app.core.sandbox_auth import (
 )
 from app.core.sandbox_auth import personal_claims as personal_claims_of
 from app.core.sentences import say
-from app.domain.agent.environment import STANDARD, Sandbox, SelfHosted
+from app.domain.agent.environment import (
+    STANDARD,
+    Sandbox,
+    SelfHosted,
+    default_for,
+    environment_of,
+)
 from app.domain.agent.harness import PI
 from app.domain.agent.models import AgentTurn
 from app.domain.agent_instance.adapters import project_team
@@ -53,7 +59,6 @@ from app.domain.assistant.models import AssistantConversation
 from app.domain.conversation.models import Conversation, ConversationKind
 from app.domain.conversation.services import of_rooms, room_column, room_of
 from app.domain.identity.actor import Actor
-from app.domain.machine.environments import default_for, environment_of
 from app.domain.machine.models import SandboxHome
 from app.domain.membership.roster import roster
 from app.domain.project.services import ProjectService
@@ -218,7 +223,7 @@ class Room:
         self, db: AsyncSession, conversation_id: uuid.UUID
     ) -> Sandbox | SelfHosted:
         # Its task's default, else its room's, its project's or the
-        # deployment's (``environments.default_for``).
+        # deployment's (``environment.default_for``).
         topic = await db.get(Topic, self.id)
         if topic is None:
             raise NotFoundError(say("topicNotFound"))

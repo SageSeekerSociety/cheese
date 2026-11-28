@@ -1,12 +1,10 @@
-"""Each agent's execution environment in a conversation: what it is, what a new
-agent gets, which sandbox specs a project is offered, and the team device a
-sandbox is placed on (``agent.environment``).
+"""Each agent's execution environment in a conversation, beside what it is and
+what a new agent gets (``agent.environment``): which sandbox specs a project
+is offered, who may choose which, and the team device a sandbox is placed on.
 
 Changing one agent's environment is ``session_work.switch_environment``; the
 machine it then works on is settled on its next tool call (``session_work``).
 """
-
-from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,76 +18,16 @@ from app.domain.agent.environment import (
     VM,
     Sandbox,
     SelfHosted,
-    default_environment,
-    project_default,
     spec_of,
     stored,
     works_tasks_of,
 )
 from app.domain.agent.market import cloud_provisionable, cloud_vm_provisionable
 from app.domain.agent_instance.models import AgentInstance
-from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.actor import Actor
 from app.domain.usage import compute
-
-
-@dataclass(frozen=True)
-class Default:
-    """What a new agent in a conversation gets, and where that came from."""
-
-    environment: Sandbox | SelfHosted
-    #: "task" | "room" | "project" | "deployment"
-    source: str
-
-
-def default_for(topic, task, project_settings: dict | None) -> Default:
-    """The task's default, else its room's, else the project's, else a
-    standard sandbox."""
-    if task is not None and (own := stored(task.default_environment)) is not None:
-        return Default(own, "task")
-    if (room := stored(topic.default_environment)) is not None:
-        return Default(room, "room")
-    if (project := project_default(project_settings)) is not None:
-        return Default(project, "project")
-    return Default(default_environment(), "deployment")
-
-
-async def environment_of(
-    db: AsyncSession, row, topic, task, project
-) -> Sandbox | SelfHosted:
-    """The environment of the agent whose session is ``row``, in its
-    conversation. The first time it is asked, the default there is written as
-    the agent's own, so a later change of default moves nobody."""
-    sessions = AgentSessionService(db)
-    own = await sessions.environment(row.conversation_id, row.agent_handle)
-    if own is not None:
-        return stored(own.environment) or default_environment()
-    instance = await db.scalar(
-        select(AgentInstance).where(
-            AgentInstance.project_id == topic.project_id,
-            AgentInstance.handle == row.agent_handle,
-        )
-    )
-    device = (
-        (instance.configuration or {}).get("execution_device_id") if instance else None
-    )
-    spec = (instance.configuration or {}).get("execution_spec") if instance else None
-    if device:
-        chosen = Default(Sandbox(spec=TEAM_DEVICES), "agent")
-    elif spec:
-        chosen = Default(Sandbox(spec=spec), "agent")
-    else:
-        chosen = default_for(topic, task, project.settings if project else None)
-    written = await sessions.set_environment(
-        row.conversation_id,
-        row.agent_handle,
-        chosen.environment.model_dump(),
-        chosen_by=None,
-        only_if_unset=True,
-    )
-    return stored(written.environment) or default_environment()
 
 
 async def offered_specs(

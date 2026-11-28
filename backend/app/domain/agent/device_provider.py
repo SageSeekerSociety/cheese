@@ -51,6 +51,7 @@ from app.domain.agent.place import (
     CHECKOUT_DIR,
     OWN_KEY,
     SANDBOXES_DIR,
+    WORK_DIR,
     launcher_path,
     machine_root,
     seat_dir,
@@ -103,7 +104,7 @@ async def _false() -> bool:
 # connector's `uninstall` are all naming one directory.
 DEVICE_ROOT = machine_root()
 DEVICE_HOME_ROOT = f"{DEVICE_ROOT}/home"
-DEVICE_WORK_ROOT = f"{DEVICE_ROOT}/work"
+DEVICE_WORK_ROOT = f"{DEVICE_ROOT}/{WORK_DIR}"
 # Where a PROJECT's rooms share the packages they install, on the machine they
 # share. Per project rather than per room because every room of a project
 # installs the same lockfile, while a room's home is its own — and uv and pnpm

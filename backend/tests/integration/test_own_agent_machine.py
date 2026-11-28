@@ -504,3 +504,67 @@ async def test_an_own_session_on_its_executors_machine_sees_the_project_there(
 
     assert target["workspace"] == "/where/the/executor/holds/it"
     assert target.get("local") and not target.get("apart")
+
+
+@pytest.mark.parametrize(
+    ("environment", "leased", "whole"),
+    [
+        # The machine holding its subscription, self-hosted: given it whole.
+        ("bobs_laptop", True, True),
+        # So too before its first tool call has taken the machine.
+        ("bobs_laptop", False, True),
+        # Another machine whole, not this one.
+        ("alices_desk", True, False),
+        # A sandbox on the team's devices, placed on this very machine.
+        ("team_devices", True, False),
+    ],
+)
+async def test_an_own_session_is_kept_on_its_machine_unless_it_holds_that_machine(
+    client, monkeypatch, environment, leased, whole
+):
+    """Bob's own Claude Code runs on his laptop, which holds his subscription.
+    It is kept from the rest of the laptop unless its own session was given
+    the laptop whole: its execution environment is that laptop, self-hosted,
+    which only an administrator of the laptop's team can choose."""
+    own = await _own_session(client, environment_on="bob")
+    chosen = (
+        {"kind": "sandbox", "spec": "team_devices"}
+        if environment == "team_devices"
+        else {"kind": "self_hosted", "device_id": getattr(own, environment)}
+    )
+    async with client.test_factory() as db:
+        await AgentSessionService(db).set_environment(
+            own.topic_id, own.handle, chosen, chosen_by=None
+        )
+        await db.commit()
+    monkeypatch.setattr(execution, "call", AsyncMock(return_value={}))
+
+    if leased:
+        on = own.alices_desk if environment == "alices_desk" else own.bobs_laptop
+        target = await _launch_target(client, own, leased_on=on)
+    else:
+        target = await _unleased_target(client, own)
+
+    assert target.get("local")
+    assert bool(target.get("whole_machine")) is whole
+
+
+async def _unleased_target(client, own):
+    """The execution target Bob's laptop is handed before any tool call of
+    the session has taken a machine."""
+    channel = OwnerChannel(
+        DeviceChannel(hub=_hub(), session_factory=client.test_request_factory)
+    )
+    session = SessionRef(
+        own.project_id, own.topic_id, own.handle, harness="claude-code"
+    )
+
+    async def prepare():
+        precheck = await channel.precheck(session, needs_place=True)
+        token = mint_session_token(own.project_id, own.topic_id, precheck.agent_handle)
+        async with channel.prepare_session(
+            session=session, token=token, env={}, precheck=precheck
+        ) as prepared:
+            return json.loads(prepared.env["CHEESE_EXECUTION_TARGET"])
+
+    return client.portal.call(prepare)

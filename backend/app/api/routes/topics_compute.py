@@ -36,17 +36,19 @@ from app.core.errors import (
 from app.core.sandbox_auth import held_by_a_machine, scoped_token_claims
 from app.core.sentences import say
 from app.domain.agent.device_hub import device_hub
-from app.domain.agent.environment import Environment, dump, parse, stored
+from app.domain.agent.environment import (
+    Environment,
+    default_for,
+    dump,
+    parse,
+    stored,
+)
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.machine import holder as holders
 from app.domain.machine import session_work
-from app.domain.machine.environments import (
-    check_allowed,
-    default_for,
-    offered_specs,
-)
+from app.domain.machine.environments import check_allowed, offered_specs
 from app.domain.machine.session_reports import conversation_sessions, devices_held_by
 from app.domain.membership.services import MemberService
 from app.domain.project_permissions import Permission

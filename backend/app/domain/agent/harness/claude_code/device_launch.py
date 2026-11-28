@@ -37,6 +37,7 @@ from app.domain.agent.place import (
     CLAUDE_KEYCHAIN_DIR,
     CLAUDE_LOGIN_DIR,
     CLAUDE_LOGINS_DIR,
+    LOGINS_DIR,
     OWN_LOGIN_ID,
     OWN_MODEL,
     OWN_MODEL_AUTH,
@@ -44,6 +45,7 @@ from app.domain.agent.place import (
     OWN_MODEL_KEY,
     ROOT_PLACEHOLDER,
     SEATS_DIR,
+    WORK_DIR,
     seat_name,
 )
 from app.domain.device.login_kind import FIRST_LOGIN
@@ -584,6 +586,14 @@ case "$CLAUDE_STATE" in
 esac
 mkdir -p "$CLAUDE_STATE"
 chmod 700 "$CLAUDE_STATE"
+# Every runner's state on the machine is under one root, and its journal
+# records what its session's tools read, a seat's memory among it: the session
+# is kept to its own (`remote_execution/namespace`).
+CHEESE_RUNNERS_ROOT="$REAL_HOME/{ROOT_PLACEHOLDER}/harness"
+case "$CLAUDE_STATE" in
+  "$CHEESE_RUNNERS_ROOT/"*)
+    export CHEESE_RUNNERS_ROOT CHEESE_RUNNER_STATE="$CLAUDE_STATE" ;;
+esac
 # The runner is unpacked, not run from its archive: Python keeps no compiled
 # modules for a zip, so every start compiled the runner again, about half of
 # its start. Unpacked into a directory named by the archive's digest, it is
@@ -750,6 +760,12 @@ cheese_launch_phase credentials_selected
 # the room's HOME, can neither see nor replace what is in a seat
 # (`confinement.SEATS`).
 #
+# Unless its session holds the machine whole, the session is kept to its own
+# room, seat and runner state, and of the machine's logins and the checkouts
+# kept there, to its own login and nothing else (`client.prepare`,
+# `remote_execution/namespace._keep_own`). On Linux the bubblewrap cheesehost
+# placed makes its namespace.
+#
 _OWN_LOGIN_CREDENTIALS = f"""\
 unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_BASE_URL
 case "${{{OWN_LOGIN_ID}:?which login this session signs in with}}" in
@@ -757,7 +773,12 @@ case "${{{OWN_LOGIN_ID}:?which login this session signs in with}}" in
   *) OWN_LOGIN="$REAL_HOME/{ROOT_PLACEHOLDER}/{CLAUDE_LOGINS_DIR}/${OWN_LOGIN_ID}" ;;
 esac
 export CLAUDE_SECURESTORAGE_CONFIG_DIR="$OWN_LOGIN"
+export CHEESE_LOGINS_ROOT="$REAL_HOME/{ROOT_PLACEHOLDER}/{LOGINS_DIR}"
+export CHEESE_WORKS_ROOT="$REAL_HOME/{ROOT_PLACEHOLDER}/{WORK_DIR}"
 [ -n "${{USER:-}}" ] || export USER="$(id -un)"
+if [ "$(uname -s)" = Linux ]; then
+  export CHEESE_SESSION_BWRAP="$REAL_HOME/{ROOT_PLACEHOLDER}/runtime/bubblewrap/bwrap"
+fi
 if [ "$(uname -s)" = Darwin ] && _security="$(command -v security)"; then
   if [ -x "$OWN_LOGIN/{CLAUDE_KEYCHAIN_DIR}/security" ]; then
     _security="$OWN_LOGIN/{CLAUDE_KEYCHAIN_DIR}/security"

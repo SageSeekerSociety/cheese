@@ -185,6 +185,17 @@ CHECKOUT_DIR = "room"
 #: cleanup script, held to this one by `tests/unit/test_footprint_root.py`.
 SANDBOXES_DIR = "sandboxes"
 
+#: Under the enrollment root: the checkouts rooms on the machine kept there
+#: (`device_provider.DEVICE_WORK_ROOT`), none of which a member's own Claude
+#: Code there is given.
+WORK_DIR = "work"
+
+#: Under the enrollment root: every login its team gave the platform on the
+#: machine, the first (`CLAUDE_LOGIN_DIR`) and the rest (`CLAUDE_LOGINS_DIR`).
+#: A member's own Claude Code there keeps its own and sees none of the others
+#: (`device_launch._OWN_LOGIN_CREDENTIALS`).
+LOGINS_DIR = "logins"
+
 #: Under the enrollment root: the first Claude Code login its team gives the
 #: platform on a machine (`cheesehost claude login`), kept apart from the
 #: owner's own `~/.claude`, which the machine calls `login_kind.FIRST_LOGIN`.
@@ -197,11 +208,11 @@ SANDBOXES_DIR = "sandboxes"
 #: The connector writes it
 #: (`cli/internal/claudecode`) and the backend's probe reads it; both copies
 #: are held to this one by `tests/unit/test_footprint_root.py`.
-CLAUDE_LOGIN_DIR = "logins/claude-login"
+CLAUDE_LOGIN_DIR = f"{LOGINS_DIR}/claude-login"
 
 #: Under the enrollment root: every further login, one directory each, named by
 #: what the machine calls it. Held to the connector's copy by the same test.
-CLAUDE_LOGINS_DIR = "logins/claude-logins"
+CLAUDE_LOGINS_DIR = f"{LOGINS_DIR}/claude-logins"
 
 
 #: In a migrated login: a security command retaining its original Keychain

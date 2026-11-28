@@ -1171,7 +1171,7 @@ LINUX_NAMESPACES = pytest.mark.skipif(
 def _enter(tmp_path, seen, command, seat_only=()):
     """`client.py enter` for a session whose executor holds the project at
     `seen`, running `command` where the session would run, left only the
-    `keep` of each `[cover, keep]` in ``seat_only``."""
+    `keeps` of each `[cover, keeps]` in ``seat_only``."""
     directory = tmp_path / "session"
     view = directory / "view"
     view.mkdir(parents=True)
@@ -1186,7 +1186,7 @@ def _enter(tmp_path, seen, command, seat_only=()):
                 "central_workspace": str(view),
                 "central_config": str(directory / "config"),
                 "central_tmp": str(directory / "tmp"),
-                "seat_only": [list(pair) for pair in seat_only],
+                "seat_only": [[cover, list(keeps)] for cover, keeps in seat_only],
             }
         )
     )
@@ -1349,11 +1349,214 @@ def test_a_session_cannot_open_another_seats_tree_by_any_path(tmp_path):
         tmp_path,
         "/executor/owner/project",
         f"cat {bobs}; cat {alices} || echo refused; ls {seats}",
-        seat_only=[[str(seats), str(seats / "for-bob")]],
+        seat_only=[[str(seats), [str(seats / "for-bob")]]],
     )
     assert done.returncode == 0, done.stderr
     assert done.stdout == "bob-private\nrefused\nfor-bob\n", done.stdout
     assert alices.read_text() == "alice-private\n"
+
+
+def _own_session_on_a_shared_machine(tmp_path, monkeypatch, *, target=None):
+    """A team's one server, logged in to two subscriptions, running every
+    member's teammate as their own Claude Code: the seats of a room, the
+    rooms, their runners' state, their temporary directories, the logins and
+    the checkouts rooms kept there, each with something in it that is not
+    this session's. Answers the reads a build and a platform command it runs
+    make of each, the paths' contents in order, how the launch ended, and the
+    login it signs in with."""
+    from app.domain.agent.harness.claude_code.remote_execution import client
+
+    owner = tmp_path.resolve()
+    root = owner / ".cheese"
+    homes = root / "home"
+    home = homes / "project/mine"
+    seats = home / ".cheese/seats"
+    runners = root / "harness"
+    own_state = runners / "project/mine/claude/seat"
+    logins = root / "logins"
+    own_login = logins / "claude-login"
+    tmps = owner / "var-tmp/cheese-1000"
+    private = {
+        seats / "mine/remote-session/memory/private/note.md": "mine",
+        seats / "theirs/remote-session/memory/private/note.md": "their seat",
+        homes / "project/theirs/.claude/projects/transcript.jsonl": "their room",
+        own_state / "journal.db": "my journal",
+        runners / "project/mine/claude/theirs/journal.db": "their journal",
+        own_login / ".credentials.json": "my login",
+        logins / "claude-logins/B7QX/.credentials.json": "their login",
+        root / "work/project/theirs/README.md": "their checkout",
+        tmps / "mine/scratch": "my temporary file",
+        tmps / "theirs/scratch": "their temporary file",
+    }
+    for path, text in private.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text + "\n")
+    for name, value in {
+        "CHEESE_HOMES_ROOT": homes,
+        "CHEESE_SEATS_ROOT": seats,
+        "CHEESE_RUNNERS_ROOT": runners,
+        "CHEESE_RUNNER_STATE": own_state,
+        "CHEESE_TMPS_ROOT": tmps,
+        "TMPDIR": tmps / "mine",
+        "CHEESE_LOGINS_ROOT": logins,
+        "CLAUDE_SECURESTORAGE_CONFIG_DIR": own_login,
+        "CHEESE_WORKS_ROOT": root / "work",
+    }.items():
+        monkeypatch.setenv(name, str(value))
+    read = "\n".join(
+        f"cat {shlex.quote(str(path))} 2>/dev/null || echo hidden" for path in private
+    )
+    if sys.platform == "darwin" and not (target or {}).get("whole_machine"):
+        # The profile names paths, not files: nothing above them moves away.
+        moved = owner / "moved/home/project/theirs/.claude/projects/transcript.jsonl"
+        read += (
+            f"\nmv {shlex.quote(str(root))} {shlex.quote(str(owner / 'moved'))}"
+            f" 2>/dev/null; cat {shlex.quote(str(moved))} 2>/dev/null || echo hidden"
+        )
+    # Claude Code renews its own login where it read it.
+    renew = f"echo renewed >> {shlex.quote(str(own_login / '.credentials.json'))}"
+    build = owner / "build"
+    build.write_text(
+        f"#!/bin/sh\n{renew}\n{read}\n"
+        f'exec "$CLAUDE_CODE_SHELL_PREFIX" {shlex.quote(read)}\n'
+    )
+    build.chmod(0o700)
+
+    launch = client.prepare(
+        seats / "mine/remote-session",
+        {
+            "kind": "unavailable",
+            "workspace": str(home),
+            "local": True,
+            **(target or {}),
+        },
+        claude=str(build),
+        version=client.PINNED_VERSION,
+        home_override=str(home),
+        # A platform command hook runs here, on the build's machine.
+        base_settings={
+            "hooks": {"Stop": [{"hooks": [{"type": "command", "command": read}]}]}
+        },
+    )
+    done = subprocess.run(
+        launch["command"],
+        cwd=launch["cwd"],
+        env={**os.environ, **launch["env"]},
+        text=True,
+        capture_output=True,
+        timeout=30,
+    )
+    return done, own_login / ".credentials.json"
+
+
+def _session_bubblewrap(tmp_path, monkeypatch):
+    """The bubblewrap cheesehost places, where it makes a user namespace."""
+    from tests.support import bubblewrap
+
+    owner = tmp_path.resolve()
+    bubblewrap.place(owner)
+    bwrap = bubblewrap.placed(owner)
+    probe = [str(bwrap), "--unshare-user", "--dev-bind", "/", "/", "true"]
+    if not bwrap.exists() or subprocess.run(probe, check=False).returncode:
+        pytest.skip("needs a bubblewrap that makes a user namespace")
+    monkeypatch.setenv("CHEESE_SESSION_BWRAP", str(bwrap))
+
+
+def _without_user_namespaces(tmp_path, monkeypatch):
+    """A machine whose bubblewrap cannot make a user namespace, as Ubuntu's
+    until `cheesehost sandbox allow` names it."""
+    refusing = tmp_path / "refusing-bwrap"
+    refusing.write_text(
+        "#!/bin/sh\necho 'bwrap: setting up uid map: Permission denied' >&2\nexit 1\n"
+    )
+    refusing.chmod(0o700)
+    monkeypatch.setenv("CHEESE_SESSION_BWRAP", str(refusing))
+
+
+@pytest.mark.skipif(
+    sys.platform not in {"linux", "darwin"},
+    reason="Windows has nothing to keep a member's own Claude Code with",
+)
+def test_a_members_own_claude_code_reads_only_its_own_seat_room_runner_and_login(
+    tmp_path, monkeypatch
+):
+    """A seat's memory tree holds the private memory of the person its turn
+    answers, a runner's journal what its session's tools read of it, and a
+    login the subscription another teammate signs in with. The build, and a
+    platform command it runs, read their own seat, room, runner, temporary
+    files and login, and nothing of another's; the build still renews its own
+    login."""
+    if sys.platform == "linux":
+        _session_bubblewrap(tmp_path, monkeypatch)
+
+    done, login = _own_session_on_a_shared_machine(tmp_path, monkeypatch)
+
+    expected = [
+        "mine",
+        "hidden",
+        "hidden",
+        "my journal",
+        "hidden",
+        "my login",
+        "renewed",
+        "hidden",
+        "hidden",
+        "my temporary file",
+        "hidden",
+    ] + (["hidden"] if sys.platform == "darwin" else [])
+    assert done.stdout.splitlines() == expected * 2, done.stderr
+    assert done.returncode == 0, done.stderr
+    assert login.read_text() == "my login\nrenewed\n"
+
+
+@pytest.mark.skipif(
+    sys.platform not in {"linux", "darwin"},
+    reason="Windows has nothing to keep a member's own Claude Code with",
+)
+def test_a_members_own_claude_code_on_a_machine_its_session_holds_whole_sees_it_all(
+    tmp_path, monkeypatch
+):
+    """A session whose execution environment is the very machine holding its
+    subscription, self-hosted, was given that whole machine by an
+    administrator of its team: nothing there is kept from its own Claude Code
+    either, and it starts on a machine that could not keep it."""
+    _without_user_namespaces(tmp_path, monkeypatch)
+
+    done, _ = _own_session_on_a_shared_machine(
+        tmp_path, monkeypatch, target={"whole_machine": True}
+    )
+
+    assert done.returncode == 0, done.stderr
+    expected = [
+        "mine",
+        "their seat",
+        "their room",
+        "my journal",
+        "their journal",
+        "my login",
+        "renewed",
+        "their login",
+        "their checkout",
+        "my temporary file",
+        "their temporary file",
+    ]
+    assert done.stdout.splitlines() == expected * 2, done.stdout
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="bubblewrap is Linux's")
+def test_a_members_own_claude_code_that_cannot_be_kept_does_not_start(
+    tmp_path, monkeypatch
+):
+    """On a machine whose bubblewrap cannot make a user namespace, a session
+    that would be kept to its own seat does not start, and says what to run,
+    rather than run seeing every seat."""
+    _without_user_namespaces(tmp_path, monkeypatch)
+
+    done, _ = _own_session_on_a_shared_machine(tmp_path, monkeypatch)
+
+    assert done.returncode != 0
+    assert "hidden" not in done.stdout and "mine" not in done.stdout
+    assert "sudo ~/.local/bin/cheesehost sandbox allow" in done.stderr
 
 
 def test_a_new_command_id_is_new(machine):

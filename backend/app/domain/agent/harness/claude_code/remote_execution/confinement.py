@@ -137,6 +137,42 @@ def sbpl(path):
     return json.dumps(os.path.realpath(str(path)))
 
 
+def seatbelt_keep_only(narrowed):
+    """The Seatbelt rules that leave a member's own Claude Code on a Mac
+    nothing of each `cover` but its `keeps` (`namespace._keep_own`), as a
+    mount namespace leaves a central session (`namespace._keep_only`). An
+    outer cover comes before one inside one of its `keeps`: the last rule
+    that matches a path decides.
+
+    The rules match paths, not files, so no directory above a `cover` may be
+    moved away from under them: what a moved one holds would be outside it."""
+    narrowed = [
+        (
+            Path(os.path.realpath(cover)),
+            [Path(os.path.realpath(keep)) for keep in keeps],
+        )
+        for cover, keeps in narrowed
+    ]
+    rules = []
+    for cover, keeps in narrowed:
+        rules.append(f"(deny file-read* file-write* (subpath {sbpl(cover)}))")
+        for keep in keeps:
+            rules += [
+                f"(allow file-read* file-write* (subpath {sbpl(keep)}))",
+                # Reaching `keep` takes a look at each directory above it.
+                *(
+                    f"(allow file-read-metadata (literal {sbpl(parent)}))"
+                    for parent in keep.parents
+                    if parent == cover or cover in parent.parents
+                ),
+            ]
+    above = {parent for cover, _ in narrowed for parent in cover.parents}
+    rules += [
+        f"(deny file-write-unlink (literal {sbpl(path)}))" for path in sorted(above)
+    ]
+    return rules
+
+
 def own_directory(path):
     """``path`` made for this user only, or refused. It is a fixed name in a
     shared /tmp: one somebody else made, or a link to somewhere else, would

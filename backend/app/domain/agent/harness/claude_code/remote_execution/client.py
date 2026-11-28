@@ -320,12 +320,16 @@ def prepare(
     unavailable = target.get("kind") in {"unavailable", "deferred"}
     forwarded = target.get("kind") not in {"private", "unavailable"}
     device_forwarded = target.get("kind") in {"device", "deferred"}
-    # A member's own Claude Code on their own computer (`owner_provider`): no
-    # view, no namespace. It sees the project where an executor on this machine
-    # holds it; before its lease, and with the executor elsewhere (`apart`), in
-    # a directory of its own (`context_copy`), its placeholder here.
+    # A member's own Claude Code on the machine holding its subscription
+    # (`owner_provider`): no view. It sees the project where an executor on
+    # this machine holds it; before its lease, and with the executor elsewhere
+    # (`apart`), in a directory of its own (`context_copy`), its placeholder
+    # here. It is kept to its own seat there (`enter`) unless its session holds
+    # that machine whole (`whole_machine`), or the machine is Windows, which
+    # has nothing to keep it with.
     local = bool(target.get("local"))
     apart = local and bool(target.get("apart"))
+    kept = not local or not (target.get("whole_machine") or sys.platform == "win32")
     placeholder = str(directory / "workspace") if local else DEFERRED_WORKSPACE
     workspace = (
         directory / "workspace"
@@ -426,18 +430,11 @@ def prepare(
         # `memoryPath`). Not in the room's home, which the room's seats share:
         # two seats can be working for two people at once.
         central_memory=str(directory / "memory"),
-        # What the session's namespace leaves it of the room's seats and of the
-        # session host's rooms (`namespace._keep_only`): its own seat, which
-        # holds its memory tree, and its own room's home. The launch names
-        # both roots (`device_launch`); a session it did not launch has none.
-        seat_only=[
-            [os.environ[root], str(own)]
-            for root, own in (
-                ("CHEESE_SEATS_ROOT", directory.parent),
-                ("CHEESE_HOMES_ROOT", home),
-            )
-            if os.environ.get(root) and not local
-        ],
+        seat_only=_seat_only(
+            home,
+            directory.parent,
+            [seen, start] if local and not at_placeholder else [],
+        ),
         helper=[sys.executable, str(Path(__file__).resolve())],
         central_hooks=(base_settings or {}).get("hooks", {}),
         target_file=str(directory / "execution.json"),
@@ -661,7 +658,9 @@ def prepare(
     launch = {
         # The session enters its own namespace first, where the project is at
         # `workspace`; `cwd` is where this host holds it, for starting there.
-        "command": command if local else [*helper, "enter", str(target_path), *command],
+        # A member's own sits where it is, kept to its own seat (`enter`)
+        # unless it is not kept at all.
+        "command": [*helper, "enter", str(target_path), *command] if kept else command,
         "env": env,
         "cwd": start if local else str(workspace),
         "workspace": start,
@@ -669,6 +668,43 @@ def prepare(
     }
     (directory / "launch.json").write_text(json.dumps(launch))
     return launch
+
+
+def _seat_only(home, seat, beside):
+    """What the session's namespace leaves it of each root on this host
+    (`namespace._keep_only`, `namespace._keep_own`), as ``[root, [kept...]]``,
+    a room before the seats inside its home. The launch names the roots
+    (`device_launch`, `machine_launcher`); a session it did not launch has none.
+
+    Of the rooms, its own room's home, and the project where an executor on
+    this machine holds it (``beside``), when it is among them; of the room's
+    seats, its own, which holds its memory tree; of the runners' state, its own
+    runner's, whose journal records what its tools read of that tree; of the
+    rooms' temporary directories, its own room's. A member's own Claude Code
+    also keeps, of the machine's logins, the one it signs in with, and nothing
+    of the checkouts rooms kept there."""
+    homes = os.environ.get("CHEESE_HOMES_ROOT")
+    roots = (
+        (
+            "CHEESE_HOMES_ROOT",
+            [home]
+            + [
+                path
+                for path in beside
+                if homes and (path == homes or path.startswith(homes + "/"))
+            ],
+        ),
+        ("CHEESE_SEATS_ROOT", [seat]),
+        ("CHEESE_RUNNERS_ROOT", [os.environ.get("CHEESE_RUNNER_STATE")]),
+        ("CHEESE_TMPS_ROOT", [os.environ.get("TMPDIR")]),
+        ("CHEESE_LOGINS_ROOT", [os.environ.get("CLAUDE_SECURESTORAGE_CONFIG_DIR")]),
+        ("CHEESE_WORKS_ROOT", []),
+    )
+    return [
+        [os.environ[root], [str(path) for path in kept if path]]
+        for root, kept in roots
+        if os.environ.get(root)
+    ]
 
 
 #: The build's own tools a narrowed session is refused unless it holds them.

@@ -661,6 +661,9 @@ fi
 # every account's, so the rooms sit under a directory only this one owns;
 # one somebody else made, or a link, leaves the session on the system default.
 # Short, because programs make sockets in TMPDIR and a path stops at 108 bytes.
+# The session is kept to its own room's among them, as to its own room
+# (`remote_execution/namespace._keep_only`, `CHEESE_TMPS_ROOT`).
+unset CHEESE_TMPS_ROOT
 TB="{SESSION_TMP}/cheese-$(id -u)"
 TD="$TB/${{CH##*/}}"
 # Not on Windows, where Git Bash's `/var/tmp` sits inside its own install and
@@ -668,7 +671,7 @@ TD="$TB/${{CH##*/}}"
 if [ "${{OS:-}}" != Windows_NT ] \
     && mkdir -p -m 700 "$TB" 2>/dev/null && [ ! -L "$TB" ] && [ -O "$TB" ] \
     && mkdir -p "$TD" 2>/dev/null; then
-  export TMPDIR="$TD"
+  export TMPDIR="$TD" CHEESE_TMPS_ROOT="$TB"
 fi
 # With the stores redirected above, the copies these tools left in the room's
 # own HOME are read by nothing. Reclaim them — a room created before the store

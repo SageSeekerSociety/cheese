@@ -137,9 +137,12 @@ class CentralChannel(DeviceChannel):
         else the deployment's session host."""
         return place.machine if place else settings.agent_session_device_id
 
-    def _deferred_target(self, target: dict, *, apart: bool) -> dict:
+    async def _deferred_target(
+        self, target: dict, *, session: SessionRef, center: str, apart: bool
+    ) -> dict:
         """The execution target a session starts with, as this channel hands
-        it on. ``apart``: it starts on a machine other than its session host."""
+        it on. ``center``: the machine its process runs on. ``apart``: it
+        starts on a machine other than that one."""
         return target
 
     async def placed(self, harness: str, device_id: str | None = None) -> list[Placed]:
@@ -349,8 +352,10 @@ class CentralChannel(DeviceChannel):
                 else DEFERRED_WORKSPACE,
                 "mcp_servers": [],
             }
-            target = self._deferred_target(
+            target = await self._deferred_target(
                 target,
+                session=session,
+                center=center,
                 apart=target["workspace"] != DEFERRED_WORKSPACE
                 and leased is not None
                 and leased["device_id"] != center,

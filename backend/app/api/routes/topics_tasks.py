@@ -72,7 +72,7 @@ from app.core.sentences import say
 from app.domain.agent import checkout_sweep
 from app.domain.agent.announce import announce, open_turn_of, word_that_started
 from app.domain.agent.chat import ChatService
-from app.domain.agent.environment import default_environment
+from app.domain.agent.environment import default_environment, default_for
 from app.domain.agent.opening import opening_content
 from app.domain.agent.own_calls import ask_owner_to_join, owner_chats_to_ask
 from app.domain.agent.room.thread_context import member, task_summary
@@ -93,7 +93,7 @@ from app.domain.delivery.ledger import settle_card
 from app.domain.idempotency import store as idem
 from app.domain.idempotency.keys import action_key
 from app.domain.machine import session_work
-from app.domain.machine.environments import default_for, usable_by_owner
+from app.domain.machine.environments import usable_by_owner
 from app.domain.mentions import canonicalize_refs
 from app.domain.project.address import Numbered, things_by_ref
 from app.domain.project_permissions import Permission
