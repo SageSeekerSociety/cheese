@@ -463,6 +463,11 @@ def sandbox_argv(
         *(("--ro-bind", path) for path in programs if path.is_dir()),
     ):
         command += [option, str(path), str(path)]
+    # The directory the seats are in, anchored where it is: a mount point
+    # cannot be moved or removed. The seats are hidden by path, and the launch
+    # makes every later seat at that path (`machine_launcher`), so a room that
+    # moved this directory away would see each seat made after it.
+    command += ["--bind", str((home / SEATS).parent), str((home / SEATS).parent)]
     if image_root is not None:
         # The upper is charged to the home, but only overlayfs may modify it.
         command += ["--tmpfs", str(home / ".cheese/rootfs")]

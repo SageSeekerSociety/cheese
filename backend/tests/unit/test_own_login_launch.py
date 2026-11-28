@@ -69,6 +69,7 @@ def _launch_on_machine(
     migrated_keychain: bool = False,
     chosen_model: str | None = None,
     seat: str = "own",
+    planted: tuple[str, ...] = (),
 ) -> dict:
     """Run the launcher the way a machine does, with the platform asking for
     Claude's ``opus`` on the machine's login ``login_id``, and return the
@@ -83,7 +84,11 @@ def _launch_on_machine(
     `security` records the HOME it ran with under ``keychain_home``.
 
     ``seat`` is the room's seat it takes; a second launch into the same
-    ``tmp_path`` is another seat's of the same room on the same machine."""
+    ``tmp_path`` is another seat's of the same room on the same machine.
+
+    ``planted`` names programs the room's own commands put in the room's
+    ``$HOME/.cheese``, which its sandbox can write: each one, run, says so in
+    ``planted-ran`` and then does what the machine's would."""
     home = tmp_path / "home"
     first = home / profile / CLAUDE_LOGIN_DIR
     second = home / profile / CLAUDE_LOGINS_DIR / "B7QX"
@@ -97,6 +102,8 @@ def _launch_on_machine(
         command.parent.mkdir(exist_ok=True)
         command.write_text(
             f'#!/bin/sh\nprintf %s "$HOME" > "{keychain_home}"\n'
+            # As the connector's does, to map the Keychain service it is asked for.
+            "printf x | sed s/x/y/ >/dev/null\n"
             f'touch "{keychain_used}"\n'
         )
         command.chmod(0o700)
@@ -150,6 +157,15 @@ def _launch_on_machine(
         for tool in machine.iterdir():
             tool.chmod(0o755)
         env["PATH"] = f"{machine}:{env['PATH']}"
+    ran = tmp_path / "planted-ran"
+    for name in planted:
+        program = room / ".cheese" / name
+        program.parent.mkdir(parents=True, exist_ok=True)
+        program.write_text(
+            f'#!/bin/sh\necho {name} >> "{ran}"\n'
+            f'PATH="{env["PATH"]}" exec {name} "$@"\n'
+        )
+        program.chmod(0o755)
 
     result = subprocess.run(
         ["sh", str(launcher)], env=env, capture_output=True, text=True, timeout=30
@@ -163,6 +179,7 @@ def _launch_on_machine(
         "_home": str(home),
         "_keychain_home": keychain_home.read_text() if keychain_home.exists() else None,
         "_migrated_keychain_used": keychain_used.exists(),
+        "_planted_ran": ran.read_text().split() if ran.exists() else [],
     }
 
 
@@ -278,6 +295,25 @@ def test_a_seats_keychain_stays_its_logins_when_another_seat_of_the_room_starts(
     )
 
     assert (tmp_path / "migrated-keychain-used").exists()
+
+
+@pytest.mark.parametrize("moved", [False, True], ids=["login", "moved-login"])
+def test_the_keychain_lookup_runs_nothing_the_room_put_in_its_home(tmp_path, moved):
+    """A room's sandbox can write the room's `$HOME/.cheese`, and the session's
+    PATH starts with it. The `security` the session runs to read its owner's
+    Keychain, the programs a moved login's own `security` runs, and those the
+    launch runs to set it up are the machine's: nothing the room put there runs
+    as the machine's owner."""
+    seen = _launch_on_machine(
+        tmp_path,
+        mac=True,
+        migrated_keychain=moved,
+        planted=("security", "sed", "uname", "id", "mkdir", "cat", "chmod"),
+    )
+
+    assert seen["_migrated_keychain_used"] is moved
+    assert seen["_keychain_home"] == seen["_home"]
+    assert seen["_planted_ran"] == []
 
 
 def test_team_selected_model_reaches_the_process_using_a_subscription(tmp_path):
