@@ -4,14 +4,32 @@ import json
 import os
 import socket
 import sys
+import time
 from pathlib import Path
 
+
+def record(event):
+    """When this process started and when it was asked to initialize, on the
+    host's monotonic clock, for a caller that has to know whether either
+    happened before something it did (`headless_contract`)."""
+    if os.environ.get("MCP_STARTUP_LOG"):
+        with open(os.environ["MCP_STARTUP_LOG"], "a") as log:
+            log.write(
+                json.dumps(
+                    {"pid": os.getpid(), "event": event, "monotonic": time.monotonic()}
+                )
+                + "\n"
+            )
+
+
+record("start")
 for line in sys.stdin:
     request = json.loads(line)
     if "id" not in request:
         continue
     method = request["method"]
     if method == "initialize":
+        record("initialize")
         result = {
             "protocolVersion": request["params"]["protocolVersion"],
             "capabilities": {"tools": {}},
