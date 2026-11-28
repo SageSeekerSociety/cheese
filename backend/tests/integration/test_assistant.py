@@ -41,6 +41,7 @@ from app.api.deps import (
 from app.api.routes import assistant as route
 from app.api.routes import assistant_agent, llm_proxy
 from app.core.config import settings
+from app.domain.agent import device_link
 from app.domain.agent.session_host import host as host_module
 from app.domain.agent.session_host.host import SessionHost
 from app.domain.assistant import gate
@@ -544,7 +545,7 @@ def test_answering_touches_no_machine_and_no_room(client, gateway):
     assert _ask(client, conversation, "从哪里入手？", me).status_code == 200
 
     ran = [argv for argv in gateway.host.execs if argv != ["cat", "/proc/meminfo"]]
-    assert ran and all(argv == ["python3", "-"] for argv in ran)
+    assert ran and all(argv == [device_link.PYTHON, "-"] for argv in ran)
 
 
 def test_a_new_conversation_starts_without_the_old_ones_turns(client, gateway):

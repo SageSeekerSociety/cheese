@@ -17,6 +17,31 @@ from pathlib import Path
 CHECKOUT_DIR = "room"
 
 
+def transcript_roots(home):
+    """Where a room's transcripts are, as `device_launch` lays them out: each
+    seat's own, and the room's, which holds those written before seats kept
+    their own and those a handover brought. A seat still linked to the room's
+    is the room's."""
+    room = home / ".claude/projects"
+    seats = sorted((home / ".cheese/seats").glob("*/.claude/projects"))
+    return [room, *(seat for seat in seats if not seat.is_symlink())]
+
+
+def transcript_at(home, relative):
+    """The transcript ``relative`` names under the room's home, refused unless
+    it is a transcript in one of `transcript_roots`, by its own path."""
+    relative = Path(relative)
+    if relative.is_absolute() or ".." in relative.parts or relative.suffix != ".jsonl":
+        raise ValueError("Invalid transcript path")
+    path = home / relative
+    if path.is_symlink() or not any(
+        path.resolve().is_relative_to(root.resolve()) and path.is_relative_to(root)
+        for root in transcript_roots(home)
+    ):
+        raise RuntimeError("Transcript path escapes its recorded home")
+    return path
+
+
 def transfer(payload):
     home = (
         Path.home()
@@ -98,26 +123,38 @@ def transfer(payload):
         print(json.dumps({"stopped": True}))
         return
     if action == "list":
+        # Named by their path under the room's home, every seat's with the
+        # room's: the source is read where each one is.
         files = []
-        for path in sorted(root.rglob("*.jsonl")):
-            if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):
-                raise RuntimeError("Transcript path escapes its recorded home")
-            content = path.read_bytes()
-            files.append(
-                {
-                    "path": str(path.relative_to(root)),
-                    "size": len(content),
-                    "sha256": hashlib.sha256(content).hexdigest(),
-                }
-            )
+        for directory in transcript_roots(home):
+            for path in sorted(directory.rglob("*.jsonl")):
+                content = transcript_at(home, path.relative_to(home)).read_bytes()
+                files.append(
+                    {
+                        "path": path.relative_to(home).as_posix(),
+                        "size": len(content),
+                        "sha256": hashlib.sha256(content).hexdigest(),
+                    }
+                )
         print(json.dumps({"files": files}))
         return
-    relative = Path(payload["path"])
-    if relative.is_absolute() or ".." in relative.parts or relative.suffix != ".jsonl":
-        raise ValueError("Invalid transcript path")
-    path = root / relative
-    if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):
-        raise RuntimeError("Transcript path escapes its recorded home")
+    if action == "read":
+        path = transcript_at(home, payload["path"])
+    else:
+        # Written into the room's directory, below the directory its cwd
+        # named, whichever seat held it here: the session that goes on with it
+        # takes it from there into its own seat (`runner.adopt_room_transcripts`).
+        relative = Path(payload["path"])
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError("Invalid transcript path")
+        parts = relative.parts
+        if "projects" not in parts or parts[-1] == "projects":
+            raise ValueError("Invalid transcript path")
+        path = root / Path(*parts[len(parts) - parts[::-1].index("projects") :])
+        if path.suffix != ".jsonl":
+            raise ValueError("Invalid transcript path")
+        if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):
+            raise RuntimeError("Transcript path escapes its recorded home")
     if action == "read":
         with path.open("rb") as source:
             source.seek(payload["offset"])

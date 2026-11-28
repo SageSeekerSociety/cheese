@@ -116,6 +116,9 @@ class HubDevice:
     # not imported here for the same reason).
     streams: bool = False
     open_streams: dict[str, Any] = field(default_factory=dict)
+    # Whether the connector on THIS connection runs the platform's programs on
+    # the Python it placed (`hello`, ``device_link.PYTHON``).
+    python: bool = False
     send_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     connection_generation: int = 0
 

@@ -139,26 +139,43 @@ def sbpl(path):
 
 def seatbelt_keep_only(narrowed):
     """The Seatbelt rules that leave a member's own Claude Code on a Mac
-    nothing of each `cover` but its `keeps` (`namespace._keep_own`), as a
-    mount namespace leaves a central session (`namespace._keep_only`). An
-    outer cover comes before one inside one of its `keeps`: the last rule
-    that matches a path decides.
+    nothing of each `cover` but its `keeps`, and its `read_only` keeps
+    unwritable (`namespace._keep_own`), as a mount namespace leaves a central
+    session (`namespace._keep_only`). An outer cover comes before one inside
+    one of its `keeps`: the last rule that matches a path decides.
 
     The rules match paths, not files, so no directory above a `cover` may be
     moved away from under them: what a moved one holds would be outside it."""
+
+    def spellings(keep):
+        # A kept link is read where it is, and what it names where that is.
+        here = Path(os.path.realpath(os.path.dirname(keep))) / os.path.basename(keep)
+        return sorted({here, Path(os.path.realpath(keep))})
+
     narrowed = [
         (
             Path(os.path.realpath(cover)),
-            [Path(os.path.realpath(keep)) for keep in keeps],
+            [
+                (spelled, "file-read* file-write*")
+                for keep in keeps
+                for spelled in spellings(keep)
+            ],
+            [
+                (spelled, "file-read*")
+                for keep in read_only
+                for spelled in spellings(keep)
+            ],
         )
-        for cover, keeps in narrowed
+        for cover, keeps, read_only in narrowed
     ]
     rules = []
-    for cover, keeps in narrowed:
+    for cover, keeps, read_only in narrowed:
         rules.append(f"(deny file-read* file-write* (subpath {sbpl(cover)}))")
-        for keep in keeps:
+        for keep, allowed in [*keeps, *read_only]:
             rules += [
-                f"(allow file-read* file-write* (subpath {sbpl(keep)}))",
+                # Spelled resolved already (`spellings`): resolving a link
+                # again would name what it points to and never the link.
+                f"(allow {allowed} (subpath {json.dumps(str(keep))}))",
                 # Reaching `keep` takes a look at each directory above it.
                 *(
                     f"(allow file-read-metadata (literal {sbpl(parent)}))"
@@ -166,7 +183,7 @@ def seatbelt_keep_only(narrowed):
                     if parent == cover or cover in parent.parents
                 ),
             ]
-    above = {parent for cover, _ in narrowed for parent in cover.parents}
+    above = {parent for cover, _, _ in narrowed for parent in cover.parents}
     rules += [
         f"(deny file-write-unlink (literal {sbpl(path)}))" for path in sorted(above)
     ]

@@ -20,6 +20,7 @@ import pytest
 
 from app.core.config import settings
 from app.core.sandbox_auth import mint_delegated_credential
+from app.domain.agent import device_link
 from app.domain.agent.document import session as doc_session
 from app.domain.agent.document.question import Asked, Bound, Surroundings
 from app.domain.agent.session_host.answer import Answer, Tool, ask
@@ -147,7 +148,7 @@ async def test_a_thread_has_the_documents_tools_and_acts_for_the_asker(host, pla
     assert set(fake.model_auth) == {f"Bearer {access.credential}"}
     assert fake.tool_calls == [(f"GET /documents/{DOCUMENT}", acting)]
     ran = [argv for argv in hub.execs if argv != ["cat", "/proc/meminfo"]]
-    assert ran and all(argv == ["python3", "-"] for argv in ran)
+    assert ran and all(argv == [device_link.PYTHON, "-"] for argv in ran)
 
 
 @pytest.mark.anyio

@@ -10,6 +10,7 @@ import json
 
 import pytest
 
+from app.domain.agent import device_link
 from app.domain.agent.harness import PI, SessionRef
 from app.domain.agent.harness.pi import launch as pi_launch
 from app.domain.agent.room.sessions import RoomSessions
@@ -32,7 +33,7 @@ class PiHost:
         self.pid = 0
 
     async def exec(self, device_id, argv, *, stdin=None, timeout=None, **_):
-        assert (device_id, argv) == ("center", ["python3", "-"])
+        assert (device_id, argv) == ("center", [device_link.PYTHON, "-"])
         self.programs.append(stdin)
         line = next(line for line in stdin.splitlines() if line.startswith("payload="))
         payload = json.loads(

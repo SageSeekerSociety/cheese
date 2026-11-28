@@ -179,6 +179,7 @@ class DeviceHub:
         device.executor = False
         device.profiles = False
         device.streams = False
+        device.python = False
         if name:
             device.name = name
         device.update_pushed = ""

@@ -678,11 +678,14 @@ func (h *Host) runExec(ctx context.Context, cancel context.CancelFunc, m link.Ms
 const selfCommand = "cheesehost"
 
 // platformPython is how the server names, in an exec, the Python its programs
-// run on (`python3 -` with a program on stdin): the one this connector placed,
-// run by path (`runtimepath.Python`), never a `python3` PATH finds, which on a
-// person's machine is theirs. Where none could be placed the exec fails here
-// and says so.
-const platformPython = "python3"
+// run on (`cheese-python -` with a program on stdin): the one this connector
+// placed, run by path (`runtimepath.Python`), never a `python3` PATH finds,
+// which on a person's machine is theirs. Where none could be placed the exec
+// fails here and says so. It is a name of its own, announced in `hello`
+// (`link.Msg.Python`), so that an exec of `python3` means what it always has —
+// whatever PATH finds — and a server never sends this one to a connector that
+// would look it up on PATH.
+const platformPython = "cheese-python"
 
 var errNoPython = errors.New("cheese: this machine has no Python of the platform's placed; restart the connector to place it")
 

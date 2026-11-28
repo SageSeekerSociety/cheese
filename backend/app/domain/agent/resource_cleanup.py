@@ -1053,9 +1053,10 @@ def harness_sessions(machine_home: Path, project: str, resource: str):
 def retain_transcripts(home: Path, archive: Path, harnesses=()) -> None:
     """Compress the resource's session files before the home goes.
 
-    `.claude/projects` holds every Claude Code session of the room — the main
-    transcript and each subagent's beside it; `harnesses` are the Codex and pi
-    ones (`harness_sessions`). A link is stored as a link and never followed:
+    Each seat's `.claude/projects` holds its Claude Code sessions — the main
+    transcript and each subagent's beside it — and the room's holds those
+    written before seats kept their own (`device_launch`); `harnesses` are the
+    Codex and pi ones (`harness_sessions`). A link is stored as a link and never followed:
     Claude Code links a resumed session's subagent files to the originals in
     the same tree, and a link out of the home is not ours to read.
     Written under a temporary name and renamed, so an archive under the final
@@ -1069,6 +1070,9 @@ def retain_transcripts(home: Path, archive: Path, harnesses=()) -> None:
     claude = home / ".claude/projects"
     if not claude.is_symlink() and claude.is_dir():
         sources.append((claude, "projects"))
+    for seat in sorted((home / ".cheese/seats").glob("*/.claude/projects")):
+        if not seat.is_symlink() and seat.is_dir():
+            sources.append((seat, f"seats/{seat.parent.parent.name}/projects"))
     sources += list(harnesses)
     if not sources:
         return

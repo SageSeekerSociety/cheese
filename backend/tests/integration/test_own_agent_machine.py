@@ -29,14 +29,20 @@ from app.domain.agent.turn_speakers import private_memory_for
 from app.domain.agent_instance.models import AgentInstance, OwnAgent
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.device.login_kind import FIRST_LOGIN
-from app.domain.device.models import DeviceClaudeLoginRow
+from app.domain.device.models import (
+    DeviceClaudeLoginRow,
+    DeviceRow,
+    ModelCredentialHost,
+)
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 from app.domain.identity.services import IdentityService
 from app.domain.machine import session_work as work_lease
 from app.domain.project.models import Project
+from app.domain.team.services import team_service
 from app.domain.topic.models import Topic
 from app.domain.user.models import User
+from app.domain.user.tokens import digest_token
 from tests.integration.conftest import post_project, session_auth_headers
 from tests.support.devices import enrollment_team, place_in_project_team
 from tests.support.environments import attach_anew
@@ -547,6 +553,56 @@ async def test_an_own_session_is_kept_on_its_machine_unless_it_holds_that_machin
 
     assert target.get("local")
     assert bool(target.get("whole_machine")) is whole
+
+
+@pytest.mark.parametrize("change", ["unbound", "given_to_another_team"])
+async def test_an_own_session_whose_machine_left_the_project_holds_it_no_longer(
+    client, monkeypatch, change
+):
+    """Bob's session was given his laptop whole, and his subscription is logged
+    in there. Then the laptop is unbound from the team, its Claude Code login
+    kept, or it goes to another team. The session's stored environment still
+    names the laptop, but no tool of the session can run there any more, so
+    its Claude Code is kept from the rest of the laptop like any other."""
+    own = await _own_session(client, environment_on="bob")
+    async with client.test_factory() as db:
+        await AgentSessionService(db).set_environment(
+            own.topic_id,
+            own.handle,
+            {"kind": "self_hosted", "device_id": own.bobs_laptop},
+            chosen_by=None,
+        )
+        if change == "unbound":
+            # The login stays on the machine, now a bare credential host.
+            db.add(
+                ModelCredentialHost(
+                    id=own.bobs_laptop,
+                    token_digest=digest_token("bobs-laptop"),
+                    name="bobs-laptop",
+                )
+            )
+            await db.flush()
+            login = await db.scalar(
+                select(DeviceClaudeLoginRow).where(
+                    DeviceClaudeLoginRow.device_id == own.bobs_laptop
+                )
+            )
+            login.host_id = own.bobs_laptop
+            await db.flush()
+            await sql_device_service(db)._repo.delete_device(own.bobs_laptop)
+        else:
+            elsewhere = await _user(db, "carol")
+            device = await db.get(DeviceRow, own.bobs_laptop)
+            device.team_id = (
+                await team_service(db).ensure_personal_team(elsewhere.id)
+            ).id
+        await db.commit()
+    monkeypatch.setattr(execution, "call", AsyncMock(return_value={}))
+
+    target = await _unleased_target(client, own)
+
+    assert target.get("local")
+    assert not target.get("whole_machine")
 
 
 async def _unleased_target(client, own):

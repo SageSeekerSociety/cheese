@@ -455,19 +455,25 @@ export CLAUDE_CONFIG_DIR="$SEAT/.claude"
 # machine, the platform half of the launch says (`CHEESE_HOMES_ROOT`).
 export CHEESE_SEATS_ROOT="$(dirname "$SEAT")"
 mkdir -p "$ROOM_CONFIG_DIR/projects" "$CLAUDE_CONFIG_DIR"
-# Conversation transcripts belong to the room for resume and transfer, while
-# settings, skills and generated instructions belong to this seat.
-if [ ! -e "$CLAUDE_CONFIG_DIR/projects" ]; then
+# Each seat keeps its own conversation transcripts, in its own config
+# directory, where its namespace keeps it (`client._seat_only`): a raw
+# transcript holds what the session was given as it was sent, a person's
+# private input among it, and the seats of a room work for different people.
+# The room's directory holds what was written before seats kept their own,
+# and what a handover brings (`session_transfer`); the runner moves a
+# conversation it takes up again from there into the seat's
+# (`runner.adopt_room_transcripts`). A seat set up when the room's directory
+# was shared has a link to it in place of its own, which goes.
+export CHEESE_ROOM_TRANSCRIPTS="$ROOM_CONFIG_DIR/projects"
+if [ -L "$CLAUDE_CONFIG_DIR/projects" ]; then
   case "$(uname -s)" in
-    # Git Bash's `ln -s` copies where Windows withholds symlinks, and a copy
-    # would keep this seat's transcripts from the room: a junction is the link
-    # every account may make.
-    MINGW*|MSYS*|CYGWIN*) cmd //c mklink /J \\
-      "$(cygpath -w "$CLAUDE_CONFIG_DIR/projects")" \\
-      "$(cygpath -w "$ROOM_CONFIG_DIR/projects")" >/dev/null ;;
-    *) ln -s "$ROOM_CONFIG_DIR/projects" "$CLAUDE_CONFIG_DIR/projects" ;;
+    # A junction: `rmdir` removes the link and leaves what it names.
+    MINGW*|MSYS*|CYGWIN*) cmd //c rmdir \\
+      "$(cygpath -w "$CLAUDE_CONFIG_DIR/projects")" >/dev/null ;;
+    *) rm -f "$CLAUDE_CONFIG_DIR/projects" ;;
   esac
 fi
+mkdir -p "$CLAUDE_CONFIG_DIR/projects"
 export DISABLE_AUTOUPDATER=1
 # The project's models as subagent definitions (`gateway_usage.model_agents`),
 # written before claude starts: it reads its agents directory once, at start.

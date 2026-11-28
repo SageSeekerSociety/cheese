@@ -27,7 +27,7 @@ from app.core.sandbox_auth import (
 )
 from app.core.sentences import say
 from app.domain.addressing import REASON_MACHINE_OWNER, Addressed, Recipient
-from app.domain.agent import execution
+from app.domain.agent import device_link, execution
 from app.domain.agent.device_hub import DeviceCallError, DeviceOffline, device_hub
 from app.domain.agent.device_provider import (
     device_home_dir,
@@ -554,7 +554,7 @@ async def _start_executor(
             )
     installed = await hub.exec(
         device_id,
-        ["python3", "-"],
+        [device_link.PYTHON, "-"],
         stdin=await asyncio.to_thread(
             launch.script,
             namespace,

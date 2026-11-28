@@ -89,12 +89,14 @@ def session_platform_dirs() -> tuple[str, ...]:
 # exit 137) and the session came back pointed at the other seat's target.
 #
 # So the files that are per-seat live under this directory, one child per seat,
-# inside the room's home. The room keeps shared transcripts in
-# `$HOME/.claude/projects`, plus `$HOME/.cheese/executor`,
-# `.cheese-environment/status.json` and the `room/` checkout. Programs that
-# resolve room paths still find those (`release.stage`'s busy scan,
-# `session_transfer`, `resource_cleanup`). Claude settings, skills and execution
-# helpers belong to a seat: a new launch must not replace a busy peer's files.
+# inside the room's home. The room keeps `$HOME/.cheese/executor`,
+# `.cheese-environment/status.json` and the `room/` checkout, which programs
+# that resolve room paths find there, and in `$HOME/.claude/projects` the
+# transcripts written before each seat kept its own and those a handover
+# brings (`device_launch`, `session_transfer`, `resource_cleanup`). Claude
+# settings, skills, execution helpers and transcripts belong to a seat: a new
+# launch must not replace a busy peer's files, and a transcript holds what its
+# session was given, a person's private input among it.
 SEATS_DIR = "seats"
 
 

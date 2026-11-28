@@ -66,7 +66,7 @@ func TestTheServersPythonIsThePlacedOneNotPaths(t *testing.T) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("CHEESE_PYTHON", placed)
 	server := hostOnAFakeServer(t, nil)
-	server.send(t, link.Msg{T: "exec", ID: "python", Command: []string{"python3", "-"}})
+	server.send(t, link.Msg{T: "exec", ID: "python", Command: []string{"cheese-python", "-"}})
 
 	result := awaitExecResult(t, server, "python")
 
@@ -88,11 +88,38 @@ func TestNoPlacedPythonRunsNothingAndSaysSo(t *testing.T) {
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("CHEESE_PYTHON", "")
 	server := hostOnAFakeServer(t, nil)
-	server.send(t, link.Msg{T: "exec", ID: "python", Command: []string{"python3", "-"}})
+	server.send(t, link.Msg{T: "exec", ID: "python", Command: []string{"cheese-python", "-"}})
 
 	result := awaitExecResult(t, server, "python")
 
 	if result.Exit == 0 || result.Stdout != "" || !strings.Contains(result.Stderr, "no Python of the platform's placed") {
 		t.Fatalf("ran without the placed Python: %+v", result)
+	}
+}
+
+// An exec of `python3` runs whatever PATH finds, as it did before the server
+// could name the platform's own Python: a server that has not asked for that
+// one gets what it asked for, from this connector as from the one before it.
+func TestPython3StillRunsWhatPathFinds(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the stand-in Pythons are shell scripts")
+	}
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "python3"), []byte("#!/bin/sh\necho on path \"$@\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	placed := filepath.Join(t.TempDir(), "python3")
+	if err := os.WriteFile(placed, []byte("#!/bin/sh\necho placed\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("CHEESE_PYTHON", placed)
+	server := hostOnAFakeServer(t, nil)
+	server.send(t, link.Msg{T: "exec", ID: "python", Command: []string{"python3", "-"}})
+
+	result := awaitExecResult(t, server, "python")
+
+	if result.Exit != 0 || strings.TrimSpace(result.Stdout) != "on path -" {
+		t.Fatalf("python3 did not run what PATH finds: %+v", result)
 	}
 }

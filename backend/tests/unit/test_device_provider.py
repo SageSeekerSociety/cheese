@@ -24,7 +24,12 @@ import pytest
 # that only for `client`/`python_client` (the layer ceiling counts wall clock).
 import app.main  # noqa: F401
 from app.core.config import settings
-from app.domain.agent import device_provider, machine_launcher, screen_identity
+from app.domain.agent import (
+    device_link,
+    device_provider,
+    machine_launcher,
+    screen_identity,
+)
 from app.domain.agent.device_hub import DeviceCallError, HubScreen
 from app.domain.agent.device_provider import (
     DeviceChannel,
@@ -148,7 +153,7 @@ class FakeHub:
             return {"stdout": verdict, "stderr": "", "exit": code}
         if argv[:2] == ["sh", "-c"] and "release-ready" in argv[2]:
             return {"stdout": self.marker, "stderr": "", "exit": 0}
-        if argv == ["python3", "-"]:
+        if argv == [device_link.PYTHON, "-"]:
             answer = self.release[_release_step(stdin or "")]
             return {"stdout": json.dumps(answer), "stderr": "", "exit": 0}
         return {"stdout": "", "stderr": "", "exit": 0, "truncated": False}
@@ -878,7 +883,9 @@ async def test_a_reused_screen_is_released_in_place_through_its_runner():
     assert hub.commands() == ["/reload-plugins"]
     assert hub.controls() == ["mcp_reconnect", "mcp_status"]
     steps = [
-        _release_step(stdin) for argv, stdin in hub.execs if argv == ["python3", "-"]
+        _release_step(stdin)
+        for argv, stdin in hub.execs
+        if argv == [device_link.PYTHON, "-"]
     ]
     assert steps == ["stage", "acknowledge"]
     for method, params in hub.asked:
@@ -942,7 +949,9 @@ async def test_a_release_refused_by_a_busy_conversation_waits_for_a_later_turn(
     assert hub.reasserted == [first.sid, first.sid]
     assert _retired(caplog) == []
     steps = [
-        _release_step(stdin) for argv, stdin in hub.execs if argv == ["python3", "-"]
+        _release_step(stdin)
+        for argv, stdin in hub.execs
+        if argv == [device_link.PYTHON, "-"]
     ]
     # Refused on the first attempt, applied on the next.
     assert steps == ["stage", "stage", "acknowledge"]
@@ -956,7 +965,7 @@ async def test_a_seat_in_a_turn_never_stages_its_release():
     hub.ping = {"alive": True, "working": True}
 
     assert await room.ensure() is first
-    assert not [stdin for argv, stdin in hub.execs if argv == ["python3", "-"]]
+    assert not [stdin for argv, stdin in hub.execs if argv == [device_link.PYTHON, "-"]]
     assert hub.commands() == []
 
 
@@ -970,7 +979,9 @@ async def test_a_seat_with_a_background_command_still_asks_for_its_release():
 
     assert await room.ensure() is first
     steps = [
-        _release_step(stdin) for argv, stdin in hub.execs if argv == ["python3", "-"]
+        _release_step(stdin)
+        for argv, stdin in hub.execs
+        if argv == [device_link.PYTHON, "-"]
     ]
     assert steps == ["stage", "acknowledge"]
 
@@ -993,14 +1004,18 @@ async def test_a_release_put_off_is_asked_again_while_the_runner_answers():
     hub.release["stage"] = {"changed": False, "busy": True}
     await room.ensure(runner_alive=True)
     assert [
-        _release_step(stdin) for argv, stdin in hub.execs if argv == ["python3", "-"]
+        _release_step(stdin)
+        for argv, stdin in hub.execs
+        if argv == [device_link.PYTHON, "-"]
     ][-1:] == ["stage"]
     hub.release["stage"] = {"changed": True}
     hub.execs.clear()
 
     assert await room.ensure(runner_alive=True) is first
     steps = [
-        _release_step(stdin) for argv, stdin in hub.execs if argv == ["python3", "-"]
+        _release_step(stdin)
+        for argv, stdin in hub.execs
+        if argv == [device_link.PYTHON, "-"]
     ]
     assert steps == ["stage", "acknowledge"]
 
@@ -1028,7 +1043,9 @@ async def test_a_deferred_room_is_released_without_a_context_tree():
     assert reused is first and hub.closed == []
     assert hub.reasserted == [first.sid]
     steps = [
-        _release_step(stdin) for argv, stdin in hub.execs if argv == ["python3", "-"]
+        _release_step(stdin)
+        for argv, stdin in hub.execs
+        if argv == [device_link.PYTHON, "-"]
     ]
     assert steps == ["stage", "acknowledge"]
     assert reused.execution_target == target
@@ -1904,7 +1921,7 @@ async def test_a_deferred_relaunch_does_not_release_helpers_into_the_old_session
 
     assert hub.closed == []
     assert not any(
-        argv == ["python3", "-"] and _release_step(stdin or "") == "stage"
+        argv == [device_link.PYTHON, "-"] and _release_step(stdin or "") == "stage"
         for argv, stdin in hub.execs
     )
 
@@ -1953,6 +1970,35 @@ async def test_the_same_sessions_busy_screen_is_still_reused(caplog):
     )
 
     assert again is first and hub.closed == []
+
+
+@pytest.mark.parametrize(
+    "ping",
+    [
+        {"alive": True, "working": False, "tasks": {"bash-1": "local_bash"}},
+        {"alive": True, "working": True, "tasks": {}},
+    ],
+)
+async def test_a_session_that_no_longer_holds_its_machine_is_not_kept_for_its_work(
+    caplog, ping
+):
+    """A member's own Claude Code started while its session held the machine
+    whole runs with nothing on the machine kept from it. When an administrator
+    moves the session to a sandbox, the next turn must not reach that process,
+    whatever it still has running: what it runs dies with it, and the
+    replacement starts kept to its own seat."""
+    hub = FakeHub()
+    whole = {"kind": "deferred", "session_id": "cheese", "local": True}
+    room = _executor_room(hub, target={**whole, "whole_machine": True})
+    first = await room.ensure()
+    hub.ping = ping
+
+    with caplog.at_level("INFO"):
+        taken = await room.ensure(env={"CHEESE_EXECUTION_TARGET": json.dumps(whole)})
+
+    assert taken.sid != first.sid
+    assert hub.closed == [first.sid]
+    assert "whole_machine" not in json.loads(hub.envs[-1]["CHEESE_EXECUTION_TARGET"])
 
 
 # --- seats: a room's teammates have one session each -------------------------

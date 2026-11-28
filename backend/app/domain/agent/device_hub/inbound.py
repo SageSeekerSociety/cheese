@@ -53,6 +53,7 @@ async def on_device_message(
         device.executor = msg.executor
         device.profiles = msg.profiles
         device.streams = msg.streams
+        device.python = msg.python
         device.dropped_at = None
         device.announced.set()
         if device.proto not in (None, device_link.PROTOCOL_VERSION):

@@ -51,7 +51,7 @@ from app.core.db import async_session_factory
 from app.core.errors import BaseError
 from app.core.sentences import say
 from app.domain.agent.central_provider import CentralChannel
-from app.domain.agent.environment import SelfHosted, environment_of
+from app.domain.agent.environment import SelfHosted, environment_of, self_hosts
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
 from app.domain.agent.place import (
@@ -136,8 +136,12 @@ class OwnerChannel(CentralChannel):
         self, session: SessionRef, session_id: str, machine: str
     ) -> bool:
         """Whether the session holds ``machine`` whole: its execution
-        environment is that machine, self-hosted. Then it is given everything
-        there, and nothing there is kept from its own Claude Code either."""
+        environment is that machine, self-hosted, and the machine is still one
+        the project's tools may run on unconfined, as the executor asks before
+        running them there (`session_work`). Then it is given everything
+        there, and nothing there is kept from its own Claude Code either. A
+        machine unbound since keeps its logins under the same id (a credential
+        host), so the id alone grants nothing."""
         async with (self._session_factory or async_session_factory)() as db:
             row = await AgentSessionService(db).by_id(uuid.UUID(session_id))
             topic = await TopicService(db).get_or_404(session.topic_id)
@@ -152,8 +156,14 @@ class OwnerChannel(CentralChannel):
             environment = (
                 await environment_of(db, row, topic, task, project) if row else None
             )
+            whole = (
+                isinstance(environment, SelfHosted)
+                and environment.device_id == machine
+                and project is not None
+                and await self_hosts(db, machine, project.id)
+            )
             await db.commit()
-        return isinstance(environment, SelfHosted) and environment.device_id == machine
+        return whole
 
     @asynccontextmanager
     async def prepare_session(self, **kwargs):

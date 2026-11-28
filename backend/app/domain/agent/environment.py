@@ -36,6 +36,7 @@ from app.domain.agent.models import AgentTurn
 from app.domain.agent_instance.models import AgentInstance
 from app.domain.agent_session.services import AgentSessionService
 from app.domain.conversation.services import of_room
+from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
 
 #: The platform's machines, the default for a new agent.
@@ -164,6 +165,23 @@ async def works_tasks_of(
     if device is None:
         return False
     return device.team_id == project.team_id
+
+
+async def self_hosts(
+    session: AsyncSession, device_id: str, project_id: uuid.UUID
+) -> bool:
+    """Whether ``device_id`` is, right now, a machine the project's tools may
+    run on as a self-hosted environment: enrolled, hosted by a person, and
+    serving the project's team. Unbound or given to another team, it is not,
+    whatever environment still names it."""
+    devices = sql_device_service(session)
+    device = await devices.get_device(device_id)
+    return (
+        device is not None
+        and device.supply == Supply.self_hosted
+        and await devices.serves_project(device_id, project_id)
+        and await devices.get_hosted_device(device_id) is not None
+    )
 
 
 @dataclass(frozen=True)

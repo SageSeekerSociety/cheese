@@ -12,6 +12,7 @@ import pytest
 
 from app.api.routes import machine_skills
 from app.core.errors import NotFoundError, UnprocessableEntityError
+from app.domain.agent import device_link
 from app.domain.agent.device_hub import DeviceCallError
 from app.domain.device.supply import Supply
 from app.domain.project_skill.importer import ReadSkill, normalize_skill_url
@@ -181,7 +182,7 @@ async def test_it_fetches_checks_lands_and_rescans(monkeypatch):
     assert "scripts/run.py" in hub.calls[0]["stdin"]
     # 第二次 exec 是重扫，project_id 作为 argv[1] 搭上去，argv[2] 说明这台机器
     # 是不是用户自己的（cloud 空着 —— 它是在平台供的机器上跑）。
-    assert hub.calls[1]["argv"] == ["python3", "-", str(PROJECT), ""]
+    assert hub.calls[1]["argv"] == [device_link.PYTHON, "-", str(PROJECT), ""]
     assert result["landed"] is True
     assert result["skills"] == [] and result["problems"] == []
     # 落盘的清单：一颗技能，和跟着进去的文件名 —— 确认框就是拿这个画的。
@@ -208,7 +209,7 @@ async def test_a_self_hosted_machine_is_told_to_skip_its_own_homes(monkeypatch):
         supply=Supply.self_hosted,
     )
     await _call()
-    assert hub.calls[1]["argv"] == ["python3", "-", str(PROJECT), "1"]
+    assert hub.calls[1]["argv"] == [device_link.PYTHON, "-", str(PROJECT), "1"]
 
 
 async def test_a_skill_that_breaks_the_spec_is_refused_before_writing(monkeypatch):
@@ -312,10 +313,10 @@ async def test_a_plugin_lands_every_skill_it_bundles(monkeypatch):
     result, _ = await _call(kind="plugin")
 
     assert len(hub.calls) == 3  # 两次落盘，一次重扫
-    assert hub.calls[0]["argv"] == ["python3", "-"]
+    assert hub.calls[0]["argv"] == [device_link.PYTHON, "-"]
     assert "alpha" in hub.calls[0]["stdin"]
     assert "beta" in hub.calls[1]["stdin"]
-    assert hub.calls[2]["argv"] == ["python3", "-", str(PROJECT), ""]
+    assert hub.calls[2]["argv"] == [device_link.PYTHON, "-", str(PROJECT), ""]
     assert result["landed"] is True
     assert [item["name"] for item in result["plan"]] == ["alpha", "beta"]
 

@@ -47,6 +47,7 @@ from app.core.device_failures import (
 )
 from app.core.errors import BaseError
 from app.core.sentences import NoticeText, say
+from app.domain.agent import device_link
 from app.domain.judge import billing, code, scoring, trials
 from app.domain.judge.runtimes import image_of
 from app.domain.judge.script import RUNNER_SRC
@@ -353,7 +354,7 @@ async def _run_on_host(device_id: str, job: _Job) -> dict:
     try:
         done = await _hub().exec(
             device_id,
-            ["python3", "-I", "-c", RUNNER_SRC],
+            [device_link.PYTHON, "-I", "-c", RUNNER_SRC],
             stdin=json.dumps(job.payload),
             timeout=EXEC_TIMEOUT_S,
         )

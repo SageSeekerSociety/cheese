@@ -1356,17 +1356,25 @@ def test_a_session_cannot_open_another_seats_tree_by_any_path(tmp_path):
     assert alices.read_text() == "alice-private\n"
 
 
-def _own_session_on_a_shared_machine(tmp_path, monkeypatch, *, target=None):
+def _own_session_on_a_shared_machine(
+    tmp_path, monkeypatch, *, target=None, owners_build=False
+):
     """A team's one server, logged in to two subscriptions, running every
     member's teammate as their own Claude Code: the seats of a room, the
     rooms, their runners' state, their temporary directories, the logins and
     the checkouts rooms kept there, each with something in it that is not
     this session's, and the machine owner's own files in their home beside
     the platform's root, their own Python among them, first on their PATH,
-    which a launch that took `python3` from PATH started this client on.
+    which a launch that took `python3` from PATH started this client on. The
+    platform's root holds, beside the rooms and logins, the forge proxy's
+    signing key, another enrollment's login, every seat's launcher and the
+    programs the platform placed. The room's own transcript directory holds
+    what its seats said before each kept its own; this seat keeps its own. ``owners_build``: the build is the owner's
+    own, a link in their `~/.local/bin` beside their other programs, to a file
+    beside their other files, as when the pinned download failed.
     Answers the reads a build and a platform command it runs make of each, the
-    paths' contents in order, how the launch ended, and the login it signs in
-    with."""
+    paths' contents in order, whether it could change the platform's
+    programs, how the launch ended, and the login it signs in with."""
     from app.domain.agent.harness.claude_code.remote_execution import client
 
     owner = tmp_path.resolve() / "owner"
@@ -1393,6 +1401,16 @@ def _own_session_on_a_shared_machine(tmp_path, monkeypatch, *, target=None):
         owner / ".ssh/id_ed25519": "the owner's key",
         owner / "Documents/taxes.pdf": "the owner's document",
         owner / ".nix-profile/lib/python3.12/os.py": "the owner's Python",
+        root / "ca/ca.key": "the machine's signing key",
+        root / "profiles/other/logins/claude-login/.credentials.json": (
+            "another enrollment's login"
+        ),
+        root / "launch/project-theirs.sh": "their launcher",
+        root / "runtime/python/bin/python3.13": "the platform's Python",
+        owner / ".local/bin/their-tool": "the owner's program",
+        owner / ".local/share/claude/notes.txt": "the owner's notes",
+        home / ".claude/projects/-work/theirs.jsonl": "a transcript of the room's",
+        seats / "mine/.claude/projects/-work/mine.jsonl": "my transcript",
     }
     for path, text in private.items():
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -1413,6 +1431,8 @@ def _own_session_on_a_shared_machine(tmp_path, monkeypatch, *, target=None):
     read = "\n".join(
         f"cat {shlex.quote(str(path))} 2>/dev/null || echo hidden" for path in private
     )
+    placed = shlex.quote(str(root / "runtime/python/bin/placed-by-the-session"))
+    read += f"\n(: > {placed}) 2>/dev/null && echo writable || echo read-only"
     if sys.platform == "darwin" and not (target or {}).get("whole_machine"):
         # The profile names paths, not files: nothing above them moves away.
         moved = owner / "moved/home/project/theirs/.claude/projects/transcript.jsonl"
@@ -1424,12 +1444,17 @@ def _own_session_on_a_shared_machine(tmp_path, monkeypatch, *, target=None):
     renew = f"echo renewed >> {shlex.quote(str(own_login / '.credentials.json'))}"
     # Where the launch places the pinned build (`device_launch`).
     build = owner / ".cheese/claude/versions" / client.PINNED_VERSION
+    if owners_build:
+        build = owner / ".local/share/claude/versions" / client.PINNED_VERSION
     build.parent.mkdir(parents=True)
     build.write_text(
         f"#!/bin/sh\n{renew}\n{read}\n"
         f'exec "$CLAUDE_CODE_SHELL_PREFIX" {shlex.quote(read)}\n'
     )
     build.chmod(0o700)
+    if owners_build:
+        (owner / ".local/bin/claude").symlink_to(build)
+        build = owner / ".local/bin/claude"
 
     with monkeypatch.context() as started:
         started.setattr(sys, "prefix", str(owner / ".nix-profile"))
@@ -1505,22 +1530,61 @@ def test_a_members_own_claude_code_reads_only_its_own_seat_room_runner_and_login
 
     done, login = _own_session_on_a_shared_machine(tmp_path, monkeypatch)
 
-    expected = [
-        "mine",
-        "hidden",
-        "hidden",
-        "my journal",
-        "hidden",
-        "my login",
-        "renewed",
-        "hidden",
-        "hidden",
-        "my temporary file",
-        "hidden",
-        "hidden",
-        "hidden",
-        "hidden",
-    ] + (["hidden"] if sys.platform == "darwin" else [])
+    expected = [*_KEPT, *(["hidden"] if sys.platform == "darwin" else [])]
+    assert done.stdout.splitlines() == expected * 2, done.stderr
+    assert done.returncode == 0, done.stderr
+    assert login.read_text() == "my login\nrenewed\n"
+
+
+#: What a kept member's own Claude Code, and a platform command it runs, read
+#: of the shared machine (`_own_session_on_a_shared_machine`), in its order.
+_KEPT = [
+    "mine",
+    "hidden",
+    "hidden",
+    "my journal",
+    "hidden",
+    "my login",
+    "renewed",
+    "hidden",
+    "hidden",
+    "my temporary file",
+    "hidden",
+    "hidden",
+    "hidden",
+    "hidden",
+    "hidden",
+    "hidden",
+    "hidden",
+    "the platform's Python",
+    "hidden",
+    "hidden",
+    "hidden",
+    "my transcript",
+    "read-only",
+]
+
+
+@pytest.mark.skipif(
+    sys.platform not in {"linux", "darwin"},
+    reason="Windows has nothing to keep a member's own Claude Code with",
+)
+def test_a_members_own_claude_code_on_the_owners_own_build_sees_only_that_build(
+    tmp_path, monkeypatch
+):
+    """When the pinned download fails the launch takes a build of the right
+    version the owner installed themselves, a link in their `~/.local/bin` to
+    a file in `~/.local/share`. It runs, and keeps the session from the owner's
+    other programs and files beside either of them as from the rest of their
+    home."""
+    if sys.platform == "linux":
+        _session_bubblewrap(tmp_path, monkeypatch)
+
+    done, login = _own_session_on_a_shared_machine(
+        tmp_path, monkeypatch, owners_build=True
+    )
+
+    expected = [*_KEPT, *(["hidden"] if sys.platform == "darwin" else [])]
     assert done.stdout.splitlines() == expected * 2, done.stderr
     assert done.returncode == 0, done.stderr
     assert login.read_text() == "my login\nrenewed\n"
@@ -1559,6 +1623,15 @@ def test_a_members_own_claude_code_on_a_machine_its_session_holds_whole_sees_it_
         "the owner's key",
         "the owner's document",
         "the owner's Python",
+        "the machine's signing key",
+        "another enrollment's login",
+        "their launcher",
+        "the platform's Python",
+        "the owner's program",
+        "the owner's notes",
+        "a transcript of the room's",
+        "my transcript",
+        "writable",
     ]
     assert done.stdout.splitlines() == expected * 2, done.stdout
 

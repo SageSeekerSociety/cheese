@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.core.config import settings
 from app.core.sentences import NoticeText, say
-from app.domain.agent import machine_launcher, screen_identity
+from app.domain.agent import device_link, machine_launcher, screen_identity
 from app.domain.agent.device_hub import (
     RECONNECT_GRACE_S,
     DeviceCallError,
@@ -672,7 +672,7 @@ class DeviceChannel(Channel):
         async def execute(function, *args):
             result = await self._hub.exec(
                 screen.device_id,
-                ["python3", "-"],
+                [device_link.PYTHON, "-"],
                 stdin=resident_release.script(function, *args),
                 timeout=40,
             )
@@ -1021,7 +1021,18 @@ class DeviceChannel(Channel):
             # so refusing turns until it ends is not waiting. A runner that
             # cannot be asked has nothing left running to lose.
             status = await self._runner(device_id, place.state, "ping")
-            if status is not None and (status.get("working") or status.get("tasks")):
+            # Except a process started holding the machine whole that holds it
+            # no longer (`owner_provider._holds_machine`): nothing on the
+            # machine is kept from it, so the revocation cannot wait for its
+            # work, and the next input goes to a process that is kept.
+            revoked = bool(
+                (existing.execution_target or {}).get("whole_machine")
+            ) and not (execution_target or {}).get("whole_machine")
+            if (
+                not revoked
+                and status is not None
+                and (status.get("working") or status.get("tasks"))
+            ):
                 logger.info(
                     "device_screen_relaunch_deferred topic=%s sid=%s working=%s "
                     "tasks=%s",

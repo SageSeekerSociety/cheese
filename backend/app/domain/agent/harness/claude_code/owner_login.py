@@ -15,7 +15,7 @@ backend asks it — `claude auth status` for each, which answers without calling
 a model — and keeps the answers: when the machine connects, and when its owner
 asks again.
 
-The question travels as a program on stdin (`hub.exec(["python3", "-"])`), the
+The question travels as a program on stdin (`hub.exec([device_link.PYTHON, "-"])`), the
 way every other one-off question to a machine does, so it runs the same on
 Linux, macOS and Windows, where the connector provides `python3`.
 
@@ -35,6 +35,7 @@ from datetime import UTC, datetime
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domain.agent import device_link
 from app.domain.agent.harness.claude_code.device_launch import CLAUDE_PINNED_VERSION
 from app.domain.agent.place import (
     CLAUDE_KEYCHAIN_DIR,
@@ -191,7 +192,9 @@ def read_answer(stdout: str) -> list[ClaudeLogin]:
 
 async def ask(hub, device_id: str) -> list[ClaudeLogin]:
     """Ask the machine. Raises what ``hub.exec`` raises when it is not there."""
-    result = await hub.exec(device_id, ["python3", "-"], stdin=program(), timeout=90)
+    result = await hub.exec(
+        device_id, [device_link.PYTHON, "-"], stdin=program(), timeout=90
+    )
     if result.get("exit") != 0:
         logger.warning(
             "claude login probe failed on %s: %s",

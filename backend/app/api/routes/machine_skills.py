@@ -60,6 +60,7 @@ from app.core.errors import (
 )
 from app.core.sentences import say
 from app.domain import skill_market
+from app.domain.agent import device_link
 from app.domain.agent.device_hub import DeviceCallError, device_hub
 from app.domain.device.supply import Supply
 from app.domain.device.wiring import sql_device_service
@@ -232,7 +233,7 @@ def _scan_argv(device: Any, project_id: uuid.UUID | None) -> list[str]:
     private homes to protect.
     """
     return [
-        "python3",
+        device_link.PYTHON,
         "-",
         str(project_id) if project_id else "",
         "1" if device.supply is Supply.self_hosted else "",
@@ -322,7 +323,7 @@ async def set_machine_skill_roots(
         roots.append(path)
     written = await device_hub.exec(
         device_id,
-        ["python3", "-", *roots],
+        [device_link.PYTHON, "-", *roots],
         stdin=scan.set_program(),
         timeout=SCAN_TIMEOUT_S,
     )
@@ -412,7 +413,7 @@ async def fetch_machine_skill(
         files = _landed_files(read)
         written = await device_hub.exec(
             device_id,
-            ["python3", "-"],
+            [device_link.PYTHON, "-"],
             stdin=scan.land_program(read.name, files),
             timeout=SCAN_TIMEOUT_S,
         )
