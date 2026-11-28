@@ -81,18 +81,26 @@ func modelLoginRequest(url string, body, result any) error {
 	return json.NewDecoder(resp.Body).Decode(result)
 }
 
-func connectModelLogin(cfgPath string) error {
-	cfg, err := config.Load(cfgPath)
-	if err != nil {
-		return err
-	}
-	if err := devenv.Ensure(context.Background(), cfg.Base, os.Stdout); err != nil {
+// startConnector places what the connector needs and installs and starts it as
+// this user's service. A variable because a test of the login cannot run it:
+// kardianos finds the unit through user.Current(), not $HOME, so it would
+// install over the connector of whoever runs the test.
+var startConnector = func(cfgPath, base string) error {
+	if err := devenv.Ensure(context.Background(), base, os.Stdout); err != nil {
 		return err
 	}
 	if err := service.Control(cfgPath, "install"); err != nil {
 		return err
 	}
-	if err := service.Control(cfgPath, "start"); err != nil {
+	return service.Control(cfgPath, "start")
+}
+
+func connectModelLogin(cfgPath string) error {
+	cfg, err := config.Load(cfgPath)
+	if err != nil {
+		return err
+	}
+	if err := startConnector(cfgPath, cfg.Base); err != nil {
 		return err
 	}
 	// The subscription is usable only while this service runs, and on a server
