@@ -225,6 +225,10 @@ class ColdCompaction:
 
     idle_s: float
     above_tokens: int = COLD_COMPACT_ABOVE_TOKENS
+    #: The project state the conversation is told again once compacted, as a
+    #: conversation that has read its chat holds it: the summary keeps less
+    #: than the conversation was told.
+    retold: str = ""
 
 
 @dataclass(frozen=True)

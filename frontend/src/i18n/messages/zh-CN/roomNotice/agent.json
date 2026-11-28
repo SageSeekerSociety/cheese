@@ -191,6 +191,7 @@
   "ownAgentRoomYes": "同意",
   "ownAgentRoomNo": "不同意",
   "conversationAbandoned": "这场对话整理不下去了，平台换了一段新的接着做。频道里的消息一条不少；只在对话里说过、没落到文件或任务里的细节不会再带过去",
+  "conversationNotCarried": "{agent}换到另一台电脑上运行，之前的对话没能带过去，这次从新对话开始。之前的消息都还在，它会自己查看",
   "actedByTeammate": "{agent}代 {person}",
   "turnFailedLoginExpired": "这次没做完：它用的 Claude 账号登录已过期。重新登录后它会自动接着做，不用重发消息。"
 }

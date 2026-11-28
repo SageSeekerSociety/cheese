@@ -505,6 +505,10 @@ class StubChannel(SeatChannel):
         self.last_resume_session_id: str | None = None
         self.last_retired_session_id: str | None = None
         self.last_prompt: str | None = None
+        #: The machine holds none of the conversations it is asked to resume:
+        #: a session started here starts a new one, as a runner whose
+        #: transcript stayed on another computer does.
+        self.holds_no_conversations = False
         self.reply = "Hello world"
         self._alive = True
         # Fired the moment the transport actually writes, so a test can assert
@@ -558,7 +562,8 @@ class StubChannel(SeatChannel):
                 self.root / str(session.conversation_id) / agent / "runner",
                 self,
                 session.conversation_id,
-                launch.resume_session_id or self.new_session_id,
+                (not self.holds_no_conversations and launch.resume_session_id)
+                or self.new_session_id,
                 agent,
             )
             # Named by the launch that started it, as the screen names a real

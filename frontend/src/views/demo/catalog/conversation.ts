@@ -52,6 +52,26 @@ const UPGRADE_TURN_FAILED: Block = {
   },
 }
 
+/** 队友换到另一台电脑上运行，之前的对话留在原来那台上（`conversation_not_carried`）：频道里居中一行。 */
+const CONVERSATION_NOT_CARRIED: Block = {
+  id: 'catalog-conversation-not-carried',
+  conversation_id: 'demo',
+  kind: 'event',
+  author_type: 'platform',
+  author: 'system',
+  content:
+    '<@cheese>换到另一台电脑上运行，之前的对话没能带过去，这次从新对话开始。之前的消息都还在，它会自己查看',
+  created_at: new Date('2026-11-28T10:05:00+08:00').toISOString(),
+  shown_as: 'happening',
+  meta: {
+    event_type: 'conversation_not_carried',
+    severity: 'info',
+    who: 'platform',
+    seat: 'cheese',
+    i18n: { content: { key: 'conversationNotCarried', params: { agent: '<@cheese>' } } },
+  },
+}
+
 /** AI 队友的运行程序正在下载到一个人自己的电脑上（`executor_install`）：同一行原地更新。 */
 function installLine(state: string, key: string, content: string, params: Record<string, unknown>): Block {
   return {
@@ -382,6 +402,12 @@ export const CONVERSATION_ENTRIES: CatalogEntry[] = [
         note: '一轮很久没有任何输出、平台把它停下了：这是平台的问题，不说模型出错；带「重试」，同时告警给运维。',
         props: failureNotice(TURN_STOPPED),
         expect: '这次没做完，已停下',
+      },
+      {
+        name: '换到另一台电脑：从新对话开始',
+        note: '队友改在另一台电脑上运行（比如换成某位成员电脑上的 Claude 订阅），之前的对话留在原来那台上：居中一行说清它从新对话开始、之前的消息都在。',
+        props: upgradeNotice(CONVERSATION_NOT_CARRIED),
+        expect: '这次从新对话开始',
       },
       {
         name: '运行程序下载中',

@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock
 import pytest
 from sqlalchemy import select
 
+from app.core.config import settings
 from app.core.sandbox_auth import bind_resource_token, mint_scoped_token
 from app.domain.agent import execution
 from app.domain.agent.device_provider import DeviceChannel
@@ -504,3 +505,70 @@ async def test_an_own_session_on_its_executors_machine_sees_the_project_there(
 
     assert target["workspace"] == "/where/the/executor/holds/it"
     assert target.get("local") and not target.get("apart")
+
+
+async def test_a_conversation_left_on_another_computer_is_not_resumed_and_the_room_is_told(
+    client, monkeypatch
+):
+    """Bob's own Claude Code ran on the platform's computer (the project's
+    model) and now runs on his laptop (his own login). Its conversation stayed
+    on the platform's computer: the start on the laptop continues nothing of
+    it, no later start takes it up, and the room is told that its teammate
+    begins a new conversation, once."""
+    own = await _own_session(client, environment_on="alice")
+    monkeypatch.setattr(settings, "agent_session_device_id", "platform-host")
+    async with client.test_factory() as db:
+        sessions = AgentSessionService(db)
+        await sessions.remember(
+            conversation_id=own.topic_id,
+            agent_handle=own.handle,
+            resume_token="conversation-1",
+            harness="claude-code",
+            generation=0,
+        )
+        row = await sessions.ensure(own.topic_id, own.handle, harness="claude-code")
+        row.runtime_location = {
+            **row.runtime_location,
+            "device_id": "platform-host",
+            "channel": "central",
+        }
+        await db.commit()
+    channel = OwnerChannel(
+        DeviceChannel(hub=_hub(), session_factory=client.test_request_factory)
+    )
+    session = SessionRef(
+        own.project_id, own.topic_id, own.handle, harness="claude-code"
+    )
+
+    async def start():
+        precheck = await channel.precheck(session, needs_place=True)
+        token = mint_session_token(own.project_id, own.topic_id, precheck.agent_handle)
+        async with channel.prepare_session(
+            session=session, token=token, env={}, precheck=precheck
+        ) as prepared:
+            return prepared
+
+    async def continued():
+        async with client.test_factory() as db:
+            return await AgentSessionService(db).continuation(
+                own.topic_id, own.handle, harness="claude-code", generation=0
+            )
+
+    first = client.portal.call(start)
+
+    assert first.device_id == own.bobs_laptop
+    assert client.portal.call(continued).resume is None
+    blocks = client.get(
+        f"/topics/{own.topic_id}/blocks", headers=session_auth_headers("alice")
+    ).json()["data"]["data"]
+    told = [
+        b
+        for b in blocks
+        if (b.get("meta") or {}).get("event_type") == "conversation_not_carried"
+    ]
+    assert len(told) == 1, blocks
+    assert told[0]["meta"]["seat"] == own.handle
+    # The start itself takes up nothing of it.
+    assert first.retired == "conversation-1"
+    # Started again on the laptop, it is where its conversation is now.
+    assert client.portal.call(start).retired is None

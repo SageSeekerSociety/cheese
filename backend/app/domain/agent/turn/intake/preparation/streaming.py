@@ -15,6 +15,8 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
+from dataclasses import replace
+from functools import partial
 from typing import TYPE_CHECKING
 
 from app.domain.agent import gateway_catalog
@@ -103,7 +105,6 @@ async def converse(
     project_id = prepared.project_id
     prompt_text = prepared.prompt_text
     provider = prepared.provider
-    resume_session_id = prepared.resume_session_id
     role = prepared.role
     roster = prepared.roster
     topic_refs_for_prompt = prepared.topic_refs_for_prompt
@@ -128,8 +129,7 @@ async def converse(
         # 队友自己带的技能正文接在平台那份指引后面（`context.carried_skills`）。
         carried=prepared.skill_bodies,
     )
-    opening = render_opening(
-        prepared.kind,
+    sections = dict(
         thread=prepared.thread_context,
         channel=prepared.channel_context,
         tasks=prepared.thread_tasks,
@@ -148,29 +148,36 @@ async def converse(
         teaching=teaching,
         stages=prepared.stages,
         package=prepared.task_package,
-        environment=_session_opening_lines(
-            unconnected_mcp=(
-                await unconnected_mcp(
-                    prep.sessions,
-                    project_id,
-                    prepared.room_id,
-                    acting_agent,
-                    inner_id=prepared.inner_id,
-                )
-                if needs_place
-                else ()
-            ),
-            # Only a session that keeps a checklist is shown the last one.
-            progress=prior_progress
-            if holds(PROFILES[prepared.kind].tools, "todo_write")
-            else None,
-            sandbox=_sandbox_limits(provider),
-            # A resumed conversation already holds what was said in it.
-            earlier_messages=(
-                prepared.earlier_messages if resume_session_id is None else 0
-            ),
-        ),
         keeps_memory=keeps_memory(runtime.harness),
+    )
+    lines = partial(
+        _session_opening_lines,
+        unconnected_mcp=(
+            await unconnected_mcp(
+                prep.sessions,
+                project_id,
+                prepared.room_id,
+                acting_agent,
+                inner_id=prepared.inner_id,
+            )
+            if needs_place
+            else ()
+        ),
+        # Only a session that keeps a checklist is shown the last one.
+        progress=prior_progress
+        if holds(PROFILES[prepared.kind].tools, "todo_write")
+        else None,
+        sandbox=_sandbox_limits(provider),
+    )
+    # The whole opening is handed only to a new conversation, and whether this
+    # one is new is known only once its session starts: a resume can find
+    # nothing to take up, as when the conversation stayed on the computer its
+    # session left (`session_move`). So it always says how much of the chat
+    # the conversation has not read.
+    opening = render_opening(
+        prepared.kind,
+        **sections,
+        environment=lines(earlier_messages=prepared.earlier_messages),
     )
     async with prep.sessions() as session:
         sessions = AgentSessionService(session)
@@ -236,6 +243,14 @@ async def converse(
     # What the kind of session differs by in its launch (`session_env`): the
     # same for the prewarm (`launch.py`), so a prewarmed session is kept.
     model_kwargs["env"] = {**model_kwargs.get("env", {}), **session_env(prepared.kind)}
+    cold = _when_cold(prepared.kind, model_kwargs.get("model"))
+    if cold is not None:
+        # Compacted before it reads this, a conversation that goes on is told
+        # the state again, as one that has read its chat.
+        cold = replace(
+            cold,
+            retold=render_opening(prepared.kind, **sections, environment=lines()).text,
+        )
     logger.info(
         "chat_preparation_timing topic=%s turn=%s phase=model_ready "
         "elapsed_ms=%.3f unix_ms=%.3f",
@@ -274,7 +289,7 @@ async def converse(
             keeps_nothing=prepared.keeps_nothing,
             sender=runtime,
             activate=activate,
-            cold=_when_cold(prepared.kind, model_kwargs.get("model")),
+            cold=cold,
             private=private,
             talk_told=talk_told,
         ),

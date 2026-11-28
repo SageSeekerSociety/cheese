@@ -23,6 +23,7 @@ from app.domain.agent.device_provider import (
 from app.domain.agent.executor_transport import DEFERRED_WORKSPACE
 from app.domain.agent.harness import SessionRef
 from app.domain.agent.harness.channel import Placement, ScreenSetupError
+from app.domain.agent.session_move import end_moved, host_move
 from app.domain.agent_instance.services import agent_stdio_servers, type_of_seat
 from app.domain.agent_session import attachment as attachments
 from app.domain.agent_session.services import AgentSessionService
@@ -48,6 +49,9 @@ class PreparedSession:
     topic_id: uuid.UUID
     token: str
     env: dict[str, str]
+    #: The conversation this start must not take up: it stayed on the
+    #: computer the session left (`session_move`).
+    retired: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -290,6 +294,7 @@ class CentralChannel(DeviceChannel):
         center = self._center(place, precheck)
         if not center:
             raise ScreenSetupError(say("screenCentralMachineOffline"))
+        move = host_move(session_row, center=center, resource=str(resource))
         await self._wait_for_session_host(center, session)
         values = {**(env or {}), "CHEESE_RESOURCE_ID": str(resource)}
         # Every room's session shares this machine's kernel: each runs under a
@@ -427,6 +432,8 @@ class CentralChannel(DeviceChannel):
                 # What it held belongs to another generation of the room, or
                 # it works in a scratch area of its own: it holds nothing.
                 await attachments.unattach(db, session_id)
+            if move is not None:
+                await end_moved(db, session, move)
             await AgentSessionService(db).remember_place(
                 conversation_id=session.conversation_id,
                 agent_handle=session.agent_handle,
@@ -445,5 +452,6 @@ class CentralChannel(DeviceChannel):
             topic_id=topic_id,
             token=token,
             env=values,
+            retired=move.token if move is not None else None,
         )
         mark("screen_ready")
